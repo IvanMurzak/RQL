@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false   # never cancel running self-hosted jobs (it can wedge the runner)
+
+jobs:
+  test-all:
+    # Ephemeral Linux runners spawned by runner-manager in WSL2 (Ubuntu-24.04) on ANASTASIIA.
+    # The selector label is REQUIRED: runner-manager only answers jobs whose runs-on carries it.
+    runs-on: [self-hosted, linux, rm-anastasiia-wsl-linux-x64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Toolchain versions
+        run: dotnet --list-sdks && node --version && cmake --version | head -1 && c++ --version | head -1
+      - name: Test all runtimes + conformance + task self-check (no LLM)
+        run: scripts/test-all.sh
