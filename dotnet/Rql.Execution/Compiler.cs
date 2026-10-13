@@ -149,6 +149,7 @@ namespace Rql.Execution
                         var v = prev(x);
                         if (v == null) return null;
                         if (V.IsAbsent(v)) return v;
+                        if (!ofCurrentItem && V.IsList(v)) return MapMeta(v, e => e == null ? null : x.Types.Info(e.GetType()).ShortName);
                         return x.Types.Info(v.GetType()).ShortName;
                     };
                 case "ref":
@@ -158,6 +159,7 @@ namespace Rql.Execution
                         if (v == null) return null;
                         if (V.IsAbsent(v)) return v;
                         if (v is RowValue rv) return rv.Columns.Length == 1 && rv.Values[0] != null && !V.IsAbsent(rv.Values[0]) && x.Types.Info(rv.Values[0]!.GetType()).IsObject ? x.Engine.RefOf(rv.Values[0]!) : (object)Missing.Value;
+                        if (!ofCurrentItem && V.IsList(v)) return MapMeta(v, e => e != null && x.Types.Info(e.GetType()).IsObject ? x.Engine.RefOf(e) : (object)Missing.Value);
                         var info = x.Types.Info(v.GetType());
                         return info.IsObject ? x.Engine.RefOf(v) : (object)Missing.Value;
                     };
@@ -175,6 +177,18 @@ namespace Rql.Execution
                     _x.Diagnostics.Add(Diagnostic.Warning("unknown-meta", $"unknown meta member '${name}'", "meta members: $type $ref $path $index $depth"));
                     return _ => Missing.Value;
             }
+        }
+
+        /// <summary>Meta members applied to a navigated list map over its elements (spec §3), skipping missing.</summary>
+        private static object MapMeta(object list, Func<object?, object?> f)
+        {
+            var r = new List<object?>();
+            foreach (var e in (IEnumerable)list)
+            {
+                var v = f(e);
+                if (!(v is Missing)) r.Add(v);
+            }
+            return r;
         }
 
         internal static object? Member(Exec x, object? v, MemberSite site)
@@ -478,6 +492,7 @@ namespace Rql.Execution
                 return null;
             }
             if (b is string) return null;
+            if (V.IsList(a) || V.IsList(b) || TypeModel.Get(ta).IsMap || TypeModel.Get(b.GetType()).IsMap) return null;
             return ReferenceEquals(a, b);
         }
 

@@ -158,7 +158,7 @@ namespace Rql.Execution
             {
                 object? mv;
                 try { mv = m.Getter(o); } catch (Exception ex) { mv = new RqlError("getter-threw", ex.Message); }
-                if (mv != null && !(mv is string))
+                if (mv != null && !(mv is string) && !(mv is RqlError) && !(mv is Missing))
                 {
                     var mi = _x.Types.Info(mv.GetType());
                     if (mi.IsList || mi.IsMap)

@@ -388,6 +388,26 @@
     ]
    },
    "code": null
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g",
+      {
+       "index": 0.0
+      }
+     ]
+    },
+    "stages": [
+     {
+      "op": "first",
+      "n": 2.0
+     }
+    ]
+   },
+   "code": null
   }
  ]
 }

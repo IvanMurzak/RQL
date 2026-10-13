@@ -66,6 +66,7 @@ namespace Rql.Execution
                 foreach (var (target, value, label) in assigns)
                 {
                     _x.Current = item;
+                    _x.CurrentDepth = -1;
                     _x.CurrentPath = null;
                     var nv = value(_x);
                     if (nv is Missing || nv is Unknown)
@@ -258,6 +259,7 @@ namespace Rql.Execution
                         all.Count > 0 ? "callable: " + string.Join(", ", all) : $"{info.ShortName} has no callable methods");
                 }
                 _x.Current = item;
+                    _x.CurrentDepth = -1;
                 var vals = args.Select(a => a(_x)).ToArray();
                 MethodInfo? chosen = null;
                 object?[]? coerced = null;

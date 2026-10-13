@@ -270,6 +270,9 @@ this is the main self-correction channel for agents.
 
 ## 11. Lexical conveniences (normative)
 
+Numbers in RQL text use ASCII digits only. In QueryPlan JSON an integer field accepts any JSON number with an integral value (`2` and `2.0`), never `2.5`.
+
+
 To reduce agent errors the parser accepts, and canonicalizes away:
 
 * Keywords `and or not in is null true false` and core stage names in any letter case.

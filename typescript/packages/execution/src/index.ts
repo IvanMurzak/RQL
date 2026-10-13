@@ -1,0 +1,31 @@
+export {
+  RqlEngine,
+  type ArgEvaluator,
+  type EngineDefaults,
+  type EngineOptions,
+  type ExtensionFunction,
+  type MutationPolicy,
+  type RefResolution,
+  type SourceRegistration,
+  type StageHandler,
+} from './engine.js';
+export {
+  EnumType,
+  EnumValue,
+  MemberAccessor,
+  MethodAccessor,
+  RecordMap,
+  TypeInfo,
+  TypeModel,
+  friendlyName,
+  t,
+  type Ctor,
+  type MemberSpec,
+  type MethodSpec,
+  type ParamSpec,
+  type ScalarName,
+  type TypeKind,
+  type TypeRef,
+  type TypeSpec,
+} from './types.js';
+export { ErrorValue, MISSING, MapEntry, Missing, RowValue, UNKNOWN, Unknown, isAbsent } from './values.js';

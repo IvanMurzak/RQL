@@ -1,0 +1,11 @@
+{
+  "name": "@rql/tests",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@rql/contracts": "0.1.0",
+    "@rql/parser": "0.1.0",
+    "@rql/execution": "0.1.0"
+  }
+}

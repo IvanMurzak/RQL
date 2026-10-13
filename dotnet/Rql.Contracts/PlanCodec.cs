@@ -341,7 +341,7 @@ namespace Rql
                     if (s.TryGetProperty("index", out var ix))
                     {
                         AllowOnly(s, "index segment", "index");
-                        if (ix.ValueKind != JsonValueKind.Number || !ix.TryGetInt64(out var l)) throw Invalid("index must be an integer");
+                        if (ix.ValueKind != JsonValueKind.Number || !TryIntegral(ix, out var l)) throw Invalid("index must be an integer");
                         segs.Add(Segment.At(l));
                     }
                     else if (s.TryGetProperty("key", out var key))
@@ -376,9 +376,20 @@ namespace Rql
         private static int ReadInt(JsonElement obj, string name, string ctx, int min)
         {
             var v = Required(obj, name, ctx);
-            if (v.ValueKind != JsonValueKind.Number || !v.TryGetInt32(out var n) || n < min)
+            if (v.ValueKind != JsonValueKind.Number || !TryIntegral(v, out var n) || n < min || n > int.MaxValue)
                 throw Invalid($"{ctx}.{name} must be an integer >= {min}");
-            return n;
+            return (int)n;
+        }
+
+        /// <summary>Integers are JSON numbers with an integral value (1 and 1.0 are both accepted; 1.5 is not).</summary>
+        private static bool TryIntegral(JsonElement v, out long value)
+        {
+            value = 0;
+            if (v.TryGetInt64(out value)) return true;
+            var d = v.GetDouble();
+            if (Math.Floor(d) != d || Math.Abs(d) > 9007199254740992d) return false;
+            value = (long)d;
+            return true;
         }
 
         private static bool ReadTrueFlag(JsonElement obj, string name, string ctx)

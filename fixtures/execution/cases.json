@@ -6601,6 +6601,136 @@
       }
     },
     {
+      "name": "meta-type-on-list",
+      "rql": "g.Nodes | select Name Children.$type Children.$ref",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Children.$type",
+                "expr": {
+                  "path": [
+                    "Children",
+                    {
+                      "meta": "type"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "Children.$ref",
+                "expr": {
+                  "path": [
+                    "Children",
+                    {
+                      "meta": "ref"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "Children.$type",
+          "Children.$ref"
+        ],
+        "rows": [
+          [
+            "root-a",
+            [
+              "Node",
+              "Special"
+            ],
+            [
+              "Node#2",
+              "Special#3"
+            ]
+          ],
+          [
+            "root-b",
+            [
+              "Special",
+              "Node"
+            ],
+            [
+              "Special#6",
+              "Node#7"
+            ]
+          ],
+          [
+            "lonely",
+            [],
+            []
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "list-equality-unknown",
+      "rql": "g.Nodes | where Tags == Tags | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Tags"
+                  ]
+                },
+                {
+                  "path": [
+                    "Tags"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 0
+      }
+    },
+    {
       "name": "warn-unknown-member",
       "rql": "g.Nodes | where Nmae == 1 | count",
       "plan": {

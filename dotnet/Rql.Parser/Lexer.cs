@@ -70,7 +70,7 @@ namespace Rql.Parsing
                     tokens.Add(new Token(TokenKind.QuotedIdent, text.Substring(i + 1, close - i - 1), start, close + 1, null, space));
                     i = close + 1;
                 }
-                else if (char.IsDigit(c))
+                else if (IsDigit(c))
                 {
                     i = ReadNumber(text, i, out var value);
                     tokens.Add(new Token(TokenKind.Number, text.Substring(start, i - start), start, i, value, space));
@@ -98,6 +98,8 @@ namespace Rql.Parsing
         private static RqlException Error(string message, int start, int end) =>
             new RqlException("syntax-error", message + " at " + start, new TextSpan(start, end));
 
+        private static bool IsDigit(char c) => c >= '0' && c <= '9';
+
         public static bool IsIdentStart(char c) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
         private static bool IsIdentPart(char c) => IsIdentStart(c) || (c >= '0' && c <= '9');
 
@@ -117,20 +119,20 @@ namespace Rql.Parsing
         private static int ReadNumber(string text, int i, out double value)
         {
             int start = i, n = text.Length;
-            while (i < n && char.IsDigit(text[i])) i++;
-            if (i + 1 < n && text[i] == '.' && char.IsDigit(text[i + 1]))
+            while (i < n && IsDigit(text[i])) i++;
+            if (i + 1 < n && text[i] == '.' && IsDigit(text[i + 1]))
             {
                 i++;
-                while (i < n && char.IsDigit(text[i])) i++;
+                while (i < n && IsDigit(text[i])) i++;
             }
             if (i < n && (text[i] == 'e' || text[i] == 'E'))
             {
                 int j = i + 1;
                 if (j < n && (text[j] == '+' || text[j] == '-')) j++;
-                if (j < n && char.IsDigit(text[j]))
+                if (j < n && IsDigit(text[j]))
                 {
                     i = j;
-                    while (i < n && char.IsDigit(text[i])) i++;
+                    while (i < n && IsDigit(text[i])) i++;
                 }
             }
             if (i < n && IsIdentStart(text[i]))

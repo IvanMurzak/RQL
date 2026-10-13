@@ -1,0 +1,24 @@
+{
+  "name": "rql-typescript",
+  "private": true,
+  "type": "module",
+  "description": "TypeScript runtime of RQL (Reflection Query Language): contracts, parser, live-object executor.",
+  "workspaces": [
+    "packages/contracts",
+    "packages/parser",
+    "packages/execution",
+    "tests"
+  ],
+  "scripts": {
+    "build": "tsc -b tests",
+    "clean": "tsc -b tests --clean",
+    "test": "npm run build && node tests/dist/run-conformance.js && node --test tests/dist/*.test.js",
+    "conformance": "npm run build && node tests/dist/run-conformance.js"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
