@@ -167,6 +167,8 @@ exhaustion on search/aggregate tasks (e.g. `v2-agg-avg-lines`: 155–233 tool ca
 Total recorded DeepSeek spend for the whole session: **$3.43** of the $25 global cap (balance before
 start: $29.46), over 33 ledger entries (`evaluation/baselines/spend-ledger.json`). Costs are computed from
 provider-reported token usage × the price snapshot. One entry is a known conservative double count (~$0.035; see the ledger).
+Cross-check against the provider's account balance endpoint at the end of the session: **$3.10 actually charged**
+($29.46 → $26.36) vs $3.43 in the ledger, so the ledger, and every cost figure in this report, is a conservative upper bound (~10% high).
 
 ## 5. Limitations (honest)
 
