@@ -1,0 +1,43 @@
+{
+ "run": "e3-dev",
+ "name": "e3-scope-escapes",
+ "split": "dev",
+ "git": "6e767a9",
+ "config": {
+  "Name": "e3-scope-escapes",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-flash",
+  "ReasoningEffort": "none",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v1",
+  "Format": "table",
+  "Toolset": "rql",
+  "SchemaInPrompt": false,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 2,
+  "Repeats": 3
+ },
+ "n": 186,
+ "successes": 186,
+ "successRate": 1.0,
+ "ci95": [
+  0.979764182349917,
+  1
+ ],
+ "costUsd": 0.072605232,
+ "costPerSuccess": 0.0003903507096774194,
+ "meanTotalTokens": 10131.618279569893,
+ "meanCompletionTokens": 347.0698924731183,
+ "meanToolCalls": 3.870967741935484,
+ "meanToolErrors": 0.07526881720430108,
+ "meanToolResultChars": 4526.720430107527,
+ "medianWallSec": 5.0136388,
+ "p95WallSec": 9.5038801,
+ "cacheHitRatio": 0.8937967807482282,
+ "unintendedChangeTasks": 0,
+ "failures": []
+}

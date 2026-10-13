@@ -56,7 +56,7 @@ export class Compiler {
       const first = i === 0 && relativeToItem;
       switch (s.kind) {
         case 'member': {
-          const site = new MemberSite(s.name, p.span);
+          const site = new MemberSite(s.name, p.span, first);
           this.x.sites.push(site);
           if (first) {
             // Lexical scope chain: inside method arguments a bare name missing on the element

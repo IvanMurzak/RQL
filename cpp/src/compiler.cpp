@@ -470,6 +470,7 @@ Eval Compiler::compile_path(const Expr& p) {
             case SegmentKind::Member: {
                 x_.sites.push_back(std::make_unique<MemberSite>(seg.name));
                 MemberSite* site = x_.sites.back().get();
+                site->bare = first;
                 if (first) {
                     // Lexical scope chain: inside collection-method arguments a bare name missing on the
                     // element resolves against the enclosing item(s), innermost first (spec §3).

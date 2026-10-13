@@ -92,8 +92,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "select",
@@ -148,8 +147,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -208,8 +206,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -250,8 +247,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -304,8 +300,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -358,8 +353,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -420,8 +414,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -474,8 +467,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -536,8 +528,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -587,8 +578,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -646,8 +636,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -700,8 +689,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -754,8 +742,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -798,8 +785,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -852,8 +838,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -910,8 +895,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -965,8 +949,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -1090,8 +1073,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -1182,8 +1164,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "select",
@@ -1229,8 +1210,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "select",
@@ -1313,8 +1293,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -1386,8 +1365,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "sort",
@@ -1445,8 +1423,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "sort",
@@ -1511,8 +1488,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "sort",
@@ -1569,8 +1545,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "sort",
@@ -1628,8 +1603,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "sort",
@@ -1678,8 +1652,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "first",
@@ -1786,8 +1759,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "distinct",
@@ -1870,8 +1842,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "group-by",
@@ -1903,8 +1874,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "sum",
@@ -1958,8 +1928,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "min",
@@ -1991,8 +1960,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "max",
@@ -2024,8 +1992,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "select",
@@ -2496,8 +2463,7 @@
                 ]
               }
             ],
-            "maxDepth": 5,
-            "includeSelf": true
+            "maxDepth": 5
           },
           {
             "op": "select",
@@ -2807,8 +2773,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -2868,8 +2833,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -2934,8 +2898,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -2988,8 +2951,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -3047,8 +3009,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "select",
@@ -3217,8 +3178,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -3299,8 +3259,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -3350,8 +3309,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "select",
@@ -3504,8 +3462,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "select",
@@ -3786,8 +3743,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "select",
@@ -3824,8 +3780,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "count"
@@ -3852,8 +3807,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -4376,8 +4330,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "set",
@@ -4731,8 +4684,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -4812,8 +4764,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -5454,8 +5405,7 @@
                 ]
               }
             ],
-            "maxDepth": 4,
-            "includeSelf": true
+            "maxDepth": 4
           },
           {
             "op": "count"

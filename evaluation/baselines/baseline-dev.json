@@ -1,0 +1,51 @@
+{
+ "run": "baseline-dev",
+ "name": "baseline",
+ "split": "dev",
+ "git": "8b53dd4",
+ "config": {
+  "Name": "baseline",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-flash",
+  "ReasoningEffort": "none",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v1",
+  "Format": "table",
+  "Toolset": "rql",
+  "SchemaInPrompt": false,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 2,
+  "Repeats": 3
+ },
+ "n": 186,
+ "successes": 172,
+ "successRate": 0.9247311827956989,
+ "ci95": [
+  0.8776350694883726,
+  0.9546377305723097
+ ],
+ "costUsd": 0.08808839100000004,
+ "costPerSuccess": 0.0005121418081395351,
+ "meanTotalTokens": 11419.274193548386,
+ "meanCompletionTokens": 387.53225806451616,
+ "meanToolCalls": 4.413978494623656,
+ "meanToolErrors": 0.11827956989247312,
+ "meanToolResultChars": 4452.790322580645,
+ "medianWallSec": 4.6945004,
+ "p95WallSec": 12.166150625,
+ "cacheHitRatio": 0.8717498479461028,
+ "unintendedChangeTasks": 0,
+ "failures": [
+  "agg-bright-point-lights@11",
+  "agg-bright-point-lights@12",
+  "agg-quest-level-gate@11",
+  "agg-quest-level-gate@12",
+  "trav-asset-closure@12",
+  "trav-max-depth@11",
+  "trav-max-depth@12"
+ ]
+}

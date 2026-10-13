@@ -14,8 +14,9 @@ runtime has no text parser by design — the .NET/TS sidecar parses, C++ execute
 | Paths, map keys/members, auto-map, entry/row delegation, scope chain, `$type $ref $path $index $depth` | full | `$type` names mirror .NET for scalars/collections (`String`, `Double`, `Int32`, `List`, `Dictionary`) |
 | `matches` | full | `std::regex` ECMAScript + icase; no regex timeout |
 | Case-insensitive matching (`contains`, members, enum names), `lower`/`upper` | partial | ASCII-only case folding (.NET folds full Unicode) |
-| String ordering | partial | UTF-8 byte order; differs from UTF-16 ordinal only for supplementary vs U+E000–U+FFFF |
-| Budgets, truncation, diagnostics incl. `no-match`, `unknown-member` hints | full | `maxOutputBytes` counts UTF-8 bytes of compact JSON |
+| String ordering | deviation (§12) | UTF-8 byte order; differs from the normative UTF-16 code-unit order only between supplementary characters and U+E000–U+FFFF |
+| Budgets, truncation, diagnostics incl. `no-match`, `unknown-member` hints | full | `maxOutputBytes` counts UTF-8 bytes of compact JSON; budgets accept integral doubles (`2.0`, §12) |
+| Static `unknown-member` for never-evaluated bare names (§10) | full | known names = members of types reachable through the `TypeRegistry` (member/element/key types + registered subtypes), `select` field names, key/value/count/Count/Length |
 | Mutations (`set` all-or-nothing + rollback, coercion, struct write-back, dry-run, `call`) | full | `null` only for nullable members (`optional`, pointers); `std::string`/`std::vector` members reject `null` (.NET allows it for reference types); list assignment copies (no aliasing); `unique_ptr` members are never assignable |
 | Reflection | provider-based | explicit `TypeRegistry` descriptors (no runtime reflection in C++); see `cpp/README.md` |
 | References (`Type#id`, `Type@n`, liveness hook, resolver hook) | full | without `is_alive`, `@n` handles are re-validated by reachability over owning members |

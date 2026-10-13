@@ -88,6 +88,7 @@ export class RqlEngine {
   private readonly handles = new WeakMap<object, number>();
   private readonly handleTargets = new Map<number, WeakRef<object>>();
   private nextHandle = 0;
+  private knownMembers: { version: number; names: ReadonlyMap<string, string> } | undefined;
 
   constructor(options: EngineOptions = {}) {
     this.types = options.types ?? new TypeModel();
@@ -106,6 +107,7 @@ export class RqlEngine {
   addSource(name: string, getter: () => unknown, description?: string): this {
     validateName(name, false);
     this.sourceMap.set(name, { name, getter, description });
+    this.knownMembers = undefined;
     return this;
   }
 
@@ -169,6 +171,48 @@ export class RqlEngine {
     this.handles.set(o, id);
     this.handleTargets.set(id, new WeakRef(o));
     return id;
+  }
+
+  /**
+   * Member names declared by any type statically reachable from the sources (plus the universal
+   * key/value/count/Length), keyed by upper-cased name; used to flag never-evaluated bare names as typos.
+   */
+  knownMemberNames(): ReadonlyMap<string, string> {
+    const cached = this.knownMembers;
+    if (cached !== undefined && cached.version === this.types.version) return cached.names;
+    const names = new Map<string, string>(['key', 'value', 'count', 'Count', 'Length'].map((n) => [n.toUpperCase(), n]));
+    const add = (n: string): void => {
+      if (!names.has(n.toUpperCase())) names.set(n.toUpperCase(), n);
+    };
+    const roots: TypeInfo[] = [];
+    for (const s of this.sourceMap.values()) {
+      let v: unknown;
+      try {
+        v = s.getter();
+      } catch {
+        continue;
+      }
+      if (v === null || v === undefined) continue;
+      const info = this.types.infoOf(v);
+      roots.push(info);
+      // Undeclared roots: learn members from the instance itself (and a few elements of collections).
+      if (info.dynamic !== undefined) for (const m of info.membersOf(v)) add(m.name);
+      if ((info.isList || info.isMap) && typeof v === 'object') {
+        let n = 0;
+        for (const e of elements(v, info)) {
+          const ev = e instanceof MapEntry ? e.Value : e;
+          if (typeof ev === 'object' && ev !== null) {
+            const ei = this.types.infoOf(ev);
+            roots.push(ei);
+            for (const m of ei.membersOf(ev)) add(m.name);
+          }
+          if (++n >= 8) break;
+        }
+      }
+    }
+    for (const t of reachableTypes(this.types, roots, 1000)) for (const m of t.members) add(m.name);
+    this.knownMembers = { version: this.types.version, names };
+    return names;
   }
 
   /** Type descriptors of everything reachable from the registered sources (schema tool). */

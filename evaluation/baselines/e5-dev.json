@@ -1,0 +1,43 @@
+{
+ "run": "e5-dev",
+ "name": "e5-json-format",
+ "split": "dev",
+ "git": "22f7394",
+ "config": {
+  "Name": "e5-json-format",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-flash",
+  "ReasoningEffort": "none",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v2",
+  "Format": "json",
+  "Toolset": "rql",
+  "SchemaInPrompt": false,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 3,
+  "Repeats": 3
+ },
+ "n": 186,
+ "successes": 186,
+ "successRate": 1.0,
+ "ci95": [
+  0.979764182349917,
+  1
+ ],
+ "costUsd": 0.062456241,
+ "costPerSuccess": 0.0003357862419354839,
+ "meanTotalTokens": 8835.564516129032,
+ "meanCompletionTokens": 293.5,
+ "meanToolCalls": 3.4408602150537635,
+ "meanToolErrors": 0.053763440860215055,
+ "meanToolResultChars": 4411.8279569892475,
+ "medianWallSec": 4.306215,
+ "p95WallSec": 8.0516091,
+ "cacheHitRatio": 0.8932373881562715,
+ "unintendedChangeTasks": 0,
+ "failures": []
+}

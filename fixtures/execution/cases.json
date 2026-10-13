@@ -102,7 +102,7 @@
       "expect": {
         "ok": true,
         "kind": "scalar",
-        "value": 5
+        "value": 8
       }
     },
     {
@@ -125,8 +125,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "select",
@@ -234,8 +233,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -314,8 +312,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -362,8 +359,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -436,8 +432,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -510,8 +505,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -600,8 +594,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -674,8 +667,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -768,8 +760,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -836,8 +827,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -909,8 +899,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -986,8 +975,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -1057,8 +1045,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -1107,8 +1094,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -1178,8 +1164,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -1253,8 +1238,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -1328,8 +1312,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -1494,8 +1477,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -1645,8 +1627,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "select",
@@ -1736,8 +1717,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "select",
@@ -1897,8 +1877,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -1993,8 +1972,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "sort",
@@ -2096,8 +2074,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "sort",
@@ -2206,8 +2183,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "sort",
@@ -2308,8 +2284,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "sort",
@@ -2411,8 +2386,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "sort",
@@ -2496,8 +2470,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "sort",
@@ -2583,8 +2556,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "sort",
@@ -2725,8 +2697,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "first",
@@ -2878,8 +2849,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "distinct",
@@ -2999,8 +2969,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "group-by",
@@ -3056,8 +3025,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "group-by",
@@ -3133,8 +3101,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "group-by",
@@ -3231,8 +3198,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "group-by",
@@ -3296,8 +3262,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "sum",
@@ -3363,8 +3328,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "min",
@@ -3402,8 +3366,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "max",
@@ -3441,8 +3404,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "select",
@@ -4163,6 +4125,161 @@
       }
     },
     {
+      "name": "recurse-exclude-self",
+      "rql": "g.Nodes | recurse Children include-self=false | select Name $depth",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ],
+            "includeSelf": false
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "$depth",
+                "expr": {
+                  "path": [
+                    {
+                      "meta": "depth"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "$depth"
+        ],
+        "rows": [
+          [
+            "a-1",
+            1
+          ],
+          [
+            "a-2",
+            1
+          ],
+          [
+            "a-2-x",
+            2
+          ],
+          [
+            "b-1",
+            1
+          ],
+          [
+            "B-2",
+            1
+          ]
+        ],
+        "total": 5
+      }
+    },
+    {
+      "name": "recurse-default-includes-input",
+      "rql": "g.Nodes[0].Children | recurse Children | select Name $depth",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes",
+            {
+              "index": 0
+            },
+            "Children"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "$depth",
+                "expr": {
+                  "path": [
+                    {
+                      "meta": "depth"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "$depth"
+        ],
+        "rows": [
+          [
+            "a-1",
+            0
+          ],
+          [
+            "a-2",
+            0
+          ],
+          [
+            "a-2-x",
+            1
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
       "name": "recurse-cycle-safe",
       "rql": "g.Nodes | recurse Peer max-depth=5 include-self=true | select Name",
       "plan": {
@@ -4183,8 +4300,7 @@
                 ]
               }
             ],
-            "maxDepth": 5,
-            "includeSelf": true
+            "maxDepth": 5
           },
           {
             "op": "select",
@@ -4267,19 +4383,28 @@
         ],
         "rows": [
           [
+            "root-a"
+          ],
+          [
             "a-1"
           ],
           [
             "a-2"
           ],
           [
+            "root-b"
+          ],
+          [
             "b-1"
           ],
           [
             "B-2"
+          ],
+          [
+            "lonely"
           ]
         ],
-        "total": 4
+        "total": 7
       }
     },
     {
@@ -4338,6 +4463,10 @@
         ],
         "rows": [
           [
+            "g.Nodes[0]",
+            "root-a"
+          ],
+          [
             "g.Nodes[0].Children[0]",
             "a-1"
           ],
@@ -4350,15 +4479,23 @@
             "a-2-x"
           ],
           [
+            "g.Nodes[1]",
+            "root-b"
+          ],
+          [
             "g.Nodes[1].Children[0]",
             "b-1"
           ],
           [
             "g.Nodes[1].Children[1]",
             "B-2"
+          ],
+          [
+            "g.Nodes[2]",
+            "lonely"
           ]
         ],
-        "total": 5
+        "total": 8
       }
     },
     {
@@ -4651,8 +4788,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -4732,8 +4868,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -4818,8 +4953,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -4889,8 +5023,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -4962,8 +5095,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "select",
@@ -5221,8 +5353,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -5332,8 +5463,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -5400,8 +5530,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "select",
@@ -5626,8 +5755,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "select",
@@ -5985,8 +6113,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "select",
@@ -6960,6 +7087,148 @@
       }
     },
     {
+      "name": "warn-unknown-member-short-circuit",
+      "rql": "g.Nodes | where Name == \"zzz\" and Valeu > 1 | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "and",
+              "args": [
+                {
+                  "op": "==",
+                  "args": [
+                    {
+                      "path": [
+                        "Name"
+                      ]
+                    },
+                    {
+                      "lit": "zzz"
+                    }
+                  ]
+                },
+                {
+                  "op": ">",
+                  "args": [
+                    {
+                      "path": [
+                        "Valeu"
+                      ]
+                    },
+                    {
+                      "lit": 1
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 0,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "no-warn-alias-and-map-keys",
+      "rql": "g.Nodes | select Name hp=(Props.hp) | where Name == \"zzz\" and hp > 1 | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "hp",
+                "expr": {
+                  "path": [
+                    "Props",
+                    "hp"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "and",
+              "args": [
+                {
+                  "op": "==",
+                  "args": [
+                    {
+                      "path": [
+                        "Name"
+                      ]
+                    },
+                    {
+                      "lit": "zzz"
+                    }
+                  ]
+                },
+                {
+                  "op": ">",
+                  "args": [
+                    {
+                      "path": [
+                        "hp"
+                      ]
+                    },
+                    {
+                      "lit": 1
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 0
+      }
+    },
+    {
       "name": "warn-unknown-member",
       "rql": "g.Nodes | where Nmae == 1 | count",
       "plan": {
@@ -7171,8 +7440,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "select",
@@ -7233,8 +7501,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "count"
@@ -7275,8 +7542,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -8481,8 +8747,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -8541,8 +8806,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",
@@ -8785,8 +9049,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "set",
@@ -8831,8 +9094,7 @@
                   "Children"
                 ]
               }
-            ],
-            "includeSelf": true
+            ]
           },
           {
             "op": "where",

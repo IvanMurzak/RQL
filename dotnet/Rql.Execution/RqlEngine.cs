@@ -91,7 +91,26 @@ namespace Rql.Execution
         {
             ValidateName(name, allowDots: true);
             _sources[name] = new SourceRegistration(name, getter, description);
+            _knownMembers = null;
             return this;
+        }
+
+        private HashSet<string>? _knownMembers;
+
+        /// <summary>Every member name of every type statically reachable from the sources (case-insensitive), cached.</summary>
+        internal HashSet<string> KnownMemberNames()
+        {
+            var known = _knownMembers;
+            if (known != null) return known;
+            known = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "key", "value", "count", "Count", "Length" };
+            var roots = new List<Type>();
+            foreach (var s in _sources.Values)
+            {
+                try { var v = s.Getter(); if (v != null) roots.Add(v.GetType()); } catch { }
+            }
+            foreach (var t in Describe.Reachable(Types, roots, 1000))
+                foreach (var m in Types.Info(t).Members) known.Add(m.Name);
+            return _knownMembers = known;
         }
 
         public RqlEngine AddFunction(string name, Func<object?[], object?> fn)
@@ -409,6 +428,8 @@ namespace Rql.Execution
         public long Misses;
         public readonly HashSet<TypeInfo> MissTypes = new HashSet<TypeInfo>();
         public string[]? RowColumns;
+        /// <summary>First segment of a relative bare path (eligible for the static never-evaluated check).</summary>
+        public bool Bare;
         public Type? CachedType;
         public MemberAccessor? CachedMember;
     }

@@ -1,6 +1,6 @@
 {
   "CapUsd": 25,
-  "SpentUsd": 1.0171748769999973,
+  "SpentUsd": 2.2869313899999977,
   "Runs": [
     {
       "id": "probe-20261013T203447Z",
@@ -142,6 +142,48 @@
       "split": "dev",
       "taskRuns": 2,
       "costUsd": 0.019933
+    },
+    {
+      "id": "20261013-211334-legacy-tools-dev",
+      "config": "legacy-tools",
+      "split": "dev",
+      "taskRuns": 186,
+      "costUsd": 1.032352
+    },
+    {
+      "id": "20261013-212037-e8-prompt-v3-dev",
+      "config": "e8-prompt-v3",
+      "split": "dev",
+      "taskRuns": 186,
+      "costUsd": 0.068788
+    },
+    {
+      "id": "20261013-212245-e9-v3-schema-in-prompt-dev",
+      "config": "e9-v3-schema-in-prompt",
+      "split": "dev",
+      "taskRuns": 186,
+      "costUsd": 0.047833
+    },
+    {
+      "id": "20261013-212546-e10-recurse-self-v4-schema-dev",
+      "config": "e10-recurse-self-v4-schema",
+      "split": "dev",
+      "taskRuns": 186,
+      "costUsd": 0.048077
+    },
+    {
+      "id": "20261013-212727-e11-recurse-self-v4-dev",
+      "config": "e11-recurse-self-v4",
+      "split": "dev",
+      "taskRuns": 186,
+      "costUsd": 0.068473
+    },
+    {
+      "id": "20261013-213012-final-tool-schema-holdout",
+      "config": "final-tool-schema",
+      "split": "holdout",
+      "taskRuns": 15,
+      "costUsd": 0.004242
     }
   ]
 }

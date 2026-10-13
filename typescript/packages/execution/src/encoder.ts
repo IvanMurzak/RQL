@@ -16,19 +16,18 @@ function put(o: JsonObject, key: string, v: JsonValue): void {
   else o[key] = v;
 }
 
-/**
- * Approximate size of the .NET default JSON form (non-ASCII and HTML-sensitive characters are
- * written as \uXXXX), so `maxOutputBytes` truncates at the same place as the reference runtime.
- */
+/** Size budget unit (spec §12): UTF-8 bytes of the compact JSON encoding. */
 function jsonLength(v: JsonValue): number {
-  if (v === null) return 4;
   const s = JSON.stringify(v);
-  let extra = 0;
+  let bytes = s.length;
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);
-    if (c > 0x7e || c === 0x26 || c === 0x27 || c === 0x2b || c === 0x3c || c === 0x3e || c === 0x60) extra += 5;
+    if (c >= 0x80) {
+      if (c >= 0xd800 && c <= 0xdbff) i++; // surrogate pair: 4 bytes in total
+      bytes += c < 0x800 ? 1 : 2;
+    }
   }
-  return s.length + extra;
+  return bytes;
 }
 
 export class Encoder {

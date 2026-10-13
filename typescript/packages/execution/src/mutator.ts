@@ -463,12 +463,16 @@ export function coerce(model: TypeModel, v: unknown, target: TypeRef): Coerced {
     case 'list': {
       if (typeof v !== 'object' || !model.infoOf(v).isList) return { ok: false, why: `expected ${friendlyName(target, model)}` };
       const items: unknown[] = [];
+      let same = Array.isArray(v);
       for (const el of v as Iterable<unknown>) {
         const co = coerce(model, el === undefined ? null : el, t.of);
         if (!co.ok) return { ok: false, why: 'element: ' + co.why };
-        items.push(rawValue(co.value, t.of));
+        const raw = rawValue(co.value, t.of);
+        if (raw !== el) same = false;
+        items.push(raw);
       }
-      return { ok: true, value: items };
+      // Natural JS semantics (spec §12): an array that needs no coercion is assigned as is (alias).
+      return { ok: true, value: same ? v : items };
     }
     case 'map': {
       if (!isMapLike(v)) return { ok: false, why: `expected ${friendlyName(target, model)}` };

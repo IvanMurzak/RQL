@@ -177,7 +177,7 @@ namespace Rql
                 case RecurseStage x:
                     if (x.Via != null && x.Via.Count > 0) WriteExprArray(w, "via", x.Via);
                     if (x.MaxDepth.HasValue) w.WriteNumber("maxDepth", x.MaxDepth.Value);
-                    if (x.IncludeSelf) w.WriteBoolean("includeSelf", true);
+                    if (!x.IncludeSelf) w.WriteBoolean("includeSelf", false);
                     break;
                 case SetStage x:
                     w.WriteStartArray("assign");
@@ -464,7 +464,7 @@ namespace Rql
                     AllowOnly(s, ctx, "op", "via", "maxDepth", "includeSelf");
                     List<Expr>? via = s.TryGetProperty("via", out var viaEl) ? ReadExprArray(viaEl, "via") : null;
                     int? depth = s.TryGetProperty("maxDepth", out _) ? ReadInt(s, "maxDepth", ctx, 1) : (int?)null;
-                    return new RecurseStage(via, depth, ReadTrueFlag(s, "includeSelf", ctx));
+                    return new RecurseStage(via, depth, !s.TryGetProperty("includeSelf", out _) || ReadTrueFlag(s, "includeSelf", ctx));
                 }
                 case "set":
                 {

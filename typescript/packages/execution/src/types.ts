@@ -444,6 +444,8 @@ const SCALARS = {
  */
 export class TypeModel {
   private readonly specs = new Map<Ctor, TypeSpec>();
+  /** Incremented on every registration (lets caches derived from the model expire). */
+  version = 0;
   private readonly infos = new Map<object, TypeInfo>();
   private readonly tags = new WeakMap<object, Ctor>();
   private readonly enumInfos = new Map<EnumType, TypeInfo>();
@@ -466,6 +468,7 @@ export class TypeModel {
   register<T extends object>(ctor: Ctor<T>, spec: TypeSpec<T>): this {
     this.specs.set(ctor, spec as unknown as TypeSpec);
     this.infos.clear();
+    this.version++;
     return this;
   }
 

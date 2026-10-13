@@ -1,0 +1,45 @@
+{
+  "Name": "e5-json-format",
+  "N": 186,
+  "Successes": 186,
+  "SuccessRate": 1,
+  "CiLow": 0.979764182349917,
+  "CiHigh": 1,
+  "CostUsd": 0.062456241,
+  "CostPerTask": 0.0003357862419354839,
+  "CostPerSuccess": 0.0003357862419354839,
+  "MeanPromptTokens": 8542.064516129032,
+  "MeanCompletionTokens": 293.5,
+  "MeanReasoningTokens": 0,
+  "MeanTotalTokens": 8835.564516129032,
+  "CacheHitRatio": 0.8932373881562715,
+  "MeanTurns": 3.9301075268817205,
+  "MeanToolCalls": 3.4408602150537635,
+  "MeanToolErrors": 0.053763440860215055,
+  "ProtocolErrors": 0,
+  "MeanToolResultChars": 4411.8279569892475,
+  "MedianWallSec": 4.306215,
+  "P95WallSec": 8.0516091,
+  "MeanExecutorMs": 7.957241397849465,
+  "SuccessPerDollar": 2978.085088406137,
+  "SuccessPerMinute": 13.45331335237108,
+  "UnintendedChangeTasks": 0,
+  "ByCategory": {
+    "aggregate": "36/36",
+    "find": "30/30",
+    "find-modify": "12/12",
+    "modify": "30/30",
+    "negative": "18/18",
+    "read": "24/24",
+    "scale": "12/12",
+    "traverse": "24/24"
+  },
+  "Outcomes": {
+    "answered": 186
+  },
+  "ToolErrorCodes": {
+    "unknown-type": 6,
+    "readonly-member": 3,
+    "syntax-error": 1
+  }
+}

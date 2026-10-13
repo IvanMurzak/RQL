@@ -1,0 +1,49 @@
+{
+  "Name": "e7-thinking-low",
+  "N": 186,
+  "Successes": 185,
+  "SuccessRate": 0.9946236559139785,
+  "CiLow": 0.9701787472015778,
+  "CiHigh": 0.9990503364133939,
+  "CostUsd": 0.09813816599999997,
+  "CostPerTask": 0.0005276245483870967,
+  "CostPerSuccess": 0.0005304765729729728,
+  "MeanPromptTokens": 9611.591397849463,
+  "MeanCompletionTokens": 433.0806451612903,
+  "MeanReasoningTokens": 172.16666666666666,
+  "MeanTotalTokens": 10044.672043010753,
+  "CacheHitRatio": 0.8308863178196577,
+  "MeanTurns": 4.182795698924731,
+  "MeanToolCalls": 3.639784946236559,
+  "MeanToolErrors": 0.08064516129032258,
+  "ProtocolErrors": 8,
+  "MeanToolResultChars": 4497.677419354839,
+  "MedianWallSec": 4.25521145,
+  "P95WallSec": 9.97880395,
+  "MeanExecutorMs": 8.472182795698924,
+  "SuccessPerDollar": 1885.0973840289623,
+  "SuccessPerMinute": 12.120199926025919,
+  "UnintendedChangeTasks": 0,
+  "ByCategory": {
+    "aggregate": "36/36",
+    "find": "30/30",
+    "find-modify": "12/12",
+    "modify": "30/30",
+    "negative": "18/18",
+    "read": "24/24",
+    "scale": "12/12",
+    "traverse": "23/24"
+  },
+  "Outcomes": {
+    "answered": 186
+  },
+  "ToolErrorCodes": {
+    "unknown-function": 4,
+    "unknown-source": 1,
+    "coercion-failed": 2,
+    "unknown-type": 3,
+    "invalid-plan": 2,
+    "readonly-member": 2,
+    "syntax-error": 1
+  }
+}

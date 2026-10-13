@@ -155,7 +155,12 @@ namespace Rql.Execution
             }
             sb.Append(string.Join(", ", parts)).Append('}');
             if (t.TryGetPropertyValue("methods", out var ms) && ms is JsonArray arr && arr.Count > 0)
-                sb.Append(" methods: ").Append(string.Join(", ", arr.Select(x => x!.GetValue<string>())));
+            {
+                var inheritedMethods = new HashSet<string>(baseType != null && baseType.TryGetPropertyValue("methods", out var bm) && bm is JsonArray barr
+                    ? barr.Select(x => x!.GetValue<string>()) : Enumerable.Empty<string>());
+                var own = arr.Select(x => x!.GetValue<string>()).Where(m => !inheritedMethods.Contains(m)).ToList();
+                if (own.Count > 0) sb.Append(baseType != null ? " +methods: " : " methods: ").Append(string.Join(" | ", own));
+            }
             if (t.TryGetPropertyValue("description", out var d) && d != null) sb.Append(" — ").Append(d.GetValue<string>());
             sb.Append('\n');
         }

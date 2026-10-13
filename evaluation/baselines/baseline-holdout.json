@@ -1,0 +1,50 @@
+{
+ "run": "baseline-holdout",
+ "name": "baseline",
+ "split": "holdout",
+ "git": "8b53dd4",
+ "config": {
+  "Name": "baseline",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-flash",
+  "ReasoningEffort": "none",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v1",
+  "Format": "table",
+  "Toolset": "rql",
+  "SchemaInPrompt": false,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 2,
+  "Repeats": 3
+ },
+ "n": 81,
+ "successes": 66,
+ "successRate": 0.8148148148148148,
+ "ci95": [
+  0.7166820913952237,
+  0.8844381137871395
+ ],
+ "costUsd": 0.04202174399999999,
+ "costPerSuccess": 0.0006366930909090908,
+ "meanTotalTokens": 12428.481481481482,
+ "meanCompletionTokens": 423.69135802469134,
+ "meanToolCalls": 5.222222222222222,
+ "meanToolErrors": 0.5925925925925926,
+ "meanToolResultChars": 5078.9876543209875,
+ "medianWallSec": 5.1972005,
+ "p95WallSec": 13.6022466,
+ "cacheHitRatio": 0.8704837986482762,
+ "unintendedChangeTasks": 4,
+ "failures": [
+  "agg-paid-revenue@21",
+  "agg-paid-revenue@22",
+  "mod-complete-quest@21",
+  "mod-complete-quest@22",
+  "neg-delete-scene@21",
+  "neg-delete-scene@22"
+ ]
+}

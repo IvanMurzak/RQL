@@ -51,6 +51,8 @@ export class MemberSite {
   constructor(
     readonly name: string,
     readonly span: TextSpan | undefined,
+    /** First segment of a relative bare path (no `on`, not `$`): eligible for the static name check. */
+    readonly bare = false,
   ) {}
 }
 

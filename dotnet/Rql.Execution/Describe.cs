@@ -54,7 +54,11 @@ namespace Rql.Execution
             }
             o["members"] = members;
             if (info.Callable.Count > 0)
-                o["methods"] = new JsonArray(info.Callable.Select(mi => (JsonNode)JsonValue.Create(Signature(mi))!).ToArray());
+                o["methods"] = new JsonArray(info.Callable.Select(mi =>
+                {
+                    var desc = mi.GetCustomAttribute<RqlCallableAttribute>()?.Description;
+                    return (JsonNode)JsonValue.Create(desc == null ? Signature(mi) : Signature(mi) + " — " + desc)!;
+                }).ToArray());
             return o;
         }
 

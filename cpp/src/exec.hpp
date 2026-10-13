@@ -39,6 +39,7 @@ struct MemberSite {
     int64_t misses = 0;
     std::vector<const TypeDescriptor*> miss_types;
     std::vector<std::string> row_columns;  // columns of a multi-column row that lacked the member
+    bool bare = false;                     // first segment of a relative path (no `on`)
     const TypeDescriptor* cached_type = nullptr;
     const MemberDescriptor* cached_member = nullptr;
     explicit MemberSite(std::string n) : name(std::move(n)) {}

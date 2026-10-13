@@ -1,0 +1,24 @@
+{
+  "cfg": {
+    "Name": "baseline",
+    "BaseUrl": "https://api.deepseek.com",
+    "Model": "deepseek-flash",
+    "ReasoningEffort": "none",
+    "Temperature": 0,
+    "MaxSteps": 12,
+    "MaxTokensPerCall": 4096,
+    "TimeoutSeconds": 120,
+    "Prompt": "v1",
+    "Format": "table",
+    "Toolset": "rql",
+    "SchemaInPrompt": false,
+    "MaxRows": 50,
+    "Parallel": 6,
+    "BudgetUsd": 2,
+    "Repeats": 3
+  },
+  "split": "dev",
+  "catalog": "v1",
+  "tasks": 62,
+  "git": "8b53dd4"
+}

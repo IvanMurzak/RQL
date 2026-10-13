@@ -33,7 +33,7 @@ assignment      = postfix , "=" , expr ;
 call            = "call" , name , "(" , [ expr , { "," , expr } ] , ")" ;
 describe        = "describe" ;
 generic_stage   = name , { "." , name } , { option | postfix } ;   (* any other (possibly namespaced) stage *)
-option          = name , "=" , postfix ;         (* max-depth=4, include-self=true *)
+option          = name , "=" , postfix ;         (* max-depth=4, include-self=false *)
 
 (* ---------- expressions (lowest to highest precedence) ---------- *)
 expr            = or_expr ;

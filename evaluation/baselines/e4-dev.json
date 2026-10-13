@@ -1,0 +1,43 @@
+{
+ "run": "e4-dev",
+ "name": "e4-prompt-v2",
+ "split": "dev",
+ "git": "233432f",
+ "config": {
+  "Name": "e4-prompt-v2",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-flash",
+  "ReasoningEffort": "none",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v2",
+  "Format": "table",
+  "Toolset": "rql",
+  "SchemaInPrompt": false,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 2,
+  "Repeats": 3
+ },
+ "n": 186,
+ "successes": 186,
+ "successRate": 1.0,
+ "ci95": [
+  0.979764182349917,
+  1
+ ],
+ "costUsd": 0.07034279400000004,
+ "costPerSuccess": 0.00037818706451612924,
+ "meanTotalTokens": 8156.801075268817,
+ "meanCompletionTokens": 287.2258064516129,
+ "meanToolCalls": 3.403225806451613,
+ "meanToolErrors": 0.03763440860215054,
+ "meanToolResultChars": 3707.7258064516127,
+ "medianWallSec": 3.79091945,
+ "p95WallSec": 7.5306983999999995,
+ "cacheHitRatio": 0.842463249987532,
+ "unintendedChangeTasks": 0,
+ "failures": []
+}

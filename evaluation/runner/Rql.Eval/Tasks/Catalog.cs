@@ -421,7 +421,7 @@ namespace Rql.Eval.Tasks
                     var house = c.Rng.Pick(houses);
                     int n = WorldGenerator.Descendants(house).Count() - 1;
                     return T($"How many GameObjects are nested anywhere under (descendants of) the object {Q(house.Name)} in scene {Q(s.Name)}? Do not count the object itself.", FmtNumber, Expected.Num(n),
-                        h => Scalar(h, $"objects | where Scene.Name == {Q(s.Name)} and Name == {Q(house.Name)} | recurse Children max-depth=16 | count"));
+                        h => Scalar(h, $"objects | where Scene.Name == {Q(s.Name)} and Name == {Q(house.Name)} | recurse Children max-depth=16 include-self=false | count"));
                 },
             };
             yield return new Template

@@ -265,6 +265,11 @@ namespace Rql.Eval
                 r.Success = g.Success; r.Precision = g.Precision; r.Recall = g.Recall; r.GradeDetail = g.Detail;
             }
             File.WriteAllLines(path, results.Select(r => JsonSerializer.Serialize(r, Json)));
+            // Keep summary files consistent with the regraded results.
+            var cfg = LoadRunConfig(dir);
+            var summary = Report.Summarize(cfg.Name, results);
+            File.WriteAllText(Path.Combine(dir, "summary.json"), JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true, NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals }));
+            File.WriteAllText(Path.Combine(dir, "summary.md"), Report.Markdown(summary, cfg));
             Console.WriteLine($"regraded {results.Count} results, {changed} changed (original kept in results.orig.jsonl)");
             return 0;
         }

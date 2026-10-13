@@ -76,7 +76,7 @@ struct Stage {
     bool has_via = false;               // recurse: via present (even if empty)
     std::vector<ExprPtr> via;
     std::optional<int> max_depth;
-    bool include_self = false;
+    bool include_self = true;           // recurse: emit input items (depth 0); default true
     std::vector<Assignment> assign;     // set
     std::string method;                 // call
     std::vector<ExprPtr> args;          // call / generic positional args

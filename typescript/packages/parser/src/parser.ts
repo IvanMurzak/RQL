@@ -254,7 +254,7 @@ class Parser {
   private parseRecurse(): Stage {
     const via: Expr[] = [];
     let maxDepth: number | undefined;
-    let includeSelf = false;
+    let includeSelf = true;
     while (!this.atStageEnd) {
       this.accept(',');
       if (this.peek().kind === 'ident' && isPunct(this.peek(1), '=')) {
@@ -279,7 +279,7 @@ class Parser {
             break;
           }
           default:
-            throw this.error(`unknown recurse option '${opt.text}'`, opt, 'options: max-depth=N include-self=true');
+            throw this.error(`unknown recurse option '${opt.text}'`, opt, 'options: max-depth=N include-self=false');
         }
       } else {
         via.push(this.parsePostfix());

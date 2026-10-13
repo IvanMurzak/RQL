@@ -1,7 +1,8 @@
 # C++ runtime — spec questions
 
-Points where the spec is silent or a runtime has to pick a behaviour. None of these is exercised by
-the current golden vectors; the C++ choice is listed so the spec owner can confirm or override.
+Points where the spec is silent or a runtime has to pick a behaviour. Items 1–7 are now resolved by
+spec/semantics.md §12 (Portability decisions); the C++ runtime conforms to those decisions. Items 8–10
+remain open.
 
 1. **Null for non-nullable reference-like members.** §8 says "null only for nullable / reference
    types". .NET treats `string` and `List<T>` as reference types (null accepted). In C++ `std::string`

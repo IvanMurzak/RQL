@@ -88,6 +88,25 @@ export class Pipeline {
       );
     }
     const reported = new Set<string>();
+    // Static check for never-evaluated bare names (short-circuit `and`/`or`, empty streams):
+    // a name that no reachable type declares and no select produces is certainly a typo.
+    let known: ReadonlyMap<string, string> | undefined;
+    for (const site of x.sites) {
+      if (!site.bare || site.hits > 0 || site.misses > 0 || reported.has(site.name)) continue;
+      known ??= this.knownNames();
+      if (known.has(site.name.toUpperCase())) continue;
+      reported.add(site.name);
+      const close = closest(site.name, known.values(), 3);
+      result.diagnostics.push(
+        diagnostic(
+          'warning',
+          'unknown-member',
+          `no type reachable from the sources has a member '${site.name}' (not evaluated)`,
+          close.length > 0 ? `did you mean ${close.join(' / ')}?` : `if '${site.name}' is a value, quote it: "${site.name}"`,
+          site.span,
+        ),
+      );
+    }
     for (const site of x.sites) {
       if (site.hits > 0 || site.misses === 0 || reported.has(site.name)) continue;
       reported.add(site.name);
@@ -113,6 +132,15 @@ export class Pipeline {
       }
       result.diagnostics.push(diagnostic('warning', 'unknown-member', `no member '${site.name}' on ${typeNames}`, hint, site.span));
     }
+  }
+
+  /** Known member names (keyed upper-cased) plus the plan's select field names. */
+  private knownNames(): ReadonlyMap<string, string> {
+    const names = new Map(this.x.engine.knownMemberNames());
+    for (const st of this.x.plan.stages) {
+      if (st.kind === 'select') for (const f of st.fields) if (!names.has(f.name.toUpperCase())) names.set(f.name.toUpperCase(), f.name);
+    }
+    return names;
   }
 
   /** Where objects of a type live: sources and "Type.Member" paths, from declared reachability. */

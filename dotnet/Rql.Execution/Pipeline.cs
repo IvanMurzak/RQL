@@ -82,6 +82,20 @@ namespace Rql.Execution
                     $"none of the {site.Evaluated} tested item(s) is a {site.TypeName} (saw {string.Join(", ", site.Seen.Select(t => t.ShortName))})", site.Span, hint));
             }
             var reported = new HashSet<string>();
+            // Static check for never-evaluated bare names (short-circuit `and`/`or`, empty streams):
+            // a name that no reachable type declares and no select/group-by produces is certainly a typo.
+            HashSet<string>? known = null;
+            foreach (var site in _x.Sites)
+            {
+                if (!site.Bare || site.Hits > 0 || site.Misses > 0 || reported.Contains(site.Name)) continue;
+                known ??= KnownNames();
+                if (known.Contains(site.Name)) continue;
+                reported.Add(site.Name);
+                var close = Suggest.Closest(site.Name, known.ToList(), 3);
+                result.Diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, "unknown-member",
+                    $"no type reachable from the sources has a member '{site.Name}' (not evaluated)", site.Span,
+                    close.Count > 0 ? "did you mean " + string.Join(" / ", close) + "?" : $"if '{site.Name}' is a value, quote it: \"{site.Name}\""));
+            }
             foreach (var site in _x.Sites)
             {
                 if (site.Hits > 0 || site.Misses == 0 || !reported.Add(site.Name)) continue;
@@ -104,6 +118,14 @@ namespace Rql.Execution
                 result.Diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, "unknown-member",
                     $"no member '{site.Name}' on {typeNames}", site.Span, hint));
             }
+        }
+
+        private HashSet<string> KnownNames()
+        {
+            var names = new HashSet<string>(_x.Engine.KnownMemberNames(), StringComparer.OrdinalIgnoreCase);
+            foreach (var st in _x.Plan.Stages)
+                if (st is SelectStage sel) foreach (var f in sel.Fields) names.Add(f.Name);
+            return names;
         }
 
         /// <summary>Where objects of a type live: "Type.Member" paths and sources, from static reachability.</summary>

@@ -134,6 +134,7 @@ export interface RecurseStage extends StageBase {
   readonly op: 'recurse';
   readonly via?: readonly Expr[];
   readonly maxDepth?: number;
+  /** Emit the input items themselves (depth 0). Default true; serialized only when false. */
   readonly includeSelf: boolean;
 }
 

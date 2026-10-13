@@ -1,0 +1,45 @@
+{
+ "run": "e8-dev",
+ "name": "e8-prompt-v3",
+ "split": "dev",
+ "git": "a403afd",
+ "config": {
+  "Name": "e8-prompt-v3",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-flash",
+  "ReasoningEffort": "none",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v3",
+  "Format": "table",
+  "Toolset": "rql",
+  "SchemaInPrompt": false,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 3,
+  "Repeats": 3
+ },
+ "n": 186,
+ "successes": 185,
+ "successRate": 0.9946236559139785,
+ "ci95": [
+  0.9701787472015778,
+  0.9990503364133939
+ ],
+ "costUsd": 0.06877728900000003,
+ "costPerSuccess": 0.0003717691297297299,
+ "meanTotalTokens": 8012.333333333333,
+ "meanCompletionTokens": 273.23655913978496,
+ "meanToolCalls": 3.247311827956989,
+ "meanToolErrors": 0.03763440860215054,
+ "meanToolResultChars": 3656.1827956989246,
+ "medianWallSec": 3.8752742,
+ "p95WallSec": 7.164805675,
+ "cacheHitRatio": 0.8394835050629675,
+ "unintendedChangeTasks": 0,
+ "failures": [
+  "trav-asset-closure@12"
+ ]
+}

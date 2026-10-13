@@ -163,7 +163,7 @@ determinism). Any other member accessed on an entry is looked up on its value, s
 | `skip n` | drop first n. |
 | `count` | terminal: number of items. |
 | `get e` | replace each item by `e`; `list` results are flattened into separate items; `missing`/`null` dropped. |
-| `recurse [via...] [max-depth=N] [include-self=true]` | depth-first pre-order expansion of each item into its descendants. With `via` members (e.g. `recurse Children`) only those members are followed; without, every **owning** object-valued member and list/map element of objects is followed (runtime member order). Members the descriptor marks as non-owning references (parent links, targets, shared assets) are not followed by generic recursion. Cycle-safe: each object identity is emitted at most once per stage. `max-depth` default 8, hard cap per budget. |
+| `recurse [via...] [max-depth=N] [include-self=false]` | depth-first pre-order expansion of each item into **itself (depth 0) and** its descendants; `include-self=false` emits descendants only. With `via` members (e.g. `recurse Children`) only those members are followed; without, every **owning** object-valued member and list/map element of objects is followed (runtime member order). Members the descriptor marks as non-owning references (parent links, targets, shared assets) are not followed by generic recursion. Cycle-safe: each object identity is emitted at most once per stage. `max-depth` default 8, hard cap per budget. |
 | `distinct [e]` | keep the first item for each distinct value of `e` (default `$`; objects by identity). |
 | `sum/min/max/avg e` | terminal aggregate, same rules as the collection methods (`sum` of nothing → `0`). |
 | `group-by e` | replaces the stream by rows `{key, count}` (members `key`, `count`) in order of first appearance of the key; `null`/`missing` keys form one `null` group. Can be followed by `sort count desc`, `where count > 1`, etc. |
@@ -267,6 +267,9 @@ for every tested item; the hint names where `T` objects are reachable).
 
 `unknown-member` SHOULD carry a `hint` with the closest member names of the observed types —
 this is the main self-correction channel for agents.
+Runtimes SHOULD also report `unknown-member` for a bare name that was never evaluated (short-circuit,
+empty stream) when no type statically reachable from the sources declares it and no `select` alias
+produces it.
 
 ## 11. Lexical conveniences (normative)
 

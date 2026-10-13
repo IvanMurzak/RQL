@@ -1,0 +1,45 @@
+{
+ "run": "e7-dev",
+ "name": "e7-thinking-low",
+ "split": "dev",
+ "git": "22f7394",
+ "config": {
+  "Name": "e7-thinking-low",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-flash",
+  "ReasoningEffort": "low",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v2",
+  "Format": "table",
+  "Toolset": "rql",
+  "SchemaInPrompt": false,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 3,
+  "Repeats": 3
+ },
+ "n": 186,
+ "successes": 185,
+ "successRate": 0.9946236559139785,
+ "ci95": [
+  0.9701787472015778,
+  0.9990503364133939
+ ],
+ "costUsd": 0.09813816599999997,
+ "costPerSuccess": 0.0005304765729729728,
+ "meanTotalTokens": 10044.672043010753,
+ "meanCompletionTokens": 433.0806451612903,
+ "meanToolCalls": 3.639784946236559,
+ "meanToolErrors": 0.08064516129032258,
+ "meanToolResultChars": 4497.677419354839,
+ "medianWallSec": 4.25521145,
+ "p95WallSec": 9.97880395,
+ "cacheHitRatio": 0.8308863178196577,
+ "unintendedChangeTasks": 0,
+ "failures": [
+  "trav-hierarchy-path@12"
+ ]
+}

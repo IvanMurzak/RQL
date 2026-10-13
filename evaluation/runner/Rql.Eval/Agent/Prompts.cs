@@ -56,8 +56,14 @@ Results come back as compact rows (header line, then col|col). Long results are 
             "  recurse Children [max-depth=N] [include-self=true]   walk a hierarchy (cycle-safe)",
             "  recurse Children [max-depth=N] [include-self=true]   all descendants via the member (cycle-safe); the input items themselves are NOT emitted unless include-self=true");
 
+        /// <summary>v4 — v2 text for the new recurse default (input items included; include-self=false drops them).</summary>
+        public static readonly string V4 = V2.Replace(
+            "  recurse Children [max-depth=N] [include-self=true]   walk a hierarchy (cycle-safe)",
+            "  recurse Children [max-depth=N] [include-self=false]  the input items ($depth 0) plus all descendants via the member (cycle-safe)");
+
         public static string Get(string variant) => variant switch
         {
+            "v4" => V4,
             "v1" => V1,
             "v2" => V2,
             "v3" => V3,

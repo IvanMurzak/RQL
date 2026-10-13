@@ -70,7 +70,7 @@ namespace Rql.Execution
                 {
                     case SegmentKind.Member:
                     {
-                        var site = new MemberSite(seg.Name!, p.Span);
+                        var site = new MemberSite(seg.Name!, p.Span) { Bare = first };
                         _x.Sites.Add(site);
                         if (first)
                         {

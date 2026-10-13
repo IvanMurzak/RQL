@@ -1,0 +1,47 @@
+{
+ "run": "e1-dev",
+ "name": "e1-exec-ergonomics",
+ "split": "dev",
+ "git": "8b53dd4",
+ "config": {
+  "Name": "e1-exec-ergonomics",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-flash",
+  "ReasoningEffort": "none",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v1",
+  "Format": "table",
+  "Toolset": "rql",
+  "SchemaInPrompt": false,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 2,
+  "Repeats": 3
+ },
+ "n": 186,
+ "successes": 183,
+ "successRate": 0.9838709677419355,
+ "ci95": [
+  0.953659015789476,
+  0.9944998703556052
+ ],
+ "costUsd": 0.07640813400000002,
+ "costPerSuccess": 0.000417530786885246,
+ "meanTotalTokens": 10711.139784946237,
+ "meanCompletionTokens": 365.7096774193548,
+ "meanToolCalls": 4.139784946236559,
+ "meanToolErrors": 0.05913978494623656,
+ "meanToolResultChars": 4372.204301075269,
+ "medianWallSec": 4.841886049999999,
+ "p95WallSec": 10.5274125,
+ "cacheHitRatio": 0.8945708717682214,
+ "unintendedChangeTasks": 0,
+ "failures": [
+  "read-rare-inventory@11",
+  "trav-asset-closure@11",
+  "trav-asset-closure@12"
+ ]
+}

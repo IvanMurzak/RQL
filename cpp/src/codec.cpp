@@ -202,7 +202,7 @@ Json stage_json(const Stage& s) {
         case StageKind::Recurse:
             if (!s.via.empty()) o.set("via", expr_array(s.via));
             if (s.max_depth) o.set("maxDepth", *s.max_depth);
-            if (s.include_self) o.set("includeSelf", true);
+            if (!s.include_self) o.set("includeSelf", false);
             break;
         case StageKind::Set: {
             Json a = Json::array();
@@ -456,7 +456,7 @@ Stage read_stage(const Json& s) {
                 st.via = read_expr_array(*v, "via");
             }
             if (s.find("maxDepth")) st.max_depth = read_int(s, "maxDepth", ctx, 1);
-            st.include_self = read_true_flag(s, "includeSelf", ctx);
+            st.include_self = !s.find("includeSelf") || read_true_flag(s, "includeSelf", ctx);
             break;
         case StageKind::Set: {
             allow_only(s, ctx, {"op", "assign"});

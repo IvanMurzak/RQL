@@ -1,0 +1,46 @@
+{
+ "run": "e3-holdout",
+ "name": "current-e3",
+ "split": "holdout",
+ "git": "233432f",
+ "config": {
+  "Name": "current-e3",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-flash",
+  "ReasoningEffort": "none",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v1",
+  "Format": "table",
+  "Toolset": "rql",
+  "SchemaInPrompt": false,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 2,
+  "Repeats": 3
+ },
+ "n": 81,
+ "successes": 75,
+ "successRate": 0.9259259259259259,
+ "ci95": [
+  0.8476694394931942,
+  0.965610838106474
+ ],
+ "costUsd": 0.03583378199999998,
+ "costPerSuccess": 0.00047778375999999974,
+ "meanTotalTokens": 10308.925925925925,
+ "meanCompletionTokens": 346.61728395061726,
+ "meanToolCalls": 4.135802469135802,
+ "meanToolErrors": 0.3950617283950617,
+ "meanToolResultChars": 5025.62962962963,
+ "medianWallSec": 4.0696178,
+ "p95WallSec": 13.0467402,
+ "cacheHitRatio": 0.8603340739850325,
+ "unintendedChangeTasks": 5,
+ "failures": [
+  "neg-delete-scene@21",
+  "neg-delete-scene@22"
+ ]
+}

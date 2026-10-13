@@ -1,0 +1,43 @@
+{
+ "run": "e11-dev",
+ "name": "e11-recurse-self-v4",
+ "split": "dev",
+ "git": "a403afd",
+ "config": {
+  "Name": "e11-recurse-self-v4",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-flash",
+  "ReasoningEffort": "none",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v4",
+  "Format": "table",
+  "Toolset": "rql",
+  "SchemaInPrompt": false,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 3,
+  "Repeats": 3
+ },
+ "n": 186,
+ "successes": 186,
+ "successRate": 1.0,
+ "ci95": [
+  0.979764182349917,
+  1
+ ],
+ "costUsd": 0.06847015199999998,
+ "costPerSuccess": 0.00036811909677419345,
+ "meanTotalTokens": 8587.435483870968,
+ "meanCompletionTokens": 273.9032258064516,
+ "meanToolCalls": 3.263440860215054,
+ "meanToolErrors": 0.03225806451612903,
+ "meanToolResultChars": 4170.9838709677415,
+ "medianWallSec": 4.0584655,
+ "p95WallSec": 7.348616575,
+ "cacheHitRatio": 0.8536632527483046,
+ "unintendedChangeTasks": 0,
+ "failures": []
+}

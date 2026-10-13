@@ -1,0 +1,48 @@
+{
+ "run": "e2-dev",
+ "name": "e2-row-ergonomics",
+ "split": "dev",
+ "git": "8b53dd4",
+ "config": {
+  "Name": "e2-row-ergonomics",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-flash",
+  "ReasoningEffort": "none",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v1",
+  "Format": "table",
+  "Toolset": "rql",
+  "SchemaInPrompt": false,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 2,
+  "Repeats": 3
+ },
+ "n": 186,
+ "successes": 182,
+ "successRate": 0.978494623655914,
+ "ci95": [
+  0.9460176960216709,
+  0.9916060913884648
+ ],
+ "costUsd": 0.072162213,
+ "costPerSuccess": 0.00039649567582417583,
+ "meanTotalTokens": 10171.817204301075,
+ "meanCompletionTokens": 351.3440860215054,
+ "meanToolCalls": 3.9301075268817205,
+ "meanToolErrors": 0.06451612903225806,
+ "meanToolResultChars": 4397.39247311828,
+ "medianWallSec": 4.564644749999999,
+ "p95WallSec": 9.495214525,
+ "cacheHitRatio": 0.8976863125531039,
+ "unintendedChangeTasks": 0,
+ "failures": [
+  "agg-quest-level-gate@11",
+  "agg-quest-level-gate@12",
+  "trav-max-depth@11",
+  "trav-max-depth@12"
+ ]
+}

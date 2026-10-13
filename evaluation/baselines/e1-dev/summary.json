@@ -1,0 +1,46 @@
+{
+  "Name": "e1-exec-ergonomics",
+  "N": 186,
+  "Successes": 183,
+  "SuccessRate": 0.9838709677419355,
+  "CiLow": 0.953659015789476,
+  "CiHigh": 0.9944998703556052,
+  "CostUsd": 0.07640813400000002,
+  "CostPerTask": 0.0004107964193548388,
+  "CostPerSuccess": 0.000417530786885246,
+  "MeanPromptTokens": 10345.430107526881,
+  "MeanCompletionTokens": 365.7096774193548,
+  "MeanReasoningTokens": 0,
+  "MeanTotalTokens": 10711.139784946236,
+  "CacheHitRatio": 0.8945708717682214,
+  "MeanTurns": 4.650537634408602,
+  "MeanToolCalls": 4.139784946236559,
+  "MeanToolErrors": 0.05913978494623656,
+  "ProtocolErrors": 0,
+  "MeanToolResultChars": 4372.204301075269,
+  "MedianWallSec": 4.841886049999999,
+  "P95WallSec": 10.5274125,
+  "MeanExecutorMs": 10.798444086021506,
+  "SuccessPerDollar": 2395.0329686103833,
+  "SuccessPerMinute": 10.748749422847466,
+  "UnintendedChangeTasks": 0,
+  "ByCategory": {
+    "aggregate": "36/36",
+    "find": "30/30",
+    "find-modify": "12/12",
+    "modify": "30/30",
+    "negative": "18/18",
+    "read": "23/24",
+    "scale": "12/12",
+    "traverse": "22/24"
+  },
+  "Outcomes": {
+    "answered": 183,
+    "max-steps": 3
+  },
+  "ToolErrorCodes": {
+    "unknown-function": 3,
+    "syntax-error": 2,
+    "readonly-member": 6
+  }
+}

@@ -109,7 +109,7 @@ function stageToJson(s: Stage): JsonObject {
     case 'recurse':
       if (s.via !== undefined && s.via.length > 0) o.via = s.via.map(exprToJson);
       if (s.maxDepth !== undefined) o.maxDepth = s.maxDepth;
-      if (s.includeSelf) o.includeSelf = true;
+      if (!s.includeSelf) o.includeSelf = false;
       break;
     case 'set':
       o.assign = s.assign.map((a) => ({ target: exprToJson(a.target), value: exprToJson(a.value) }));
@@ -398,7 +398,7 @@ export function readStage(s: Json): Stage {
       allowOnly(s, ctx, 'op', 'via', 'maxDepth', 'includeSelf');
       const via = has(s, 'via') ? readExprArray(s['via'], 'via') : undefined;
       const maxDepth = has(s, 'maxDepth') ? readInt(s, 'maxDepth', ctx, 1) : undefined;
-      const includeSelf = readTrueFlag(s, 'includeSelf', ctx);
+      const includeSelf = !has(s, 'includeSelf') || readTrueFlag(s, 'includeSelf', ctx);
       return {
         kind: 'recurse',
         op,

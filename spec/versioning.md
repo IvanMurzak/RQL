@@ -19,5 +19,7 @@
 * `$depth` meta; `$name` columns shadow metas on rows; map entries delegate members to their value;
   single-column rows stand for their value; scope chain in method arguments; verbatim unknown string
   escapes; `no-match` warning — all from Tier B failure analysis (see `RESULTS.md`).
+* `recurse` includes its input items by default (`include-self=false` to drop them; canonical plans only
+  carry `includeSelf: false`) — evidence: E6/E9 agents repeatedly lost the start items (`X.Dependencies | recurse Dependencies`).
 * `$type`/`$ref` on lists map over elements; `==` on lists/maps is unknown; integral doubles accepted for
   integer plan/budget fields; ASCII-only digits in text; portability decisions (§12).

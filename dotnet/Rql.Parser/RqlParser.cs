@@ -251,7 +251,7 @@ namespace Rql
         {
             var via = new List<Expr>();
             int? depth = null;
-            bool includeSelf = false;
+            bool includeSelf = true;
             while (!AtStageEnd)
             {
                 Accept(",");
@@ -274,7 +274,7 @@ namespace Rql
                             includeSelf = flag;
                             break;
                         default:
-                            throw Error($"unknown recurse option '{opt.Text}'", opt, "options: max-depth=N include-self=true");
+                            throw Error($"unknown recurse option '{opt.Text}'", opt, "options: max-depth=N include-self=false");
                     }
                 }
                 else

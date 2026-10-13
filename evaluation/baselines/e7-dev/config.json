@@ -1,0 +1,24 @@
+{
+  "cfg": {
+    "Name": "e7-thinking-low",
+    "BaseUrl": "https://api.deepseek.com",
+    "Model": "deepseek-flash",
+    "ReasoningEffort": "low",
+    "Temperature": 0,
+    "MaxSteps": 12,
+    "MaxTokensPerCall": 4096,
+    "TimeoutSeconds": 120,
+    "Prompt": "v2",
+    "Format": "table",
+    "Toolset": "rql",
+    "SchemaInPrompt": false,
+    "MaxRows": 50,
+    "Parallel": 6,
+    "BudgetUsd": 3,
+    "Repeats": 3
+  },
+  "split": "dev",
+  "catalog": "v1",
+  "tasks": 62,
+  "git": "22f7394"
+}

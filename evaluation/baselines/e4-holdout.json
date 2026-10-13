@@ -1,0 +1,45 @@
+{
+ "run": "e4-holdout",
+ "name": "e4-prompt-v2",
+ "split": "holdout",
+ "git": "22f7394",
+ "config": {
+  "Name": "e4-prompt-v2",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-flash",
+  "ReasoningEffort": "none",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v2",
+  "Format": "table",
+  "Toolset": "rql",
+  "SchemaInPrompt": false,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 2,
+  "Repeats": 3
+ },
+ "n": 81,
+ "successes": 80,
+ "successRate": 0.9876543209876543,
+ "ci95": [
+  0.9333295783588225,
+  0.9978174061393479
+ ],
+ "costUsd": 0.02880255600000001,
+ "costPerSuccess": 0.00036003195000000013,
+ "meanTotalTokens": 8127.037037037037,
+ "meanCompletionTokens": 289.01234567901236,
+ "meanToolCalls": 3.2839506172839505,
+ "meanToolErrors": 0.09876543209876543,
+ "meanToolResultChars": 3257.3086419753085,
+ "medianWallSec": 4.227119,
+ "p95WallSec": 6.7206396,
+ "cacheHitRatio": 0.8622920866935484,
+ "unintendedChangeTasks": 1,
+ "failures": [
+  "neg-delete-scene@22"
+ ]
+}

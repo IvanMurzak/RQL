@@ -809,8 +809,9 @@ QueryResult collect(Exec& x, Stream& stream, Encoder& enc) {
     return r;
 }
 
-std::vector<std::string> holders(Exec& x, const std::string& type_name) {
-    // Static reachability from source root types through member / element types.
+/// Types statically reachable from the sources' root types through member, element and key types,
+/// plus registered subtypes of reachable object types.
+std::vector<const TypeDescriptor*> reachable_types(Exec& x, std::vector<std::pair<std::string, const TypeDescriptor*>>* roots_out) {
     std::vector<std::pair<std::string, const TypeDescriptor*>> roots;
     for (auto& s : x.engine.sources()) {
         Value v;
@@ -824,18 +825,29 @@ std::vector<std::string> holders(Exec& x, const std::string& type_name) {
     std::vector<const TypeDescriptor*> types;
     std::vector<const TypeDescriptor*> queue;
     for (auto& r : roots) queue.push_back(r.second);
-    for (auto* t : x.types.registered()) queue.push_back(t);  // subclasses of reachable types
-    for (size_t i = 0; i < queue.size() && types.size() < 200; ++i) {
+    auto registered = x.types.registered();
+    for (size_t i = 0; i < queue.size() && types.size() < 1000; ++i) {
         const TypeDescriptor* t = queue[i];
         if (!t || std::find(types.begin(), types.end(), t) != types.end()) continue;
         if (t->kind == TypeKind::List || t->kind == TypeKind::Map) {
+            queue.push_back(t->key);
             queue.push_back(t->element);
             continue;
         }
         if (t->kind == TypeKind::Scalar) continue;
         types.push_back(t);
         for (auto& m : t->members) queue.push_back(m.type);
+        if (t->kind == TypeKind::Object)
+            for (auto* sub : registered)
+                if (sub != t && sub->derives_from(t)) queue.push_back(sub);
     }
+    if (roots_out) *roots_out = std::move(roots);
+    return types;
+}
+
+std::vector<std::string> holders(Exec& x, const std::string& type_name) {
+    std::vector<std::pair<std::string, const TypeDescriptor*>> roots;
+    std::vector<const TypeDescriptor*> types = reachable_types(x, &roots);
     std::vector<const TypeDescriptor*> targets;
     for (auto* t : types)
         if (t->is_a(type_name)) targets.push_back(t);
@@ -882,10 +894,40 @@ void add_warnings(Exec& x, QueryResult& r, bool only_general) {
                                                     hint));
     }
     std::vector<std::string> reported;
+    auto is_reported = [&](const std::string& n) { return std::find(reported.begin(), reported.end(), n) != reported.end(); };
+    // Static check for never-evaluated bare names (short-circuit `and`/`or`, empty streams): a name that
+    // no reachable type declares and no select produces is certainly a typo (spec §10).
+    bool known_ready = false;
+    std::vector<std::string> known;
+    for (auto& sp : x.sites) {
+        MemberSite& site = *sp;
+        if (!site.bare || site.hits > 0 || site.misses > 0 || is_reported(site.name)) continue;
+        if (!known_ready) {
+            known_ready = true;
+            known = {"key", "value", "count", "Count", "Length"};
+            for (auto* t : reachable_types(x, nullptr))
+                for (auto& m : t->members) known.push_back(m.name);
+            for (auto& st : x.plan.stages)
+                if (st.kind == StageKind::Select)
+                    for (auto& f : st.fields) known.push_back(f.name);
+        }
+        bool is_known = false;
+        for (auto& k : known)
+            if (iequals(k, site.name)) { is_known = true; break; }
+        if (is_known) continue;
+        reported.push_back(site.name);
+        std::vector<std::string> uniq;
+        for (auto& k : known)
+            if (std::find(uniq.begin(), uniq.end(), k) == uniq.end()) uniq.push_back(k);
+        auto close = suggest_closest(site.name, uniq, 3);
+        r.diagnostics.push_back(Diagnostic::warning(
+            "unknown-member", "no type reachable from the sources has a member '" + site.name + "' (not evaluated)",
+            !close.empty() ? "did you mean " + join(close, " / ") + "?" : "if '" + site.name + "' is a value, quote it: \"" + site.name + "\""));
+    }
     for (auto& sp : x.sites) {
         MemberSite& site = *sp;
         if (site.hits > 0 || site.misses == 0) continue;
-        if (std::find(reported.begin(), reported.end(), site.name) != reported.end()) continue;
+        if (is_reported(site.name)) continue;
         reported.push_back(site.name);
         if (!site.row_columns.empty() && site.miss_types.empty()) {
             r.diagnostics.push_back(Diagnostic::warning(
