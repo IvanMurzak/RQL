@@ -215,6 +215,7 @@ namespace Rql.Execution
                     var list = new List<object?>();
                     foreach (var el in V.Iterate(v))
                     {
+                        x.Visit();
                         var r = Member(x, el, site);
                         if (r is Missing) continue;
                         if (r != null && !(r is string) && V.IsList(r))
@@ -408,7 +409,13 @@ namespace Rql.Execution
                 case "contains": return x => Tri(Contains(a(x), b!(x)));
                 case "starts-with": return x => Tri(StringTest(a(x), b!(x), (s, t) => s.StartsWith(t, StringComparison.OrdinalIgnoreCase)));
                 case "ends-with": return x => Tri(StringTest(a(x), b!(x), (s, t) => s.EndsWith(t, StringComparison.OrdinalIgnoreCase)));
-                case "matches": return x => Tri(Matches(a(x), b!(x)));
+                case "matches":
+                    return x =>
+                    {
+                        var r = Tri(Matches(a(x), b!(x)));
+                        x.CheckTime(); // the per-match regex timeout alone does not bound the whole query
+                        return r;
+                    };
                 case "in": return x => Tri(In(a(x), b!(x)));
                 case "is":
                 {
@@ -749,7 +756,7 @@ namespace Rql.Execution
                             foreach (var r in refs)
                             {
                                 if (!(r is string s)) return new RqlError("type-mismatch", "ref() expects reference strings");
-                                var o = x.Engine.ResolveRef(s, out var err);
+                                var o = x.Engine.ResolveRef(s, out var err, x);
                                 if (o == null)
                                 {
                                     x.Diagnostics.Add(Diagnostic.Error("stale-ref", err!, "re-query to obtain a fresh $ref"));
@@ -884,6 +891,7 @@ namespace Rql.Execution
                 long i = 0;
                 foreach (var el in els)
                 {
+                    x.Visit(); // collection-method elements count toward maxVisited/timeout (spec §10)
                     bool? t = true;
                     if (pred != null)
                     {
@@ -941,6 +949,7 @@ namespace Rql.Execution
                 var values = new List<object?>();
                 foreach (var el in els)
                 {
+                    x.Visit();
                     object? val = el;
                     if (sel != null)
                     {

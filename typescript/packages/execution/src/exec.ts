@@ -95,6 +95,8 @@ export class Exec {
   readonly diagnostics: Diagnostic[] = [];
   readonly sites: MemberSite[] = [];
   readonly isSites: IsSite[] = [];
+  /** Per-query cache of fallback ref searches ("Type#id" → object). */
+  readonly refCache = new Map<string, object | undefined>();
   private readonly started = now();
 
   constructor(
@@ -111,7 +113,8 @@ export class Exec {
     this.maxDepth = budgets.maxDepth ?? d.maxDepth;
     this.timeoutMs = Math.min(budgets.timeoutMs ?? d.timeoutMs, d.hardTimeoutMs);
     this.maxOutputBytes = budgets.maxOutputBytes ?? d.maxOutputBytes;
-    this.maxMutationTargets = budgets.maxMutationTargets ?? engine.mutations.maxTargets;
+    // Requests may change the per-request limit, but never beyond the host's hard ceiling.
+    this.maxMutationTargets = Math.min(budgets.maxMutationTargets ?? engine.mutations.maxTargets, engine.mutations.hardMaxTargets);
   }
 
   get elapsedMs(): number {

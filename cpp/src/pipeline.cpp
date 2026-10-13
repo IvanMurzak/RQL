@@ -50,7 +50,8 @@ Exec::Exec(Engine& e, const Budgets& b, const QueryOptions& o, const QueryPlan& 
     max_depth = b.max_depth.value_or(d.max_depth);
     timeout_ms = std::min(b.timeout_ms.value_or(d.timeout_ms), d.hard_timeout_ms);
     max_output_bytes = b.max_output_bytes.value_or(d.max_output_bytes);
-    max_mutation_targets = b.max_mutation_targets.value_or(e.mutations().max_targets);
+    // Requests may change the per-request limit, but never beyond the host's hard ceiling.
+    max_mutation_targets = std::min(b.max_mutation_targets.value_or(e.mutations().max_targets), e.mutations().hard_max_targets);
 }
 
 void Exec::visit() {
@@ -793,7 +794,9 @@ QueryResult collect(Exec& x, Stream& stream, Encoder& enc) {
         if (total < x.max_rows) collected.push_back(it.value);
         ++total;
     }
-    bool rows = !collected.empty() ? collected[0].is_row() : last_is_rows(x.plan);
+    // Rows only when EVERY item is a projected row (a later stage can mix rows and plain values).
+    bool rows = !collected.empty() ? std::all_of(collected.begin(), collected.end(), [](const Value& v) { return v.is_row(); })
+                                   : last_is_rows(x.plan);
     QueryResult r;
     if (rows) {
         std::vector<std::string> cols = !collected.empty() ? *collected[0].row().columns : last_columns(x.plan);
@@ -1028,8 +1031,9 @@ QueryResult run_pipeline(Exec& x) {
     } catch (const RqlException& ex) {
         return fail_with(x, ex);
     } catch (const std::exception& ex) {
-        // Host code (getters of sources, extension stages) threw outside a member read.
-        return fail_with(x, RqlException("getter-threw", std::string("host code threw: ") + ex.what()));
+        // Host code (source getters, extension stages) or a runtime bug threw outside a member read.
+        return QueryResult::fail({Diagnostic::error("internal-error", std::string("internal error: ") + ex.what(),
+                                                    "this is an RQL runtime bug or a throwing host callback; please report the query")});
     }
     bool any_error = false;
     for (auto& d : x.diagnostics)

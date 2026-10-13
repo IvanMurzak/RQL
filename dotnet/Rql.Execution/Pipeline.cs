@@ -727,7 +727,8 @@ namespace Rql.Execution
                 if (total < _x.MaxRows) collected.Add(it.Value);
                 total++;
             }
-            bool rows = collected.Count > 0 ? collected[0] is RowValue : LastIsSelect();
+            // Rows only when EVERY item is a projected row (a later stage can mix rows and plain values).
+            bool rows = collected.Count > 0 ? collected.All(c => c is RowValue) : LastIsSelect();
             QueryResult r;
             if (rows)
             {
@@ -807,7 +808,7 @@ namespace Rql.Execution
         public new bool Equals(object? a, object? b)
         {
             if (a == null || b == null) return a == null && b == null;
-            if (V.TryNumber(a, out var da) && V.TryNumber(b, out var db)) return da == db;
+            if (V.TryNumber(a, out var da) && V.TryNumber(b, out var db)) return da.Equals(db); // NaN groups with NaN
             if (a is Enum && b is Enum) return a.Equals(b);
             if (V.IsString(a) && V.IsString(b)) return V.AsString(a) == V.AsString(b);
             if (a is bool ba && b is bool bb) return ba == bb;

@@ -575,11 +575,12 @@ export class Pipeline {
       if (total < x.maxRows) collected.push(it.value);
       total++;
     }
-    const rows = collected.length > 0 ? collected[0] instanceof RowValue : this.lastIsRows();
+    // Rows only when EVERY item is a projected row (a later stage can mix rows and plain values).
+    const rows = collected.length > 0 ? collected.every((c) => c instanceof RowValue) : this.lastIsRows();
     let r: QueryResult;
     if (rows) {
       const cols = collected.length > 0 ? (collected[0] as RowValue).columns : this.lastColumns();
-      r = enc.rows(cols, collected.map((c) => (c instanceof RowValue ? c.values : [c])));
+      r = enc.rows(cols, collected.map((c) => (c as RowValue).values));
     } else {
       r = enc.items(collected);
     }

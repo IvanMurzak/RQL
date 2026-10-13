@@ -37,7 +37,8 @@ Every expression evaluates to one of:
 
 ### 1.2 Truth (three-valued logic)
 
-Predicates evaluate to `true`, `false` or `unknown`. Comparisons involving `missing`, `error`,
+Predicates evaluate to `true`, `false` or `unknown`. As a predicate, a boolean is itself, `null` is
+`false`, and `missing`, `error` and every non-boolean value are `unknown`. Comparisons involving `missing`, `error`,
 or incomparable kinds yield `unknown`. Logic is Kleene:
 `not unknown = unknown`, `false and unknown = false`, `true or unknown = true`, otherwise unknown.
 `where` keeps an item only when its predicate is `true`.
@@ -221,6 +222,11 @@ conformance form.
 
 Mutations are disabled unless the caller's policy enables them (`permission-denied` otherwise).
 
+* Targets must be objects with identity; value-type or scalar items (e.g. from `get Transform.Position`)
+  are rejected with `invalid-plan` because a change to a copy would be lost.
+* Writing through value types requires every value-type parent member on the path to be writable and
+  allowed by policy, since the modified copy is written back into it.
+* A request's `maxMutationTargets` may not exceed the host's hard ceiling.
 * `set p = e`: for each item, evaluate `e` against the item, coerce to the member type of `p`
   (number→integral only if integral and in range; string→enum by name; null only for nullable /
   reference types; list literal → list/array type), then write. Writing through value types
@@ -249,7 +255,7 @@ Budgets (request-level, all optional, runtime may clamp to its own hard caps):
 
 | Budget | Default | On exceed |
 |---|---|---|
-| `maxVisited` (items + recursion nodes touched) | 200 000 | `budget-exceeded` (error, partial results discarded) |
+| `maxVisited` (items, recursion nodes and collection-method elements touched) | 1 000 000 | `budget-exceeded` (error, partial results discarded) |
 | `maxRows` (returned rows/items) | 50 | truncation (`truncated: true`), not an error |
 | `maxListItems` (per encoded list) | 20 | truncation marker |
 | `maxDepth` (recurse cap) | 16 | clamp + warning |
@@ -262,7 +268,8 @@ are a closed set in v0.1: `syntax-error`, `invalid-plan`, `version-unsupported`,
 `unknown-stage`, `unknown-function`, `unknown-member` (warning: no evaluated item had it),
 `unknown-meta`, `type-mismatch`, `arity`, `div-by-zero`, `getter-threw`, `stale-ref`,
 `permission-denied`, `readonly-member`, `coercion-failed`, `mutation-limit`, `budget-exceeded`,
-`timeout`, `output-truncated`, `unsupported`, `no-match` (warning: an `x is T` test was false
+`timeout`, `output-truncated`, `unsupported`, `internal-error` (a runtime bug surfaced as a diagnostic instead of
+a crash), `no-match` (warning: an `x is T` test was false
 for every tested item; the hint names where `T` objects are reachable).
 
 `unknown-member` SHOULD carry a `hint` with the closest member names of the observed types —
@@ -272,6 +279,9 @@ empty stream) when no type statically reachable from the sources declares it and
 produces it.
 
 ## 11. Lexical conveniences (normative)
+
+Parsers MUST bound expression nesting (reference: 100 levels) and operator count (reference: 1000) and
+report `syntax-error` beyond them; numeric literals must be finite; select aliases may not start with `$`.
 
 Numbers in RQL text use ASCII digits only. In QueryPlan JSON an integer field accepts any JSON number with an integral value (`2` and `2.0`), never `2.5`.
 

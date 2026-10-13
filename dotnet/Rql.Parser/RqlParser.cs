@@ -215,6 +215,8 @@ namespace Rql
                 if (IsName(Peek()) && Peek(1).Is("="))
                 {
                     alias = Next().Text;
+                    if (alias.StartsWith("$", StringComparison.Ordinal))
+                        throw Error($"column alias '{alias}' may not start with '$' (reserved for meta members)", ft);
                     Next();
                 }
                 var expr = ParsePostfix();
@@ -334,13 +336,40 @@ namespace Rql
 
         public Expr ParseExpr() => ParseOr();
 
+        /// <summary>Maximum expression nesting; deeper input is rejected instead of overflowing the stack.</summary>
+        public const int MaxNesting = 100;
+        private int _nesting;
+        /// <summary>Operator count cap: left-deep chains (a+a+a…) would otherwise build arbitrarily deep trees.</summary>
+        public const int MaxOperators = 1000;
+        private int _operators;
+
+        private void CountOperator()
+        {
+            if (++_operators > MaxOperators)
+                throw Error($"more than {MaxOperators} operators in one query", Peek());
+        }
+
+        private void Enter()
+        {
+            if (++_nesting > MaxNesting)
+                throw Error($"expression nesting deeper than {MaxNesting} levels", Peek());
+        }
+
         private Expr ParseOr()
+        {
+            Enter();
+            try { return ParseOrCore(); }
+            finally { _nesting--; }
+        }
+
+        private Expr ParseOrCore()
         {
             int start = Peek().Start;
             var left = ParseAnd();
             while (Peek().IsWord("or") || Peek().Is("||"))
             {
                 Next();
+                CountOperator();
                 var right = ParseAnd();
                 left = At(new OpExpr("or", new[] { left, right }), start, PrevEnd);
             }
@@ -354,6 +383,7 @@ namespace Rql
             while (Peek().IsWord("and") || Peek().Is("&&"))
             {
                 Next();
+                CountOperator();
                 var right = ParseNot();
                 left = At(new OpExpr("and", new[] { left, right }), start, PrevEnd);
             }
@@ -366,7 +396,10 @@ namespace Rql
             if (Peek().IsWord("not") || Peek().Is("!"))
             {
                 Next();
-                var inner = ParseNot();
+                Enter();
+                Expr inner;
+                try { inner = ParseNot(); }
+                finally { _nesting--; }
                 return At(new OpExpr("not", new[] { inner }), start, PrevEnd);
             }
             return ParseComparison();
@@ -437,6 +470,7 @@ namespace Rql
             while (Peek().Is("+") || Peek().Is("-"))
             {
                 var op = Next().Text;
+                CountOperator();
                 var right = ParseMultiplicative();
                 left = At(new OpExpr(op, new[] { left, right }), start, PrevEnd);
             }
@@ -450,6 +484,7 @@ namespace Rql
             while (Peek().Is("*") || Peek().Is("/") || Peek().Is("%"))
             {
                 var op = Next().Text;
+                CountOperator();
                 var right = ParseUnary();
                 left = At(new OpExpr(op, new[] { left, right }), start, PrevEnd);
             }
@@ -462,7 +497,10 @@ namespace Rql
             if (Peek().Is("-"))
             {
                 Next();
-                var inner = ParseUnary();
+                Enter();
+                Expr inner;
+                try { inner = ParseUnary(); }
+                finally { _nesting--; }
                 if (inner is LitExpr l && l.Value is double d) return At(new LitExpr(-d), start, PrevEnd);
                 return At(new OpExpr("neg", new[] { inner }), start, PrevEnd);
             }

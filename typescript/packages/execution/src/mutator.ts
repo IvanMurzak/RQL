@@ -154,6 +154,15 @@ export class Mutator {
       if (it.value instanceof MapEntry) {
         throw new RqlError('invalid-plan', `'${op}' cannot target map entries; set the map member with a key path instead (Stats["key"] = ...)`);
       }
+      const v = it.value;
+      if (typeof v !== 'object' || v instanceof EnumValue || v instanceof Date || this.x.types.infoOf(v).kind === 'struct') {
+        throw new RqlError(
+          'invalid-plan',
+          `'${op}' needs objects with identity; '${this.x.types.infoOf(v).shortName}' items are value copies, so the change would be lost`,
+          undefined,
+          'set the member from its owner instead, e.g. objects | where … | set Transform.Position.x = 0',
+        );
+      }
       list.push(it);
       if (list.length > this.x.maxMutationTargets) {
         throw new RqlError(
@@ -194,7 +203,7 @@ export class Mutator {
         if (!slot.writable(x)) throw new RqlError(slot.denyCode, `'${lbl}' on ${this.refOf(item)} is not writable${slot.denyReason}`);
         const co = coerce(x.types, nv, slot.type);
         if (!co.ok) throw new RqlError('coercion-failed', `cannot assign ${describeValue(nv)} to '${lbl}' (${friendlyName(slot.type, x.types)}): ${co.why}`);
-        writes.push({ item, segments: target.segments, label: lbl, old: slot.get(container), new: co.value });
+        writes.push({ item, segments: target.segments, label: lbl, old: safeGet(slot, container, lbl), new: co.value });
       }
     }
 
@@ -203,14 +212,19 @@ export class Mutator {
       try {
         for (; applied < writes.length; applied++) this.assign(writes[applied]!.item, writes[applied]!.segments, writes[applied]!.new);
       } catch (e) {
+        let rollbackFailures = 0;
         for (let k = applied - 1; k >= 0; k--) {
           try {
             this.assign(writes[k]!.item, writes[k]!.segments, writes[k]!.old);
           } catch {
-            // best effort
+            rollbackFailures++;
           }
         }
-        throw new RqlError('coercion-failed', `write '${writes[applied]!.label}' failed (${errorMessage(e)}); ${applied} earlier write(s) were rolled back`);
+        const rolled =
+          rollbackFailures === 0
+            ? `${applied} earlier write(s) were rolled back`
+            : `rolling back ${applied} earlier write(s) FAILED for ${rollbackFailures} of them — state may be partially modified`;
+        throw new RqlError('coercion-failed', `write '${writes[applied]!.label}' failed (${errorMessage(e)}); ${rolled}`);
       }
     }
 
@@ -225,8 +239,12 @@ export class Mutator {
     const info = x.types.infoOf(container);
     const args = typeArgs(declared);
     if (info.isMap) {
+      if (seg.kind === 'member' && seg.name.toUpperCase() === 'COUNT') {
+        throw new RqlError('readonly-member', `'${lbl}': Count of a map is read-only (use ["Count"] to address a key literally named Count)`);
+      }
       const key = seg.kind === 'member' ? seg.name : seg.kind === 'key' ? seg.key : seg.kind === 'index' ? seg.index : undefined;
-      const k = key === undefined ? undefined : coerceKey(container as MapLike, key, args?.key ?? 'any');
+      // Member syntax addresses an existing key case-insensitively, like reads (spec §3); new keys keep the given spelling.
+      const k = key === undefined ? undefined : coerceKey(container as MapLike, key, args?.key ?? 'any', seg.kind === 'member');
       if (k === undefined) throw new RqlError('coercion-failed', `invalid map key in '${lbl}'`);
       return new MapSlot(k, args?.of ?? 'any');
     }
@@ -252,13 +270,26 @@ export class Mutator {
     const lbl = segs.map(segmentToString).join('');
     let cur: object = root;
     let declared: TypeRef = 'any';
+    const chain: { slot: Slot; value: object }[] = [];
     for (let i = 0; i < segs.length; i++) {
       const slot = this.slotOf(cur, declared, segs[i]!, lbl);
-      if (i === segs.length - 1) return { slot, container: cur };
-      const next = slot.get(cur);
+      if (i === segs.length - 1) {
+        // Every value-type (struct) container on the way is written back into its parent: those
+        // parent slots must be writable and allowed too.
+        for (let j = chain.length - 1; j >= 0; j--) {
+          const c = chain[j]!;
+          if (this.x.types.infoOf(c.value).kind !== 'struct') break;
+          if (!c.slot.writable(this.x)) {
+            throw new RqlError(c.slot.denyCode, `'${lbl}' on ${this.refOf(root)} is not writable: '${segmentToString(segs[j]!)}' is a value type held by a non-writable member${c.slot.denyReason}`);
+          }
+        }
+        return { slot, container: cur };
+      }
+      const next = safeGet(slot, cur, lbl);
       if (next === null || next === MISSING || typeof next !== 'object') {
         throw new RqlError('coercion-failed', `cannot set '${lbl}': '${segmentToString(segs[i]!)}' is null on ${this.refOf(root)}`);
       }
+      chain.push({ slot, value: next as object });
       cur = next as object;
       declared = slot.type;
     }
@@ -283,11 +314,9 @@ export class Mutator {
     slots[slots.length - 1]!.set(containers[containers.length - 1]!, value);
     for (let j = containers.length - 1; j >= 1; j--) {
       if (this.x.types.infoOf(containers[j]).kind !== 'struct') break;
-      // JS structs are references (already updated in place); write back only through writable members
-      // so hosts whose getters return copies see the change.
-      const parent = slots[j - 1]!;
-      if (parent instanceof MemberSlot && !parent.m.canWrite) break;
-      parent.set(containers[j - 1]!, containers[j]);
+      // JS structs are references (already updated in place); writing back also covers hosts whose
+      // getters return copies. Writability was checked in resolve().
+      slots[j - 1]!.set(containers[j - 1]!, containers[j]);
     }
   }
 
@@ -373,6 +402,15 @@ export class Mutator {
   }
 }
 
+function safeGet(slot: Slot, container: object, lbl: string): unknown {
+  try {
+    return slot.get(container);
+  } catch (e) {
+    const name = e instanceof Error ? e.name : typeof e;
+    throw new RqlError('getter-threw', `reading '${lbl}' failed: ${name}: ${errorMessage(e)}`);
+  }
+}
+
 function label(p: PathExpr): string {
   return p.segments.map((s, i) => (s.kind === 'member' ? (i === 0 ? '' : '.') + s.name : segmentToString(s))).join('');
 }
@@ -389,9 +427,9 @@ function hasMethod(o: object, upperName: string): boolean {
 }
 
 /** Map key for a set target, coerced to the declared key type; existing equivalent keys win. */
-function coerceKey(m: MapLike, key: string | number, keyType: TypeRef): unknown {
+function coerceKey(m: MapLike, key: string | number, keyType: TypeRef, caseInsensitive: boolean): unknown {
   const existing = findMapKey(m, key);
-  if (existing.found) return existing.key;
+  if (existing.found && (caseInsensitive || typeof existing.key !== 'string' || typeof key !== 'string' || existing.key === key)) return existing.key;
   const kt = unwrapNullable(keyType);
   if (m instanceof RecordMap || kt === 'string') return typeof key === 'number' ? String(key) : key;
   if (kt === 'int' || kt === 'number') {

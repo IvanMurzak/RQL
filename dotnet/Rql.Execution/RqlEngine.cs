@@ -30,12 +30,15 @@ namespace Rql.Execution
         public bool Enabled { get; set; }
         /// <summary>Optional extra allow-check per (declaring object type, member).</summary>
         public Func<Type, MemberAccessor, bool>? CanWrite { get; set; }
+        /// <summary>Default per-request target limit (requests may raise it up to <see cref="HardMaxTargets"/>).</summary>
         public int MaxTargets { get; set; } = 20;
+        /// <summary>Host ceiling no request can exceed.</summary>
+        public int HardMaxTargets { get; set; } = 1000;
     }
 
     public sealed class EngineDefaults
     {
-        public int MaxVisited { get; set; } = 200_000;
+        public int MaxVisited { get; set; } = 1_000_000;
         public int MaxRows { get; set; } = 50;
         public int MaxListItems { get; set; } = 20;
         public int MaxDepth { get; set; } = 16;
@@ -160,7 +163,16 @@ namespace Rql.Execution
         public QueryResult Execute(QueryPlan plan, Budgets? budgets = null, QueryOptions? options = null)
         {
             var x = new Exec(this, budgets ?? new Budgets(), options ?? new QueryOptions(), plan);
-            var result = new Pipeline(x).Run();
+            QueryResult result;
+            try
+            {
+                result = new Pipeline(x).Run();
+            }
+            catch (Exception ex) when (!(ex is OutOfMemoryException))
+            {
+                // Last line of defence: untrusted queries must never crash the host with a raw exception.
+                result = QueryResult.Fail(new[] { Diagnostic.Error("internal-error", $"{ex.GetType().Name}: {ex.Message}", "this is an RQL runtime bug; please report the query") });
+            }
             result.Stats.Visited = x.Visited;
             result.Stats.MembersRead = x.MembersRead;
             result.Stats.ElapsedMs = x.Elapsed.TotalMilliseconds;
@@ -209,6 +221,11 @@ namespace Rql.Execution
                 long id = ++_nextHandle;
                 _handles.Add(o, id);
                 _handleTargets[id] = new WeakReference(o);
+                if ((id & 4095) == 0)
+                {
+                    // Drop entries whose objects were collected so the table does not grow forever.
+                    foreach (var dead in _handleTargets.Where(kv => !kv.Value.IsAlive).Select(kv => kv.Key).ToList()) _handleTargets.Remove(dead);
+                }
                 return id;
             }
         }
@@ -226,7 +243,7 @@ namespace Rql.Execution
             return Describe.Reachable(Types, roots).Select(t => Describe.TypeDescriptor(Types, t, Mutations.Enabled)).ToList();
         }
 
-        internal object? ResolveRef(string reference, out string? error)
+        internal object? ResolveRef(string reference, out string? error, Exec? x = null)
         {
             error = null;
             // Tolerate copied display forms such as "Enemy#12(Goblin_0012)" or "Enemy#12 Goblin".
@@ -254,7 +271,7 @@ namespace Rql.Execution
             }
             else
             {
-                found = ResolveStableRef != null ? ResolveStableRef(type, id) : SearchSources(type, id);
+                found = ResolveStableRef != null ? ResolveStableRef(type, id) : SearchSources(type, id, x);
             }
 
             if (found == null || !Types.Info(found.GetType()).IsA(type))
@@ -271,7 +288,17 @@ namespace Rql.Execution
         }
 
         /// <summary>Fallback ref resolution: bounded walk over owning members of all sources.</summary>
-        private object? SearchSources(string type, string id)
+        /// <summary>Fallback resolution; nodes count toward the calling query's budgets and results are cached per query.</summary>
+        private object? SearchSources(string type, string id, Exec? x)
+        {
+            var key = type + "#" + id;
+            if (x != null && x.RefCache.TryGetValue(key, out var cached)) return cached;
+            var found = SearchSourcesCore(type, id, x);
+            if (x != null) x.RefCache[key] = found;
+            return found;
+        }
+
+        private object? SearchSourcesCore(string type, string id, Exec? x)
         {
             var visited = new HashSet<object>(RefEq.Instance);
             var stack = new Stack<(object, int)>();
@@ -283,6 +310,7 @@ namespace Rql.Execution
             int budget = Defaults.MaxVisited;
             while (stack.Count > 0 && budget-- > 0)
             {
+                x?.Visit();
                 var (o, depth) = stack.Pop();
                 if (!visited.Add(o)) continue;
                 var info = Types.Info(o.GetType());
@@ -333,7 +361,8 @@ namespace Rql.Execution
             MaxDepth = budgets.MaxDepth ?? d.MaxDepth;
             TimeoutMs = Math.Min(budgets.TimeoutMs ?? d.TimeoutMs, d.HardTimeoutMs);
             MaxOutputBytes = budgets.MaxOutputBytes ?? d.MaxOutputBytes;
-            MaxMutationTargets = budgets.MaxMutationTargets ?? engine.Mutations.MaxTargets;
+            // Requests may change the per-request limit, but never beyond the host's hard ceiling.
+            MaxMutationTargets = Math.Min(budgets.MaxMutationTargets ?? engine.Mutations.MaxTargets, engine.Mutations.HardMaxTargets);
         }
 
         public RqlEngine Engine { get; }
@@ -356,6 +385,7 @@ namespace Rql.Execution
         /// <summary>Enclosing items while evaluating collection-method arguments (scope chain).</summary>
         public readonly List<object?> Outer = new List<object?>();
         public readonly List<IsSite> IsSites = new List<IsSite>();
+        public readonly Dictionary<string, object?> RefCache = new Dictionary<string, object?>(StringComparer.Ordinal);
         public long Index;
 
         public long Visited;

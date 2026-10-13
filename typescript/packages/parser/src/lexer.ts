@@ -139,7 +139,9 @@ function readNumber(text: string, i: number): [number, number] {
   if (i < n && isIdentStart(text.charCodeAt(i))) {
     throw error(`invalid number '${text.slice(start, i + 1)}'`, start, i + 1);
   }
-  return [i, Number(text.slice(start, i))];
+  const value = Number(text.slice(start, i));
+  if (!Number.isFinite(value)) throw error(`number '${text.slice(start, i)}' is out of range`, start, i);
+  return [i, value];
 }
 
 const HEX4 = /^[0-9a-fA-F]{1,4}$/;

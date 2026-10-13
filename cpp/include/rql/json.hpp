@@ -80,8 +80,9 @@ public:
     std::string dump(int indent = -1) const;
     void dump_to(std::string& out, int indent = -1, int level = 0) const;
 
-    static Json parse(std::string_view text);  // throws JsonParseError
-    static bool try_parse(std::string_view text, Json& out, std::string& error);
+    /// max_depth bounds container nesting (hostile inputs cannot overflow the stack).
+    static Json parse(std::string_view text, int max_depth = 512);  // throws JsonParseError
+    static bool try_parse(std::string_view text, Json& out, std::string& error, int max_depth = 512);
 
 private:
     Type type_ = Type::Null;

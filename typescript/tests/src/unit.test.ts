@@ -146,3 +146,24 @@ test('first stops pulling upstream items (lazy)', () => {
   assert.equal(e.execute('xs | where v >= 0 | first 3 | count').value, 3);
   assert.equal(reads, 3);
 });
+
+test('unexpected host exceptions become internal-error diagnostics', () => {
+  const e = new RqlEngine()
+    .addSource('xs', () => [1, 2])
+    .addStage('host.boom', () => {
+      throw new TypeError('host bug');
+    });
+  const r = e.execute('xs | host.boom | count');
+  assert.equal(r.ok, false);
+  assert.equal(r.diagnostics[0]?.code, 'internal-error');
+});
+
+test('request maxMutationTargets is capped by the host ceiling', () => {
+  const xs = Array.from({ length: 5 }, (_, i) => ({ Id: i, v: 0 }));
+  const e = new RqlEngine().addSource('xs', () => xs);
+  e.mutations.enabled = true;
+  e.mutations.hardMaxTargets = 3;
+  const r = e.execute('xs | set v = 1', { maxMutationTargets: 100 }, { allowMutation: true });
+  assert.equal(r.diagnostics[0]?.code, 'mutation-limit');
+  assert.ok(xs.every((x) => x.v === 0));
+});

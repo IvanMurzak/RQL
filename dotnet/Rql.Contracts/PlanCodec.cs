@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 
@@ -265,6 +266,7 @@ namespace Rql
 
         private static void AllowOnly(JsonElement obj, string ctx, params string[] names)
         {
+            if (obj.ValueKind != JsonValueKind.Object) throw Invalid($"{ctx} must be an object");
             foreach (var p in obj.EnumerateObject())
             {
                 if (Array.IndexOf(names, p.Name) < 0) throw Invalid($"unexpected property '{p.Name}' in {ctx}");
@@ -278,7 +280,12 @@ namespace Rql
                 case JsonValueKind.Null: return null;
                 case JsonValueKind.True: return true;
                 case JsonValueKind.False: return false;
-                case JsonValueKind.Number: return v.GetDouble();
+                case JsonValueKind.Number:
+                {
+                    var d = v.GetDouble();
+                    if (double.IsInfinity(d) || double.IsNaN(d)) throw Invalid($"{ctx} number is out of range");
+                    return d;
+                }
                 case JsonValueKind.String: return v.GetString();
                 default: throw Invalid($"{ctx} must be a scalar literal");
             }
@@ -475,8 +482,9 @@ namespace Rql
                     foreach (var a in arr.EnumerateArray())
                     {
                         AllowOnly(a, "assignment", "target", "value");
-                        if (!(ReadExpr(Required(a, "target", "assignment")) is PathExpr target) || target.Segments.Count == 0)
-                            throw Invalid("assignment.target must be a non-empty path");
+                        if (!(ReadExpr(Required(a, "target", "assignment")) is PathExpr target) || target.Segments.Count == 0
+                            || target.On != null || target.Segments.Any(sg => sg.Kind == SegmentKind.Meta))
+                            throw Invalid("assignment.target must be a non-empty member path relative to the item (no 'on', no meta segments)");
                         list.Add(new Assignment(target, ReadExpr(Required(a, "value", "assignment"))));
                     }
                     return new SetStage(list);

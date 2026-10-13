@@ -7229,6 +7229,464 @@
       }
     },
     {
+      "name": "group-by-nan-key",
+      "rql": "g.Nodes | group-by (1e308 * 10 - 1e308 * 10) | select count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "group-by",
+            "expr": {
+              "op": "-",
+              "args": [
+                {
+                  "op": "*",
+                  "args": [
+                    {
+                      "lit": 1E+308
+                    },
+                    {
+                      "lit": 10
+                    }
+                  ]
+                },
+                {
+                  "op": "*",
+                  "args": [
+                    {
+                      "lit": 1E+308
+                    },
+                    {
+                      "lit": 10
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "count",
+                "expr": {
+                  "path": [
+                    "count"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "count"
+        ],
+        "rows": [
+          [
+            3
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "mixed-rows-and-values",
+      "rql": "g.Nodes | first 1 | select Name | get [$, 1]",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "first",
+            "n": 1
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "get",
+            "expr": {
+              "list": [
+                {
+                  "path": []
+                },
+                {
+                  "lit": 1
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "items",
+        "items": [
+          {
+            "Name": "root-a"
+          },
+          1
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "budget-counts-method-elements",
+      "rql": "g.Nodes | where Children.any(Enabled) | count",
+      "budgets": {
+        "maxVisited": 4
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "call": "any",
+              "on": {
+                "path": [
+                  "Children"
+                ]
+              },
+              "args": [
+                {
+                  "path": [
+                    "Enabled"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "budget-exceeded"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mut-err-set-on-value-copy",
+      "rql": "g.Nodes | first 1 | get Pos | set x = 5",
+      "then": "g.Nodes | first 1 | select Pos.x",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "first",
+            "n": 1
+          },
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Pos"
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "x"
+                  ]
+                },
+                "value": {
+                  "lit": 5
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-plan"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "first",
+            "n": 1
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Pos.x",
+                "expr": {
+                  "path": [
+                    "Pos",
+                    "x"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Pos.x"
+        ],
+        "rows": [
+          [
+            0
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "mut-map-key-case-insensitive",
+      "rql": "ref(\"Node#1\") | set Props.HP = 3",
+      "then": "ref(\"Node#1\") | select Props",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Props",
+                    "HP"
+                  ]
+                },
+                "value": {
+                  "lit": 3
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "Props.HP",
+            100,
+            3
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Props",
+                "expr": {
+                  "path": [
+                    "Props"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Props"
+        ],
+        "rows": [
+          [
+            {
+              "hp": 3,
+              "mp": 5
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "mut-err-map-count-readonly",
+      "rql": "ref(\"Node#1\") | set Props.Count = 3",
+      "then": "ref(\"Node#1\") | select Props",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Props",
+                    "Count"
+                  ]
+                },
+                "value": {
+                  "lit": 3
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "readonly-member"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Props",
+                "expr": {
+                  "path": [
+                    "Props"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Props"
+        ],
+        "rows": [
+          [
+            {
+              "hp": 100,
+              "mp": 5
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
       "name": "warn-unknown-member",
       "rql": "g.Nodes | where Nmae == 1 | count",
       "plan": {

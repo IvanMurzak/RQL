@@ -72,11 +72,10 @@ namespace Rql.Execution
                     if (v.TryGetValue<string>(out var s))
                         return s.Length == 0 || s.IndexOfAny(new[] { '|', '\n', '\r' }) >= 0 || s == "null" || s.Trim() != s ? JsonSerializer.Serialize(s) : s;
                     return v.ToJsonString();
-                case JsonObject o when o.ContainsKey("$ref"):
-                    var r = o["$ref"]!.GetValue<string>();
-                    return o.TryGetPropertyValue("name", out var name) && name != null ? r + "(" + name.GetValue<string>() + ")" : r;
-                case JsonObject o when o.ContainsKey("$error"):
-                    return "error(" + o["$error"]!.GetValue<string>() + ")";
+                case JsonObject o when o["$ref"] is JsonValue rv && rv.TryGetValue<string>(out var r):
+                    return o.TryGetPropertyValue("name", out var name) && name is JsonValue nv && nv.TryGetValue<string>(out var ns) ? r + "(" + ns + ")" : r;
+                case JsonObject o when o["$error"] is JsonValue ev && ev.TryGetValue<string>(out var code):
+                    return "error(" + code + ")";
                 case JsonObject o:
                     return "{" + string.Join(",", o.Select(kv => kv.Key + ":" + Cell(kv.Value))) + "}";
                 case JsonArray a:

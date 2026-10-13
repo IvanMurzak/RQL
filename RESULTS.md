@@ -10,7 +10,7 @@ traces are committed in `evaluation/baselines/*.json`; spend is in `evaluation/b
 | Area | State |
 |---|---|
 | Spec | EBNF grammar, normative semantics (incl. §12 portability decisions), JSON schemas for QueryPlan / QueryResult / ObjectRef / CapabilityManifest, versioning + changelog |
-| Golden vectors | 478 checks: 141 syntax→plan cases (each also a codec round-trip = 282), 25 negative syntax, 23 negative/edge plans, 132 execution cases = 148 steps incl. 16 mutation scenarios with follow-up state checks, on a portable graph (`fixtures/cross-runtime/graph.json`) materialized natively per runtime |
+| Golden vectors | 496 checks: 141 syntax→plan cases (each also a codec round-trip = 282), 30 negative syntax, 27 negative/edge plans, 138 execution cases = 157 steps incl. 16 mutation scenarios with follow-up state checks, on a portable graph (`fixtures/cross-runtime/graph.json`) materialized natively per runtime |
 | .NET reference | parser, codec, live-CLR executor (compiled or reflection accessors), mutations, diagnostics, agent formats; libraries target netstandard2.1 + net8.0 |
 | TypeScript | contracts, identical parser, live-object executor with descriptor registry |
 | C++17 | own JSON, codec, provider-based reflection (`TypeRegistry`), executor; no parser by design |
@@ -21,7 +21,7 @@ traces are committed in `evaluation/baselines/*.json`; spend is in `evaluation/b
 
 ## 2. Tier A (deterministic)
 
-Conformance (latest run): .NET **478/478** golden vectors (compiled and reflection accessors), TypeScript **478/478** (+10 unit tests), C++ **309 passed, 0 failed, 28 skipped** (text-only cases; 75 unit tests); reference agent **89/89** tasks; .NET unit tests 25/25.
+Conformance (latest run): .NET **496/496** golden checks (compiled and reflection accessors), TypeScript **496/496** (+12 unit tests), C++ **322 passed, 0 failed, 33 skipped** (text-only cases; 80 unit tests, ASan/UBSan clean); reference agent **119/119** tasks; .NET unit tests 36/36.
 
 Executor benchmark, Large world (14,437 GameObjects; `evaluation/reports/tierA-large.json`, median of 51
 interleaved runs after 60 warmups, compiled accessors):
@@ -162,10 +162,27 @@ modes. The conventional reflection-tool baseline solved **66.7%** at **40× the 
 ($0.00956 vs $0.00024), with 37 vs 1.9 tool calls and 3.2× the median wall time. Its failures are step-budget
 exhaustion on search/aggregate tasks (e.g. `v2-agg-avg-lines`: 155–233 tool calls).
 
+### 3.5 Independent code review and hardening
+
+A separate review agent (report-only, findings confirmed by running them) found 14 confirmed defects in
+the .NET reference. Examples: a parser stack overflow from deeply nested text (`((((…))))`, which crashes
+the host and can't be caught); writes through struct sub-members that bypassed read-only fields,
+`[RqlReadOnly]` and host write policy (a security bug); collection methods, regex and the `ref()` fallback search
+escaping `maxVisited`/`timeoutMs` (24–52 s instead of the 2 s budget); raw .NET exceptions on mixed
+row/value streams and NaN group keys; `set` on value copies reporting success without effect; and a
+request able to raise the host's mutation-target limit. **All were fixed** in .NET and mirrored in TypeScript
+and C++. Twenty new golden checks lock them in (496 total), plus 11 .NET regression tests. The
+spec gained nesting/operator limits, the `internal-error` code (a last-resort catch so hosts never see raw
+exceptions), value-copy target rejection, and a host hard ceiling for mutation targets.
+
+Regression check: the final configuration rerun on dev with the hardened build scored 98.4% (183/186) vs
+98.9% before, within noise. The only failures are the known `include-self` misreading on one template.
+Tokens, tool calls and cost were unchanged.
+
 ## 4. Spend
 
-Total recorded DeepSeek spend for the whole session: **$3.43** of the $25 global cap (balance before
-start: $29.46), over 33 ledger entries (`evaluation/baselines/spend-ledger.json`). Costs are computed from
+Total recorded DeepSeek spend for the whole session: **$3.48** of the $25 global cap (balance before
+start: $29.46), over 34 ledger entries (`evaluation/baselines/spend-ledger.json`). Costs are computed from
 provider-reported token usage × the price snapshot. One entry is a known conservative double count (~$0.035; see the ledger).
 Cross-check against the provider's account balance endpoint at the end of the session: **$3.10 actually charged**
 ($29.46 → $26.36) vs $3.43 in the ledger, so the ledger, and every cost figure in this report, is a conservative upper bound (~10% high).

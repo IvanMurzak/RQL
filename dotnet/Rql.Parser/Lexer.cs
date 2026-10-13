@@ -138,6 +138,7 @@ namespace Rql.Parsing
             if (i < n && IsIdentStart(text[i]))
                 throw Error($"invalid number '{text.Substring(start, i - start + 1)}'", start, i + 1);
             value = double.Parse(text.Substring(start, i - start), NumberStyles.Float, CultureInfo.InvariantCulture);
+            if (double.IsInfinity(value)) throw Error($"number '{text.Substring(start, i - start)}' is out of range", start, i);
             return i;
         }
 

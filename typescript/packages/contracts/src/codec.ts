@@ -249,6 +249,7 @@ export function validateStructure(p: QueryPlan): void {
 }
 
 function readLiteral(v: Json, ctx: string): LiteralValue {
+  if (typeof v === 'number' && !Number.isFinite(v)) throw invalid(`${ctx} number is out of range`);
   if (v === null || typeof v === 'boolean' || typeof v === 'number' || typeof v === 'string') return v;
   throw invalid(`${ctx} must be a scalar literal`);
 }
@@ -413,7 +414,9 @@ export function readStage(s: Json): Stage {
       const assign: Assignment[] = arr.map((a) => {
         allowOnly(a, 'assignment', 'target', 'value');
         const target = readExpr(required(a, 'target', 'assignment'));
-        if (target.kind !== 'path' || target.segments.length === 0) throw invalid('assignment.target must be a non-empty path');
+        if (target.kind !== 'path' || target.segments.length === 0 || target.on !== undefined || target.segments.some((sg) => sg.kind === 'meta')) {
+          throw invalid("assignment.target must be a non-empty member path relative to the item (no 'on', no meta segments)");
+        }
         return { target, value: readExpr(required(a, 'value', 'assignment')) };
       });
       return { kind: 'set', op, assign };

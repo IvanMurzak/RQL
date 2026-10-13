@@ -1,6 +1,6 @@
 {
   "CapUsd": 25,
-  "SpentUsd": 3.434871065999994,
+  "SpentUsd": 3.4790242259999973,
   "Runs": [
     {
       "id": "probe-20261013T203447Z",
@@ -226,6 +226,13 @@
       "split": "holdout2",
       "taskRuns": 90,
       "costUsd": 0.573484
+    },
+    {
+      "id": "20261013-215452-final-hardened-dev",
+      "config": "final-hardened",
+      "split": "dev",
+      "taskRuns": 186,
+      "costUsd": 0.044161
     }
   ]
 }

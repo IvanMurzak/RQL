@@ -24,6 +24,11 @@ std::vector<Value> targets(Exec& x, Stream& stream, const std::string& op) {
             throw RqlException("invalid-plan", "'" + op + "' needs objects, not projected rows; remove 'select' before '" + op + "'");
         if (it.value.is_entry())
             throw RqlException("invalid-plan", "'" + op + "' cannot target map entries; set the map member with a key path instead (Stats[\"key\"] = ...)");
+        const Value& v = it.value;
+        if (v.is_struct() || v.is_number() || v.is_string() || v.is_bool() || v.is_enum())
+            throw RqlException("invalid-plan",
+                               "'" + op + "' needs objects with identity; '" + type_name_of(v) + "' items are value copies, so the change would be lost",
+                               "set the member from its owner instead, e.g. objects | where ... | set Transform.Position.x = 0");
         list.push_back(it.value);
         if (static_cast<int64_t>(list.size()) > x.max_mutation_targets)
             throw RqlException("mutation-limit",
@@ -91,8 +96,23 @@ Slot slot_of(Exec& x, const Value& container, const Segment& seg, const std::str
     if (container.is_map()) {
         if (!container.map().writable())
             throw RqlException("unsupported", "map type " + friendly_type_of(container) + " does not support writes");
+        if (seg.kind == SegmentKind::Member && iequals(seg.name, "Count"))
+            throw RqlException("readonly-member", "'" + label + "': Count of a map is read-only (use [\"Count\"] to address a key literally named Count)");
         Value key;
-        if (seg.kind == SegmentKind::Member) key = Value::string(seg.name);
+        if (seg.kind == SegmentKind::Member) {
+            key = Value::string(seg.name);
+            // Writes address an existing key case-insensitively, like reads do (spec §3); new keys keep the given spelling.
+            Value tmp;
+            if (container.map().find(key, tmp) == MapLookup::NotFound) {
+                container.map().for_each([&](const Value& k, const Value&) {
+                    if (k.is_string() && iequals(k.as_string(), seg.name)) {
+                        key = k;
+                        return false;
+                    }
+                    return true;
+                });
+            }
+        }
         else if (seg.kind == SegmentKind::Key) key = seg.key.type == Literal::Type::String ? Value::string(seg.key.s) : Value::number(seg.key.n);
         else if (seg.kind == SegmentKind::Index) key = Value::number(static_cast<double>(seg.index));
         if (key.is_missing() || !container.map().accepts_key(key)) throw RqlException("coercion-failed", "invalid map key in '" + label + "'");
@@ -143,18 +163,44 @@ Slot slot_of(Exec& x, const Value& container, const Segment& seg, const std::str
     return s;
 }
 
+Value safe_get(const Slot& slot, const Value& container, const std::string& label) {
+    try {
+        return slot.get(container);
+    } catch (const std::exception& ex) {
+        throw RqlException("getter-threw", "reading '" + label + "' failed: " + ex.what());
+    }
+}
+
+/// Member slots must be writable and allowed by policy; list/map slots were checked by slot_of.
+void check_writable(Exec& x, const Slot& slot, const std::string& label, const Value& root, const std::string& what) {
+    if (slot.kind != Slot::Member) return;
+    if (!slot.owner->member_writable(*slot.member))
+        throw RqlException("readonly-member", "'" + label + "' on " + x.engine.ref_of(root) + " is not writable" + what + " (read-only member)");
+    auto& policy = x.engine.mutations().can_write;
+    if (policy && !policy(*slot.owner, *slot.member))
+        throw RqlException("permission-denied", "'" + label + "' on " + x.engine.ref_of(root) + " is not writable" + what + " (denied by host policy)");
+}
+
 Slot resolve(Exec& x, const Value& root, const std::vector<Segment>& segs, Value& container) {
     std::string label = raw_label(segs);
     Value cur = root;
+    std::vector<std::pair<Slot, Value>> chain;
     for (size_t i = 0; i < segs.size(); ++i) {
         Slot slot = slot_of(x, cur, segs[i], label);
         if (i + 1 == segs.size()) {
+            // Every value-type copy on the way is written back into its parent: those parent slots
+            // must be writable and allowed too.
+            for (size_t j = chain.size(); j-- > 0;) {
+                if (!chain[j].second.is_struct()) break;
+                check_writable(x, chain[j].first, label, root, ": '" + segs[j].to_string() + "' is a value type held by a non-writable member");
+            }
             container = cur;
             return slot;
         }
-        Value next = slot.get(cur);
+        Value next = safe_get(slot, cur, label);
         if (next.is_null() || next.is_missing())
             throw RqlException("coercion-failed", "cannot set '" + label + "': '" + segs[i].to_string() + "' is null on " + x.engine.ref_of(root));
+        chain.emplace_back(slot, next);
         cur = next;
     }
     throw RqlException("invalid-plan", "empty set target");
@@ -323,19 +369,13 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
                                        (nv.error_detail().empty() ? nv.error_code() : nv.error_detail()));
             Value container;
             Slot slot = resolve(x, item, a.target->segments, container);
-            if (slot.kind == Slot::Member) {
-                if (!slot.owner->member_writable(*slot.member))
-                    throw RqlException("readonly-member", "'" + a.label + "' on " + x.engine.ref_of(item) + " is not writable (read-only member)");
-                auto& policy = x.engine.mutations().can_write;
-                if (policy && !policy(*slot.owner, *slot.member))
-                    throw RqlException("permission-denied", "'" + a.label + "' on " + x.engine.ref_of(item) + " is not writable (denied by host policy)");
-            }
+            check_writable(x, slot, a.label, item, "");
             std::string why;
             auto coerced = coerce(nv, slot.type, slot.nullable, why);
             if (!coerced)
                 throw RqlException("coercion-failed", "cannot assign " + describe_value(nv) + " to '" + a.label + "' (" +
                                                           (slot.type ? slot.type->friendly_name() : std::string("object")) + "): " + why);
-            writes.push_back({item, &a.target->segments, a.label, snapshot(slot.get(container)), *coerced});
+            writes.push_back({item, &a.target->segments, a.label, snapshot(safe_get(slot, container, a.label)), *coerced});
         }
     }
 
@@ -344,15 +384,19 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
         try {
             for (; applied < writes.size(); ++applied) assign(x, writes[applied].item, *writes[applied].segments, writes[applied].new_value);
         } catch (const std::exception& ex) {
+            size_t rollback_failures = 0;
             for (size_t k = applied; k-- > 0;) {
                 try {
                     assign(x, writes[k].item, *writes[k].segments, writes[k].old_value);
                 } catch (...) {
-                    // best effort
+                    ++rollback_failures;
                 }
             }
-            throw RqlException("coercion-failed", "write '" + writes[applied].label + "' failed (" + ex.what() + "); " +
-                                                      std::to_string(applied) + " earlier write(s) were rolled back");
+            std::string rolled = rollback_failures == 0
+                                     ? std::to_string(applied) + " earlier write(s) were rolled back"
+                                     : "rolling back " + std::to_string(applied) + " earlier write(s) FAILED for " +
+                                           std::to_string(rollback_failures) + " of them - state may be partially modified";
+            throw RqlException("coercion-failed", "write '" + writes[applied].label + "' failed (" + ex.what() + "); " + rolled);
         }
     }
 

@@ -196,7 +196,11 @@ export class Compiler {
       case 'ends-with':
         return (x) => tri(stringTest(a(x), b(x), (s, t) => s.toUpperCase().endsWith(t.toUpperCase())));
       case 'matches':
-        return (x) => tri(matches(a(x), b(x)));
+        return (x) => {
+          const r = tri(matches(a(x), b(x)));
+          x.checkTime(); // regexes have no per-match timeout in JS; bound the whole query
+          return r;
+        };
       case 'in':
         return (x) => tri(isIn(x, a(x), b(x)));
       case 'is': {
@@ -342,7 +346,7 @@ export class Compiler {
             const refs = isList(x, v) ? [...elements(v, x.types.infoOf(v))] : [v];
             for (const r of refs) {
               if (typeof r !== 'string') return new ErrorValue('type-mismatch', 'ref() expects reference strings');
-              const res = x.engine.resolveRef(r);
+              const res = x.engine.resolveRef(r, x);
               if (!res.ok) {
                 x.diagnostics.push(diagnostic('error', 'stale-ref', res.error, 're-query to obtain a fresh $ref'));
                 return new ErrorValue('stale-ref', res.error);
@@ -443,6 +447,7 @@ export function member(x: Exec, v: unknown, site: MemberSite): unknown {
       // Implicit map over elements, flattening one level (spec §3).
       const out: unknown[] = [];
       for (const el of elements(v as object, info)) {
+        x.visit();
         const r = member(x, el === undefined ? null : el, site);
         if (r === MISSING) continue;
         if (typeof r === 'object' && r !== null && x.types.infoOf(r).isList) {
@@ -770,6 +775,7 @@ function quantify(x: Exec, v: unknown, pred: Eval | undefined, kind: string): un
     let sawUnknown = false;
     let i = 0;
     for (const raw of els) {
+      x.visit(); // collection-method elements count toward maxVisited/timeout (spec §10)
       const el = raw === undefined ? null : raw;
       let tv: Truth = true;
       if (pred !== undefined) {
@@ -824,6 +830,7 @@ function aggregate(x: Exec, v: unknown, sel: Eval | undefined, kind: string): un
   try {
     const values: unknown[] = [];
     for (const raw of els) {
+      x.visit();
       const el = raw === undefined ? null : raw;
       if (sel !== undefined) {
         x.current = el;

@@ -33,7 +33,7 @@
       "type": "object", "required": ["severity", "code", "message"], "additionalProperties": false,
       "properties": {
         "severity": { "enum": ["error", "warning"] },
-        "code": { "enum": ["syntax-error", "invalid-plan", "version-unsupported", "unknown-source", "unknown-stage", "unknown-function", "unknown-member", "unknown-meta", "type-mismatch", "arity", "div-by-zero", "getter-threw", "stale-ref", "permission-denied", "readonly-member", "coercion-failed", "mutation-limit", "budget-exceeded", "timeout", "output-truncated", "unsupported", "no-match"] },
+        "code": { "enum": ["syntax-error", "invalid-plan", "version-unsupported", "unknown-source", "unknown-stage", "unknown-function", "unknown-member", "unknown-meta", "type-mismatch", "arity", "div-by-zero", "getter-threw", "stale-ref", "permission-denied", "readonly-member", "coercion-failed", "mutation-limit", "budget-exceeded", "timeout", "output-truncated", "unsupported", "no-match", "internal-error"] },
         "message": { "type": "string" },
         "hint": { "type": "string" },
         "at": { "type": "object", "required": ["start", "end"], "properties": { "start": { "type": "integer" }, "end": { "type": "integer" } }, "additionalProperties": false }

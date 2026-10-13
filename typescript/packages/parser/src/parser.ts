@@ -26,6 +26,11 @@ const COMPARE_OPS: ReadonlyMap<string, ExprOp> = new Map<string, ExprOp>([
 ]);
 const WORD_OPS: ReadonlySet<string> = new Set(['contains', 'starts-with', 'ends-with', 'matches']);
 
+/** Maximum expression nesting (spec §11 reference value). */
+export const MAX_NESTING = 100;
+/** Maximum binary operators per query (spec §11 reference value). */
+export const MAX_OPERATORS = 1000;
+
 const STAGE_LIST = 'stages: where select sort first skip count get recurse distinct sum min max avg group-by describe set call';
 
 /** Parses or throws {@link RqlError} (syntax-error / unknown-stage / invalid-plan). */
@@ -54,6 +59,8 @@ function at<T extends Expr>(node: T, start: number, end: number): T {
 class Parser {
   private readonly tokens: Token[];
   private pos = 0;
+  private nesting = 0;
+  private operators = 0;
 
   constructor(private readonly text: string) {
     this.tokens = tokenize(text);
@@ -222,6 +229,7 @@ class Parser {
       let alias: string | undefined;
       if (this.isName(this.peek()) && isPunct(this.peek(1), '=')) {
         alias = this.next().text;
+        if (alias.startsWith('$')) throw this.error(`column alias '${alias}' may not start with '$' (reserved for meta members)`, ft);
         this.next();
       }
       const expr = this.parsePostfix();
@@ -342,11 +350,31 @@ class Parser {
     return this.parseOr();
   }
 
+  /** Counts a binary operator: left-deep chains (a+a+a…) would otherwise build arbitrarily deep trees. */
+  private countOperator(): void {
+    if (++this.operators > MAX_OPERATORS) throw this.error(`more than ${MAX_OPERATORS} operators in one query`, this.peek());
+  }
+
+  /** Runs `f` one nesting level deeper; deeper input is rejected instead of overflowing the stack. */
+  private nested<T>(f: () => T): T {
+    if (++this.nesting > MAX_NESTING) throw this.error(`expression nesting deeper than ${MAX_NESTING} levels`, this.peek());
+    try {
+      return f();
+    } finally {
+      this.nesting--;
+    }
+  }
+
   private parseOr(): Expr {
+    return this.nested(() => this.parseOrCore());
+  }
+
+  private parseOrCore(): Expr {
     const start = this.peek().start;
     let left = this.parseAnd();
     while (isWord(this.peek(), 'or') || isPunct(this.peek(), '||')) {
       this.next();
+      this.countOperator();
       const right = this.parseAnd();
       left = at({ kind: 'op', op: 'or', args: [left, right] }, start, this.prevEnd);
     }
@@ -358,6 +386,7 @@ class Parser {
     let left = this.parseNot();
     while (isWord(this.peek(), 'and') || isPunct(this.peek(), '&&')) {
       this.next();
+      this.countOperator();
       const right = this.parseNot();
       left = at({ kind: 'op', op: 'and', args: [left, right] }, start, this.prevEnd);
     }
@@ -368,7 +397,7 @@ class Parser {
     const start = this.peek().start;
     if (isWord(this.peek(), 'not') || isPunct(this.peek(), '!')) {
       this.next();
-      const inner = this.parseNot();
+      const inner = this.nested(() => this.parseNot());
       return at({ kind: 'op', op: 'not', args: [inner] }, start, this.prevEnd);
     }
     return this.parseComparison();
@@ -421,6 +450,7 @@ class Parser {
     let left = this.parseMultiplicative();
     while (isPunct(this.peek(), '+') || isPunct(this.peek(), '-')) {
       const o = this.next().text as ExprOp;
+      this.countOperator();
       const right = this.parseMultiplicative();
       left = at({ kind: 'op', op: o, args: [left, right] }, start, this.prevEnd);
     }
@@ -432,6 +462,7 @@ class Parser {
     let left = this.parseUnary();
     while (isPunct(this.peek(), '*') || isPunct(this.peek(), '/') || isPunct(this.peek(), '%')) {
       const o = this.next().text as ExprOp;
+      this.countOperator();
       const right = this.parseUnary();
       left = at({ kind: 'op', op: o, args: [left, right] }, start, this.prevEnd);
     }
@@ -442,7 +473,7 @@ class Parser {
     const start = this.peek().start;
     if (isPunct(this.peek(), '-')) {
       this.next();
-      const inner = this.parseUnary();
+      const inner = this.nested(() => this.parseUnary());
       if (inner.kind === 'lit' && typeof inner.value === 'number') return at({ kind: 'lit', value: -inner.value }, start, this.prevEnd);
       return at({ kind: 'op', op: 'neg', args: [inner] }, start, this.prevEnd);
     }

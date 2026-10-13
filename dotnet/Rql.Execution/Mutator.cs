@@ -34,6 +34,9 @@ namespace Rql.Execution
                     throw new RqlException("invalid-plan", $"'{op}' needs objects, not projected rows; remove 'select' before '{op}'");
                 if (it.Value is MapEntry)
                     throw new RqlException("invalid-plan", $"'{op}' cannot target map entries; set the map member with a key path instead (Stats[\"key\"] = ...)");
+                if (it.Value.GetType().IsValueType || TypeModel.IsScalarType(it.Value.GetType()))
+                    throw new RqlException("invalid-plan", $"'{op}' needs objects with identity; '{_x.Types.Info(it.Value.GetType()).ShortName}' items are value copies, so the change would be lost",
+                        null, "set the member from its owner instead, e.g. objects | where … | set Transform.Position.x = 0");
                 list.Add(it.Value);
                 if (list.Count > _x.MaxMutationTargets)
                 {
@@ -78,7 +81,7 @@ namespace Rql.Execution
                         throw new RqlException(slot.DenyCode, $"'{label}' on {_x.Engine.RefOf(item)} is not writable{slot.DenyReason}");
                     if (!Coerce.TryTo(nv, slot.Type, out var coerced, out var why))
                         throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' ({TypeModel.FriendlyName(slot.Type)}): {why}");
-                    writes.Add(new PlannedWrite { Item = item, Segments = target.Segments, Label = label, Old = slot.Get(container), New = coerced });
+                    writes.Add(new PlannedWrite { Item = item, Segments = target.Segments, Label = label, Old = SafeGet(slot, container, label), New = coerced });
                 }
             }
 
@@ -91,12 +94,16 @@ namespace Rql.Execution
                 }
                 catch (Exception ex)
                 {
+                    int rollbackFailures = 0;
                     for (int k = applied - 1; k >= 0; k--)
                     {
-                        try { Assign(writes[k].Item, writes[k].Segments, writes[k].Old); } catch { /* best effort */ }
+                        try { Assign(writes[k].Item, writes[k].Segments, writes[k].Old); } catch { rollbackFailures++; }
                     }
                     var inner = ex is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
-                    throw new RqlException("coercion-failed", $"write '{writes[applied].Label}' failed ({inner.Message}); {applied} earlier write(s) were rolled back");
+                    var rolled = rollbackFailures == 0
+                        ? $"{applied} earlier write(s) were rolled back"
+                        : $"rolling back {applied} earlier write(s) FAILED for {rollbackFailures} of them — state may be partially modified";
+                    throw new RqlException("coercion-failed", $"write '{writes[applied].Label}' failed ({inner.Message}); {rolled}");
                 }
             }
 
@@ -171,7 +178,15 @@ namespace Rql.Execution
             {
                 if (!(container is IDictionary))
                     throw new RqlException("unsupported", $"map type {info.FriendlyName} does not support writes");
+                if (seg.Kind == SegmentKind.Member && (string.Equals(seg.Name, "Count", StringComparison.OrdinalIgnoreCase)))
+                    throw new RqlException("readonly-member", $"'{label}': Count of a map is read-only (use [\"Count\"] to address a key literally named Count)");
                 object? key = seg.Kind == SegmentKind.Member ? seg.Name : seg.Kind == SegmentKind.Key ? seg.Key : seg.Kind == SegmentKind.Index ? (object)(double)seg.Index : null;
+                // Writes address an existing key case-insensitively, like reads do (spec §3); new keys keep the given spelling.
+                if (seg.Kind == SegmentKind.Member && key is string ks && container is IDictionary existing && !existing.Contains(ks))
+                {
+                    foreach (DictionaryEntry de in existing)
+                        if (de.Key is string dk && string.Equals(dk, ks, StringComparison.OrdinalIgnoreCase)) { key = dk; break; }
+                }
                 if (key == null || !Compiler.TryCoerceKey(key, info.KeyType, out var k) || k == null)
                     throw new RqlException("coercion-failed", $"invalid map key in '{label}'");
                 return new MapSlot(k, info.ElementType ?? typeof(object));
@@ -202,16 +217,40 @@ namespace Rql.Execution
         {
             string label = string.Concat(segs.Select(s => s.ToString()));
             object cur = root;
+            var chain = new List<(Slot slot, object value)>();
             for (int i = 0; i < segs.Count; i++)
             {
                 var slot = SlotOf(cur, segs[i], label);
-                if (i == segs.Count - 1) { container = cur; return slot; }
-                var next = slot.Get(cur);
+                if (i == segs.Count - 1)
+                {
+                    // Every value-type copy on the way is written back into its parent: those parent slots
+                    // must be writable and allowed too (readonly struct fields, get-only properties, policy).
+                    for (int j = chain.Count - 1; j >= 0; j--)
+                    {
+                        if (!chain[j].value.GetType().IsValueType) break;
+                        if (!chain[j].slot.Writable(_x))
+                            throw new RqlException(chain[j].slot.DenyCode, $"'{label}' on {_x.Engine.RefOf(root)} is not writable: '{segs[j]}' is a value type held by a non-writable member{chain[j].slot.DenyReason}");
+                    }
+                    container = cur;
+                    return slot;
+                }
+                object? next = SafeGet(slot, cur, label);
                 if (next == null || next is Missing)
                     throw new RqlException("coercion-failed", $"cannot set '{label}': '{segs[i]}' is null on {_x.Engine.RefOf(root)}");
+                chain.Add((slot, next));
                 cur = next;
             }
             throw new InvalidOperationException("empty set target");
+        }
+
+        private static object? SafeGet(Slot slot, object container, string label)
+        {
+            try { return slot.Get(container); }
+            catch (Exception ex)
+            {
+                var inner = ex is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
+                throw new RqlException("getter-threw", $"reading '{label}' failed: {inner.GetType().Name}: {inner.Message}");
+            }
         }
 
         /// <summary>Navigate fresh, write, then write back modified value-type copies up the chain.</summary>

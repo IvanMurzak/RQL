@@ -2,7 +2,7 @@
  * Host-facing RQL runtime over live JS objects (port of dotnet/Rql.Execution/RqlEngine.cs):
  * sources, extension functions/stages, mutation policy, budgets, stable references.
  */
-import { failResult, formatNumber, type Budgets, type JsonObject, type QueryOptions, type QueryPlan, type QueryResult } from '@rql/contracts';
+import { diagnostic, failResult, formatNumber, type Budgets, type JsonObject, type QueryOptions, type QueryPlan, type QueryResult } from '@rql/contracts';
 import { isIdentStart, tryParse } from '@rql/parser';
 import { reachableTypes, typeDescriptor } from './describe.js';
 import { Exec, now } from './exec.js';
@@ -35,7 +35,10 @@ export interface MutationPolicy {
   enabled: boolean;
   /** Optional extra allow-check per (declaring type, member). */
   canWrite?: (type: TypeInfo, member: MemberAccessor) => boolean;
+  /** Default per-request target limit (requests may raise it up to `hardMaxTargets`). */
   maxTargets: number;
+  /** Host ceiling no request can exceed. */
+  hardMaxTargets: number;
 }
 
 export interface EngineDefaults {
@@ -62,7 +65,7 @@ export interface EngineOptions {
 export class RqlEngine {
   readonly types: TypeModel;
   readonly defaults: EngineDefaults = {
-    maxVisited: 200_000,
+    maxVisited: 1_000_000,
     maxRows: 50,
     maxListItems: 20,
     maxDepth: 16,
@@ -73,7 +76,7 @@ export class RqlEngine {
     hardMaxRows: 10_000,
     hardTimeoutMs: 30_000,
   };
-  readonly mutations: MutationPolicy = { enabled: false, maxTargets: 20 };
+  readonly mutations: MutationPolicy = { enabled: false, maxTargets: 20, hardMaxTargets: 1000 };
   runtimeName = 'typescript';
   /** Liveness check for explicitly destroyed objects. Undefined = always alive. */
   isAlive: ((o: object) => boolean) | undefined;
@@ -141,7 +144,15 @@ export class RqlEngine {
       plan = query;
     }
     const x = new Exec(this, budgets, options, plan);
-    const result = new Pipeline(x).run();
+    let result: QueryResult;
+    try {
+      result = new Pipeline(x).run();
+    } catch (e) {
+      // Last line of defence: untrusted queries must never crash the host with a raw exception.
+      const name = e instanceof Error ? e.name : typeof e;
+      const message = e instanceof Error ? e.message : String(e);
+      result = failResult([diagnostic('error', 'internal-error', `${name}: ${message}`, 'this is an RQL runtime bug; please report the query')]);
+    }
     result.stats = { visited: x.visited, membersRead: x.membersRead, elapsedMs: now() - started };
     return result;
   }
@@ -170,6 +181,10 @@ export class RqlEngine {
     const id = ++this.nextHandle;
     this.handles.set(o, id);
     this.handleTargets.set(id, new WeakRef(o));
+    if ((id & 4095) === 0) {
+      // Drop entries whose objects were collected so the table does not grow forever.
+      for (const [k, w] of this.handleTargets) if (w.deref() === undefined) this.handleTargets.delete(k);
+    }
     return id;
   }
 
@@ -231,7 +246,7 @@ export class RqlEngine {
   }
 
   /** Resolves a reference; tolerates copied display forms such as "Enemy#12(Goblin_0012)". */
-  resolveRef(reference: string): RefResolution {
+  resolveRef(reference: string, x?: Exec): RefResolution {
     let ref = reference.trim();
     const cut = ref.search(/[ (\t]/);
     if (cut > 0) ref = ref.slice(0, cut);
@@ -243,7 +258,7 @@ export class RqlEngine {
     if (ref[i] === '@') {
       if (/^\s*[+-]?\d+\s*$/.test(id)) found = this.handleTargets.get(Number(id))?.deref();
     } else {
-      found = this.resolveStableRef !== undefined ? this.resolveStableRef(type, id) : this.searchSources(type, id);
+      found = this.resolveStableRef !== undefined ? this.resolveStableRef(type, id) : this.searchSources(type, id, x);
     }
     if (typeof found !== 'object' || found === null || !this.types.infoOf(found).isA(type)) {
       return { ok: false, error: `reference '${ref}' does not resolve to a live object` };
@@ -252,8 +267,17 @@ export class RqlEngine {
     return { ok: true, value: found };
   }
 
-  /** Fallback ref resolution: bounded walk over owning members of all sources. */
-  private searchSources(type: string, id: string): object | undefined {
+  /** Fallback resolution; nodes count toward the calling query's budgets and results are cached per query. */
+  private searchSources(type: string, id: string, x: Exec | undefined): object | undefined {
+    const key = type + '#' + id;
+    if (x !== undefined && x.refCache.has(key)) return x.refCache.get(key);
+    const found = this.searchSourcesCore(type, id, x);
+    x?.refCache.set(key, found);
+    return found;
+  }
+
+  /** Bounded walk over owning members of all sources. */
+  private searchSourcesCore(type: string, id: string, x: Exec | undefined): object | undefined {
     const visited = new Set<object>();
     const stack: { o: object; depth: number }[] = [];
     for (const s of this.sourceMap.values()) {
@@ -262,6 +286,7 @@ export class RqlEngine {
     }
     let budget = this.defaults.maxVisited;
     while (stack.length > 0 && budget-- > 0) {
+      x?.visit();
       const { o, depth } = stack.pop()!;
       if (visited.has(o)) continue;
       visited.add(o);

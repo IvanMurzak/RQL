@@ -23,7 +23,8 @@ export type DiagnosticCode =
   | 'timeout'
   | 'output-truncated'
   | 'unsupported'
-  | 'no-match';
+  | 'no-match'
+  | 'internal-error';
 
 export type DiagnosticSeverity = 'error' | 'warning';
 

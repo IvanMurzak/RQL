@@ -408,6 +408,110 @@
     ]
    },
    "code": null
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "set",
+      "assign": [
+       {
+        "target": {
+         "path": [
+          "Value"
+         ],
+         "on": {
+          "path": [
+           "Nodes",
+           {
+            "index": 0
+           }
+          ]
+         }
+        },
+        "value": {
+         "lit": 1
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "set",
+      "assign": [
+       {
+        "target": {
+         "path": [
+          {
+           "meta": "type"
+          }
+         ]
+        },
+        "value": {
+         "lit": 1
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "select",
+      "fields": [
+       1
+      ]
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "sort",
+      "keys": [
+       "x"
+      ]
+     }
+    ]
+   },
+   "code": "invalid-plan"
   }
  ]
 }

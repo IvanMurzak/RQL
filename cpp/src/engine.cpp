@@ -76,7 +76,17 @@ const SourceRegistration* Engine::find_source(const std::string& name) const {
 
 QueryResult Engine::execute(const QueryPlan& plan, const Budgets& budgets, const QueryOptions& options) {
     detail::Exec x(*this, budgets, options, plan);
-    QueryResult r = detail::run_pipeline(x);
+    QueryResult r;
+    try {
+        r = detail::run_pipeline(x);
+    } catch (const std::exception& ex) {
+        // Last line of defence: untrusted queries must never crash the host with a raw exception.
+        r = QueryResult::fail({Diagnostic::error("internal-error", std::string("internal error: ") + ex.what(),
+                                                 "this is an RQL runtime bug; please report the query")});
+    } catch (...) {
+        r = QueryResult::fail({Diagnostic::error("internal-error", "internal error: unknown exception",
+                                                 "this is an RQL runtime bug; please report the query")});
+    }
     r.stats.visited = x.visited;
     r.stats.members_read = x.members_read;
     r.stats.elapsed_ms = x.elapsed_ms();
@@ -163,7 +173,7 @@ std::string Engine::ref_of(const Value& v) {
     return type_name_of(v) + "@" + std::to_string(handle_of(v));
 }
 
-Value Engine::search_sources(const std::string& type, const std::string& id, const Value* identity) {
+Value Engine::search_sources(const std::string& type, const std::string& id, const Value* identity, detail::Exec* x) {
     struct IdKey {
         const void* a;
         const void* b;
@@ -187,6 +197,7 @@ Value Engine::search_sources(const std::string& type, const std::string& id, con
     }
     int budget = defaults_.max_visited;
     while (!stack.empty() && budget-- > 0) {
+        if (x) x->visit();
         auto [o, depth] = stack.back();
         stack.pop_back();
         const void *a, *b;
@@ -232,7 +243,7 @@ Value Engine::search_sources(const std::string& type, const std::string& id, con
     return Value::missing();
 }
 
-Value Engine::resolve_ref(const std::string& reference_in, std::string& error) {
+Value Engine::resolve_ref(const std::string& reference_in, std::string& error, detail::Exec* x) {
     std::string reference = reference_in;
     while (!reference.empty() && (reference.front() == ' ' || reference.front() == '\t')) reference.erase(reference.begin());
     while (!reference.empty() && (reference.back() == ' ' || reference.back() == '\t')) reference.pop_back();
@@ -257,10 +268,25 @@ Value Engine::resolve_ref(const std::string& reference_in, std::string& error) {
         }
         if (candidate.is_object()) {
             // Without a liveness hook, only hand out objects that are still reachable from a source.
-            found = is_alive ? candidate : search_sources(type, id, &candidate);
+            found = is_alive ? candidate : search_sources(type, id, &candidate, x);
         }
     } else {
-        found = resolve_stable_ref ? resolve_stable_ref(type, id) : search_sources(type, id, nullptr);
+        if (resolve_stable_ref) {
+            found = resolve_stable_ref(type, id);
+        } else {
+            if (!x) {
+                found = search_sources(type, id, nullptr, nullptr);
+            } else {
+                std::string key = type + "#" + id;
+                auto cached = x->ref_cache.find(key);
+                if (cached != x->ref_cache.end()) {
+                    found = cached->second;
+                } else {
+                    found = search_sources(type, id, nullptr, x);
+                    x->ref_cache.emplace(key, found);
+                }
+            }
+        }
     }
     if (!found.is_object() || !found.type()->is_a(type)) {
         error = "reference '" + reference + "' does not resolve to a live object";

@@ -18,6 +18,10 @@
 
 namespace rql {
 
+namespace detail {
+class Exec;
+}
+
 struct SourceRegistration {
     std::string name;
     std::function<Value()> getter;
@@ -37,10 +41,12 @@ struct MutationPolicy {
     /// Optional extra allow-check per (declaring object type, member) → permission-denied when false.
     std::function<bool(const TypeDescriptor& owner, const MemberDescriptor& member)> can_write;
     int max_targets = 20;
+    /// Host ceiling no request's maxMutationTargets can exceed.
+    int hard_max_targets = 1000;
 };
 
 struct EngineDefaults {
-    int max_visited = 200000;
+    int max_visited = 1000000;
     int max_rows = 50;
     int max_list_items = 20;
     int max_depth = 16;
@@ -100,7 +106,9 @@ public:
     /// Stable reference string: "Type#id" (id member) or session handle "Type@n".
     std::string ref_of(const Value& v);
     /// Resolve a reference string (copied display forms tolerated). On failure returns missing and sets error.
-    Value resolve_ref(const std::string& reference, std::string& error);
+    Value resolve_ref(const std::string& reference, std::string& error) { return resolve_ref(reference, error, nullptr); }
+    /// Internal: fallback-search nodes count as visits of the calling query; results cached per query.
+    Value resolve_ref(const std::string& reference, std::string& error, detail::Exec* x);
     void clear_session_handles();
 
     /// Capability manifest (spec/capability-manifest.schema.json).
@@ -135,7 +143,7 @@ private:
     int64_t next_handle_ = 0;
 
     int64_t handle_of(const Value& v);
-    Value search_sources(const std::string& type, const std::string& id, const Value* identity);
+    Value search_sources(const std::string& type, const std::string& id, const Value* identity, detail::Exec* x);
 };
 
 }  // namespace rql

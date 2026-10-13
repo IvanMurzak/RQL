@@ -79,6 +79,7 @@ public:
     std::vector<std::unique_ptr<MemberSite>> sites;
     std::vector<std::unique_ptr<IsSite>> is_sites;
     std::unordered_map<std::string, std::shared_ptr<std::regex>> regex_cache;
+    std::unordered_map<std::string, Value> ref_cache;  // fallback ref() search results
 
     void visit();
     void check_time() const;

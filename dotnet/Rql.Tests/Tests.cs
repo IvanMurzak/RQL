@@ -237,3 +237,116 @@ namespace Rql.Tests
         }
     }
 }
+
+namespace Rql.Tests
+{
+    using System;
+    using System.Collections.Generic;
+    using Rql.Execution;
+    using Xunit;
+
+    public struct V3 { public float x, y, z; }
+
+    public sealed class GuardHost
+    {
+        public readonly V3 Origin;
+        [RqlReadOnly] public V3 Locked { get; set; }
+        public V3 Policy { get; set; }
+        public V3 GetOnly => default;
+        public V3 Free { get; set; }
+        public Inner Bad => throw new InvalidOperationException("boom");
+        public List<GuardHost> Kids { get; set; } = new List<GuardHost>();
+        public sealed class Inner { public int A { get; set; } }
+    }
+
+    /// <summary>Regression tests for the independent review findings (security + robustness).</summary>
+    public class ReviewRegressionTests
+    {
+        private static RqlEngine Engine(GuardHost h, int maxTargets = 20)
+        {
+            var e = new RqlEngine();
+            e.AddSource("h", () => h);
+            e.AddSource("many", () => { var l = new List<GuardHost>(); for (int i = 0; i < 50; i++) l.Add(new GuardHost()); return l; });
+            e.Mutations.Enabled = true;
+            e.Mutations.MaxTargets = maxTargets;
+            e.Mutations.HardMaxTargets = 30;
+            e.Mutations.CanWrite = (t, m) => m.Name != "Policy";
+            return e;
+        }
+
+        private static QueryResult Mut(RqlEngine e, string q, Budgets? b = null) => e.Execute(q, b, new QueryOptions { AllowMutation = true });
+
+        [Theory]
+        [InlineData("h | set Origin.x = 7", "readonly-member")]
+        [InlineData("h | set Locked.x = 7", "readonly-member")]
+        [InlineData("h | set Policy.x = 7", "permission-denied")]
+        [InlineData("h | set GetOnly.x = 7", "readonly-member")]
+        public void StructWriteBackRespectsParentWritability(string q, string code)
+        {
+            var h = new GuardHost();
+            var r = Mut(Engine(h), q);
+            Assert.False(r.Ok);
+            Assert.Equal(code, r.Diagnostics[0].Code);
+            Assert.Equal(0f, h.Origin.x);
+            Assert.Equal(0f, h.Locked.x);
+            Assert.Equal(0f, h.Policy.x);
+        }
+
+        [Fact]
+        public void StructWriteBackStillWorksWhenAllowed()
+        {
+            var h = new GuardHost();
+            Assert.True(Mut(Engine(h), "h | set Free.x = 7").Ok);
+            Assert.Equal(7f, h.Free.x);
+        }
+
+        [Fact]
+        public void GetterFailureDuringSetIsADiagnostic()
+        {
+            var r = Mut(Engine(new GuardHost()), "h | set Bad.A = 1");
+            Assert.False(r.Ok);
+            Assert.Equal("getter-threw", r.Diagnostics[0].Code);
+        }
+
+        [Fact]
+        public void RequestCannotExceedHardMutationCeiling()
+        {
+            var e = Engine(new GuardHost());
+            var r = Mut(e, "many | set Free.x = 1", new Budgets { MaxMutationTargets = 1000 });
+            Assert.False(r.Ok);
+            Assert.Equal("mutation-limit", r.Diagnostics[0].Code);
+        }
+
+        [Theory]
+        [InlineData(200)]
+        [InlineData(20000)]
+        public void DeepNestingIsASyntaxErrorNotACrash(int depth)
+        {
+            var q = "h | where " + new string('(', depth) + "1" + new string(')', depth) + " == 1";
+            var r = Engine(new GuardHost()).Execute(q);
+            Assert.False(r.Ok);
+            Assert.Equal("syntax-error", r.Diagnostics[0].Code);
+            var n = Engine(new GuardHost()).Execute("h | where " + string.Concat(System.Linq.Enumerable.Repeat("not ", depth)) + "true");
+            Assert.Equal("syntax-error", n.Diagnostics[0].Code);
+        }
+
+        [Fact]
+        public void CollectionMethodsAreBudgeted()
+        {
+            var sb = Rql.Sample.WorldGenerator.Create(1, Rql.Sample.WorldSize.Large);
+            var host = new Rql.Sample.SampleHost(sb);
+            var r = host.Query("world | select c=(ItemCatalog.count(ItemCatalog.count(ItemCatalog.count(true) > 0) > 0))", new Budgets { TimeoutMs = 500 });
+            Assert.False(r.Ok);
+            Assert.Contains(r.Diagnostics[0].Code, new[] { "timeout", "budget-exceeded" });
+            Assert.True(r.Stats.ElapsedMs < 5000, "elapsed " + r.Stats.ElapsedMs);
+        }
+
+        [Fact]
+        public void TableRenderingSurvivesNonStringRefColumns()
+        {
+            var r = Engine(new GuardHost()).Execute("h | select x=Free");
+            Assert.True(r.Ok);
+            Assert.NotNull(AgentFormat.Render(r, OutputFormat.Table));
+        }
+    }
+}

@@ -201,7 +201,8 @@ std::optional<int> rql_compare(const Value& a, const Value& b) {
 
 bool distinct_equal(const Value& a, const Value& b) {
     if (a.is_null() || b.is_null()) return a.is_null() && b.is_null();
-    if (a.is_number() && b.is_number()) return a.as_number() == b.as_number();
+    if (a.is_number() && b.is_number())  // NaN groups with NaN
+        return a.as_number() == b.as_number() || (std::isnan(a.as_number()) && std::isnan(b.as_number()));
     if (a.is_enum() && b.is_enum()) return a.type() == b.type() && a.enum_value() == b.enum_value();
     if (a.is_string() && b.is_string()) return a.as_string() == b.as_string();
     if (a.is_bool() && b.is_bool()) return a.as_bool() == b.as_bool();
@@ -228,6 +229,7 @@ size_t distinct_hash(const Value& v) {
         case Value::Kind::Number: {
             double d = v.as_number();
             if (d == 0) d = 0;  // -0 == 0
+            if (std::isnan(d)) return 0x7ff8;
             return std::hash<double>()(d);
         }
         case Value::Kind::String: return std::hash<std::string>()(v.as_string());
@@ -365,6 +367,7 @@ Value member_of(Exec& x, const Value& v, MemberSite& site) {
             auto& l = v.list();
             size_t n = l.size();
             for (size_t i = 0; i < n; ++i) {
+                x.visit();
                 Value r = member_of(x, l.at(i), site);
                 if (r.is_missing()) continue;
                 if (r.is_list()) {
@@ -723,7 +726,13 @@ Eval Compiler::compile_op_args(const std::string& op, const ExprPtr& ae, const E
     if (op == "contains") return [a, b](Exec& x) { Value l = a(x); return tri(contains_op(l, b(x))); };
     if (op == "starts-with") return [a, b](Exec& x) { Value l = a(x); return tri(string_test(l, b(x), true)); };
     if (op == "ends-with") return [a, b](Exec& x) { Value l = a(x); return tri(string_test(l, b(x), false)); };
-    if (op == "matches") return [a, b](Exec& x) { Value l = a(x); return tri(matches_op(x, l, b(x))); };
+    if (op == "matches")
+        return [a, b](Exec& x) {
+            Value l = a(x);
+            Value r = tri(matches_op(x, l, b(x)));
+            x.check_time();  // a per-match bound alone does not bound the whole query
+            return r;
+        };
     if (op == "in") return [a, b](Exec& x) { Value l = a(x); return tri(in_op(l, b(x))); };
     if (op == "is") {
         IsSite* site = nullptr;
@@ -823,6 +832,7 @@ Value quantify(Exec& x, const Value& v, const Eval* pred, const std::string& kin
     bool saw_unknown = false;
     int64_t i = 0;
     for (auto& el : els) {
+        x.visit();  // collection-method elements count toward maxVisited/timeout (spec §10)
         std::optional<bool> t = true;
         if (pred) {
             x.current = el;
@@ -857,6 +867,7 @@ Value aggregate(Exec& x, const Value& v, const Eval* sel, const std::string& kin
     std::vector<Value> values;
     values.reserve(els.size());
     for (auto& el : els) {
+        x.visit();
         if (sel) {
             x.current = el;
             x.current_path = nullptr;
@@ -986,7 +997,7 @@ Eval Compiler::compile_function(const Expr& c) {
                 for (auto& r : refs) {
                     if (!r.is_string()) return Value::error("type-mismatch", "ref() expects reference strings");
                     std::string err;
-                    Value o = x.engine.resolve_ref(r.as_string(), err);
+                    Value o = x.engine.resolve_ref(r.as_string(), err, &x);
                     if (o.is_missing()) {
                         x.diagnostics.push_back(Diagnostic::error("stale-ref", err, "re-query to obtain a fresh $ref"));
                         return Value::error("stale-ref", err);

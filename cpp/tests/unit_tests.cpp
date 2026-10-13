@@ -129,6 +129,10 @@ struct Counter {
     void Secret() {}
 };
 
+struct Frame {
+    conformance::Vec2 Origin;
+};
+
 struct Holder {
     std::unordered_map<std::string, int> Scores;
     std::vector<std::shared_ptr<Counter>> Counters;
@@ -176,6 +180,16 @@ void engine_tests() {
         h.Counters.push_back(c);
     }
     h.Points = {{1, 2}, {3, 4}};
+
+    reg.object<Frame>("Frame").member("Origin", &Frame::Origin).readonly();
+    Frame frame;
+    {
+        rql::Engine fe(reg);
+        fe.add_object_source("f", &frame);
+        fe.mutations().enabled = true;
+        auto fr = run(fe, R"({"rql":"0.1","source":{"path":["f"]},"stages":[{"op":"set","assign":[{"target":{"path":["Origin","x"]},"value":{"lit":1}}]}]})", true);
+        check(!fr.ok && first_code(fr) == "readonly-member" && frame.Origin.x == 0, "set through read-only struct parent → readonly-member");
+    }
 
     rql::Engine e(reg);
     e.add_object_source("h", &h);
@@ -277,6 +291,40 @@ void engine_tests() {
     req.set("text", "h | count");
     r = e.execute_request(req);
     check(!r.ok && first_code(r) == "unsupported", "text request → unsupported");
+
+    // hostile nesting is rejected, not a stack overflow
+    {
+        std::string deep;
+        for (int i = 0; i < 5000; ++i) deep += "{\"op\":\"not\",\"args\":[";
+        deep += "{\"lit\":true}";
+        for (int i = 0; i < 5000; ++i) deep += "]}";
+        r = e.execute_json(R"({"rql":"0.1","source":{"path":["h"]},"stages":[{"op":"where","pred":)" + deep + "}]}");
+        check(!r.ok && first_code(r) == "invalid-plan", "deep plan nesting → invalid-plan");
+    }
+
+    // throwing host extension stage → internal-error (never propagates)
+    e.add_stage("demo.boom", [](const std::vector<rql::Value>&, const std::vector<rql::ArgEvaluator>&,
+                                const std::map<std::string, rql::ArgEvaluator>&) -> std::vector<rql::Value> {
+        throw std::runtime_error("host bug");
+    });
+    r = run(e, R"({"rql":"0.1","source":{"path":["h"]},"stages":[{"op":"demo.boom"}]})");
+    check(!r.ok && first_code(r) == "internal-error", "throwing extension → internal-error");
+
+    // request maxMutationTargets is capped by the host ceiling
+    e.mutations().hard_max_targets = 2;
+    {
+        rql::Budgets mb;
+        mb.max_mutation_targets = 100;
+        rql::QueryOptions mo;
+        mo.allow_mutation = true;
+        r = e.execute_json(R"({"rql":"0.1","source":{"path":["h","Counters"]},"stages":[{"op":"set","assign":[{"target":{"path":["Count"]},"value":{"lit":1}}]}]})", mb, mo);
+        check(!r.ok && first_code(r) == "mutation-limit", "hard_max_targets caps request budget");
+    }
+    e.mutations().hard_max_targets = 1000;
+
+    // value-type items cannot be mutation targets
+    r = run(e, R"({"rql":"0.1","source":{"path":["h","Points"]},"stages":[{"op":"set","assign":[{"target":{"path":["x"]},"value":{"lit":1}}]}]})", true);
+    check(!r.ok && first_code(r) == "invalid-plan", "struct items rejected as set targets");
 
     // timeout budget
     rql::Budgets b;

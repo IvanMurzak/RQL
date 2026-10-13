@@ -1,0 +1,46 @@
+{
+ "run": "final-hardened-dev",
+ "name": "final-hardened",
+ "split": "dev",
+ "git": "110d6da",
+ "config": {
+  "Name": "final-hardened",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-flash",
+  "ReasoningEffort": "none",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v4",
+  "Format": "table",
+  "Toolset": "rql",
+  "SchemaInPrompt": true,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 3,
+  "Repeats": 3
+ },
+ "n": 186,
+ "successes": 183,
+ "successRate": 0.9838709677419355,
+ "ci95": [
+  0.953659015789476,
+  0.9944998703556052
+ ],
+ "costUsd": 0.04415316,
+ "costPerSuccess": 0.00024127409836065573,
+ "meanTotalTokens": 8011.403225806452,
+ "meanCompletionTokens": 217.86559139784947,
+ "meanToolCalls": 2.0698924731182795,
+ "meanToolErrors": 0.06989247311827956,
+ "meanToolResultChars": 546.5806451612904,
+ "medianWallSec": 2.77701135,
+ "p95WallSec": 6.466412200000001,
+ "cacheHitRatio": 0.9273053632800266,
+ "unintendedChangeTasks": 0,
+ "failures": [
+  "trav-asset-closure@11",
+  "trav-asset-closure@12"
+ ]
+}

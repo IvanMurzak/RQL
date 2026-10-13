@@ -1,7 +1,7 @@
 # Feature matrix
 
-Conformance status (latest local run): **.NET 474/474** golden vectors (compiled and reflection
-accessors) · **TypeScript 474/474** · **C++ 305/305 plan vectors, 28 skipped** (text-only cases; no parser
+Conformance status (latest local run): **.NET 496/496** golden checks (compiled and reflection
+accessors) · **TypeScript 496/496** · **C++ 322 passed, 33 skipped** (text-only cases; no parser
 by design, ADR-0003). Details: [TypeScript](feature-matrix-typescript.md), [C++](feature-matrix-cpp.md).
 
 | Feature | .NET | TS | C++ |

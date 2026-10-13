@@ -286,6 +286,7 @@ const Json& required(const Json& obj, const char* name, const std::string& ctx) 
 }
 
 void allow_only(const Json& obj, const std::string& ctx, std::initializer_list<const char*> names) {
+    if (!obj.is_object()) invalid(ctx + " must be an object");
     for (size_t i = 0; i < obj.size(); ++i) {
         const std::string& k = obj.key(i);
         bool ok = false;
@@ -299,7 +300,9 @@ Literal read_literal(const Json& v, const std::string& ctx) {
     switch (v.type()) {
         case Json::Type::Null: return Literal::null();
         case Json::Type::Bool: return Literal::boolean(v.as_bool());
-        case Json::Type::Number: return Literal::number(v.as_number());
+        case Json::Type::Number:
+            if (!std::isfinite(v.as_number())) invalid(ctx + " number is out of range");
+            return Literal::number(v.as_number());
         case Json::Type::String: return Literal::string(v.as_string());
         default: invalid(ctx + " must be a scalar literal");
     }
@@ -466,8 +469,12 @@ Stage read_stage(const Json& s) {
                 if (!a.is_object()) invalid("assignment must be an object");
                 allow_only(a, "assignment", {"target", "value"});
                 ExprPtr target = decode_expr(required(a, "target", "assignment"));
-                if (target->kind != ExprKind::Path || target->segments.empty())
-                    invalid("assignment.target must be a non-empty path");
+                bool meta = false;
+                if (target->kind == ExprKind::Path)
+                    for (auto& sg : target->segments)
+                        if (sg.kind == SegmentKind::Meta) meta = true;
+                if (target->kind != ExprKind::Path || target->segments.empty() || target->on || meta)
+                    invalid("assignment.target must be a non-empty member path relative to the item (no 'on', no meta segments)");
                 st.assign.push_back({target, decode_expr(required(a, "value", "assignment"))});
             }
             break;
@@ -487,7 +494,21 @@ Stage read_stage(const Json& s) {
 
 }  // namespace
 
+namespace {
+thread_local int g_expr_depth = 0;
+struct DepthGuard {
+    DepthGuard() {
+        if (++g_expr_depth > 128) {
+            --g_expr_depth;
+            invalid("expression nesting exceeds 128 levels");
+        }
+    }
+    ~DepthGuard() { --g_expr_depth; }
+};
+}  // namespace
+
 ExprPtr decode_expr(const Json& e) {
+    DepthGuard guard;
     if (!e.is_object()) invalid("expression must be an object");
     if (const Json* lit = e.find("lit")) {
         allow_only(e, "lit expression", {"lit"});
@@ -552,7 +573,7 @@ QueryPlan decode_plan(const Json& root) {
 QueryPlan decode_plan(std::string_view json_text) {
     Json j;
     std::string err;
-    if (!Json::try_parse(json_text, j, err)) invalid("plan is not valid JSON: " + err);
+    if (!Json::try_parse(json_text, j, err, 256)) invalid("plan is not valid JSON: " + err);
     return decode_plan(j);
 }
 

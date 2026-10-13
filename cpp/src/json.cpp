@@ -280,7 +280,7 @@ namespace {
 
 class Parser {
 public:
-    explicit Parser(std::string_view t) : t_(t) {}
+    Parser(std::string_view t, int max_depth) : t_(t), max_depth_(max_depth) {}
 
     Json run() {
         skip_ws();
@@ -292,6 +292,7 @@ public:
 
 private:
     std::string_view t_;
+    int max_depth_;
     size_t i_ = 0;
 
     [[noreturn]] void fail(const std::string& m) const { throw JsonParseError(m, i_); }
@@ -309,7 +310,7 @@ private:
     }
 
     Json value(int depth) {
-        if (depth > 512) fail("nesting too deep");
+        if (depth >= max_depth_) fail("nesting too deep");
         if (i_ >= t_.size()) fail("unexpected end of input");
         char c = t_[i_];
         switch (c) {
@@ -496,11 +497,11 @@ private:
 
 }  // namespace
 
-Json Json::parse(std::string_view text) { return Parser(text).run(); }
+Json Json::parse(std::string_view text, int max_depth) { return Parser(text, max_depth).run(); }
 
-bool Json::try_parse(std::string_view text, Json& out, std::string& error) {
+bool Json::try_parse(std::string_view text, Json& out, std::string& error, int max_depth) {
     try {
-        out = parse(text);
+        out = parse(text, max_depth);
         return true;
     } catch (const JsonParseError& e) {
         error = e.what();
