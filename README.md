@@ -18,10 +18,11 @@ $ref|Name|Health|MaxHealth|Faction|Transform.Position
 Enemy#233|Wraith_0232|1|90|Undead|{x:207.96,y:25.52,z:1.02}
 ```
 
-**Measured outcome** (DeepSeek V4.1-Flash agent, hidden-oracle tasks, details in [`RESULTS.md`](RESULTS.md)):
-on held-out tasks, success rose from **81.5% to 98.8%** between the first and the final language/prompt
-iteration. Cost per successful task fell to **$0.00036**. A conventional reflection-tool baseline on the same
-tasks is far behind (see RESULTS).
+**Measured outcome** (DeepSeek V4.1-Flash agent, hidden-oracle tasks; details and caveats in
+[`RESULTS.md`](RESULTS.md)): on **held-out** tasks the final language + prompt reaches **100% (81/81)**,
+up from **81.5%** for the first iteration, at **$0.00023 per successful task** and 1.9 tool calls per task.
+A conventional reflection-tool baseline (find / dump-object-as-JSON / set / call) on the same tasks scores 91.4% at
+**22× the cost per success** and 34 tool calls per task.
 
 ## Layout
 

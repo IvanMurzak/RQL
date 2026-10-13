@@ -1,0 +1,18 @@
+{
+  "name": "final",
+  "baseUrl": "https://api.deepseek.com",
+  "model": "deepseek-flash",
+  "reasoningEffort": "none",
+  "temperature": 0,
+  "maxSteps": 12,
+  "maxTokensPerCall": 4096,
+  "timeoutSeconds": 120,
+  "prompt": "v4",
+  "format": "table",
+  "toolset": "rql",
+  "schemaInPrompt": true,
+  "maxRows": 50,
+  "parallel": 6,
+  "budgetUsd": 3,
+  "repeats": 3
+}

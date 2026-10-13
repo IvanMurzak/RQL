@@ -1,0 +1,50 @@
+{
+ "run": "legacy-holdout",
+ "name": "legacy-tools",
+ "split": "holdout",
+ "git": "47458cb",
+ "config": {
+  "Name": "legacy-tools",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-flash",
+  "ReasoningEffort": "none",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v2",
+  "Format": "table",
+  "Toolset": "legacy",
+  "SchemaInPrompt": false,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 3,
+  "Repeats": 3
+ },
+ "n": 81,
+ "successes": 74,
+ "successRate": 0.9135802469135802,
+ "ci95": [
+  0.8321989792572,
+  0.9575079569627674
+ ],
+ "costUsd": 0.3843317969999999,
+ "costPerSuccess": 0.0051936729324324315,
+ "meanTotalTokens": 125565.88888888889,
+ "meanCompletionTokens": 2076.3333333333335,
+ "meanToolCalls": 33.97530864197531,
+ "meanToolErrors": 1.0123456790123457,
+ "meanToolResultChars": 74738.82716049382,
+ "medianWallSec": 9.2488665,
+ "p95WallSec": 35.5408669,
+ "cacheHitRatio": 0.8276552402992245,
+ "unintendedChangeTasks": 0,
+ "failures": [
+  "agg-paid-revenue@21",
+  "agg-paid-revenue@22",
+  "find-labeled-props@21",
+  "find-labeled-props@22",
+  "find-targeting-player@21",
+  "trav-descendant-count@21"
+ ]
+}

@@ -1,31 +1,31 @@
 world size=Large objects=14437 runtime=10.0.13 os=Unix cpus=12
 
 query                mode        median ms    p90 ms   alloc KB   visited   members    out B
-count-all            Compiled        0.889     0.922      179.6     14437         0       53
-                     Reflection      0.889     0.949      179.6     14437         0       53
-filter-type-scalar   Compiled        0.535     0.637      298.1     14437      4818       51
-                     Reflection      0.555     0.698      298.1     14437      4818       51
-filter-nested-any    Compiled        0.840     0.852      230.6     14437     16384       51
-                     Reflection      0.897     0.913      230.6     14437     16384       51
-top-n                Compiled        0.536     0.543      287.4     14437      3902      462
-                     Reflection      0.556     0.565      287.4     14437      3902      462
-first-lazy           Compiled        0.040     0.041       29.9      1267         3      111
-                     Reflection      0.040     0.041       29.9      1267         3      111
-group-by             Compiled        0.723     0.731      277.1     14437      3882      132
-                     Reflection      0.746     0.761      277.1     14437      3882      132
-project-50           Compiled        1.121     1.296     1326.8     14437     16204     3450
-                     Reflection      1.217     1.383     1326.8     14437     16204     3450
-recurse-children     Compiled        0.765     1.821     2646.7     14445     14446       53
-                     Reflection      0.825     1.901     2646.7     14445     14446       53
-recurse-generic      Compiled        6.783     9.895     9035.2     85464     76201       53
-                     Reflection      7.045    10.130     9035.2     85464     76201       53
-path-tracking        Compiled        0.062     0.063      276.4       722      1361      471
-                     Reflection      0.067     0.068      276.4       722      1361      471
-string-ops           Compiled        1.278     1.293      183.1     14437     28477       51
-                     Reflection      1.405     1.422      183.1     14437     28477       51
-dict-access          Compiled        1.379     1.615     2104.1     41404     21795       51
-                     Reflection      1.463     1.676     2104.1     41404     21795       51
-app-join             Compiled        0.085     0.088       60.0      2030      3085       65
+count-all            Compiled        0.872     0.915      179.6     14437         0       53
+                     Reflection      0.874     0.920      179.6     14437         0       53
+filter-type-scalar   Compiled        0.503     0.507      298.0     14437      4818       51
+                     Reflection      0.524     0.531      298.0     14437      4818       51
+filter-nested-any    Compiled        2.078     2.184      504.3     14437     16384       51
+                     Reflection      2.137     2.262      498.0     14437     16384       51
+top-n                Compiled        0.513     0.521      287.4     14437      3902      462
+                     Reflection      0.533     0.547      287.4     14437      3902      462
+first-lazy           Compiled        0.037     0.039       29.9      1267         3      111
+                     Reflection      0.037     0.039       29.9      1267         3      111
+group-by             Compiled        0.694     0.703      277.1     14437      3882      132
+                     Reflection      0.711     0.727      277.1     14437      3882      132
+project-50           Compiled        1.086     1.234     1326.8     14437     16204     3450
+                     Reflection      1.185     1.336     1326.8     14437     16204     3450
+recurse-children     Compiled        0.964     2.120     2646.7     14445     14446       53
+                     Reflection      0.920     2.043     2646.7     14445     14446       53
+recurse-generic      Compiled        7.064    10.329     9035.4     85464     76201       53
+                     Reflection      7.366    10.525     9035.4     85464     76201       53
+path-tracking        Compiled        0.061     0.064      276.4       722      1363      471
+                     Reflection      0.067     0.069      276.4       722      1363      471
+string-ops           Compiled        1.223     1.306      183.1     14437     28477       51
+                     Reflection      1.347     1.417      183.1     14437     28477       51
+dict-access          Compiled        1.351     1.560     2104.1     41404     21795       51
+                     Reflection      1.445     1.647     2104.1     41404     21795       51
+app-join             Compiled        0.084     0.085       60.0      2030      3085       65
                      Reflection      0.097     0.098       60.0      2030      3085       65
 
-naive full-graph JSON (System.Text.Json, ReferenceHandler.Preserve): 7.70 MB, 61.5 ms, 44.8 MB allocated
+naive full-graph JSON (System.Text.Json, ReferenceHandler.Preserve): 7.70 MB, 61.2 ms, 44.8 MB allocated

@@ -1,0 +1,47 @@
+{
+ "run": "pro-holdout",
+ "name": "pro-tool-schema",
+ "split": "holdout",
+ "git": "47458cb",
+ "config": {
+  "Name": "pro-tool-schema",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-v4-pro",
+  "ReasoningEffort": "none",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v4",
+  "Format": "table",
+  "Toolset": "rql",
+  "SchemaInPrompt": false,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 3,
+  "Repeats": 3
+ },
+ "n": 81,
+ "successes": 75,
+ "successRate": 0.9259259259259259,
+ "ci95": [
+  0.8476694394931942,
+  0.965610838106474
+ ],
+ "costUsd": 0.09461724799999996,
+ "costPerSuccess": 0.001261563306666666,
+ "meanTotalTokens": 7716.148148148148,
+ "meanCompletionTokens": 256.14814814814815,
+ "meanToolCalls": 3.074074074074074,
+ "meanToolErrors": 0.1728395061728395,
+ "meanToolResultChars": 3046.1111111111113,
+ "medianWallSec": 5.2158822,
+ "p95WallSec": 8.9869576,
+ "cacheHitRatio": 0.8956144705921292,
+ "unintendedChangeTasks": 0,
+ "failures": [
+  "agg-most-enemies-scene@22",
+  "trav-descendant-count@21",
+  "trav-descendant-count@22"
+ ]
+}
