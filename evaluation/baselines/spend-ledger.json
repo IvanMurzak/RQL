@@ -1,10 +1,10 @@
 {
   "CapUsd": 25,
-  "SpentUsd": 0.23765422200000005,
+  "SpentUsd": 0.45845803000000007,
   "Runs": [
     {
       "id": "probe-20261013T203447Z",
-      "costUsd": 2.25E-06
+      "costUsd": 2.25e-06
     },
     {
       "id": "20261013-203453-baseline-dev",
@@ -33,6 +33,34 @@
       "split": "dev",
       "taskRuns": 186,
       "costUsd": 0.072162
+    },
+    {
+      "id": "20261013-204837-e3-scope-escapes-dev",
+      "config": "e3-scope-escapes",
+      "split": "dev",
+      "taskRuns": 186,
+      "costUsd": 0.072605
+    },
+    {
+      "id": "20261013-205404-current-e3-holdout",
+      "config": "current-e3",
+      "split": "holdout",
+      "taskRuns": 81,
+      "costUsd": 0.035834
+    },
+    {
+      "id": "20261013-205230-baseline-holdout (baseline worktree @8b53dd4)",
+      "config": "baseline",
+      "split": "holdout",
+      "taskRuns": 81,
+      "costUsd": 0.042022
+    },
+    {
+      "id": "20261013-205553-baseline-dev",
+      "config": "baseline",
+      "split": "dev",
+      "taskRuns": 186,
+      "costUsd": 0.070343
     }
   ]
 }

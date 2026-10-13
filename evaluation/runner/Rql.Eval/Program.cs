@@ -62,7 +62,9 @@ namespace Rql.Eval
                 if (args[i].StartsWith("--"))
                 {
                     var k = args[i].Substring(2);
-                    d[k] = i + 1 < args.Length && !args[i + 1].StartsWith("--") ? args[++i] : "true";
+                    var v = i + 1 < args.Length && !args[i + 1].StartsWith("--") ? args[++i] : "true";
+                    // --set may repeat; values accumulate separated by '\n'.
+                    d[k] = k == "set" && d.TryGetValue(k, out var prev) ? prev + "\n" + v : v;
                 }
                 else positional.Add(args[i]);
             }
@@ -77,9 +79,13 @@ namespace Rql.Eval
             {
                 // CLI overrides for quick one-factor experiments: --set Key=Value
                 if (kv.Key != "set") continue;
-                var eq = kv.Value.IndexOf('=');
-                var prop = typeof(EvalConfig).GetProperty(kv.Value.Substring(0, eq), System.Reflection.BindingFlags.IgnoreCase | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)!;
-                prop.SetValue(cfg, Convert.ChangeType(kv.Value.Substring(eq + 1), prop.PropertyType, CultureInfo.InvariantCulture));
+                foreach (var assignment in kv.Value.Split('\n'))
+                {
+                    var eq = assignment.IndexOf('=');
+                    var prop = typeof(EvalConfig).GetProperty(assignment.Substring(0, eq), System.Reflection.BindingFlags.IgnoreCase | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+                               ?? throw new ArgumentException("unknown config key " + assignment.Substring(0, eq));
+                    prop.SetValue(cfg, Convert.ChangeType(assignment.Substring(eq + 1), prop.PropertyType, CultureInfo.InvariantCulture));
+                }
             }
             var env = Environment.GetEnvironmentVariable("RQL_EVAL_BASE_URL");
             if (!string.IsNullOrWhiteSpace(env)) cfg.BaseUrl = env!;

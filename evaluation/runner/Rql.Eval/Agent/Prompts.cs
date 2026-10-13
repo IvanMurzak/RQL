@@ -37,9 +37,24 @@ Results come back as compact rows (header line, then col|col). Long results are 
 
 " + Rules;
 
+        private const string RulesV2 =
+            "Rules: be efficient — one precise query beats many exploratory ones; submit as soon as the result answers the task. " +
+            "If the object or data the task asks about does not exist, answer NONE. " +
+            "Only perform exactly the change requested. If no member or method does exactly that (read-only member, missing operation), " +
+            "do NOT approximate it with other or destructive operations: change nothing and answer \"IMPOSSIBLE: <reason>\". " +
+            "Always finish by calling submit_answer exactly once.";
+
+        /// <summary>v2 — v1 + navigation guidance ($depth, select is projection only, map keys in sources) + exact-change safety rule.</summary>
+        public static readonly string V2 = V1.Substring(0, V1.IndexOf("Rules:", StringComparison.Ordinal))
+            .Replace("Meta: $ (current item), $ref (stable id such as Enemy#12), $type, $path.",
+                     "Meta: $ (current item), $ref (stable id such as Enemy#12), $type, $path, $depth (depth inside recurse; 0 = start item).")
+            .Replace("Results come back as compact rows", "Navigate with paths in the source or with get (world.Assets[\"prefab/house\"].Dependencies, world.LocalPlayer.Inventory.Slots | get Item); select only projects output columns. Inside .any(...) etc. bare names refer to the element, falling back to the outer item.\nResults come back as compact rows")
+            + RulesV2;
+
         public static string Get(string variant) => variant switch
         {
             "v1" => V1,
+            "v2" => V2,
             _ => throw new ArgumentException("unknown prompt variant " + variant),
         };
 
