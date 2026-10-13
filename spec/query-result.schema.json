@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rql.dev/schema/0.1/query-result.json",
+  "title": "RQL QueryResult v0.1",
+  "type": "object",
+  "required": ["rql", "ok"],
+  "additionalProperties": false,
+  "properties": {
+    "rql": { "const": "0.1" },
+    "ok": { "type": "boolean", "description": "false when any error diagnostic was produced; no rows/value are returned then" },
+    "kind": { "enum": ["rows", "items", "scalar", "schema"] },
+    "columns": { "type": "array", "items": { "type": "string" } },
+    "rows": { "type": "array", "items": { "type": "array" } },
+    "items": { "type": "array" },
+    "value": {},
+    "types": { "type": "array", "items": { "$ref": "capability-manifest.schema.json#/$defs/typeDescriptor" } },
+    "total": { "type": "integer", "minimum": 0 },
+    "truncated": { "type": "boolean" },
+    "dryRun": { "type": "boolean" },
+    "diagnostics": { "type": "array", "items": { "$ref": "#/$defs/diagnostic" } },
+    "stats": {
+      "type": "object",
+      "description": "Runtime metrics; informational, not part of conformance equality.",
+      "properties": {
+        "visited": { "type": "integer" },
+        "membersRead": { "type": "integer" },
+        "elapsedMs": { "type": "number" }
+      }
+    }
+  },
+  "$defs": {
+    "diagnostic": {
+      "type": "object", "required": ["severity", "code", "message"], "additionalProperties": false,
+      "properties": {
+        "severity": { "enum": ["error", "warning"] },
+        "code": { "enum": ["syntax-error", "invalid-plan", "version-unsupported", "unknown-source", "unknown-stage", "unknown-function", "unknown-member", "unknown-meta", "type-mismatch", "arity", "div-by-zero", "getter-threw", "stale-ref", "permission-denied", "readonly-member", "coercion-failed", "mutation-limit", "budget-exceeded", "timeout", "output-truncated", "unsupported"] },
+        "message": { "type": "string" },
+        "hint": { "type": "string" },
+        "at": { "type": "object", "required": ["start", "end"], "properties": { "start": { "type": "integer" }, "end": { "type": "integer" } }, "additionalProperties": false }
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.1;net8.0</TargetFrameworks>
+    <RootNamespace>Rql</RootNamespace>
+    <Description>RQL QueryPlan / QueryResult contracts and canonical JSON codec.</Description>
+  </PropertyGroup>
+</Project>

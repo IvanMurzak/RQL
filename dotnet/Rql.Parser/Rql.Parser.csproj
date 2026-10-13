@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.1;net8.0</TargetFrameworks>
+    <RootNamespace>Rql</RootNamespace>
+    <Description>RQL text parser (syntax only) producing canonical QueryPlans.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Rql.Contracts\Rql.Contracts.csproj" />
+  </ItemGroup>
+</Project>

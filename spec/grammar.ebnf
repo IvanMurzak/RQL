@@ -1,0 +1,81 @@
+(* RQL v0.1 — normative core syntax.
+   Notation: ISO-ish EBNF. { x } = zero or more, [ x ] = optional, "x" = terminal.
+   Whitespace (space, tab, CR, LF) separates tokens and is otherwise insignificant,
+   EXCEPT where noted for identifiers with hyphens.
+
+   The parser is syntax-only: it never knows domain classes, registered sources or
+   which stages/functions exist. Unknown stage and function names are accepted
+   structurally; the binder/executor decides whether they exist and are allowed. *)
+
+query           = source , { "|" , stage } ;
+source          = postfix ;                       (* e.g. world.scenes[0].objects, ref("GameObject#12") *)
+
+(* ---------- stages ---------- *)
+stage           = where | select | sort | first | skip | count | get | recurse
+                | distinct | aggregate | group_by | set | call | describe
+                | generic_stage ;
+
+where           = "where" , expr ;
+select          = "select" , select_item , { [ "," ] , select_item } ;
+select_item     = [ name , "=" ] , postfix ;     (* complex expressions need parentheses *)
+sort            = "sort" , sort_key , { [ "," ] , sort_key } ;
+sort_key        = postfix , [ "asc" | "desc" ] ;
+first           = "first" , [ integer ] ;         (* default 1 *)
+skip            = "skip" , integer ;
+count           = "count" ;
+get             = "get" , postfix ;
+recurse         = "recurse" , { postfix | option } ; (* positional args = members to traverse ("via") *)
+distinct        = "distinct" , [ postfix ] ;
+aggregate       = ( "sum" | "min" | "max" | "avg" ) , postfix ;
+group_by        = "group-by" , postfix ;
+set             = "set" , assignment , { "," , assignment } ;
+assignment      = postfix , "=" , expr ;
+call            = "call" , name , "(" , [ expr , { "," , expr } ] , ")" ;
+describe        = "describe" ;
+generic_stage   = name , { "." , name } , { option | postfix } ;   (* any other (possibly namespaced) stage *)
+option          = name , "=" , postfix ;         (* max-depth=4, include-self=true *)
+
+(* ---------- expressions (lowest to highest precedence) ---------- *)
+expr            = or_expr ;
+or_expr         = and_expr , { ( "or" | "||" ) , and_expr } ;
+and_expr        = not_expr , { ( "and" | "&&" ) , not_expr } ;
+not_expr        = ( "not" | "!" ) , not_expr | comparison ;
+comparison      = additive , [ comp_op , additive
+                             | "is" , [ "not" ] , ( "null" | type_name )
+                             | [ "not" ] , "in" , additive ] ;
+comp_op         = "==" | "=" | "!=" | "<" | "<=" | ">" | ">="
+                | "contains" | "starts-with" | "ends-with" | "matches" ;
+additive        = multiplicative , { ( "+" | "-" ) , multiplicative } ;
+multiplicative  = unary , { ( "*" | "/" | "%" ) , unary } ;
+unary           = "-" , unary | postfix ;
+postfix         = primary , { "." , member | "." , name , call_args | "[" , expr , "]" } ;
+primary         = literal | list | "(" , expr , ")" | meta | name , [ call_args ] ;
+call_args       = "(" , [ expr , { "," , expr } ] , ")" ;
+member          = name | meta ;
+meta            = "$" , [ ident ] ;               (* "$" alone = current item; $type $ref $path $index *)
+type_name       = name | string ;
+list            = "[" , [ expr , { "," , expr } ] , "]" ;
+literal         = number | string | "true" | "false" | "null" ;
+
+(* ---------- lexical ---------- *)
+name            = ident | quoted_ident ;
+ident           = ident_seg , { "-" , ident_seg } ;
+                  (* hyphen belongs to the identifier only when it is IMMEDIATELY between two
+                     identifier segments with no whitespace and the next char is a letter or "_":
+                     starts-with, max-depth, group-by.  "a - b" and "a-1" are subtraction.
+                     Dots are NOT part of ident: "a.b" is member access. In STAGE position the
+                     parser joins dotted idents into one namespaced stage name (unity.prefab-source).
+                     In expressions "ns.fn(x)" parses as a method call fn on path ns; the binder
+                     rewrites it to the namespaced function "ns.fn" when such a function is
+                     registered (see semantics.md §Extensions). *)
+ident_seg       = letter_ , { letter_ | digit } ;
+quoted_ident    = "`" , { any_char_except_backtick } , "`" ;
+letter_         = "A".."Z" | "a".."z" | "_" ;
+number          = digit , { digit } , [ "." , digit , { digit } ] , [ ( "e" | "E" ) , [ "+" | "-" ] , digit , { digit } ] ;
+integer         = digit , { digit } ;
+string          = '"' , { char | escape } , '"' | "'" , { char | escape } , "'" ;
+escape          = "\\" , ( '"' | "'" | "\\" | "n" | "t" | "r" | "u" , hex , hex , hex , hex ) ;
+
+(* Reserved words (use backticks to address a member with this name):
+   and or not in is null true false
+   Contextual words (only special in their position): asc desc, stage names. *)

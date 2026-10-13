@@ -1,0 +1,54 @@
+{
+  "description": "Portable conformance graph. Every runtime materializes it into NATIVE objects of the types below (no JSON-backed execution) and runs fixtures/execution against source 'g'. Objects with \"$id\" can be referenced elsewhere via {\"$link\": id}; links are non-owning (RqlReference). Member order is declaration order as listed in 'types'.",
+  "types": {
+    "Vec2": { "kind": "struct", "members": { "x": "double", "y": "double" } },
+    "NodeKind": { "kind": "enum", "values": ["Alpha", "Beta", "Gamma"] },
+    "Node": {
+      "kind": "object", "id": "Id", "display": "Name",
+      "members": {
+        "Id": "int", "Name": "string", "Kind": "NodeKind", "Value": "double", "Enabled": "bool",
+        "Note": "string?", "Pos": "Vec2", "Tags": "list<string>", "Props": "map<string,double>",
+        "Children": "list<Node>", "Parent": "Node? (link)", "Peer": "Node? (link)"
+      }
+    },
+    "Special": { "kind": "object", "base": "Node", "members": { "Power": "int" } },
+    "Graph": {
+      "kind": "object",
+      "members": { "Name": "string", "Version": "int", "Nodes": "list<Node>", "Index": "map<string,Node> (links)", "Empty": "list<Node>", "Nothing": "Node? (link)" }
+    }
+  },
+  "root": {
+    "$type": "Graph", "Name": "conformance", "Version": 3, "Empty": [], "Nothing": null,
+    "Nodes": [
+      {
+        "$type": "Node", "$id": 1, "Id": 1, "Name": "root-a", "Kind": "Alpha", "Value": 10, "Enabled": true, "Note": "first",
+        "Pos": { "x": 0, "y": 0 }, "Tags": ["root", "red"], "Props": { "hp": 100, "mp": 5 }, "Parent": null, "Peer": { "$link": 5 },
+        "Children": [
+          { "$type": "Node", "$id": 2, "Id": 2, "Name": "a-1", "Kind": "Beta", "Value": 2.5, "Enabled": true, "Note": null,
+            "Pos": { "x": 1, "y": -1 }, "Tags": ["leaf"], "Props": {}, "Parent": { "$link": 1 }, "Peer": null, "Children": [] },
+          { "$type": "Special", "$id": 3, "Id": 3, "Name": "a-2", "Kind": "Gamma", "Value": -4, "Enabled": false, "Note": "special one",
+            "Pos": { "x": 2.25, "y": 3 }, "Tags": ["red", "blue"], "Props": { "hp": 7 }, "Parent": { "$link": 1 }, "Peer": { "$link": 1 }, "Power": 9000,
+            "Children": [
+              { "$type": "Node", "$id": 4, "Id": 4, "Name": "a-2-x", "Kind": "Alpha", "Value": 0, "Enabled": true, "Note": "",
+                "Pos": { "x": -3, "y": 0.5 }, "Tags": [], "Props": { "hp": 0, "armor": 12 }, "Parent": { "$link": 3 }, "Peer": { "$link": 3 }, "Children": [] }
+            ] }
+        ]
+      },
+      {
+        "$type": "Node", "$id": 5, "Id": 5, "Name": "root-b", "Kind": "Beta", "Value": 7, "Enabled": true, "Note": "Second",
+        "Pos": { "x": 10, "y": 10 }, "Tags": ["root"], "Props": { "hp": 50 }, "Parent": null, "Peer": { "$link": 1 },
+        "Children": [
+          { "$type": "Special", "$id": 6, "Id": 6, "Name": "b-1", "Kind": "Alpha", "Value": 7, "Enabled": true, "Note": null,
+            "Pos": { "x": 11, "y": 9 }, "Tags": ["blue"], "Props": { "mp": 30 }, "Parent": { "$link": 5 }, "Peer": null, "Power": 1, "Children": [] },
+          { "$type": "Node", "$id": 7, "Id": 7, "Name": "B-2", "Kind": "Gamma", "Value": 1e3, "Enabled": false, "Note": "upper case name",
+            "Pos": { "x": 12, "y": 8 }, "Tags": ["green", "leaf"], "Props": {}, "Parent": { "$link": 5 }, "Peer": { "$link": 7 }, "Children": [] }
+        ]
+      },
+      {
+        "$type": "Node", "$id": 8, "Id": 8, "Name": "lonely", "Kind": "Gamma", "Value": 3, "Enabled": true, "Note": null,
+        "Pos": { "x": -1, "y": -1 }, "Tags": [], "Props": {}, "Parent": null, "Peer": null, "Children": []
+      }
+    ],
+    "Index": { "a": { "$link": 1 }, "b": { "$link": 5 }, "special": { "$link": 3 } }
+  }
+}

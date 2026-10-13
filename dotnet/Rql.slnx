@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="Rql.Conformance/Rql.Conformance.csproj" />
+  <Project Path="Rql.Contracts/Rql.Contracts.csproj" />
+  <Project Path="Rql.Execution/Rql.Execution.csproj" />
+  <Project Path="Rql.Parser/Rql.Parser.csproj" />
+  <Project Path="Rql.SampleRuntime/Rql.SampleRuntime.csproj" />
+  <Project Path="Rql.Tests/Rql.Tests.csproj" />
+</Solution>

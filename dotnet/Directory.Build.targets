@@ -1,0 +1,6 @@
+<Project>
+  <!-- Libraries multi-target netstandard2.1 (future Unity/ReflectorNet adapter) and net8.0. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.1'">
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+  </ItemGroup>
+</Project>

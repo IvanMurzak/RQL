@@ -1,0 +1,393 @@
+{
+ "version": "0.1",
+ "description": "Plans every codec must reject with 'code' (code null = must be ACCEPTED: positive edge cases).",
+ "cases": [
+  {
+   "plan": {
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": []
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "9.9",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": []
+   },
+   "code": "version-unsupported"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    }
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "pth": [
+      "g"
+     ]
+    },
+    "stages": []
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "where"
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "first",
+      "n": -1
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "first",
+      "n": 1.5
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "frob"
+     }
+    ]
+   },
+   "code": "unknown-stage"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "where",
+      "pred": {
+       "op": "xor",
+       "args": [
+        {
+         "lit": 1
+        },
+        {
+         "lit": 2
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "where",
+      "pred": {
+       "op": "==",
+       "args": [
+        {
+         "lit": 1
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "code": "arity"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "count"
+     },
+     {
+      "op": "first",
+      "n": 1
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      {
+       "index": "x"
+      }
+     ]
+    },
+    "stages": []
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      ""
+     ]
+    },
+    "stages": []
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "lit": {
+      "a": 1
+     }
+    },
+    "stages": []
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "set",
+      "assign": [
+       {
+        "target": {
+         "lit": 1
+        },
+        "value": {
+         "lit": 1
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "select",
+      "fields": []
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "sort",
+      "keys": [
+       {
+        "expr": {
+         "path": [
+          "a"
+         ]
+        },
+        "desc": "yes"
+       }
+      ]
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "where",
+      "pred": {
+       "lit": true
+      },
+      "extra": 1
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ],
+     "extra": true
+    },
+    "stages": []
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "recurse",
+      "maxDepth": 0
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "call",
+      "method": "",
+      "args": []
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "ns.custom",
+      "args": [
+       {
+        "lit": 1
+       }
+      ],
+      "named": {
+       "k": {
+        "lit": 2
+       }
+      }
+     },
+     {
+      "op": "count"
+     }
+    ]
+   },
+   "code": null
+  }
+ ]
+}

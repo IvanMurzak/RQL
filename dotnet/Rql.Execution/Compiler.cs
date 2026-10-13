@@ -1,0 +1,912 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Text.RegularExpressions;
+
+namespace Rql.Execution
+{
+    internal delegate object? Eval(Exec x);
+
+    /// <summary>Compiles plan expressions into closures over <see cref="Exec"/> (spec §3–4).</summary>
+    internal sealed class Compiler
+    {
+        private readonly Exec _x;
+
+        public Compiler(Exec x) { _x = x; }
+
+        public static readonly string[] CoreFunctions =
+        {
+            "has", "is-null", "len", "lower", "upper", "abs", "round", "floor", "ceil", "coalesce", "ref",
+            "contains", "starts-with", "ends-with", "matches",
+        };
+
+        public static readonly string[] CoreMethods =
+        {
+            "any", "all", "count", "sum", "min", "max", "avg", "first", "keys", "values",
+            "contains", "starts-with", "ends-with", "matches", "lower", "upper", "len",
+        };
+
+        public Eval Compile(Expr e)
+        {
+            switch (e)
+            {
+                case LitExpr l:
+                {
+                    var v = l.Value;
+                    return _ => v;
+                }
+                case ListExpr l:
+                {
+                    var items = l.Items.Select(Compile).ToArray();
+                    return x =>
+                    {
+                        var list = new List<object?>(items.Length);
+                        foreach (var i in items) list.Add(i(x));
+                        return list;
+                    };
+                }
+                case PathExpr p: return CompilePath(p);
+                case OpExpr o: return CompileOp(o);
+                case CallExpr c: return CompileCall(c);
+                default: throw new RqlException("invalid-plan", "unknown expression node " + e.GetType().Name);
+            }
+        }
+
+        // ------------------------------------------------------------ paths
+
+        private Eval CompilePath(PathExpr p)
+        {
+            Eval baseEval = p.On != null ? Compile(p.On) : (x => x.Current);
+            bool relativeToItem = p.On == null;
+            Eval cur = baseEval;
+            for (int i = 0; i < p.Segments.Count; i++)
+            {
+                var seg = p.Segments[i];
+                var prev = cur;
+                bool first = i == 0 && relativeToItem;
+                switch (seg.Kind)
+                {
+                    case SegmentKind.Member:
+                    {
+                        var site = new MemberSite(seg.Name!, p.Span);
+                        _x.Sites.Add(site);
+                        cur = x => Member(x, prev(x), site);
+                        break;
+                    }
+                    case SegmentKind.Index:
+                    {
+                        long idx = seg.Index;
+                        object key = (double)idx;
+                        cur = x =>
+                        {
+                            var v = prev(x);
+                            if (v != null && !V.IsAbsent(v) && !(v is string))
+                            {
+                                var info = x.Types.Info(v.GetType());
+                                if (info.IsMap) return MapLookup(x, v, info, key, null);
+                            }
+                            return IndexAt(v, idx);
+                        };
+                        break;
+                    }
+                    case SegmentKind.Key:
+                    {
+                        var key = seg.Key;
+                        var site = new MemberSite(key as string ?? "", p.Span);
+                        cur = x => KeyAt(x, prev(x), key, site);
+                        break;
+                    }
+                    case SegmentKind.Meta:
+                        cur = CompileMeta(seg.Name!, prev, first);
+                        break;
+                }
+            }
+            return cur;
+        }
+
+        private Eval CompileMeta(string name, Eval prev, bool ofCurrentItem)
+        {
+            switch (name)
+            {
+                case "type":
+                    return x =>
+                    {
+                        var v = prev(x);
+                        if (v == null) return null;
+                        if (V.IsAbsent(v)) return v;
+                        return x.Types.Info(v.GetType()).ShortName;
+                    };
+                case "ref":
+                    return x =>
+                    {
+                        var v = prev(x);
+                        if (v == null) return null;
+                        if (V.IsAbsent(v)) return v;
+                        var info = x.Types.Info(v.GetType());
+                        return info.IsObject ? x.Engine.RefOf(v) : (object)Missing.Value;
+                    };
+                case "path":
+                    _x.TrackPaths = true;
+                    if (!ofCurrentItem) return _ => Missing.Value;
+                    return x => x.CurrentPath?.ToString() ?? (object)Missing.Value;
+                case "index":
+                    if (!ofCurrentItem) return _ => Missing.Value;
+                    return x => (double)x.Index;
+                default:
+                    _x.Diagnostics.Add(Diagnostic.Warning("unknown-meta", $"unknown meta member '${name}'", "meta members: $type $ref $path $index"));
+                    return _ => Missing.Value;
+            }
+        }
+
+        internal static object? Member(Exec x, object? v, MemberSite site)
+        {
+            if (v == null) return Missing.Value;
+            if (V.IsAbsent(v)) return v;
+            var type = v.GetType();
+            MemberAccessor? m;
+            if (ReferenceEquals(type, site.CachedType))
+            {
+                m = site.CachedMember;
+            }
+            else
+            {
+                var info = x.Types.Info(type);
+                if (info.IsList)
+                {
+                    if (string.Equals(site.Name, "Count", StringComparison.OrdinalIgnoreCase) || string.Equals(site.Name, "Length", StringComparison.OrdinalIgnoreCase))
+                    {
+                        site.Hits++;
+                        return (double)(V.Count(v) ?? 0);
+                    }
+                    // Implicit map over elements, flattening one level (spec §3).
+                    var list = new List<object?>();
+                    foreach (var el in (IEnumerable)v)
+                    {
+                        var r = Member(x, el, site);
+                        if (r is Missing) continue;
+                        if (r != null && !(r is string) && V.IsList(r))
+                        {
+                            foreach (var inner in (IEnumerable)r) list.Add(inner);
+                        }
+                        else list.Add(r);
+                    }
+                    return list;
+                }
+                if (info.IsMap)
+                {
+                    if (string.Equals(site.Name, "Count", StringComparison.OrdinalIgnoreCase))
+                    {
+                        site.Hits++;
+                        return (double)(V.Count(v) ?? 0);
+                    }
+                    return MapLookup(x, v, info, site.Name, site);
+                }
+                if (v is RowValue row)
+                {
+                    int ci = row.IndexOf(site.Name);
+                    if (ci < 0) { site.Misses++; return Missing.Value; }
+                    site.Hits++;
+                    return row.Values[ci];
+                }
+                m = info.Find(site.Name);
+                if (m == null)
+                {
+                    site.Misses++;
+                    if (site.MissTypes.Count < 8) site.MissTypes.Add(info);
+                    return Missing.Value;
+                }
+                site.CachedType = type;
+                site.CachedMember = m;
+            }
+            site.Hits++;
+            x.MembersRead++;
+            try
+            {
+                return m!.Getter(v);
+            }
+            catch (Exception ex)
+            {
+                x.GetterThrew(m!.Name, ex);
+                return new RqlError("getter-threw", ex.Message);
+            }
+        }
+
+        private static object? MapLookup(Exec x, object map, TypeInfo info, object? key, MemberSite? site)
+        {
+            if (!TryCoerceKey(key, info.KeyType, out var k))
+            {
+                if (site != null) site.Misses++;
+                return Missing.Value;
+            }
+            x.MembersRead++;
+            if (map is IDictionary d)
+            {
+                if (k != null && d.Contains(k)) { if (site != null) site.Hits++; return d[k]; }
+                // case-insensitive fallback for string keys
+                if (k is string ks)
+                {
+                    foreach (DictionaryEntry e in d)
+                    {
+                        if (e.Key is string s && string.Equals(s, ks, StringComparison.OrdinalIgnoreCase)) { if (site != null) site.Hits++; return e.Value; }
+                    }
+                }
+                return Missing.Value;
+            }
+            foreach (var e in V.EnumerateMap(map, info))
+            {
+                var me = (MapEntry)e!;
+                if (Equals(me.Key, k) || (me.Key is string s && k is string ks2 && string.Equals(s, ks2, StringComparison.OrdinalIgnoreCase)))
+                {
+                    if (site != null) site.Hits++;
+                    return me.Value;
+                }
+            }
+            return Missing.Value;
+        }
+
+        internal static bool TryCoerceKey(object? key, Type? keyType, out object? result)
+        {
+            result = key;
+            if (keyType == null || key == null || keyType.IsInstanceOfType(key)) return true;
+            if (key is double d)
+            {
+                if (keyType.IsEnum) { result = Enum.ToObject(keyType, (long)d); return true; }
+                try { result = Convert.ChangeType(d, keyType, CultureInfo.InvariantCulture); return true; }
+                catch { return false; }
+            }
+            if (key is string s)
+            {
+                if (keyType.IsEnum)
+                {
+                    try { result = Enum.Parse(keyType, s, true); return true; } catch { return false; }
+                }
+                if (V.IsNumericType(keyType) && double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var dv))
+                {
+                    try { result = Convert.ChangeType(dv, keyType, CultureInfo.InvariantCulture); return true; } catch { return false; }
+                }
+            }
+            return false;
+        }
+
+        internal static object? IndexAt(object? v, long idx)
+        {
+            if (v == null) return Missing.Value;
+            if (V.IsAbsent(v)) return v;
+            if (v is string) return Missing.Value;
+            var info = TypeModel.Get(v.GetType());
+            if (info.IsMap) return Missing.Value;
+            if (!info.IsList) return Missing.Value;
+            if (v is IList list)
+            {
+                long i = idx < 0 ? list.Count + idx : idx;
+                return i >= 0 && i < list.Count ? list[(int)i] : Missing.Value;
+            }
+            var all = ((IEnumerable)v).Cast<object?>().ToList();
+            long j = idx < 0 ? all.Count + idx : idx;
+            return j >= 0 && j < all.Count ? all[(int)j] : Missing.Value;
+        }
+
+        private static object? KeyAt(Exec x, object? v, object? key, MemberSite site)
+        {
+            if (v == null) return Missing.Value;
+            if (V.IsAbsent(v)) return v;
+            var info = x.Types.Info(v.GetType());
+            if (info.IsMap) return MapLookup(x, v, info, key, null);
+            if (key is string s && !info.IsList)
+            {
+                var ms = new MemberSite(s, site.Span);
+                return Member(x, v, ms);
+            }
+            if (key is double d && Math.Floor(d) == d) return IndexAt(v, (long)d);
+            return Missing.Value;
+        }
+
+        // ------------------------------------------------------------ operators
+
+        private Eval CompileOp(OpExpr o)
+        {
+            var a = Compile(o.Args[0]);
+            Eval? b = o.Args.Count > 1 ? Compile(o.Args[1]) : null;
+            switch (o.Op)
+            {
+                case "and":
+                    return x =>
+                    {
+                        var l = Truth(a(x));
+                        if (l == false) return V.False;
+                        var r = Truth(b!(x));
+                        if (r == false) return V.False;
+                        return l == true && r == true ? V.True : Unknown.Value;
+                    };
+                case "or":
+                    return x =>
+                    {
+                        var l = Truth(a(x));
+                        if (l == true) return V.True;
+                        var r = Truth(b!(x));
+                        if (r == true) return V.True;
+                        return l == false && r == false ? V.False : Unknown.Value;
+                    };
+                case "not":
+                    return x =>
+                    {
+                        var t = Truth(a(x));
+                        return t == null ? Unknown.Value : V.Bool(!t.Value);
+                    };
+                case "==": return x => Tri(Equal(a(x), b!(x)));
+                case "!=":
+                    return x =>
+                    {
+                        var t = Equal(a(x), b!(x));
+                        return t == null ? Unknown.Value : V.Bool(!t.Value);
+                    };
+                case "<": return x => Ord(a(x), b!(x), c => c < 0);
+                case "<=": return x => Ord(a(x), b!(x), c => c <= 0);
+                case ">": return x => Ord(a(x), b!(x), c => c > 0);
+                case ">=": return x => Ord(a(x), b!(x), c => c >= 0);
+                case "contains": return x => Tri(Contains(a(x), b!(x)));
+                case "starts-with": return x => Tri(StringTest(a(x), b!(x), (s, t) => s.StartsWith(t, StringComparison.OrdinalIgnoreCase)));
+                case "ends-with": return x => Tri(StringTest(a(x), b!(x), (s, t) => s.EndsWith(t, StringComparison.OrdinalIgnoreCase)));
+                case "matches": return x => Tri(Matches(a(x), b!(x)));
+                case "in": return x => Tri(In(a(x), b!(x)));
+                case "is": return x => Tri(IsType(x, a(x), b!(x)));
+                case "neg": return x => Arith("neg", a(x), 0d);
+                case "+":
+                case "-":
+                case "*":
+                case "/":
+                case "%":
+                {
+                    var op = o.Op;
+                    return x => Arith(op, a(x), b!(x));
+                }
+                case "index":
+                    return x =>
+                    {
+                        var v = a(x);
+                        var k = b!(x);
+                        if (V.IsAbsent(k)) return k;
+                        if (v == null) return Missing.Value;
+                        if (V.IsAbsent(v)) return v;
+                        var info = x.Types.Info(v.GetType());
+                        if (info.IsMap) return MapLookup(x, v, info, k is double || k is string ? k : Convert.ToString(k, CultureInfo.InvariantCulture), null);
+                        if (V.TryNumber(k, out var d) && Math.Floor(d) == d) return IndexAt(v, (long)d);
+                        if (k is string s) return Member(x, v, new MemberSite(s, null));
+                        return Missing.Value;
+                    };
+                default:
+                    throw new RqlException("invalid-plan", $"unknown operator '{o.Op}'");
+            }
+        }
+
+        internal static bool? Truth(object? v) => v switch
+        {
+            bool b => b,
+            null => false,
+            _ => null,
+        };
+
+        private static object Tri(bool? b) => b == null ? Unknown.Value : V.Bool(b.Value);
+
+        /// <summary>Equality per spec §4.1; null = unknown.</summary>
+        internal static bool? Equal(object? a, object? b)
+        {
+            if (V.IsAbsent(a) || V.IsAbsent(b)) return null;
+            if (a == null || b == null) return a == null && b == null;
+            if (V.TryNumber(a, out var da, out var sa))
+            {
+                if (V.TryNumber(b, out var db, out var sb))
+                {
+                    if (sa || sb) return (float)da == (float)db;
+                    return da == db;
+                }
+                if (b is Enum eb) return Convert.ToDouble(eb, CultureInfo.InvariantCulture) == da;
+                return null;
+            }
+            if (a is Enum ea) return EnumEqual(ea, b);
+            if (b is Enum eb2) return EnumEqual(eb2, a);
+            if (V.IsString(a)) return V.IsString(b) ? string.Equals(V.AsString(a), V.AsString(b), StringComparison.Ordinal) : (bool?)null;
+            if (a is bool ba) return b is bool bb ? ba == bb : (bool?)null;
+            var ta = a.GetType();
+            if (ta.IsValueType || b.GetType().IsValueType)
+            {
+                // DateTime / Guid etc: same-type equality; other structs are not comparable in v0.
+                if (TypeModel.IsScalarType(ta) && ta == b.GetType()) return a.Equals(b);
+                return null;
+            }
+            if (b is string) return null;
+            return ReferenceEquals(a, b);
+        }
+
+        private static bool? EnumEqual(Enum e, object? other)
+        {
+            if (other is string s) return string.Equals(e.ToString(), s, StringComparison.OrdinalIgnoreCase);
+            if (V.TryNumber(other, out var d)) return Convert.ToDouble(e, CultureInfo.InvariantCulture) == d;
+            if (other is Enum o) return e.GetType() == o.GetType() && e.Equals(o);
+            return null;
+        }
+
+        /// <summary>Ordering comparison; null = incomparable.</summary>
+        internal static int? Compare(object? a, object? b)
+        {
+            if (a == null || b == null || V.IsAbsent(a) || V.IsAbsent(b)) return null;
+            if (V.TryNumber(a, out var da, out var sa))
+            {
+                if (V.TryNumber(b, out var db, out var sb))
+                {
+                    if (sa || sb) return ((float)da).CompareTo((float)db);
+                    return da.CompareTo(db);
+                }
+                if (b is Enum eb) return da.CompareTo(Convert.ToDouble(eb, CultureInfo.InvariantCulture));
+                return null;
+            }
+            if (a is Enum ea)
+            {
+                var va = Convert.ToDouble(ea, CultureInfo.InvariantCulture);
+                if (b is Enum eb && eb.GetType() == ea.GetType()) return va.CompareTo(Convert.ToDouble(eb, CultureInfo.InvariantCulture));
+                if (V.TryNumber(b, out var db2)) return va.CompareTo(db2);
+                if (b is string bs && TryParseEnum(ea.GetType(), bs, out var ev)) return va.CompareTo(Convert.ToDouble(ev, CultureInfo.InvariantCulture));
+                return null;
+            }
+            if (V.IsString(a) && V.IsString(b)) return Math.Sign(string.CompareOrdinal(V.AsString(a), V.AsString(b)));
+            if (a.GetType() == b.GetType() && a is IComparable c && TypeModel.IsScalarType(a.GetType())) return Math.Sign(c.CompareTo(b));
+            return null;
+        }
+
+        private static bool TryParseEnum(Type t, string s, out object? value)
+        {
+            try { value = Enum.Parse(t, s, true); return true; }
+            catch { value = null; return false; }
+        }
+
+        private static object Ord(object? a, object? b, Func<int, bool> test)
+        {
+            var c = Compare(a, b);
+            return c == null ? Unknown.Value : V.Bool(test(c.Value));
+        }
+
+        private static bool? Contains(object? a, object? b)
+        {
+            if (V.IsAbsent(a) || V.IsAbsent(b) || a == null) return null;
+            if (V.IsString(a)) return b != null && V.IsString(b) ? V.AsString(a).IndexOf(V.AsString(b), StringComparison.OrdinalIgnoreCase) >= 0 : (bool?)null;
+            if (V.IsList(a))
+            {
+                foreach (var el in (IEnumerable)a!) if (Equal(el, b) == true) return true;
+                return false;
+            }
+            var info = TypeModel.Get(a.GetType());
+            if (info.IsMap)
+            {
+                foreach (var e in V.EnumerateMap(a, info)) if (Equal(((MapEntry)e!).Key, b) == true) return true;
+                return false;
+            }
+            return null;
+        }
+
+        private static bool? StringTest(object? a, object? b, Func<string, string, bool> test)
+        {
+            if (a == null || b == null || !V.IsString(a) || !V.IsString(b)) return null;
+            return test(V.AsString(a), V.AsString(b));
+        }
+
+        private static readonly Dictionary<string, Regex> RegexCache = new Dictionary<string, Regex>();
+
+        private static bool? Matches(object? a, object? b)
+        {
+            if (a == null || b == null || !V.IsString(a) || !(b is string pattern)) return null;
+            Regex? re;
+            lock (RegexCache)
+            {
+                if (!RegexCache.TryGetValue(pattern, out re))
+                {
+                    try { re = new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50)); }
+                    catch (ArgumentException) { re = null; }
+                    if (RegexCache.Count < 256) RegexCache[pattern] = re!;
+                }
+            }
+            if (re == null) return null;
+            try { return re.IsMatch(V.AsString(a)); }
+            catch (RegexMatchTimeoutException) { return null; }
+        }
+
+        private static bool? In(object? a, object? b)
+        {
+            if (V.IsAbsent(a) || V.IsAbsent(b) || b == null) return null;
+            if (!V.IsList(b)) return Equal(a, b);
+            foreach (var el in (IEnumerable)b) if (Equal(a, el) == true) return true;
+            return false;
+        }
+
+        private static bool? IsType(Exec x, object? a, object? b)
+        {
+            if (V.IsAbsent(a)) return null;
+            if (a == null) return false;
+            if (!(b is string name)) return null;
+            return x.Types.Info(a.GetType()).IsA(name);
+        }
+
+        internal static object? Arith(string op, object? a, object? b)
+        {
+            if (a is Missing || b is Missing) return Missing.Value;
+            if (a is RqlError) return a;
+            if (b is RqlError) return b;
+            if (op == "+" && ((a != null && V.IsString(a)) || (b != null && V.IsString(b))))
+                return ToText(a) + ToText(b);
+            if (!V.TryNumber(a, out var x) || !V.TryNumber(b, out var y)) return new RqlError("type-mismatch", $"cannot apply '{op}' to {V.Describe(a)} and {V.Describe(b)}");
+            switch (op)
+            {
+                case "neg": return -x;
+                case "+": return x + y;
+                case "-": return x - y;
+                case "*": return x * y;
+                case "/": return y == 0 ? new RqlError("div-by-zero") : (object)(x / y);
+                case "%": return y == 0 ? new RqlError("div-by-zero") : (object)(x % y);
+                default: return new RqlError("type-mismatch");
+            }
+        }
+
+        internal static string ToText(object? v) => v switch
+        {
+            null => "",
+            string s => s,
+            char c => c.ToString(),
+            bool b => b ? "true" : "false",
+            _ when V.TryNumber(v, out var d) => V.FormatNumber(d),
+            _ => Convert.ToString(v, CultureInfo.InvariantCulture) ?? "",
+        };
+
+        // ------------------------------------------------------------ calls
+
+        private Eval CompileCall(CallExpr c)
+        {
+            // ns.fn(x) parses as method fn on path ns: rewrite when a namespaced function is registered (spec §9).
+            if (c.On is PathExpr np && np.On == null && np.Segments.Count > 0 && np.Segments.All(s => s.Kind == SegmentKind.Member))
+            {
+                var ns = string.Join(".", np.Segments.Select(s => s.Name)) + "." + c.Name;
+                if (_x.Engine.Functions.TryGetValue(ns, out var ext)) return CompileExtension(ext, c.Args);
+            }
+            if (c.On == null) return CompileFunction(c);
+            return CompileMethod(c);
+        }
+
+        private Eval CompileExtension(Func<object?[], object?> fn, IReadOnlyList<Expr> argExprs)
+        {
+            var args = argExprs.Select(Compile).ToArray();
+            return x =>
+            {
+                var vals = new object?[args.Length];
+                for (int i = 0; i < args.Length; i++) vals[i] = args[i](x);
+                try { return fn(vals); }
+                catch (Exception ex) { return new RqlError("getter-threw", ex.Message); }
+            };
+        }
+
+        private void Arity(CallExpr c, int min, int max)
+        {
+            if (c.Args.Count < min || c.Args.Count > max)
+            {
+                var expect = min == max ? min.ToString(CultureInfo.InvariantCulture) : $"{min}-{max}";
+                throw new RqlException("arity", $"'{c.Name}' takes {expect} argument(s), got {c.Args.Count}", c.Span);
+            }
+        }
+
+        private Eval CompileFunction(CallExpr c)
+        {
+            var name = c.Name.ToLowerInvariant();
+            if (c.Name.IndexOf('.') >= 0 && _x.Engine.Functions.TryGetValue(c.Name, out var ext)) return CompileExtension(ext, c.Args);
+            switch (name)
+            {
+                case "has":
+                {
+                    Arity(c, 1, 1);
+                    var a = Compile(c.Args[0]);
+                    return x => V.Bool(!(a(x) is Missing));
+                }
+                case "is-null":
+                {
+                    Arity(c, 1, 1);
+                    var a = Compile(c.Args[0]);
+                    return x => Tri(Equal(a(x), null));
+                }
+                case "len":
+                {
+                    Arity(c, 1, 1);
+                    var a = Compile(c.Args[0]);
+                    return x => Len(a(x));
+                }
+                case "lower":
+                case "upper":
+                {
+                    Arity(c, 1, 1);
+                    var a = Compile(c.Args[0]);
+                    bool up = name == "upper";
+                    return x => CaseOf(a(x), up);
+                }
+                case "abs":
+                case "floor":
+                case "ceil":
+                {
+                    Arity(c, 1, 1);
+                    var a = Compile(c.Args[0]);
+                    Func<double, double> f = name == "abs" ? Math.Abs : name == "floor" ? (Func<double, double>)Math.Floor : Math.Ceiling;
+                    return x => Num(a(x), f);
+                }
+                case "round":
+                {
+                    Arity(c, 1, 2);
+                    var a = Compile(c.Args[0]);
+                    var digits = c.Args.Count > 1 ? Compile(c.Args[1]) : null;
+                    return x =>
+                    {
+                        int dg = 0;
+                        if (digits != null && V.TryNumber(digits(x), out var dd)) dg = Math.Max(0, Math.Min(15, (int)dd));
+                        return Num(a(x), v => Math.Round(v, dg, MidpointRounding.AwayFromZero));
+                    };
+                }
+                case "coalesce":
+                {
+                    Arity(c, 1, 16);
+                    var args = c.Args.Select(Compile).ToArray();
+                    return x =>
+                    {
+                        foreach (var a in args)
+                        {
+                            var v = a(x);
+                            if (v != null && !V.IsAbsent(v)) return v;
+                        }
+                        return null;
+                    };
+                }
+                case "ref":
+                {
+                    Arity(c, 1, 64);
+                    var args = c.Args.Select(Compile).ToArray();
+                    return x =>
+                    {
+                        var found = new List<object?>();
+                        foreach (var a in args)
+                        {
+                            var v = a(x);
+                            var refs = V.IsList(v) ? ((IEnumerable)v!).Cast<object?>() : new[] { v };
+                            foreach (var r in refs)
+                            {
+                                if (!(r is string s)) return new RqlError("type-mismatch", "ref() expects reference strings");
+                                var o = x.Engine.ResolveRef(s, out var err);
+                                if (o == null)
+                                {
+                                    x.Diagnostics.Add(Diagnostic.Error("stale-ref", err!, "re-query to obtain a fresh $ref"));
+                                    return new RqlError("stale-ref", err);
+                                }
+                                found.Add(o);
+                            }
+                        }
+                        return found.Count == 1 ? found[0] : found;
+                    };
+                }
+                case "contains":
+                case "starts-with":
+                case "ends-with":
+                case "matches":
+                {
+                    Arity(c, 2, 2);
+                    return CompileOp(new OpExpr(name, c.Args) { Span = c.Span });
+                }
+            }
+            var known = CoreFunctions.Concat(_x.Engine.Functions.Keys);
+            throw new RqlException("unknown-function", $"unknown function '{c.Name}'", c.Span, "functions: " + string.Join(" ", known) + "; collection methods: list.any(pred) list.count() ...");
+        }
+
+        private static object? Len(object? v)
+        {
+            if (v == null) return Missing.Value;
+            if (V.IsAbsent(v)) return v;
+            var n = V.Count(v);
+            return n.HasValue && (V.IsString(v) || V.IsList(v) || TypeModel.Get(v.GetType()).IsMap) ? (double)n.Value : (object)Missing.Value;
+        }
+
+        private static object? CaseOf(object? v, bool upper)
+        {
+            if (v == null || V.IsAbsent(v)) return v;
+            if (!V.IsString(v)) return new RqlError("type-mismatch");
+            var s = V.AsString(v);
+            return upper ? s.ToUpperInvariant() : s.ToLowerInvariant();
+        }
+
+        private static object? Num(object? v, Func<double, double> f)
+        {
+            if (v == null || V.IsAbsent(v)) return v;
+            return V.TryNumber(v, out var d) ? f(d) : (object)new RqlError("type-mismatch");
+        }
+
+        private Eval CompileMethod(CallExpr c)
+        {
+            var on = Compile(c.On!);
+            var name = c.Name.ToLowerInvariant();
+            switch (name)
+            {
+                case "any":
+                case "all":
+                case "count":
+                case "first":
+                {
+                    Arity(c, name == "all" ? 1 : 0, 1);
+                    var pred = c.Args.Count > 0 ? Compile(c.Args[0]) : null;
+                    return x => Quantify(x, on(x), pred, name);
+                }
+                case "sum":
+                case "min":
+                case "max":
+                case "avg":
+                {
+                    Arity(c, 0, 1);
+                    var sel = c.Args.Count > 0 ? Compile(c.Args[0]) : null;
+                    return x => Aggregate(x, on(x), sel, name);
+                }
+                case "keys":
+                case "values":
+                {
+                    Arity(c, 0, 0);
+                    bool keys = name == "keys";
+                    return x =>
+                    {
+                        var v = on(x);
+                        if (v == null || V.IsAbsent(v)) return Missing.Value;
+                        var info = x.Types.Info(v.GetType());
+                        if (!info.IsMap) return Missing.Value;
+                        return V.EnumerateMap(v, info).Select(e => keys ? ((MapEntry)e!).Key : ((MapEntry)e!).Value).ToList();
+                    };
+                }
+                case "contains":
+                case "starts-with":
+                case "ends-with":
+                case "matches":
+                    Arity(c, 1, 1);
+                    return CompileOp(new OpExpr(name, new[] { c.On!, c.Args[0] }) { Span = c.Span });
+                case "lower":
+                case "upper":
+                {
+                    Arity(c, 0, 0);
+                    bool up = name == "upper";
+                    return x => CaseOf(on(x), up);
+                }
+                case "len":
+                    Arity(c, 0, 0);
+                    return x => Len(on(x));
+            }
+            throw new RqlException("unknown-function", $"unknown method '{c.Name}'", c.Span, "methods: " + string.Join(" ", CoreMethods));
+        }
+
+        private static IEnumerable<object?>? Elements(Exec x, object? v)
+        {
+            if (v == null || V.IsAbsent(v) || v is string) return null;
+            var info = x.Types.Info(v.GetType());
+            if (info.IsMap) return V.EnumerateMap(v, info);
+            if (info.IsList) return ((IEnumerable)v).Cast<object?>();
+            return null;
+        }
+
+        private static object? Quantify(Exec x, object? v, Eval? pred, string kind)
+        {
+            if (v is Missing || v is RqlError) return kind == "count" || kind == "first" ? Missing.Value : (object)Unknown.Value;
+            var els = Elements(x, v);
+            if (els == null)
+            {
+                if (v == null) return kind == "count" ? 0d : kind == "first" ? Missing.Value : (object)(kind == "all" ? V.True : V.False);
+                // A single object behaves as a one-element collection.
+                els = new[] { v };
+            }
+            var saved = x.Current;
+            var savedPath = x.CurrentPath;
+            var savedIndex = x.Index;
+            try
+            {
+                double count = 0;
+                bool sawUnknown = false;
+                long i = 0;
+                foreach (var el in els)
+                {
+                    bool? t = true;
+                    if (pred != null)
+                    {
+                        x.Current = el;
+                        x.CurrentPath = null;
+                        x.Index = i;
+                        t = Truth(pred(x));
+                    }
+                    i++;
+                    switch (kind)
+                    {
+                        case "any":
+                            if (t == true) return V.True;
+                            if (t == null) sawUnknown = true;
+                            break;
+                        case "all":
+                            if (t == false) return V.False;
+                            if (t == null) sawUnknown = true;
+                            break;
+                        case "first":
+                            if (t == true) return el;
+                            break;
+                        default:
+                            if (t == true) count++;
+                            break;
+                    }
+                }
+                switch (kind)
+                {
+                    case "any": return sawUnknown ? Unknown.Value : V.False;
+                    case "all": return sawUnknown ? Unknown.Value : V.True;
+                    case "first": return Missing.Value;
+                    default: return count;
+                }
+            }
+            finally
+            {
+                x.Current = saved;
+                x.CurrentPath = savedPath;
+                x.Index = savedIndex;
+            }
+        }
+
+        private static object? Aggregate(Exec x, object? v, Eval? sel, string kind)
+        {
+            if (v is Missing || v is RqlError) return v;
+            var els = Elements(x, v);
+            if (els == null) return v == null ? null : Missing.Value;
+            var saved = x.Current;
+            var savedPath = x.CurrentPath;
+            try
+            {
+                var values = new List<object?>();
+                foreach (var el in els)
+                {
+                    object? val = el;
+                    if (sel != null)
+                    {
+                        x.Current = el;
+                        x.CurrentPath = null;
+                        val = sel(x);
+                    }
+                    values.Add(val);
+                }
+                return Reduce(values, kind);
+            }
+            finally
+            {
+                x.Current = saved;
+                x.CurrentPath = savedPath;
+            }
+        }
+
+        internal static object? Reduce(IEnumerable<object?> values, string kind)
+        {
+            double sum = 0;
+            int n = 0;
+            object? best = null;
+            foreach (var val in values)
+            {
+                if (kind == "min" || kind == "max")
+                {
+                    if (val == null || V.IsAbsent(val)) continue;
+                    if (!V.IsNumber(val) && !V.IsString(val) && !(val is Enum)) continue;
+                    if (best == null) { best = val; continue; }
+                    var c = Compare(val, best);
+                    if (c == null) continue;
+                    if ((kind == "min" && c < 0) || (kind == "max" && c > 0)) best = val;
+                    continue;
+                }
+                if (!V.TryNumber(val, out var d)) continue;
+                sum += d;
+                n++;
+            }
+            switch (kind)
+            {
+                case "sum": return sum;
+                case "avg": return n == 0 ? null : (object)(sum / n);
+                default: return best;
+            }
+        }
+    }
+}

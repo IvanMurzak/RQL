@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rql.dev/schema/0.1/capability-manifest.json",
+  "title": "RQL CapabilityManifest v0.1",
+  "description": "What a runtime/host exposes: sources, supported stages/functions, mutation policy and hard limits. Returned by the schema/help tool and used by binders to validate plans before shipping them to a remote executor.",
+  "type": "object",
+  "required": ["rql", "runtime", "sources", "stages", "functions"],
+  "additionalProperties": false,
+  "properties": {
+    "rql": { "const": "0.1" },
+    "runtime": { "type": "string", "description": "e.g. dotnet, typescript, cpp, unreal" },
+    "sources": { "type": "array", "items": { "type": "object", "required": ["name", "type"], "additionalProperties": false, "properties": { "name": { "type": "string" }, "type": { "type": "string" }, "description": { "type": "string" } } } },
+    "stages": { "type": "array", "items": { "type": "string" } },
+    "functions": { "type": "array", "items": { "type": "string" } },
+    "methods": { "type": "array", "items": { "type": "string" } },
+    "mutations": { "type": "object", "additionalProperties": false, "properties": { "enabled": { "type": "boolean" }, "maxTargets": { "type": "integer" }, "callable": { "type": "array", "items": { "type": "string" } } } },
+    "limits": { "$ref": "query-plan.schema.json#/$defs/budgets" },
+    "types": { "type": "array", "items": { "$ref": "#/$defs/typeDescriptor" } }
+  },
+  "$defs": {
+    "typeDescriptor": {
+      "type": "object", "required": ["name", "members"], "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "base": { "type": "string" },
+        "kind": { "enum": ["object", "struct", "enum"] },
+        "values": { "type": "array", "items": { "type": "string" }, "description": "enum names" },
+        "members": { "type": "array", "items": { "type": "object", "required": ["name", "type"], "additionalProperties": false, "properties": { "name": { "type": "string" }, "type": { "type": "string" }, "writable": { "type": "boolean" } } } },
+        "methods": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

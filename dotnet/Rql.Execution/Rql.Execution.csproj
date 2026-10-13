@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.1;net8.0</TargetFrameworks>
+    <RootNamespace>Rql</RootNamespace>
+    <Description>RQL executor over live CLR object graphs (System.Reflection, no pre-serialization).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Rql.Parser\Rql.Parser.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Rql.Tests" />
+  </ItemGroup>
+</Project>

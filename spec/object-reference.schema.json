@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rql.dev/schema/0.1/object-reference.json",
+  "title": "RQL ObjectRef v0.1",
+  "description": "String form '<Type>#<stableId>' (identity provider) or '<Type>@<sessionHandle>' (session-scoped). Encoded in results as a summary object.",
+  "$defs": {
+    "refString": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*[#@][^\\s]+$" },
+    "summary": {
+      "type": "object", "required": ["$ref"], "additionalProperties": false,
+      "properties": { "$ref": { "$ref": "#/$defs/refString" }, "name": { "type": "string" } }
+    }
+  },
+  "$ref": "#/$defs/summary"
+}

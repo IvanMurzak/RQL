@@ -1,0 +1,377 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading;
+
+namespace Rql.Execution
+{
+    public sealed class SourceRegistration
+    {
+        internal SourceRegistration(string name, Func<object?> getter, string? description)
+        {
+            Name = name; Getter = getter; Description = description;
+        }
+        public string Name { get; }
+        public Func<object?> Getter { get; }
+        public string? Description { get; }
+    }
+
+    /// <summary>Per-item evaluator handed to extension stages: evaluates an argument expression with $ = item.</summary>
+    public delegate object? ArgEvaluator(object? item);
+
+    public delegate IEnumerable<object?> StageHandler(IEnumerable<object?> input, IReadOnlyList<ArgEvaluator> args, IReadOnlyDictionary<string, ArgEvaluator> named);
+
+    public sealed class MutationPolicy
+    {
+        /// <summary>Host-level switch. Requests must additionally set <see cref="QueryOptions.AllowMutation"/>.</summary>
+        public bool Enabled { get; set; }
+        /// <summary>Optional extra allow-check per (declaring object type, member).</summary>
+        public Func<Type, MemberAccessor, bool>? CanWrite { get; set; }
+        public int MaxTargets { get; set; } = 20;
+    }
+
+    public sealed class EngineDefaults
+    {
+        public int MaxVisited { get; set; } = 200_000;
+        public int MaxRows { get; set; } = 50;
+        public int MaxListItems { get; set; } = 20;
+        public int MaxDepth { get; set; } = 16;
+        public int TimeoutMs { get; set; } = 2_000;
+        public int MaxOutputBytes { get; set; } = 65_536;
+        public int DefaultRecurseDepth { get; set; } = 8;
+        /// <summary>Hard caps applied after request budgets.</summary>
+        public int HardMaxVisited { get; set; } = 5_000_000;
+        public int HardMaxRows { get; set; } = 10_000;
+        public int HardTimeoutMs { get; set; } = 30_000;
+    }
+
+    /// <summary>
+    /// Host-facing RQL runtime over live CLR objects. Thread-safe for concurrent queries as long as the
+    /// host's object graph is not mutated concurrently.
+    /// </summary>
+    public sealed class RqlEngine
+    {
+        private readonly Dictionary<string, SourceRegistration> _sources = new Dictionary<string, SourceRegistration>(StringComparer.Ordinal);
+        private readonly Dictionary<string, Func<object?[], object?>> _functions = new Dictionary<string, Func<object?[], object?>>(StringComparer.Ordinal);
+        private readonly Dictionary<string, StageHandler> _stages = new Dictionary<string, StageHandler>(StringComparer.Ordinal);
+        private readonly ConditionalWeakTable<object, object> _handles = new ConditionalWeakTable<object, object>();
+        private readonly Dictionary<long, WeakReference> _handleTargets = new Dictionary<long, WeakReference>();
+        private long _nextHandle;
+
+        public RqlEngine(AccessorMode accessors = AccessorMode.Compiled)
+        {
+            Types = accessors == AccessorMode.Compiled ? TypeModel.Shared : new TypeModel(accessors);
+        }
+
+        public TypeModel Types { get; }
+        public EngineDefaults Defaults { get; } = new EngineDefaults();
+        public MutationPolicy Mutations { get; } = new MutationPolicy();
+        public string RuntimeName { get; set; } = "dotnet";
+
+        /// <summary>Liveness check for explicitly destroyed objects (Unity/Unreal style). Null = always alive.</summary>
+        public Func<object, bool>? IsAlive { get; set; }
+
+        /// <summary>Resolve "Type#id" (type short name, id string). Null result = not found. When unset, sources are searched.</summary>
+        public Func<string, string, object?>? ResolveStableRef { get; set; }
+
+        /// <summary>When false, $path tracking is computed only for plans that reference $path (default optimization).</summary>
+        public bool AlwaysTrackPaths { get; set; }
+
+        public IReadOnlyDictionary<string, SourceRegistration> Sources => _sources;
+        public IReadOnlyDictionary<string, Func<object?[], object?>> Functions => _functions;
+        public IReadOnlyDictionary<string, StageHandler> Stages => _stages;
+
+        public RqlEngine AddSource(string name, Func<object?> getter, string? description = null)
+        {
+            ValidateName(name, allowDots: true);
+            _sources[name] = new SourceRegistration(name, getter, description);
+            return this;
+        }
+
+        public RqlEngine AddFunction(string name, Func<object?[], object?> fn)
+        {
+            ValidateName(name, allowDots: true);
+            if (name.IndexOf('.') < 0) throw new ArgumentException("extension functions must be namespaced (ns.name)", nameof(name));
+            _functions[name] = fn;
+            return this;
+        }
+
+        public RqlEngine AddStage(string name, StageHandler handler)
+        {
+            ValidateName(name, allowDots: true);
+            if (name.IndexOf('.') < 0) throw new ArgumentException("extension stages must be namespaced (ns.name)", nameof(name));
+            _stages[name] = handler;
+            return this;
+        }
+
+        private static void ValidateName(string name, bool allowDots)
+        {
+            if (string.IsNullOrEmpty(name)) throw new ArgumentException("name required");
+            foreach (var part in name.Split('.'))
+            {
+                if (part.Length == 0 || !Parsing.Lexer.IsIdentStart(part[0]) || (!allowDots && name.Contains(".")))
+                    throw new ArgumentException($"invalid name '{name}'");
+            }
+        }
+
+        // ------------------------------------------------------------ execution
+
+        public QueryResult Execute(string text, Budgets? budgets = null, QueryOptions? options = null)
+        {
+            var sw = Stopwatch.StartNew();
+            QueryPlan plan;
+            try { plan = RqlParser.Parse(text); }
+            catch (RqlException ex)
+            {
+                var fail = QueryResult.Fail(new[] { ex.ToDiagnostic() });
+                fail.Stats.ElapsedMs = sw.Elapsed.TotalMilliseconds;
+                return fail;
+            }
+            var r = Execute(plan, budgets, options);
+            r.Stats.ElapsedMs = sw.Elapsed.TotalMilliseconds;
+            return r;
+        }
+
+        public QueryResult Execute(QueryPlan plan, Budgets? budgets = null, QueryOptions? options = null)
+        {
+            var x = new Exec(this, budgets ?? new Budgets(), options ?? new QueryOptions(), plan);
+            var result = new Pipeline(x).Run();
+            result.Stats.Visited = x.Visited;
+            result.Stats.MembersRead = x.MembersRead;
+            result.Stats.ElapsedMs = x.Elapsed.TotalMilliseconds;
+            return result;
+        }
+
+        // ------------------------------------------------------------ references
+
+        /// <summary>Stable reference string for an object: "Type#id" or session handle "Type@n".</summary>
+        public string RefOf(object o)
+        {
+            var info = Types.Info(o.GetType());
+            if (info.IdMember != null)
+            {
+                object? id;
+                try { id = info.IdMember.Getter(o); } catch { id = null; }
+                if (id != null) return info.ShortName + "#" + Convert.ToString(id, CultureInfo.InvariantCulture);
+            }
+            return info.ShortName + "@" + HandleOf(o).ToString(CultureInfo.InvariantCulture);
+        }
+
+        private long HandleOf(object o)
+        {
+            lock (_handleTargets)
+            {
+                if (_handles.TryGetValue(o, out var h)) return (long)h;
+                long id = ++_nextHandle;
+                _handles.Add(o, id);
+                _handleTargets[id] = new WeakReference(o);
+                return id;
+            }
+        }
+
+        /// <summary>Type descriptors of everything reachable from the registered sources (schema tool).</summary>
+        public List<System.Text.Json.Nodes.JsonObject> DescribeTypes()
+        {
+            var roots = new List<Type>();
+            foreach (var s in _sources.Values)
+            {
+                object? v;
+                try { v = s.Getter(); } catch { continue; }
+                if (v != null) roots.Add(v.GetType());
+            }
+            return Describe.Reachable(Types, roots).Select(t => Describe.TypeDescriptor(Types, t, Mutations.Enabled)).ToList();
+        }
+
+        internal object? ResolveRef(string reference, out string? error)
+        {
+            error = null;
+            // Tolerate copied display forms such as "Enemy#12(Goblin_0012)" or "Enemy#12 Goblin".
+            reference = reference.Trim();
+            int cut = reference.IndexOfAny(new[] { ' ', '(', '\t' });
+            if (cut > 0) reference = reference.Substring(0, cut);
+            int i = reference.IndexOfAny(new[] { '#', '@' });
+            if (i <= 0 || i == reference.Length - 1)
+            {
+                error = $"malformed reference '{reference}' (expected Type#id or Type@handle)";
+                return null;
+            }
+            var type = reference.Substring(0, i);
+            var id = reference.Substring(i + 1);
+            object? found = null;
+            if (reference[i] == '@')
+            {
+                if (long.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var h))
+                {
+                    lock (_handleTargets)
+                    {
+                        if (_handleTargets.TryGetValue(h, out var wr)) found = wr.Target;
+                    }
+                }
+            }
+            else
+            {
+                found = ResolveStableRef != null ? ResolveStableRef(type, id) : SearchSources(type, id);
+            }
+
+            if (found == null || !Types.Info(found.GetType()).IsA(type))
+            {
+                error = $"reference '{reference}' does not resolve to a live object";
+                return null;
+            }
+            if (IsAlive != null && !IsAlive(found))
+            {
+                error = $"reference '{reference}' points to a destroyed object";
+                return null;
+            }
+            return found;
+        }
+
+        /// <summary>Fallback ref resolution: bounded walk over owning members of all sources.</summary>
+        private object? SearchSources(string type, string id)
+        {
+            var visited = new HashSet<object>(RefEq.Instance);
+            var stack = new Stack<(object, int)>();
+            foreach (var s in _sources.Values)
+            {
+                var v = s.Getter();
+                if (v != null) stack.Push((v, 0));
+            }
+            int budget = Defaults.MaxVisited;
+            while (stack.Count > 0 && budget-- > 0)
+            {
+                var (o, depth) = stack.Pop();
+                if (!visited.Add(o)) continue;
+                var info = Types.Info(o.GetType());
+                if (info.IsList || info.IsMap)
+                {
+                    foreach (var e in V.Enumerate(o))
+                    {
+                        var ev = e is MapEntry me ? me.Value : e;
+                        if (ev != null && !TypeModel.IsScalarType(ev.GetType())) stack.Push((ev, depth));
+                    }
+                    continue;
+                }
+                if (!info.IsObject) continue;
+                if (info.IdMember != null && info.IsA(type))
+                {
+                    object? v;
+                    try { v = info.IdMember.Getter(o); } catch { v = null; }
+                    if (v != null && Convert.ToString(v, CultureInfo.InvariantCulture) == id) return o;
+                }
+                if (depth >= 32) continue;
+                foreach (var m in info.Members)
+                {
+                    if (!m.Owning || TypeModel.IsScalarType(m.Type)) continue;
+                    object? v;
+                    try { v = m.Getter(o); } catch { continue; }
+                    if (v != null && !v.GetType().IsValueType) stack.Push((v, depth + 1));
+                }
+            }
+            return null;
+        }
+    }
+
+    /// <summary>Per-query execution state.</summary>
+    internal sealed class Exec
+    {
+        private readonly Stopwatch _sw = Stopwatch.StartNew();
+
+        public Exec(RqlEngine engine, Budgets budgets, QueryOptions options, QueryPlan plan)
+        {
+            Engine = engine;
+            Types = engine.Types;
+            Options = options;
+            Plan = plan;
+            var d = engine.Defaults;
+            MaxVisited = Math.Min(budgets.MaxVisited ?? d.MaxVisited, d.HardMaxVisited);
+            MaxRows = Math.Min(budgets.MaxRows ?? d.MaxRows, d.HardMaxRows);
+            MaxListItems = budgets.MaxListItems ?? d.MaxListItems;
+            MaxDepth = budgets.MaxDepth ?? d.MaxDepth;
+            TimeoutMs = Math.Min(budgets.TimeoutMs ?? d.TimeoutMs, d.HardTimeoutMs);
+            MaxOutputBytes = budgets.MaxOutputBytes ?? d.MaxOutputBytes;
+            MaxMutationTargets = budgets.MaxMutationTargets ?? engine.Mutations.MaxTargets;
+        }
+
+        public RqlEngine Engine { get; }
+        public TypeModel Types { get; }
+        public QueryOptions Options { get; }
+        public QueryPlan Plan { get; }
+        public int MaxVisited { get; }
+        public int MaxRows { get; }
+        public int MaxListItems { get; }
+        public int MaxDepth { get; }
+        public int TimeoutMs { get; }
+        public int MaxOutputBytes { get; }
+        public int MaxMutationTargets { get; }
+        public bool TrackPaths { get; set; }
+
+        // evaluation scope (mutable, saved/restored by nested scopes)
+        public object? Current;
+        public PathNode? CurrentPath;
+        public long Index;
+
+        public long Visited;
+        public long MembersRead;
+        public int GetterErrors;
+        public string? FirstGetterError;
+        public readonly List<Diagnostic> Diagnostics = new List<Diagnostic>();
+        public readonly List<MemberSite> Sites = new List<MemberSite>();
+
+        public TimeSpan Elapsed => _sw.Elapsed;
+
+        public void Visit()
+        {
+            if (++Visited > MaxVisited)
+                throw new RqlException("budget-exceeded", $"visited more than {MaxVisited} objects", null,
+                    "narrow the source (e.g. a specific scene), filter earlier, lower recurse max-depth, or raise budgets.maxVisited");
+            if ((Visited & 1023) == 0) CheckTime();
+        }
+
+        public void CheckTime()
+        {
+            if (_sw.ElapsedMilliseconds > TimeoutMs)
+                throw new RqlException("timeout", $"query exceeded {TimeoutMs} ms", null, "narrow the query or raise budgets.timeoutMs");
+        }
+
+        public void GetterThrew(string member, Exception ex)
+        {
+            if (GetterErrors++ == 0) FirstGetterError = $"getter '{member}' threw {ex.GetType().Name}: {ex.Message}";
+        }
+    }
+
+    /// <summary>Linked navigation path; rendered lazily for $path.</summary>
+    internal sealed class PathNode
+    {
+        public PathNode(PathNode? parent, string text) { Parent = parent; Text = text; }
+        public PathNode? Parent { get; }
+        public string Text { get; }
+
+        public PathNode Member(string name) => new PathNode(this, "." + name);
+        public PathNode At(long i) => new PathNode(this, "[" + i.ToString(CultureInfo.InvariantCulture) + "]");
+        public PathNode Key(object? key) => new PathNode(this, "[" + (key is string s ? "\"" + s.Replace("\"", "\\\"") + "\"" : Convert.ToString(key, CultureInfo.InvariantCulture)) + "]");
+
+        public override string ToString()
+        {
+            var parts = new List<string>();
+            for (var n = this; n != null; n = n.Parent) parts.Add(n.Text);
+            parts.Reverse();
+            return string.Concat(parts);
+        }
+    }
+
+    /// <summary>Per-path-segment statistics used for unknown-member diagnostics and a monomorphic inline cache.</summary>
+    internal sealed class MemberSite
+    {
+        public MemberSite(string name, TextSpan? span) { Name = name; Span = span; }
+        public string Name { get; }
+        public TextSpan? Span { get; }
+        public long Hits;
+        public long Misses;
+        public readonly HashSet<TypeInfo> MissTypes = new HashSet<TypeInfo>();
+        public Type? CachedType;
+        public MemberAccessor? CachedMember;
+    }
+}

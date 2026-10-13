@@ -1,0 +1,18 @@
+# secrets
+.env
+.env.*
+!.env.example
+# build
+bin/
+obj/
+node_modules/
+dist/
+build/
+cpp/build*/
+*.user
+.vs/
+.idea/
+.DS_Store
+# eval raw traces (large); curated summaries live in evaluation/reports and baselines
+evaluation/runs/
+.scratch/
