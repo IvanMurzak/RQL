@@ -18,7 +18,7 @@ writes, no secret leakage.
 | Unintended writes | Writes need BOTH `Mutations.Enabled` on the host AND `options.allowMutation` on the request (the read tool cannot mutate). All targets and values are resolved and coerced before the first write; failures roll back already-applied writes. `maxMutationTargets` (default 20) refuses bulk changes unless raised explicitly, and never beyond the host's `HardMaxTargets` (default 1000). Writes through value types require every written-back parent member to be writable and allowed. Value-copy items are rejected as targets. Dry-run receipts. Identity members are read-only. Host policy hook `Mutations.CanWrite(type, member)`. |
 | `call` side effects | Calls cannot be rolled back; the receipt says how many completed if one throws. Dry-run validates without invoking. |
 | Stale references | Liveness hook (`IsAlive`) → `stale-ref` instead of touching destroyed objects. |
-| Regex DoS | .NET uses a 50 ms regex timeout; TS/C++ have none (documented gap — hosts exposing them to untrusted input should cap string sizes or disable `matches`). |
+| Regex DoS | All runtimes check the query timeout after every `matches` evaluation; .NET additionally bounds each match (50 ms). A single catastrophic match in TS/C++ is not interruptible, so hosts exposing those runtimes to untrusted input should cap string sizes or disable `matches`. |
 | Secrets | Evaluation keys are read only from `RQL_EVAL_API_KEY` / `RQL_EVAL_API_KEY_FILE`; never written to configs, traces or reports; provider error text is redacted (`sk-…`, `Bearer …`). `.env*` is gitignored. |
 
 ## Observed residual risk (evaluation)
