@@ -17,13 +17,13 @@ jobs:
     runs-on: [self-hosted, linux, rm-anastasiia-wsl-linux-x64]
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: |
             8.0.x
             10.0.x
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Toolchain versions
