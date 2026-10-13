@@ -1,0 +1,43 @@
+{
+ "run": "final-prompt-h2",
+ "name": "final-prompt-schema",
+ "split": "holdout2",
+ "git": "078cb54",
+ "config": {
+  "Name": "final-prompt-schema",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-flash",
+  "ReasoningEffort": "none",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v4",
+  "Format": "table",
+  "Toolset": "rql",
+  "SchemaInPrompt": true,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 3,
+  "Repeats": 3
+ },
+ "n": 90,
+ "successes": 90,
+ "successRate": 1.0,
+ "ci95": [
+  0.9590629315783191,
+  0.9999999999999999
+ ],
+ "costUsd": 0.021278099999999998,
+ "costPerSuccess": 0.0002364233333333333,
+ "meanTotalTokens": 7816.511111111111,
+ "meanCompletionTokens": 213.98888888888888,
+ "meanToolCalls": 1.9111111111111112,
+ "meanToolErrors": 0.05555555555555555,
+ "meanToolResultChars": 290.77777777777777,
+ "medianWallSec": 3.01168575,
+ "p95WallSec": 6.335506485,
+ "cacheHitRatio": 0.9237431437227703,
+ "unintendedChangeTasks": 0,
+ "failures": []
+}

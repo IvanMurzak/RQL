@@ -12,7 +12,7 @@ namespace Rql.Eval.Tasks
     /// LINQ over the live sandbox (hidden from the model), and <c>Reference</c> is a scripted RQL solution
     /// used to validate solvability through the agent tool surface.
     /// </summary>
-    public static class Catalog
+    public static partial class Catalog
     {
         public const string Version = "v1";
 
@@ -700,13 +700,19 @@ namespace Rql.Eval.Tasks
 
         // ------------------------------------------------------------ instantiation
 
+        private static int[] SeedsFor(string split) => split switch
+        {
+            "holdout" => HoldoutSeeds,
+            "holdout2" => Holdout2Seeds,
+            _ => DevSeeds,
+        };
+
         public static List<TaskInstance> Build(string split)
         {
-            var seeds = split == "holdout" ? HoldoutSeeds : DevSeeds;
             var list = new List<TaskInstance>();
-            foreach (var t in Templates().Where(t => t.Split == split || split == "all"))
+            foreach (var t in Templates().Concat(TemplatesV2()).Where(t => t.Split == split || split == "all"))
             {
-                foreach (var seed in (split == "all" ? (t.Split == "holdout" ? HoldoutSeeds : DevSeeds) : seeds))
+                foreach (var seed in SeedsFor(t.Split))
                 {
                     var inst = Instantiate(t, seed);
                     if (inst != null) list.Add(inst);

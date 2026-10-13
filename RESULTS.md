@@ -145,10 +145,27 @@ and the median task takes −66% less time. Legacy failures are mostly step-budg
 "search everything" tasks (scale: 0/12 on dev; `agg-paid-revenue`: 95–175 tool calls). Typical
 legacy behaviour: walking `Children[i].Components[0]` one call at a time.
 
+### 3.4 Clean generalization check — task catalog v2 (`holdout2`)
+
+The holdout caveats in §3 motivated a fresh test. 15 new templates (`Tasks/CatalogV2.cs`, seeds 31/32,
+30 instances) were written **after** all language and prompt work was frozen, validated only by the
+scripted reference agent (30/30), then each condition was run exactly once (×3 repeats). There was no iteration.
+
+| Run | Split | n | Success (95% CI) | Cost / success | Tokens / task | Tool calls | Tool errors | Tool-result chars | Median / p95 wall s | Cache hit |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| final-prompt-schema | holdout2 | 90 | 100.0% (95.9–100.0) | $0.00024 | 7,817 | 1.91 | 0.06 | 291 | 3.01 / 6.34 | 92% |
+| final-tool-schema | holdout2 | 90 | 100.0% (95.9–100.0) | $0.00033 | 7,720 | 3.00 | 0.06 | 4,391 | 3.64 / 7.17 | 85% |
+| legacy-tools | holdout2 | 90 | 66.7% (56.4–75.5) | $0.00956 | 169,190 | 36.86 | 2.10 | 102,045 | 9.60 / 37.44 | 82% |
+
+**Result:** the frozen final configurations solved **90/90 = 100%** (95% CI 95.9–100) in both schema
+modes. The conventional reflection-tool baseline solved **66.7%** at **40× the cost per success**
+($0.00956 vs $0.00024), with 37 vs 1.9 tool calls and 3.2× the median wall time. Its failures are step-budget
+exhaustion on search/aggregate tasks (e.g. `v2-agg-avg-lines`: 155–233 tool calls).
+
 ## 4. Spend
 
-Total recorded DeepSeek spend for the whole session: **$2.81** of the $25 global cap (balance before
-start: $29.46), over 30 ledger entries (`evaluation/baselines/spend-ledger.json`). Costs are computed from
+Total recorded DeepSeek spend for the whole session: **$3.43** of the $25 global cap (balance before
+start: $29.46), over 33 ledger entries (`evaluation/baselines/spend-ledger.json`). Costs are computed from
 provider-reported token usage × the price snapshot. One entry is a known conservative double count (~$0.035; see the ledger).
 
 ## 5. Limitations (honest)
@@ -170,7 +187,7 @@ provider-reported token usage × the price snapshot. One entry is a known conser
    reflection rules; rerun Tier B on a real Unity scene, comparing against the production ReflectorNet tools rather than the re-implemented legacy baseline.
 2. **Unreal provider** for the C++ engine plus the sidecar plan forwarding (ADR-0003).
 3. **Second model family** for external validity (needs owner approval for another provider's spend).
-4. **Task catalog v2** with fresh holdout templates (current holdout is now fully used for checkpoints).
+4. **Task catalog v3** with harder multi-step tasks; catalog v2 is now spent (§3.4) and the final configs saturate it.
 5. **Destructive-method policy** (`Destructive` flag requiring a prior dry-run) for the residual
    "approximate an impossible change" risk: 1/6 runs with tool schema, 0/6 with prompt schema.
 6. Investigate the bimodal JIT behaviour and the slower allocation-free recurse variant (low priority:

@@ -1,6 +1,6 @@
 {
   "CapUsd": 25,
-  "SpentUsd": 2.8099848779999976,
+  "SpentUsd": 3.434871065999994,
   "Runs": [
     {
       "id": "probe-20261013T203447Z",
@@ -205,6 +205,27 @@
       "split": "holdout",
       "taskRuns": 81,
       "costUsd": 0.38433
+    },
+    {
+      "id": "20261013-214018-final-prompt-schema-holdout2",
+      "config": "final-prompt-schema",
+      "split": "holdout2",
+      "taskRuns": 90,
+      "costUsd": 0.021281
+    },
+    {
+      "id": "20261013-214109-final-tool-schema-holdout2",
+      "config": "final-tool-schema",
+      "split": "holdout2",
+      "taskRuns": 90,
+      "costUsd": 0.030119
+    },
+    {
+      "id": "20261013-214211-legacy-tools-holdout2",
+      "config": "legacy-tools",
+      "split": "holdout2",
+      "taskRuns": 90,
+      "costUsd": 0.573484
     }
   ]
 }

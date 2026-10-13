@@ -1,0 +1,43 @@
+{
+ "run": "final-tool-h2",
+ "name": "final-tool-schema",
+ "split": "holdout2",
+ "git": "078cb54",
+ "config": {
+  "Name": "final-tool-schema",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-flash",
+  "ReasoningEffort": "none",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v4",
+  "Format": "table",
+  "Toolset": "rql",
+  "SchemaInPrompt": false,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 3,
+  "Repeats": 3
+ },
+ "n": 90,
+ "successes": 90,
+ "successRate": 1.0,
+ "ci95": [
+  0.9590629315783191,
+  0.9999999999999999
+ ],
+ "costUsd": 0.030124542000000015,
+ "costPerSuccess": 0.00033471713333333347,
+ "meanTotalTokens": 7720.0888888888885,
+ "meanCompletionTokens": 252.27777777777777,
+ "meanToolCalls": 3,
+ "meanToolErrors": 0.05555555555555555,
+ "meanToolResultChars": 4391.166666666667,
+ "medianWallSec": 3.6431646000000004,
+ "p95WallSec": 7.172109084999999,
+ "cacheHitRatio": 0.8533870552578995,
+ "unintendedChangeTasks": 0,
+ "failures": []
+}
