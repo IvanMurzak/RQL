@@ -28,19 +28,19 @@ interleaved runs after 60 warmups, compiled accessors):
 
 | Query | Median ms | p90 ms | Alloc KB | Visited | Members read | Output B |
 |---|---:|---:|---:|---:|---:|---:|
-| `objects | count` | 0.872 | 0.915 | 180 | 14,437 | 0 | 53 |
-| `objects | where $ is Enemy and Health < 20 and Health > 0 | count` | 0.503 | 0.507 | 298 | 14,437 | 4,818 | 51 |
-| `objects | where Components.any($ is LightComponent and Enabled == false) | count` | 2.078 | 2.184 | 504 | 14,437 | 16,384 | 51 |
-| `objects | where $ is Enemy | sort Level desc | first 10 | select $ref Name Level` | 0.513 | 0.521 | 287 | 14,437 | 3,902 | 462 |
-| `objects | where $ is Enemy and IsElite | first 1 | select $ref Name` | 0.037 | 0.039 | 30 | 1,267 | 3 | 111 |
-| `objects | where $ is Enemy | group-by Faction | sort count desc` | 0.694 | 0.703 | 277 | 14,437 | 3,882 | 132 |
-| `objects | where $ is Character | select $ref Name Health Transform.Position` | 1.086 | 1.234 | 1327 | 14,437 | 16,204 | 3,450 |
-| `world.Scenes | get Objects | recurse Children max-depth=16 | count` | 0.964 | 2.120 | 2647 | 14,445 | 14,446 | 53 |
-| `world | recurse max-depth=8 | count` | 7.064 | 10.329 | 9035 | 85,464 | 76,201 | 53 |
-| `world.Scenes | get Objects | recurse Children max-depth=16 | where Name starts-with "Chest" | first 5 | select $path` | 0.061 | 0.064 | 276 | 722 | 1,363 | 471 |
-| `objects | where Name contains "oak" or Name matches "^Torch_0[0-9]+$" | count` | 1.223 | 1.306 | 183 | 14,437 | 28,477 | 51 |
-| `objects | get Components | where $ is ScriptComponent and ScriptName == "Chest" and Properties.locked == true | count` | 1.351 | 1.560 | 2104 | 41,404 | 21,795 | 51 |
-| `app.Orders | where Status == "Delivered" and Customer.Profile.Country == "DE" | sum Total` | 0.084 | 0.085 | 60 | 2,030 | 3,085 | 65 |
+| `objects \| count` | 0.872 | 0.915 | 180 | 14,437 | 0 | 53 |
+| `objects \| where $ is Enemy and Health < 20 and Health > 0 \| count` | 0.503 | 0.507 | 298 | 14,437 | 4,818 | 51 |
+| `objects \| where Components.any($ is LightComponent and Enabled == false) \| count` | 2.078 | 2.184 | 504 | 14,437 | 16,384 | 51 |
+| `objects \| where $ is Enemy \| sort Level desc \| first 10 \| select $ref Name Level` | 0.513 | 0.521 | 287 | 14,437 | 3,902 | 462 |
+| `objects \| where $ is Enemy and IsElite \| first 1 \| select $ref Name` | 0.037 | 0.039 | 30 | 1,267 | 3 | 111 |
+| `objects \| where $ is Enemy \| group-by Faction \| sort count desc` | 0.694 | 0.703 | 277 | 14,437 | 3,882 | 132 |
+| `objects \| where $ is Character \| select $ref Name Health Transform.Position` | 1.086 | 1.234 | 1327 | 14,437 | 16,204 | 3,450 |
+| `world.Scenes \| get Objects \| recurse Children max-depth=16 \| count` | 0.964 | 2.120 | 2647 | 14,445 | 14,446 | 53 |
+| `world \| recurse max-depth=8 \| count` | 7.064 | 10.329 | 9035 | 85,464 | 76,201 | 53 |
+| `world.Scenes \| get Objects \| recurse Children max-depth=16 \| where Name starts-with "Chest" \| first 5 \| select $path` | 0.061 | 0.064 | 276 | 722 | 1,363 | 471 |
+| `objects \| where Name contains "oak" or Name matches "^Torch_0[0-9]+$" \| count` | 1.223 | 1.306 | 183 | 14,437 | 28,477 | 51 |
+| `objects \| get Components \| where $ is ScriptComponent and ScriptName == "Chest" and Properties.locked == true \| count` | 1.351 | 1.560 | 2104 | 41,404 | 21,795 | 51 |
+| `app.Orders \| where Status == "Delivered" and Customer.Profile.Country == "DE" \| sum Total` | 0.084 | 0.085 | 60 | 2,030 | 3,085 | 65 |
 
 Note: some queries are bimodal across process launches (e.g. `filter-nested-any` 0.84 ms / 275 KB in one launch and 2.3–2.5 ms / ~600 KB in others), from JIT/PGO decisions rather than code changes. Use the per-launch numbers as ±2.5× bands.
 
@@ -63,7 +63,13 @@ Note: some queries are bimodal across process launches (e.g. `filter-nested-any`
 
 Setup: DeepSeek `deepseek-flash` (V4.1-Flash) non-thinking, temperature 0, max 12 turns, 4,096 tokens per call, 50 rows
 per result; 3 repeats per task; cost = provider-reported tokens × `configs/pricing.json` snapshot
-(off-peak rates applied by request time). Holdout templates/seeds were never used for tuning.
+(off-peak rates applied by request time).
+
+**Holdout hygiene, disclosed:** holdout templates/seeds were not used to design language features, with two exceptions.
+(1) The exact-change safety rule in prompt v2 was motivated by the `neg-delete-scene` failure, first seen in the E3
+holdout checkpoint. (2) The choice between the two final configurations (`final-tool-schema` vs `final-prompt-schema`)
+was made on holdout. Treat the final holdout numbers as optimistic; a fresh task catalog v2 is the clean test
+(see §6).
 
 ### 3.1 Experiment log (one factor at a time unless noted)
 
@@ -102,7 +108,7 @@ Run names: `baseline` = first evaluated commit (`8b53dd4`, run from a separate g
 `final-tool-schema` with `deepseek-v4-pro`. `final-prompt-schema` is the recommended configuration
 (`evaluation/configs/final.json`).
 
-**Headline (holdout, never tuned on):** first iteration → final configuration: success **81.5% → 100%**
+**Headline (holdout; see the hygiene note above):** first iteration → final configuration: success **81.5% → 100%**
 (95% CI 95.5–100), cost per successful task **$0.00064 → $0.00023 (−64%)**, tokens per task **12.4k → 7.4k
 (−40%)**, tool calls **5.2 → 1.9**, median wall time **5.2 s → 3.2 s**, p95 **13.6 s → 5.0 s**.
 
@@ -113,7 +119,7 @@ Run names: `baseline` = first evaluated commit (`8b53dd4`, run from a separate g
 | E1 | Agents filtered `objects` (GameObjects) for `$ is LightComponent` / `$ is Quest` and silently got 0; `$path` lost after `select`; map entries needed `.Value`; depth questions ran out of steps | `no-match` warning naming where a type is reachable; `$name` row columns shadow metas; map-entry member delegation; `$depth` meta | 92.5% → 98.4% (+13 / −2 flips), cost/success −18%, tool errors −50% |
 | E2 | Agents used `select` as navigation (`world \| select A.B \| get $ \| …`); warnings said `no member 'Item' on ` (empty) | single-column rows stand for their value; row-specific `unknown-member` text; `$ref` of a row is its value's ref | 97.8% (noise vs E1: +3 / −5 flips; kept for ergonomics), tokens −5% |
 | E3 | Outer item unreachable inside `.count(...)`; regex escapes `\\[` were syntax errors | lexical scope chain in method arguments; verbatim unknown escapes | 100% (+4 / −0) |
-| — | Holdout checkpoint (never used for tuning) | baseline code vs E3 code | **81.5% → 92.6%**, cost/success −25%, tokens −17%, tool calls −21% |
+| — | Holdout checkpoint | baseline code vs E3 code | **81.5% → 92.6%**, cost/success −25%, tokens −17%, tool calls −21% |
 | E4 | Over-verification loops; destructive approximation on "delete the scene" (6/6 holdout runs destroyed 11k–33k fields) | prompt v2: navigation tips, "submit as soon as…", exact-change-only safety rule | dev: =100%, tokens −19%, wall −24%; **holdout 98.8%** (+5 / −0), destructive runs 6/6 → 1/6 |
 | E5 | — (ablation) | JSON results instead of compact table | =100%; tokens +8%, tool-result chars +19%, wall +14% → table kept (ADR-0004) |
 | E6 | — (ablation) | schema in system prompt instead of `rql_schema` tool | cost/success −37%, tool calls −40%, wall −32%; success 97.3% (5 failures on one template: `X.Dependencies \| recurse Dependencies` drops the start items) |

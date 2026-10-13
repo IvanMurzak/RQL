@@ -19,7 +19,7 @@ Enemy#233|Wraith_0232|1|90|Undead|{x:207.96,y:25.52,z:1.02}
 ```
 
 **Measured outcome** (DeepSeek V4.1-Flash agent, hidden-oracle tasks; details and caveats in
-[`RESULTS.md`](RESULTS.md)): on **held-out** tasks the final language + prompt reaches **100% (81/81)**,
+[`RESULTS.md`](RESULTS.md)): on **held-out** tasks the final language + prompt reaches **100% (81/81)** (optimistic: holdout informed the final config choice, see RESULTS),
 up from **81.5%** for the first iteration, at **$0.00023 per successful task** and 1.9 tool calls per task.
 A conventional reflection-tool baseline (find / dump-object-as-JSON / set / call) on the same tasks scores 91.4% at
 **22× the cost per success** and 34 tool calls per task.
