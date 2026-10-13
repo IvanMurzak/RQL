@@ -1,0 +1,8 @@
+{
+  "source": "https://api-docs.deepseek.com/quick_start/pricing (USD per 1M tokens, peak rates; off-peak = 0.5x; peak = 01:00-04:00 and 06:00-10:00 UTC Mon-Fri)",
+  "retrievedAt": "2026-10-13",
+  "models": {
+    "deepseek-flash": { "peakHit": 0.006, "peakMiss": 0.3, "peakOutput": 1.2, "offPeakFactor": 0.5 },
+    "deepseek-v4-pro": { "peakHit": 0.044, "peakMiss": 1.32, "peakOutput": 3.96, "offPeakFactor": 0.5 }
+  }
+}

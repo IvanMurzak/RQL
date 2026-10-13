@@ -170,7 +170,7 @@ namespace Rql
     {
         public ExprStage(string op, Expr? expr) : base(op) { Expr = expr; }
         public Expr? Expr { get; }
-        public override bool IsTerminal => Op != "get" && Op != "distinct";
+        public override bool IsTerminal => Op != "get" && Op != "distinct" && Op != "group-by";
     }
 
     public sealed class RecurseStage : Stage

@@ -157,19 +157,19 @@ determinism). Entries encode as `{"key": ..., "value": ...}`. `m[1]` on a map is
 | `recurse [via...] [max-depth=N] [include-self=true]` | depth-first pre-order expansion of each item into its descendants. With `via` members (e.g. `recurse Children`) only those members are followed; without, every **owning** object-valued member and list/map element of objects is followed (runtime member order). Members the descriptor marks as non-owning references (parent links, targets, shared assets) are not followed by generic recursion. Cycle-safe: each object identity is emitted at most once per stage. `max-depth` default 8, hard cap per budget. |
 | `distinct [e]` | keep the first item for each distinct value of `e` (default `$`; objects by identity). |
 | `sum/min/max/avg e` | terminal aggregate, same rules as the collection methods (`sum` of nothing → `0`). |
-| `group-by e` | terminal: rows `{key, count}` ordered by first appearance of the key. |
+| `group-by e` | replaces the stream by rows `{key, count}` (members `key`, `count`) in order of first appearance of the key; `null`/`missing` keys form one `null` group. Can be followed by `sort count desc`, `where count > 1`, etc. |
 | `describe` | terminal: schema of the distinct runtime types of the items (members, kinds, writability). |
 | `set p = e, ...` | mutation (§8). |
 | `call m(args)` | mutation: invoke an allowlisted method (§8). |
 
-Terminal stages (`count`, aggregates, `group-by`, `describe`, `set`, `call`) MUST be last;
+Terminal stages (`count`, aggregates, `describe`, `set`, `call`) MUST be last;
 otherwise `invalid-plan`.
 
 ## 6. Output encoding
 
 The result of a query is a `QueryResult` ([schema](query-result.schema.json)):
 
-* `kind: "rows"` — when the last stage is `select` / `group-by` / mutation receipt: `columns` +
+* `kind: "rows"` — when the stream carries projected rows (`select` / `group-by` not followed by `get`/`recurse`) or a mutation receipt: `columns` +
   `rows` (array of arrays, column order).
 * `kind: "items"` — no projection: each item is encoded as a **value** (below), `columns` absent.
 * `kind: "scalar"` — `count` and aggregates: `value`.
@@ -206,6 +206,7 @@ conformance form.
   from every registered source) → `error(stale-ref)` and diagnostic `stale-ref`. Runtimes with
   explicit destruction (Unity/Unreal) MUST check liveness, not just a cached pointer.
 * Object identity (for cycles, `distinct`, `==`) is reference identity in the owning runtime.
+* The identity member that backs `$ref` is always read-only through RQL (`readonly-member`).
 
 ## 8. Mutations
 

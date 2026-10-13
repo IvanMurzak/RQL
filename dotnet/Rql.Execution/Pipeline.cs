@@ -112,8 +112,6 @@ namespace Rql.Execution
                 }
                 case SimpleTerminalStage _:
                     return Describe.Run(_x, stream.Select(i => i.Value));
-                case ExprStage e when e.Op == "group-by":
-                    return GroupBy(stream, _c.Compile(e.Expr!), encoder);
                 case ExprStage e:
                 {
                     var sel = _c.Compile(e.Expr!);
@@ -257,6 +255,7 @@ namespace Rql.Execution
                 case LimitStage l: return input.Skip(l.N);
                 case ExprStage e when e.Op == "get": return Get(input, e.Expr!);
                 case ExprStage e when e.Op == "distinct": return Distinct(input, e.Expr == null ? null : _c.Compile(e.Expr));
+                case ExprStage e when e.Op == "group-by": return GroupBy(input, _c.Compile(e.Expr!));
                 case RecurseStage r: return Recurse(input, r);
                 case GenericStage g: return Generic(input, g);
                 default: throw new RqlException("unsupported", $"stage '{st.Op}' is not supported here", st.Span);
@@ -495,7 +494,8 @@ namespace Rql.Execution
 
         // ------------------------------------------------------------ terminals / output
 
-        private QueryResult GroupBy(IEnumerable<Item> input, Eval key, Encoder enc)
+        /// <summary>group-by: rows {key, count} in order of first appearance (null/missing keys grouped as null).</summary>
+        private IEnumerable<Item> GroupBy(IEnumerable<Item> input, Eval key)
         {
             var order = new List<object?>();
             var counts = new Dictionary<object, long>(DistinctComparer.Instance);
@@ -513,8 +513,9 @@ namespace Rql.Execution
                 if (counts.TryGetValue(k, out var c)) counts[k] = c + 1;
                 else { counts[k] = 1; order.Add(k); }
             }
-            var rows = order.Select(k => new object?[] { k, (double)(k == null ? nullCount : counts[k]) }).ToList();
-            return enc.Rows(new[] { "key", "count" }, rows);
+            var cols = new[] { "key", "count" };
+            foreach (var k in order)
+                yield return new Item(new RowValue(cols, new object?[] { k, (double)(k == null ? nullCount : counts[k]) }), null);
         }
 
         private QueryResult Collect(IEnumerable<Item> stream, Encoder enc)
@@ -548,14 +549,17 @@ namespace Rql.Execution
             bool rows = false;
             foreach (var st in _x.Plan.Stages)
             {
-                if (st is SelectStage) rows = true;
-                else if (st is ExprStage || st is RecurseStage || st is GenericStage) rows = false;
+                if (st is SelectStage || (st is ExprStage ge && ge.Op == "group-by")) rows = true;
+                else if ((st is ExprStage ee && ee.Op != "distinct") || st is RecurseStage || st is GenericStage) rows = false;
             }
             return rows;
         }
 
-        private string[] SelectColumns() =>
-            ((SelectStage)_x.Plan.Stages.Last(s => s is SelectStage)).Fields.Select(f => f.Name).ToArray();
+        private string[] SelectColumns()
+        {
+            var last = _x.Plan.Stages.Last(s => s is SelectStage || (s is ExprStage e && e.Op == "group-by"));
+            return last is SelectStage sel ? sel.Fields.Select(f => f.Name).ToArray() : new[] { "key", "count" };
+        }
     }
 
     /// <summary>Sort order: null/missing last; number &lt; string &lt; bool &lt; other (spec §5).</summary>

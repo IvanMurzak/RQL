@@ -203,6 +203,16 @@ namespace Rql.Execution
 
             info.IdMember = members.FirstOrDefault(m => m.Member.IsDefined(typeof(RqlIdAttribute)))
                             ?? members.FirstOrDefault(m => m.Name == "Id" && IsIdType(m.Type));
+            // Stable identities never change through RQL (refs would silently break).
+            if (info.IdMember != null && info.IdMember.CanWrite)
+            {
+                var id = info.IdMember;
+                var ro = new MemberAccessor(id.Member, id.Type, id.Getter, false, id.Owning, id.Order);
+                members[members.IndexOf(id)] = ro;
+                info.ByName[ro.Name] = ro;
+                info.ByNameCI[ro.Name] = info.ByNameCI.TryGetValue(ro.Name, out var prev) && prev == null ? null : ro;
+                info.IdMember = ro;
+            }
             info.DisplayMember = members.FirstOrDefault(m => m.Member.IsDefined(typeof(RqlDisplayAttribute)))
                                  ?? members.FirstOrDefault(m => m.Name == "Name" && m.Type == typeof(string));
             info.Callable = t.GetMethods(BindingFlags.Public | BindingFlags.Instance)

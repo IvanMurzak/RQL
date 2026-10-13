@@ -44,7 +44,7 @@ namespace Rql.Sample
             var t = v.GetType();
             if (TypeModel.IsScalarType(t)) { into[path] = Scalar(v); return; }
             var info = engine.Types.Info(t);
-            if (!t.IsValueType && !visited.Add(v)) { into[path] = "→" + engine.RefOf(v); return; }
+            if (!t.IsValueType && !visited.Add(v)) { into[path] = "→" + StableRef(engine, v); return; }
             if (info.IsMap)
             {
                 into[path] = "map[" + (V2.Count(v)) + "]";
@@ -75,14 +75,18 @@ namespace Rql.Sample
                     {
                         var mi = engine.Types.Info(mv.GetType());
                         into[path + "." + m.Name] = mi.IsList || mi.IsMap
-                            ? "refs[" + string.Join(",", ((IEnumerable)mv).Cast<object?>().Select(x => x == null ? "null" : engine.RefOf(x is DictionaryEntry de ? de.Value! : x))) + "]"
-                            : "→" + engine.RefOf(mv);
+                            ? "refs[" + string.Join(",", ((IEnumerable)mv).Cast<object?>().Select(x => x == null ? "null" : StableRef(engine, x is DictionaryEntry de ? de.Value! : x))) + "]"
+                            : "→" + StableRef(engine, mv);
                     }
                     continue;
                 }
                 Walk(engine, mv, path + "." + m.Name, into, visited, depth + 1);
             }
         }
+
+        /// <summary>Session handles depend on query history, so identity-less objects are recorded by type only.</summary>
+        private static string StableRef(RqlEngine engine, object o) =>
+            engine.Types.Info(o.GetType()).IdMember != null ? engine.RefOf(o) : engine.Types.Info(o.GetType()).ShortName;
 
         private static (object? key, object? value) Entry(object kv)
         {
