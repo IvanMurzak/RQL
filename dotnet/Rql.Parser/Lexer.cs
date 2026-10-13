@@ -168,7 +168,10 @@ namespace Rql.Parsing
                             sb.Append((char)code);
                             i += 4;
                             break;
-                        default: throw Error($"invalid escape '\\{e}'", i, i + 2);
+                        default:
+                            // Unknown escapes are kept verbatim so regex patterns ("\[", "\.") survive.
+                            sb.Append('\\').Append(e);
+                            break;
                     }
                     i += 2;
                     continue;

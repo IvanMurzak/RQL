@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Run RQL against the deterministic sandbox. Usage: scripts/rql-sample [--size small|medium|large|huge] [--seed N] "query" | schema [Type] | plan "query" | repl
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -z "${DOTNET_ROOT:-}" ] && [ -x "$HOME/.dotnet/dotnet" ]; then export DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH"; fi
+dotnet build "$ROOT/dotnet/Rql.SampleRuntime" -v q -nologo -clp:ErrorsOnly >/dev/null
+exec dotnet "$ROOT/dotnet/Rql.SampleRuntime/bin/Debug/net10.0/rql-sample.dll" "$@"

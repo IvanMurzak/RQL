@@ -311,6 +311,10 @@ namespace Rql.Execution
         // evaluation scope (mutable, saved/restored by nested scopes)
         public object? Current;
         public PathNode? CurrentPath;
+        public int CurrentDepth = -1;
+        /// <summary>Enclosing items while evaluating collection-method arguments (scope chain).</summary>
+        public readonly List<object?> Outer = new List<object?>();
+        public readonly List<IsSite> IsSites = new List<IsSite>();
         public long Index;
 
         public long Visited;
@@ -342,6 +346,17 @@ namespace Rql.Execution
         }
     }
 
+    /// <summary>Statistics of one `x is T` test, used for the no-match diagnostic.</summary>
+    internal sealed class IsSite
+    {
+        public IsSite(string typeName, TextSpan? span) { TypeName = typeName; Span = span; }
+        public string TypeName { get; }
+        public TextSpan? Span { get; }
+        public long Evaluated;
+        public long Matched;
+        public readonly HashSet<TypeInfo> Seen = new HashSet<TypeInfo>();
+    }
+
     /// <summary>Linked navigation path; rendered lazily for $path.</summary>
     internal sealed class PathNode
     {
@@ -371,6 +386,7 @@ namespace Rql.Execution
         public long Hits;
         public long Misses;
         public readonly HashSet<TypeInfo> MissTypes = new HashSet<TypeInfo>();
+        public string[]? RowColumns;
         public Type? CachedType;
         public MemberAccessor? CachedMember;
     }

@@ -6146,6 +6146,56 @@
           }
         ]
       }
+    },
+    {
+      "rql": "objects | where Name matches \"^Torch_\\d+\\.x\" or Name == 'a\\qb' | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "objects"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "or",
+              "args": [
+                {
+                  "op": "matches",
+                  "args": [
+                    {
+                      "path": [
+                        "Name"
+                      ]
+                    },
+                    {
+                      "lit": "^Torch_\\d+\\.x"
+                    }
+                  ]
+                },
+                {
+                  "op": "==",
+                  "args": [
+                    {
+                      "path": [
+                        "Name"
+                      ]
+                    },
+                    {
+                      "lit": "a\\qb"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      }
     }
   ]
 }

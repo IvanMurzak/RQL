@@ -115,7 +115,12 @@ namespace Rql.Eval.Tasks
                 }
                 case AnswerKind.Names:
                 {
-                    var got = ParseList(answer);
+                    // Leniency v1.1: "Asset#mat/wood" names the same thing as "mat/wood" when ids were asked for.
+                    var got = new HashSet<string>(ParseList(answer).Select(x =>
+                    {
+                        var m = Regex.Match(x, @"^[A-Za-z_][A-Za-z0-9_]*[#@](.+)$");
+                        return m.Success && !e.Set!.Contains(x) && e.Set.Contains(m.Groups[1].Value) ? m.Groups[1].Value : x;
+                    }), StringComparer.Ordinal);
                     return SetGrade(g, got, e);
                 }
                 case AnswerKind.Number:

@@ -296,7 +296,7 @@ namespace Rql.Eval.Tasks
                     var s = c.PickScene(sc => c.In(sc).OfType<Enemy>().Any(e => e.Faction == Faction.Undead));
                     var lv = c.In(s).OfType<Enemy>().Where(e => e.Faction == Faction.Undead).Select(e => (double)e.Level).ToList();
                     if (lv.Count == 0) return null;
-                    return T($"What is the average Level of Undead-faction enemies in scene {Q(s.Name)}? Round to 2 decimals.", FmtNumber, Expected.Num(Math.Round(lv.Average(), 2), 0.006),
+                    return T($"What is the average Level of Undead-faction enemies in scene {Q(s.Name)}? Round to 2 decimals.", FmtNumber, Expected.Num(lv.Average(), 0.0051),
                         h => Scalar(h, $"objects | where Scene.Name == {Q(s.Name)} and $ is Enemy and Faction == \"Undead\" | avg Level"));
                 },
             };

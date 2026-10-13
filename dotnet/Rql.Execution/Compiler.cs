@@ -72,7 +72,23 @@ namespace Rql.Execution
                     {
                         var site = new MemberSite(seg.Name!, p.Span);
                         _x.Sites.Add(site);
-                        cur = x => Member(x, prev(x), site);
+                        if (first)
+                        {
+                            // Lexical scope chain: inside method arguments a bare name missing on the element
+                            // resolves against the enclosing item(s) (spec §3).
+                            cur = x =>
+                            {
+                                var r = Member(x, x.Current, site);
+                                if (!(r is Missing) || x.Outer.Count == 0) return r;
+                                for (int k = x.Outer.Count - 1; k >= 0; k--)
+                                {
+                                    var o = Member(x, x.Outer[k], site);
+                                    if (!(o is Missing)) return o;
+                                }
+                                return r;
+                            };
+                        }
+                        else cur = x => Member(x, prev(x), site);
                         break;
                     }
                     case SegmentKind.Index:
@@ -108,6 +124,23 @@ namespace Rql.Execution
 
         private Eval CompileMeta(string name, Eval prev, bool ofCurrentItem)
         {
+            var inner = CompileMetaCore(name, prev, ofCurrentItem);
+            if (!ofCurrentItem) return inner;
+            // After `select`, a column literally named "$name" (e.g. select $path) shadows the meta member.
+            var column = "$" + name;
+            return x =>
+            {
+                if (x.Current is RowValue row)
+                {
+                    int i = row.IndexOf(column);
+                    if (i >= 0) return row.Values[i];
+                }
+                return inner(x);
+            };
+        }
+
+        private Eval CompileMetaCore(string name, Eval prev, bool ofCurrentItem)
+        {
             switch (name)
             {
                 case "type":
@@ -124,6 +157,7 @@ namespace Rql.Execution
                         var v = prev(x);
                         if (v == null) return null;
                         if (V.IsAbsent(v)) return v;
+                        if (v is RowValue rv) return rv.Columns.Length == 1 && rv.Values[0] != null && !V.IsAbsent(rv.Values[0]) && x.Types.Info(rv.Values[0]!.GetType()).IsObject ? x.Engine.RefOf(rv.Values[0]!) : (object)Missing.Value;
                         var info = x.Types.Info(v.GetType());
                         return info.IsObject ? x.Engine.RefOf(v) : (object)Missing.Value;
                     };
@@ -134,8 +168,11 @@ namespace Rql.Execution
                 case "index":
                     if (!ofCurrentItem) return _ => Missing.Value;
                     return x => (double)x.Index;
+                case "depth":
+                    if (!ofCurrentItem) return _ => Missing.Value;
+                    return x => x.CurrentDepth >= 0 ? (double)x.CurrentDepth : (object)Missing.Value;
                 default:
-                    _x.Diagnostics.Add(Diagnostic.Warning("unknown-meta", $"unknown meta member '${name}'", "meta members: $type $ref $path $index"));
+                    _x.Diagnostics.Add(Diagnostic.Warning("unknown-meta", $"unknown meta member '${name}'", "meta members: $type $ref $path $index $depth"));
                     return _ => Missing.Value;
             }
         }
@@ -186,11 +223,19 @@ namespace Rql.Execution
                 if (v is RowValue row)
                 {
                     int ci = row.IndexOf(site.Name);
-                    if (ci < 0) { site.Misses++; return Missing.Value; }
-                    site.Hits++;
-                    return row.Values[ci];
+                    if (ci >= 0) { site.Hits++; return row.Values[ci]; }
+                    // A single-column row stands for its value (`select A.B | get Item` style navigation).
+                    if (row.Columns.Length == 1) return Member(x, row.Values[0], site);
+                    site.Misses++;
+                    site.RowColumns ??= row.Columns;
+                    return Missing.Value;
                 }
                 m = info.Find(site.Name);
+                if (m == null && v is MapEntry entry)
+                {
+                    // Entries expose key/value; any other member is looked up on the value (spec §4.4).
+                    return Member(x, entry.Value, site);
+                }
                 if (m == null)
                 {
                     site.Misses++;
@@ -351,7 +396,23 @@ namespace Rql.Execution
                 case "ends-with": return x => Tri(StringTest(a(x), b!(x), (s, t) => s.EndsWith(t, StringComparison.OrdinalIgnoreCase)));
                 case "matches": return x => Tri(Matches(a(x), b!(x)));
                 case "in": return x => Tri(In(a(x), b!(x)));
-                case "is": return x => Tri(IsType(x, a(x), b!(x)));
+                case "is":
+                {
+                    var site = o.Args[1] is LitExpr tl && tl.Value is string tn ? new IsSite(tn, o.Span) : null;
+                    if (site != null) _x.IsSites.Add(site);
+                    return x =>
+                    {
+                        var v = a(x);
+                        var r = IsType(x, v, b!(x));
+                        if (site != null && r != null)
+                        {
+                            site.Evaluated++;
+                            if (r == true) site.Matched++;
+                            else if (v != null && site.Seen.Count < 6) site.Seen.Add(x.Types.Info(v.GetType()));
+                        }
+                        return Tri(r);
+                    };
+                }
                 case "neg": return x => Arith("neg", a(x), 0d);
                 case "+":
                 case "-":
@@ -800,6 +861,7 @@ namespace Rql.Execution
             var saved = x.Current;
             var savedPath = x.CurrentPath;
             var savedIndex = x.Index;
+            x.Outer.Add(saved);
             try
             {
                 double count = 0;
@@ -844,6 +906,7 @@ namespace Rql.Execution
             }
             finally
             {
+                x.Outer.RemoveAt(x.Outer.Count - 1);
                 x.Current = saved;
                 x.CurrentPath = savedPath;
                 x.Index = savedIndex;
@@ -857,6 +920,7 @@ namespace Rql.Execution
             if (els == null) return v == null ? null : Missing.Value;
             var saved = x.Current;
             var savedPath = x.CurrentPath;
+            x.Outer.Add(saved);
             try
             {
                 var values = new List<object?>();
@@ -875,6 +939,7 @@ namespace Rql.Execution
             }
             finally
             {
+                x.Outer.RemoveAt(x.Outer.Count - 1);
                 x.Current = saved;
                 x.CurrentPath = savedPath;
             }

@@ -1,1 +1,38 @@
-{"CapUsd": 25, "SpentUsd": 0, "Runs": []}
+{
+  "CapUsd": 25,
+  "SpentUsd": 0.23765422200000005,
+  "Runs": [
+    {
+      "id": "probe-20261013T203447Z",
+      "costUsd": 2.25E-06
+    },
+    {
+      "id": "20261013-203453-baseline-dev",
+      "config": "baseline",
+      "split": "dev",
+      "taskRuns": 2,
+      "costUsd": 0.000993
+    },
+    {
+      "id": "20261013-203517-baseline-dev",
+      "config": "baseline",
+      "split": "dev",
+      "taskRuns": 186,
+      "costUsd": 0.088088
+    },
+    {
+      "id": "20261013-204031-e1-exec-ergonomics-dev",
+      "config": "e1-exec-ergonomics",
+      "split": "dev",
+      "taskRuns": 186,
+      "costUsd": 0.076408
+    },
+    {
+      "id": "20261013-204414-e2-row-ergonomics-dev",
+      "config": "e2-row-ergonomics",
+      "split": "dev",
+      "taskRuns": 186,
+      "costUsd": 0.072162
+    }
+  ]
+}

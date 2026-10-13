@@ -74,7 +74,9 @@ letter_         = "A".."Z" | "a".."z" | "_" ;
 number          = digit , { digit } , [ "." , digit , { digit } ] , [ ( "e" | "E" ) , [ "+" | "-" ] , digit , { digit } ] ;
 integer         = digit , { digit } ;
 string          = '"' , { char | escape } , '"' | "'" , { char | escape } , "'" ;
-escape          = "\\" , ( '"' | "'" | "\\" | "n" | "t" | "r" | "u" , hex , hex , hex , hex ) ;
+escape          = "\\" , ( '"' | "'" | "\\" | "n" | "t" | "r" | "u" , hex , hex , hex , hex | other_char ) ;
+                  (* any other escaped character is kept verbatim INCLUDING the backslash, so regex
+                     patterns such as "a\.b" or "\[0\]" need no double escaping *)
 
 (* Reserved words (use backticks to address a member with this name):
    and or not in is null true false

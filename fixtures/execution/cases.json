@@ -5737,6 +5737,870 @@
       }
     },
     {
+      "name": "depth-meta",
+      "rql": "g.Nodes | recurse Children include-self=true | select Name $depth",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ],
+            "includeSelf": true
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "$depth",
+                "expr": {
+                  "path": [
+                    {
+                      "meta": "depth"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "$depth"
+        ],
+        "rows": [
+          [
+            "root-a",
+            0
+          ],
+          [
+            "a-1",
+            1
+          ],
+          [
+            "a-2",
+            1
+          ],
+          [
+            "a-2-x",
+            2
+          ],
+          [
+            "root-b",
+            0
+          ],
+          [
+            "b-1",
+            1
+          ],
+          [
+            "B-2",
+            1
+          ],
+          [
+            "lonely",
+            0
+          ]
+        ],
+        "total": 8
+      }
+    },
+    {
+      "name": "depth-max",
+      "rql": "g.Nodes | recurse Children | max $depth",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "max",
+            "expr": {
+              "path": [
+                {
+                  "meta": "depth"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 2
+      }
+    },
+    {
+      "name": "depth-missing-outside-recurse",
+      "rql": "g.Nodes | select Name $depth",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "$depth",
+                "expr": {
+                  "path": [
+                    {
+                      "meta": "depth"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "$depth"
+        ],
+        "rows": [
+          [
+            "root-a",
+            null
+          ],
+          [
+            "root-b",
+            null
+          ],
+          [
+            "lonely",
+            null
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "row-meta-column",
+      "rql": "g.Nodes | recurse Children | select $path Name | where $path contains \"Children[1]\" | select Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "$path",
+                "expr": {
+                  "path": [
+                    {
+                      "meta": "path"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "contains",
+              "args": [
+                {
+                  "path": [
+                    {
+                      "meta": "path"
+                    }
+                  ]
+                },
+                {
+                  "lit": "Children[1]"
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "a-2"
+          ],
+          [
+            "a-2-x"
+          ],
+          [
+            "B-2"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "map-entry-delegation",
+      "rql": "g.Index | where Kind == \"Alpha\" | select key Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Index"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Kind"
+                  ]
+                },
+                {
+                  "lit": "Alpha"
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "key",
+                "expr": {
+                  "path": [
+                    "key"
+                  ]
+                }
+              },
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "key",
+          "Name"
+        ],
+        "rows": [
+          [
+            "a",
+            "root-a"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "warn-no-match",
+      "rql": "g.Nodes | where $ is Graph | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "is",
+              "args": [
+                {
+                  "path": []
+                },
+                {
+                  "lit": "Graph"
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 0,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "no-match"
+          }
+        ]
+      }
+    },
+    {
+      "name": "single-column-row-get",
+      "rql": "g | select Nodes | get $ | select Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Nodes",
+                "expr": {
+                  "path": [
+                    "Nodes"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "get",
+            "expr": {
+              "path": []
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "root-a"
+          ],
+          [
+            "root-b"
+          ],
+          [
+            "lonely"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "single-column-row-member",
+      "rql": "g | select Index[\"special\"] | select Name Power $ref",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Index[\"special\"]",
+                "expr": {
+                  "path": [
+                    "Index",
+                    {
+                      "key": "special"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Power",
+                "expr": {
+                  "path": [
+                    "Power"
+                  ]
+                }
+              },
+              {
+                "name": "$ref",
+                "expr": {
+                  "path": [
+                    {
+                      "meta": "ref"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "Power",
+          "$ref"
+        ],
+        "rows": [
+          [
+            "a-2",
+            9000,
+            "Special#3"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "multi-column-row-miss",
+      "rql": "g.Nodes | select Name Value | where Kind == \"Alpha\" | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Kind"
+                  ]
+                },
+                {
+                  "lit": "Alpha"
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 0,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "scope-chain-outer",
+      "rql": "g | select Name n=Nodes.count(Value > Version) m=Nodes.first(Value < Version).Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "n",
+                "expr": {
+                  "call": "count",
+                  "on": {
+                    "path": [
+                      "Nodes"
+                    ]
+                  },
+                  "args": [
+                    {
+                      "op": ">",
+                      "args": [
+                        {
+                          "path": [
+                            "Value"
+                          ]
+                        },
+                        {
+                          "path": [
+                            "Version"
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "m",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ],
+                  "on": {
+                    "call": "first",
+                    "on": {
+                      "path": [
+                        "Nodes"
+                      ]
+                    },
+                    "args": [
+                      {
+                        "op": "<",
+                        "args": [
+                          {
+                            "path": [
+                              "Value"
+                            ]
+                          },
+                          {
+                            "path": [
+                              "Version"
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "n",
+          "m"
+        ],
+        "rows": [
+          [
+            "conformance",
+            2,
+            null
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "scope-chain-inner-wins",
+      "rql": "g.Nodes | select Name n=Children.count(Value > 2)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "n",
+                "expr": {
+                  "call": "count",
+                  "on": {
+                    "path": [
+                      "Children"
+                    ]
+                  },
+                  "args": [
+                    {
+                      "op": ">",
+                      "args": [
+                        {
+                          "path": [
+                            "Value"
+                          ]
+                        },
+                        {
+                          "lit": 2
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "n"
+        ],
+        "rows": [
+          [
+            "root-a",
+            1
+          ],
+          [
+            "root-b",
+            2
+          ],
+          [
+            "lonely",
+            0
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "regex-verbatim-escape",
+      "rql": "g.Nodes | recurse Children | where $path matches \"Children\\[1\\]$\" | select Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "matches",
+              "args": [
+                {
+                  "path": [
+                    {
+                      "meta": "path"
+                    }
+                  ]
+                },
+                {
+                  "lit": "Children\\[1\\]$"
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "a-2"
+          ],
+          [
+            "B-2"
+          ]
+        ],
+        "total": 2
+      }
+    },
+    {
       "name": "warn-unknown-member",
       "rql": "g.Nodes | where Nmae == 1 | count",
       "plan": {

@@ -75,12 +75,20 @@ If the source value is a `list` its elements become the item stream; a `map` yie
   elements, skipping `missing` results and flattening one level of nested lists. So
   `Components.$type` is the list of component type names. `.count()` is the portable way to
   get a size; `.Count` / `.Length` (any case) on a list or map always return its size.
+* **Projected rows** (after `select`/`group-by`) have exactly their columns as members. A row with a
+  **single** column stands for that column's value: member access, `get $`, `recurse` and `$ref`
+  delegate to it, so `world | select LocalPlayer.Inventory | get Slots` navigates as expected.
 * `$` is the current item. Inside a method argument (`Components.any(...)`) `$` and bare names
-  refer to the current *element*.
+  refer to the current *element*. **Scope chain:** when the first segment of a bare path is
+  `missing` on the element, it is resolved against the enclosing item(s), innermost first — so
+  `world | select Quests.count(RequiredLevel > LocalPlayer.Level)` compares with the world's player.
 * **Meta members** (portable): `$type` — runtime short type name (no namespace / generic arity);
   `$ref` — stable reference string (§7); `$path` — the navigation path by which the item was
   reached (§3.1); `$index` — zero-based position of the item in the stream entering the current
-  stage. Unknown meta → `missing` + warning `unknown-meta`.
+  stage; `$depth` — inside/after a `recurse` stage, the item's depth relative to the item the
+  recursion started from (0 = start item), otherwise `missing`. Unknown meta → `missing` +
+  warning `unknown-meta`. On projected rows a column literally named `$name` (from
+  `select $path`) shadows the meta member, so `select $path Name | where $path contains "x"` works.
 
 ### 3.1 `$path`
 
@@ -141,7 +149,8 @@ Methods/functions not in this table are **extensions** (§9).
 Iterating a map (as a source, in `get`, or in methods) yields entry values with members `key`
 and `value` (member lookup is case-insensitive, so `Key` works too), in the map's own iteration
 order (runtimes with unordered maps MUST use insertion order or sort entries by key for
-determinism). Entries encode as `{"key": ..., "value": ...}`. `m[1]` on a map is a key lookup.
+determinism). Any other member accessed on an entry is looked up on its value, so
+`world.Assets | where Type == "Material"` filters assets directly. Entries encode as `{"key": ..., "value": ...}`. `m[1]` on a map is a key lookup.
 
 ## 5. Stages
 
@@ -253,7 +262,8 @@ are a closed set in v0.1: `syntax-error`, `invalid-plan`, `version-unsupported`,
 `unknown-stage`, `unknown-function`, `unknown-member` (warning: no evaluated item had it),
 `unknown-meta`, `type-mismatch`, `arity`, `div-by-zero`, `getter-threw`, `stale-ref`,
 `permission-denied`, `readonly-member`, `coercion-failed`, `mutation-limit`, `budget-exceeded`,
-`timeout`, `output-truncated`, `unsupported`.
+`timeout`, `output-truncated`, `unsupported`, `no-match` (warning: an `x is T` test was false
+for every tested item; the hint names where `T` objects are reachable).
 
 `unknown-member` SHOULD carry a `hint` with the closest member names of the observed types —
 this is the main self-correction channel for agents.

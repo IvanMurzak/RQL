@@ -8,9 +8,11 @@ namespace Rql.Execution
 {
     internal readonly struct Item
     {
-        public Item(object? value, PathNode? path) { Value = value; Path = path; }
+        public Item(object? value, PathNode? path, int depth = -1) { Value = value; Path = path; Depth = depth; }
         public object? Value { get; }
         public PathNode? Path { get; }
+        /// <summary>Depth within the most recent recurse stage (0 = start item); -1 outside recurse.</summary>
+        public int Depth { get; }
     }
 
     /// <summary>Projected row flowing between stages after `select`; members are the column names.</summary>
@@ -69,10 +71,27 @@ namespace Rql.Execution
             if (_x.GetterErrors > 0)
                 result.Diagnostics.Add(Diagnostic.Warning("getter-threw", $"{_x.GetterErrors} member read(s) failed; first: {_x.FirstGetterError}"));
             if (onlyGeneral) return;
+            foreach (var site in _x.IsSites)
+            {
+                if (site.Matched > 0 || site.Evaluated == 0) continue;
+                var holders = Holders(site.TypeName);
+                string hint = holders.Count > 0
+                    ? $"{site.TypeName} objects are reached via {string.Join(", ", holders)}"
+                    : $"no reachable type is named '{site.TypeName}'; use rql_schema / describe to list types";
+                result.Diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, "no-match",
+                    $"none of the {site.Evaluated} tested item(s) is a {site.TypeName} (saw {string.Join(", ", site.Seen.Select(t => t.ShortName))})", site.Span, hint));
+            }
             var reported = new HashSet<string>();
             foreach (var site in _x.Sites)
             {
                 if (site.Hits > 0 || site.Misses == 0 || !reported.Add(site.Name)) continue;
+                if (site.RowColumns != null && site.MissTypes.Count == 0)
+                {
+                    result.Diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, "unknown-member",
+                        $"no column '{site.Name}' in the projected rows (columns: {string.Join(", ", site.RowColumns)})", site.Span,
+                        "select produces rows with only the listed columns; to navigate into objects use the path in the source or `get Path` (e.g. world.LocalPlayer.Inventory.Slots | select Item.Name)"));
+                    continue;
+                }
                 var types = site.MissTypes.ToList();
                 var typeNames = string.Join(", ", types.Select(t => t.ShortName).Distinct().Take(4));
                 var candidates = types.SelectMany(t => t.Members.Select(m => m.Name)).Distinct().ToList();
@@ -85,6 +104,39 @@ namespace Rql.Execution
                 result.Diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, "unknown-member",
                     $"no member '{site.Name}' on {typeNames}", site.Span, hint));
             }
+        }
+
+        /// <summary>Where objects of a type live: "Type.Member" paths and sources, from static reachability.</summary>
+        private List<string> Holders(string typeName)
+        {
+            var roots = new List<(string source, Type type)>();
+            foreach (var s in _x.Engine.Sources.Values)
+            {
+                object? v;
+                try { v = s.Getter(); } catch { continue; }
+                if (v != null) roots.Add((s.Name, v.GetType()));
+            }
+            var types = Describe.Reachable(_x.Types, roots.Select(r => r.type));
+            var targets = types.Where(t => _x.Types.Info(t).IsA(typeName)).ToList();
+            if (targets.Count == 0) return new List<string>();
+            bool Holds(Type declared)
+            {
+                var info = _x.Types.Info(declared);
+                var el = info.IsList || info.IsMap ? info.ElementType : declared;
+                return el != null && targets.Any(t => el.IsAssignableFrom(t));
+            }
+            var result = new List<string>();
+            foreach (var (source, type) in roots) if (Holds(type)) result.Add("source " + source);
+            foreach (var t in types)
+            {
+                var info = _x.Types.Info(t);
+                foreach (var m in info.Members)
+                {
+                    if (m.Member.DeclaringType != t) continue;
+                    if (Holds(m.Type)) result.Add(info.ShortName + "." + m.Name);
+                }
+            }
+            return result.Distinct().Take(4).ToList();
         }
 
         private QueryResult RunCore()
@@ -141,6 +193,7 @@ namespace Rql.Execution
             {
                 _x.Current = it.Value;
                 _x.CurrentPath = it.Path;
+                _x.CurrentDepth = it.Depth;
                 _x.Index = i++;
                 yield return sel(_x);
             }
@@ -214,6 +267,11 @@ namespace Rql.Execution
         {
             if (value == null || value is Missing || value is Unknown) yield break;
             if (value is RqlError) yield break;
+            if (value is RowValue row && row.Columns.Length == 1)
+            {
+                foreach (var it in Expand(row.Values[0], path, countVisit)) yield return it;
+                yield break;
+            }
             var info = _x.Types.Info(value.GetType());
             if (info.IsList)
             {
@@ -280,6 +338,7 @@ namespace Rql.Execution
             {
                 _x.Current = it.Value;
                 _x.CurrentPath = it.Path;
+                _x.CurrentDepth = it.Depth;
                 _x.Index = i++;
                 if (pred(_x) is bool b && b) yield return it;
             }
@@ -295,6 +354,7 @@ namespace Rql.Execution
             {
                 _x.Current = it.Value;
                 _x.CurrentPath = it.Path;
+                _x.CurrentDepth = it.Depth;
                 _x.Index = i++;
                 var vals = new object?[evals.Length];
                 for (int k = 0; k < evals.Length; k++) vals[k] = evals[k](_x);
@@ -313,6 +373,7 @@ namespace Rql.Execution
             {
                 _x.Current = it.Value;
                 _x.CurrentPath = it.Path;
+                _x.CurrentDepth = it.Depth;
                 _x.Index = i++;
                 var kv = new object?[keys.Length];
                 for (int k = 0; k < keys.Length; k++) kv[k] = keys[k].eval(_x);
@@ -333,6 +394,7 @@ namespace Rql.Execution
             {
                 _x.Current = it.Value;
                 _x.CurrentPath = it.Path;
+                _x.CurrentDepth = it.Depth;
                 _x.Index = i++;
                 var v = eval(_x);
                 if (v is RqlError err) { _x.GetterErrors++; _x.FirstGetterError ??= err.Detail ?? err.Code; continue; }
@@ -360,6 +422,7 @@ namespace Rql.Execution
                 {
                     _x.Current = it.Value;
                     _x.CurrentPath = it.Path;
+                _x.CurrentDepth = it.Depth;
                     _x.Index = i;
                     k = key(_x);
                 }
@@ -394,7 +457,7 @@ namespace Rql.Execution
                     if (v == null) continue;
                     bool isRef = !v.GetType().IsValueType;
                     if (isRef && !visited.Add(v)) continue;
-                    if (emit) yield return new Item(v, path);
+                    if (emit) yield return new Item(v, path, depth);
                     if (depth >= depthLimit) continue;
                     var children = new List<(object? value, PathNode? path)>();
                     if (via != null)
@@ -403,6 +466,7 @@ namespace Rql.Execution
                         {
                             _x.Current = v;
                             _x.CurrentPath = path;
+                            _x.CurrentDepth = depth;
                             var cv = eval(_x);
                             var cp = _x.TrackPaths && path != null && suffix != null ? new PathNode(path, suffix) : null;
                             foreach (var child in Expand(cv, cp, true)) children.Add((child.Value, child.Path));

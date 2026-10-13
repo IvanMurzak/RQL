@@ -48,6 +48,7 @@ namespace Rql.Eval
                 case "probe": return await Probe(LoadConfig(opts));
                 case "run": return await Run(LoadConfig(opts), split, opts);
                 case "report": return ReportCmd(positional, opts);
+                case "regrade": return Regrade(positional[0]);
                 default: Console.Error.WriteLine("unknown command " + args[0]); return 2;
             }
         }
@@ -229,6 +230,27 @@ namespace Rql.Eval
             Console.WriteLine(md);
             Console.WriteLine($"results: {outDir}");
             if (budget.Exhausted) Console.WriteLine("WARNING: run budget exhausted; some tasks were skipped");
+            return 0;
+        }
+
+        /// <summary>Re-grade answer-type tasks from stored answers with the current oracle (state tasks keep their original grade).</summary>
+        private static int Regrade(string dir)
+        {
+            var path = Path.Combine(dir, "results.jsonl");
+            var orig = Path.Combine(dir, "results.orig.jsonl");
+            if (!File.Exists(orig)) File.Copy(path, orig);
+            var tasks = Catalog.Build("all").ToDictionary(t => t.Id);
+            var results = File.ReadAllLines(orig).Where(l => l.Length > 0).Select(l => JsonSerializer.Deserialize<TaskResult>(l, Json)!).ToList();
+            int changed = 0;
+            foreach (var r in results)
+            {
+                if (!tasks.TryGetValue(r.TaskId, out var t) || t.Expected.Kind == AnswerKind.State || t.Expected.Kind == AnswerKind.Impossible) continue;
+                var g = Grader.GradeAnswer(t, r.Answer, new Sample.SampleHost(Sample.WorldGenerator.Create(t.Seed, t.Size)));
+                if (g.Success != r.Success) { changed++; Console.WriteLine($"{r.TaskId} r{r.Repeat}: {r.Success} → {g.Success} ({g.Detail})"); }
+                r.Success = g.Success; r.Precision = g.Precision; r.Recall = g.Recall; r.GradeDetail = g.Detail;
+            }
+            File.WriteAllLines(path, results.Select(r => JsonSerializer.Serialize(r, Json)));
+            Console.WriteLine($"regraded {results.Count} results, {changed} changed (original kept in results.orig.jsonl)");
             return 0;
         }
 

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Build (incrementally) and run the Tier B evaluation CLI. Usage: scripts/rql-eval <command> [args]
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -z "${DOTNET_ROOT:-}" ] && [ -x "$HOME/.dotnet/dotnet" ]; then export DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH"; fi
+dotnet build "$ROOT/evaluation/runner/Rql.Eval" -v q -nologo -clp:ErrorsOnly >/dev/null
+exec dotnet "$ROOT/evaluation/runner/Rql.Eval/bin/Debug/net10.0/rql-eval.dll" "$@"

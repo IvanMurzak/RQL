@@ -97,10 +97,6 @@
     {
       "rql": "objects | where 1x == 2",
       "code": "syntax-error"
-    },
-    {
-      "rql": "objects | where a == '\\q'",
-      "code": "syntax-error"
     }
   ]
 }

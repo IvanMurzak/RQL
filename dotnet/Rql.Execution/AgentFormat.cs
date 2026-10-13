@@ -100,7 +100,7 @@ namespace Rql.Execution
                 {
                     object? v;
                     try { v = s.Getter(); } catch { v = null; }
-                    sb.Append("  ").Append(s.Name).Append(": ").Append(v == null ? "?" : TypeModel.FriendlyName(v.GetType()));
+                    sb.Append("  ").Append(s.Name).Append(": ").Append(v == null ? "?" : SourceTypeName(engine, v.GetType()));
                     if (s.Description != null) sb.Append(" — ").Append(s.Description);
                     sb.Append('\n');
                 }
@@ -120,6 +120,13 @@ namespace Rql.Execution
                 AppendType(sb, t, typeFilter == null ? baseType : null, engine.Mutations.Enabled);
             }
             return sb.ToString().TrimEnd();
+        }
+
+        private static string SourceTypeName(RqlEngine engine, Type t)
+        {
+            var info = engine.Types.Info(t);
+            if (info.IsList && (!t.IsPublic || t.IsNested) && info.ElementType != null) return "list of " + TypeModel.FriendlyName(info.ElementType);
+            return TypeModel.FriendlyName(t);
         }
 
         private static void AppendType(StringBuilder sb, JsonObject t, JsonObject? baseType, bool markReadOnly = false)
