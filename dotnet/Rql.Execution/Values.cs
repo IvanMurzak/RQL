@@ -107,6 +107,21 @@ namespace Rql.Execution
             return Cast((IEnumerable)v);
         }
 
+        /// <summary>Elements of a list value; index-based for IList (no boxed enumerator, no LINQ).</summary>
+        public static IEnumerable<object?> Iterate(object list) =>
+            // Reference-type lists are covariantly IEnumerable<object>: no wrapper allocation at all.
+            list as IEnumerable<object?> ?? IterateSlow(list);
+
+        private static IEnumerable<object?> IterateSlow(object list)
+        {
+            if (list is IList l)
+            {
+                for (int i = 0; i < l.Count; i++) yield return l[i];
+                yield break;
+            }
+            foreach (var x in (IEnumerable)list) yield return x;
+        }
+
         private static IEnumerable<object?> Cast(IEnumerable e)
         {
             foreach (var x in e) yield return x;

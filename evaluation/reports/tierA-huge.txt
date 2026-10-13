@@ -1,0 +1,31 @@
+world size=Huge objects=145001 runtime=10.0.13 os=Unix cpus=12
+
+query                mode        median ms    p90 ms   alloc KB   visited   members    out B
+count-all            Compiled        3.272     3.812     1035.1    145001         0       54
+                     Reflection      3.233     3.622     1035.1    145001         0       54
+filter-type-scalar   Compiled        7.543     8.138     3426.1    145001    101785       52
+                     Reflection      7.948     8.529     3426.1    145001    101785       52
+filter-nested-any    Compiled       10.632    11.125     1313.5    145001    156652       52
+                     Reflection     10.909    11.489     1313.5    145001    156652       52
+top-n                Compiled        7.401     7.834     2965.7    145001     81680      463
+                     Reflection      7.739     8.447     2965.8    145001     81680      463
+first-lazy           Compiled        0.146     0.149       90.7      4897         2      113
+                     Reflection      0.146     0.147       90.7      4897         2      113
+group-by             Compiled        8.625     9.159     2955.6    145001     81660      136
+                     Reflection      9.170     9.603     2955.5    145001     81660      136
+project-50           Compiled       10.879    11.182    23264.7    145001    330532     3493
+                     Reflection     12.128    12.435    23264.7    145001    330532     3493
+recurse-children     Compiled       10.264    10.911    25418.5    145013    145014       54
+                     Reflection     10.819    11.234    25418.5    145013    145014       54
+  recurse-generic: FAILED error budget-exceeded: visited more than 200000 objects (narrow the source (e.g. a specific scene), filter earlier, lower recurse max-depth, or raise budgets.maxVisited)
+  recurse-generic: FAILED error budget-exceeded: visited more than 200000 objects (narrow the source (e.g. a specific scene), filter earlier, lower recurse max-depth, or raise budgets.maxVisited)
+path-tracking        Compiled        0.231     0.529     1092.7      2772      5219      471
+                     Reflection      0.251     0.258     1092.7      2772      5219      471
+string-ops           Compiled       14.279    14.667     1038.5    145001    287668       52
+                     Reflection     14.949    15.367     1038.5    145001    287668       52
+  dict-access: FAILED error budget-exceeded: visited more than 200000 objects (narrow the source (e.g. a specific scene), filter earlier, lower recurse max-depth, or raise budgets.maxVisited)
+  dict-access: FAILED error budget-exceeded: visited more than 200000 objects (narrow the source (e.g. a specific scene), filter earlier, lower recurse max-depth, or raise budgets.maxVisited)
+app-join             Compiled        0.313     0.316      205.3      8030     12065       66
+                     Reflection      0.354     0.364      205.3      8030     12065       66
+
+naive full-graph JSON (System.Text.Json, ReferenceHandler.Preserve): 85.23 MB, 495.9 ms, 554.5 MB allocated

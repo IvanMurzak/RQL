@@ -165,6 +165,22 @@ namespace Rql.Tests
             Assert.True(r.Stats.Visited < 2000, "visited " + r.Stats.Visited);
         }
 
+        [Theory]
+        [InlineData("objects | where $ is Enemy | sort Level desc | first 7 | select $ref Level")]
+        [InlineData("objects | sort Layer, Name desc | first 25 | select $ref")]
+        [InlineData("objects | get Components | sort $type, Enabled | first 40 | select $ref")]
+        [InlineData("app.Orders | sort Total desc, Id | first 10 | select Id Total")]
+        public void TopNMatchesFullSort(string rql)
+        {
+            var on = new SampleHost(3, WorldSize.Medium);
+            var off = new SampleHost(3, WorldSize.Medium);
+            off.Engine.DisableTopN = true;
+            var a = on.Query(rql, new Budgets { MaxRows = 1000 });
+            var b = off.Query(rql, new Budgets { MaxRows = 1000 });
+            Assert.True(a.Ok && b.Ok);
+            Assert.Equal(b.ToJson(includeStats: false), a.ToJson(includeStats: false));
+        }
+
         [Fact]
         public void UnknownSourceSuggests()
         {

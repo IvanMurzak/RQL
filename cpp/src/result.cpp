@@ -36,7 +36,7 @@ Budgets Budgets::from_json(const Json& j) {
     for (size_t i = 0; i < j.size(); ++i) {
         const std::string& k = j.key(i);
         const Json& v = j.at(i);
-        if (!v.is_number() || !v.integral_text() || v.as_number() < 0 || v.as_number() > 2147483647.0)
+        if (!v.is_number() || std::floor(v.as_number()) != v.as_number() || v.as_number() < 0 || v.as_number() > 2147483647.0)
             throw RqlException("invalid-plan", "budget '" + k + "' must be a non-negative integer");
         int n = static_cast<int>(v.as_number());
         if (k == "maxVisited") b.max_visited = n;

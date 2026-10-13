@@ -139,6 +139,48 @@ namespace Rql.Execution
             return result.Distinct().Take(4).ToList();
         }
 
+        /// <summary>Live items produced by a plan without a terminal stage (host API, see RqlEngine.EvaluateLive).</summary>
+        public List<object?> LiveItems(int max, out List<Diagnostic> diagnostics)
+        {
+            var items = new List<object?>();
+            try
+            {
+                var (stream, terminal) = BuildStream();
+                if (terminal != null) throw new RqlException("invalid-plan", $"EvaluateLive needs a plan without a terminal stage (found '{terminal.Op}')");
+                foreach (var it in stream)
+                {
+                    if (items.Count >= max) break;
+                    items.Add(it.Value);
+                }
+                diagnostics = new List<Diagnostic>(_x.Diagnostics);
+            }
+            catch (RqlException ex)
+            {
+                diagnostics = new List<Diagnostic> { ex.ToDiagnostic() };
+                items.Clear();
+            }
+            return items;
+        }
+
+        private (IEnumerable<Item> stream, Stage? terminal) BuildStream()
+        {
+            var plan = _x.Plan;
+            var stream = CompileSource(plan.Source);
+            for (int i = 0; i < plan.Stages.Count; i++)
+            {
+                var st = plan.Stages[i];
+                if (st.IsTerminal) return (stream, st);
+                if (st is SortStage ss && i + 1 < plan.Stages.Count && plan.Stages[i + 1] is LimitStage ls && ls.Op == "first" && ls.N <= 1000 && !_x.Engine.DisableTopN)
+                {
+                    stream = TopN(stream, ss.Keys.Select(k => (eval: _c.Compile(k.Expr), desc: k.Desc)).ToArray(), ls.N);
+                    i++;
+                    continue;
+                }
+                stream = Apply(stream, st);
+            }
+            return (stream, null);
+        }
+
         private QueryResult RunCore()
         {
             var plan = _x.Plan;
@@ -150,6 +192,13 @@ namespace Rql.Execution
             {
                 var st = plan.Stages[i];
                 if (st.IsTerminal) { terminal = st; break; }
+                // Peephole: `sort … | first n` keeps only the n best items (bounded insertion, same stable order).
+                if (st is SortStage ss && i + 1 < plan.Stages.Count && plan.Stages[i + 1] is LimitStage ls && ls.Op == "first" && ls.N <= 1000 && !_x.Engine.DisableTopN)
+                {
+                    stream = TopN(stream, ss.Keys.Select(k => (eval: _c.Compile(k.Expr), desc: k.Desc)).ToArray(), ls.N);
+                    i++;
+                    continue;
+                }
                 stream = Apply(stream, st);
             }
             var encoder = new Encoder(_x);
@@ -275,12 +324,24 @@ namespace Rql.Execution
             var info = _x.Types.Info(value.GetType());
             if (info.IsList)
             {
-                long i = 0;
+                if (value is IList list)
+                {
+                    // Index loop: avoids boxing the collection enumerator per list.
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        if (countVisit) _x.Visit();
+                        var el = list[i];
+                        if (el == null) continue;
+                        yield return new Item(el, path?.At(i));
+                    }
+                    yield break;
+                }
+                long j = 0;
                 foreach (var el in (IEnumerable)value)
                 {
                     if (countVisit) _x.Visit();
-                    var p = path != null ? path.At(i) : null;
-                    i++;
+                    var p = path != null ? path.At(j) : null;
+                    j++;
                     if (el == null) continue;
                     yield return new Item(el, p);
                 }
@@ -385,6 +446,35 @@ namespace Rql.Execution
             foreach (var r in rows.OrderBy(r => r.keys, cmp)) yield return r.item;
         }
 
+        private IEnumerable<Item> TopN(IEnumerable<Item> input, (Eval eval, bool desc)[] keys, int n)
+        {
+            if (n <= 0) yield break;
+            var cmp = new SortComparer(keys.Select(k => k.desc).ToArray());
+            var best = new List<(Item item, object?[] keys)>(n + 1);
+            var scratch = new object?[keys.Length];
+            long i = 0;
+            foreach (var it in input)
+            {
+                _x.Current = it.Value;
+                _x.CurrentPath = it.Path;
+                _x.CurrentDepth = it.Depth;
+                _x.Index = i++;
+                for (int k = 0; k < keys.Length; k++) scratch[k] = keys[k].eval(_x);
+                // Strictly-better-than-last test keeps stability: earlier items win ties.
+                if (best.Count == n && cmp.Compare(scratch, best[n - 1].keys) >= 0) continue;
+                int lo = 0, hi = best.Count;
+                while (lo < hi)
+                {
+                    int mid = (lo + hi) / 2;
+                    if (cmp.Compare(best[mid].keys, scratch) <= 0) lo = mid + 1; else hi = mid;
+                }
+                best.Insert(lo, (it, (object?[])scratch.Clone()));
+                if (best.Count > n) best.RemoveAt(n);
+            }
+            _x.CheckTime();
+            foreach (var b in best) yield return b.item;
+        }
+
         private IEnumerable<Item> Get(IEnumerable<Item> input, Expr e) => GetIter(input, _c.Compile(e), PathSuffix(e));
 
         private IEnumerable<Item> GetIter(IEnumerable<Item> input, Eval eval, string? suffix)
@@ -446,10 +536,13 @@ namespace Rql.Execution
                 depthLimit = _x.MaxDepth;
             }
             var visited = new HashSet<object>(RefEq.Instance);
+            // Buffers reused for every node of this stage (no per-node allocation).
+            var stack = new Stack<(object? value, PathNode? path, int depth, bool emit)>();
+            var children = new List<(object? value, PathNode? path)>();
             foreach (var it in input)
             {
                 if (it.Value == null) continue;
-                var stack = new Stack<(object? value, PathNode? path, int depth, bool emit)>();
+                stack.Clear();
                 stack.Push((it.Value, it.Path, 0, r.IncludeSelf));
                 while (stack.Count > 0)
                 {
@@ -459,26 +552,32 @@ namespace Rql.Execution
                     if (isRef && !visited.Add(v)) continue;
                     if (emit) yield return new Item(v, path, depth);
                     if (depth >= depthLimit) continue;
-                    var children = new List<(object? value, PathNode? path)>();
-                    if (via != null)
-                    {
-                        foreach (var (eval, suffix) in via)
-                        {
-                            _x.Current = v;
-                            _x.CurrentPath = path;
-                            _x.CurrentDepth = depth;
-                            var cv = eval(_x);
-                            var cp = _x.TrackPaths && path != null && suffix != null ? new PathNode(path, suffix) : null;
-                            foreach (var child in Expand(cv, cp, true)) children.Add((child.Value, child.Path));
-                        }
-                    }
-                    else
-                    {
-                        GenericChildren(v, path, children);
-                    }
+                    CollectChildren(v, path, depth, via, children);
                     // Push in reverse so the first child is visited first (pre-order).
                     for (int k = children.Count - 1; k >= 0; k--) stack.Push((children[k].value, children[k].path, depth + 1, true));
                 }
+            }
+        }
+
+        /// <summary>Kept out of the iterator so the state machine stays small (measurably faster JIT code).</summary>
+        private void CollectChildren(object v, PathNode? path, int depth, (Eval eval, string? suffix)[]? via, List<(object? value, PathNode? path)> children)
+        {
+            children.Clear();
+            if (via == null)
+            {
+                GenericChildren(v, path, children);
+                return;
+            }
+            foreach (var (eval, suffix) in via)
+            {
+                _x.Current = v;
+                _x.CurrentPath = path;
+                _x.CurrentDepth = depth;
+                var cv = eval(_x);
+                var cp = _x.TrackPaths && path != null && suffix != null ? new PathNode(path, suffix) : null;
+                // Measured: the iterator-based Expand has a lower median here than AppendExpanded
+                // (0.95 vs 1.75 ms on recurse-children, Large world) despite allocating more; keep it.
+                foreach (var child in Expand(cv, cp, true)) children.Add((child.Value, child.Path));
             }
         }
 
@@ -487,11 +586,7 @@ namespace Rql.Execution
             var info = _x.Types.Info(v.GetType());
             if (info.IsList || info.IsMap)
             {
-                foreach (var c in Expand(v, path, true))
-                {
-                    var cv = c.Value is MapEntry me ? me.Value : c.Value;
-                    if (cv != null && _x.Types.Info(cv.GetType()).IsObject) into.Add((cv, c.Path));
-                }
+                AppendExpanded(v, path, into, objectsOnly: true);
                 return;
             }
             if (!info.IsObject) return;
@@ -506,14 +601,33 @@ namespace Rql.Execution
                 var p = _x.TrackPaths ? path?.Member(m.Name) : null;
                 var ci = _x.Types.Info(cv.GetType());
                 if (ci.IsObject) { _x.Visit(); into.Add((cv, p)); }
-                else if (ci.IsList || ci.IsMap)
+                else if (ci.IsList || ci.IsMap) AppendExpanded(cv, p, into, objectsOnly: true);
+            }
+        }
+
+        /// <summary>Non-iterator equivalent of <see cref="Expand"/> used by recurse (no iterator allocation).</summary>
+        private void AppendExpanded(object? value, PathNode? path, List<(object?, PathNode?)> into, bool objectsOnly)
+        {
+            if (value == null || value is Missing || value is Unknown || value is RqlError) return;
+            if (value is RowValue row && row.Columns.Length == 1) { AppendExpanded(row.Values[0], path, into, objectsOnly); return; }
+            var info = _x.Types.Info(value.GetType());
+            if (info.IsList)
+            {
+                int i = 0;
+                foreach (var el in V.Iterate(value))
                 {
-                    foreach (var c in Expand(cv, p, true))
-                    {
-                        var ev = c.Value is MapEntry me ? me.Value : c.Value;
-                        if (ev != null && _x.Types.Info(ev.GetType()).IsObject) into.Add((ev, c.Path));
-                    }
+                    _x.Visit();
+                    int idx = i++;
+                    if (el == null || (objectsOnly && !_x.Types.Info(el.GetType()).IsObject)) continue;
+                    into.Add((el, _x.TrackPaths ? path?.At(idx) : null));
                 }
+                return;
+            }
+            foreach (var c in Expand(value, path, true))
+            {
+                var cv = objectsOnly && c.Value is MapEntry me ? me.Value : c.Value;
+                if (cv == null || (objectsOnly && !_x.Types.Info(cv.GetType()).IsObject)) continue;
+                into.Add((cv, c.Path));
             }
         }
 

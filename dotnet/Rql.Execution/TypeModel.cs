@@ -92,13 +92,16 @@ namespace Rql.Execution
 
         private readonly ConcurrentDictionary<Type, TypeInfo> _cache = new ConcurrentDictionary<Type, TypeInfo>();
 
-        public TypeModel(AccessorMode mode) { Mode = mode; }
+        private readonly Func<Type, TypeInfo> _build;
+
+        public TypeModel(AccessorMode mode) { Mode = mode; _build = Build; }
 
         public AccessorMode Mode { get; }
 
         public static TypeInfo Get(Type t) => Shared.Info(t);
 
-        public TypeInfo Info(Type t) => _cache.GetOrAdd(t, Build);
+        // Cached delegate: a method-group argument would allocate a new delegate on every lookup.
+        public TypeInfo Info(Type t) => _cache.TryGetValue(t, out var info) ? info : _cache.GetOrAdd(t, _build);
 
         private static readonly HashSet<Type> ScalarTypes = new HashSet<Type>
         {

@@ -1,0 +1,256 @@
+{
+  "size": "Huge",
+  "objects": 145001,
+  "runs": 21,
+  "runtime": "10.0.13",
+  "cpus": 12,
+  "naiveFullGraphJson": {
+    "bytes": 89375137,
+    "ms": 495.9,
+    "allocBytes": 581447456
+  },
+  "results": [
+    {
+      "mode": "Compiled",
+      "query": "count-all",
+      "rql": "objects | count",
+      "medianMs": 3.2717,
+      "p90Ms": 3.8119,
+      "allocKB": 1035.1,
+      "visited": 145001,
+      "membersRead": 0,
+      "outputBytes": 54
+    },
+    {
+      "mode": "Reflection",
+      "query": "count-all",
+      "rql": "objects | count",
+      "medianMs": 3.2332,
+      "p90Ms": 3.6215,
+      "allocKB": 1035.1,
+      "visited": 145001,
+      "membersRead": 0,
+      "outputBytes": 54
+    },
+    {
+      "mode": "Compiled",
+      "query": "filter-type-scalar",
+      "rql": "objects | where $ is Enemy and Health \u003C 20 and Health \u003E 0 | count",
+      "medianMs": 7.5427,
+      "p90Ms": 8.1382,
+      "allocKB": 3426.1,
+      "visited": 145001,
+      "membersRead": 101785,
+      "outputBytes": 52
+    },
+    {
+      "mode": "Reflection",
+      "query": "filter-type-scalar",
+      "rql": "objects | where $ is Enemy and Health \u003C 20 and Health \u003E 0 | count",
+      "medianMs": 7.9482,
+      "p90Ms": 8.529,
+      "allocKB": 3426.1,
+      "visited": 145001,
+      "membersRead": 101785,
+      "outputBytes": 52
+    },
+    {
+      "mode": "Compiled",
+      "query": "filter-nested-any",
+      "rql": "objects | where Components.any($ is LightComponent and Enabled == false) | count",
+      "medianMs": 10.6322,
+      "p90Ms": 11.1247,
+      "allocKB": 1313.5,
+      "visited": 145001,
+      "membersRead": 156652,
+      "outputBytes": 52
+    },
+    {
+      "mode": "Reflection",
+      "query": "filter-nested-any",
+      "rql": "objects | where Components.any($ is LightComponent and Enabled == false) | count",
+      "medianMs": 10.9092,
+      "p90Ms": 11.4892,
+      "allocKB": 1313.5,
+      "visited": 145001,
+      "membersRead": 156652,
+      "outputBytes": 52
+    },
+    {
+      "mode": "Compiled",
+      "query": "top-n",
+      "rql": "objects | where $ is Enemy | sort Level desc | first 10 | select $ref Name Level",
+      "medianMs": 7.4007,
+      "p90Ms": 7.8336,
+      "allocKB": 2965.7,
+      "visited": 145001,
+      "membersRead": 81680,
+      "outputBytes": 463
+    },
+    {
+      "mode": "Reflection",
+      "query": "top-n",
+      "rql": "objects | where $ is Enemy | sort Level desc | first 10 | select $ref Name Level",
+      "medianMs": 7.7391,
+      "p90Ms": 8.4473,
+      "allocKB": 2965.8,
+      "visited": 145001,
+      "membersRead": 81680,
+      "outputBytes": 463
+    },
+    {
+      "mode": "Compiled",
+      "query": "first-lazy",
+      "rql": "objects | where $ is Enemy and IsElite | first 1 | select $ref Name",
+      "medianMs": 0.1457,
+      "p90Ms": 0.1487,
+      "allocKB": 90.7,
+      "visited": 4897,
+      "membersRead": 2,
+      "outputBytes": 113
+    },
+    {
+      "mode": "Reflection",
+      "query": "first-lazy",
+      "rql": "objects | where $ is Enemy and IsElite | first 1 | select $ref Name",
+      "medianMs": 0.1455,
+      "p90Ms": 0.1472,
+      "allocKB": 90.7,
+      "visited": 4897,
+      "membersRead": 2,
+      "outputBytes": 113
+    },
+    {
+      "mode": "Compiled",
+      "query": "group-by",
+      "rql": "objects | where $ is Enemy | group-by Faction | sort count desc",
+      "medianMs": 8.6251,
+      "p90Ms": 9.159,
+      "allocKB": 2955.6,
+      "visited": 145001,
+      "membersRead": 81660,
+      "outputBytes": 136
+    },
+    {
+      "mode": "Reflection",
+      "query": "group-by",
+      "rql": "objects | where $ is Enemy | group-by Faction | sort count desc",
+      "medianMs": 9.1697,
+      "p90Ms": 9.6028,
+      "allocKB": 2955.5,
+      "visited": 145001,
+      "membersRead": 81660,
+      "outputBytes": 136
+    },
+    {
+      "mode": "Compiled",
+      "query": "project-50",
+      "rql": "objects | where $ is Character | select $ref Name Health Transform.Position",
+      "medianMs": 10.8791,
+      "p90Ms": 11.1823,
+      "allocKB": 23264.7,
+      "visited": 145001,
+      "membersRead": 330532,
+      "outputBytes": 3493
+    },
+    {
+      "mode": "Reflection",
+      "query": "project-50",
+      "rql": "objects | where $ is Character | select $ref Name Health Transform.Position",
+      "medianMs": 12.1279,
+      "p90Ms": 12.4348,
+      "allocKB": 23264.7,
+      "visited": 145001,
+      "membersRead": 330532,
+      "outputBytes": 3493
+    },
+    {
+      "mode": "Compiled",
+      "query": "recurse-children",
+      "rql": "world.Scenes | get Objects | recurse Children max-depth=16 | count",
+      "medianMs": 10.2637,
+      "p90Ms": 10.911,
+      "allocKB": 25418.5,
+      "visited": 145013,
+      "membersRead": 145014,
+      "outputBytes": 54
+    },
+    {
+      "mode": "Reflection",
+      "query": "recurse-children",
+      "rql": "world.Scenes | get Objects | recurse Children max-depth=16 | count",
+      "medianMs": 10.8194,
+      "p90Ms": 11.2337,
+      "allocKB": 25418.5,
+      "visited": 145013,
+      "membersRead": 145014,
+      "outputBytes": 54
+    },
+    {
+      "mode": "Compiled",
+      "query": "path-tracking",
+      "rql": "world.Scenes | get Objects | recurse Children max-depth=16 | where Name starts-with \u0022Chest\u0022 | first 5 | select $path",
+      "medianMs": 0.2313,
+      "p90Ms": 0.5292,
+      "allocKB": 1092.7,
+      "visited": 2772,
+      "membersRead": 5219,
+      "outputBytes": 471
+    },
+    {
+      "mode": "Reflection",
+      "query": "path-tracking",
+      "rql": "world.Scenes | get Objects | recurse Children max-depth=16 | where Name starts-with \u0022Chest\u0022 | first 5 | select $path",
+      "medianMs": 0.2508,
+      "p90Ms": 0.2579,
+      "allocKB": 1092.7,
+      "visited": 2772,
+      "membersRead": 5219,
+      "outputBytes": 471
+    },
+    {
+      "mode": "Compiled",
+      "query": "string-ops",
+      "rql": "objects | where Name contains \u0022oak\u0022 or Name matches \u0022^Torch_0[0-9]\u002B$\u0022 | count",
+      "medianMs": 14.2789,
+      "p90Ms": 14.667,
+      "allocKB": 1038.5,
+      "visited": 145001,
+      "membersRead": 287668,
+      "outputBytes": 52
+    },
+    {
+      "mode": "Reflection",
+      "query": "string-ops",
+      "rql": "objects | where Name contains \u0022oak\u0022 or Name matches \u0022^Torch_0[0-9]\u002B$\u0022 | count",
+      "medianMs": 14.949,
+      "p90Ms": 15.3671,
+      "allocKB": 1038.5,
+      "visited": 145001,
+      "membersRead": 287668,
+      "outputBytes": 52
+    },
+    {
+      "mode": "Compiled",
+      "query": "app-join",
+      "rql": "app.Orders | where Status == \u0022Delivered\u0022 and Customer.Profile.Country == \u0022DE\u0022 | sum Total",
+      "medianMs": 0.3129,
+      "p90Ms": 0.3155,
+      "allocKB": 205.3,
+      "visited": 8030,
+      "membersRead": 12065,
+      "outputBytes": 66
+    },
+    {
+      "mode": "Reflection",
+      "query": "app-join",
+      "rql": "app.Orders | where Status == \u0022Delivered\u0022 and Customer.Profile.Country == \u0022DE\u0022 | sum Total",
+      "medianMs": 0.3535,
+      "p90Ms": 0.364,
+      "allocKB": 205.3,
+      "visited": 8030,
+      "membersRead": 12065,
+      "outputBytes": 66
+    }
+  ]
+}

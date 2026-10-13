@@ -2477,6 +2477,235 @@
       }
     },
     {
+      "name": "topn-stable-ties",
+      "rql": "g.Nodes | recurse Children include-self=true | sort Value desc | first 3 | select Name Value",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ],
+            "includeSelf": true
+          },
+          {
+            "op": "sort",
+            "keys": [
+              {
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "desc": true
+              }
+            ]
+          },
+          {
+            "op": "first",
+            "n": 3
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "Value"
+        ],
+        "rows": [
+          [
+            "B-2",
+            1000
+          ],
+          [
+            "root-a",
+            10
+          ],
+          [
+            "root-b",
+            7
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "topn-nulls-last",
+      "rql": "g.Nodes | recurse Children include-self=true | sort Note desc | first 7 | select Name Note",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ],
+            "includeSelf": true
+          },
+          {
+            "op": "sort",
+            "keys": [
+              {
+                "expr": {
+                  "path": [
+                    "Note"
+                  ]
+                },
+                "desc": true
+              }
+            ]
+          },
+          {
+            "op": "first",
+            "n": 7
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Note",
+                "expr": {
+                  "path": [
+                    "Note"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "Note"
+        ],
+        "rows": [
+          [
+            "B-2",
+            "upper case name"
+          ],
+          [
+            "a-2",
+            "special one"
+          ],
+          [
+            "root-a",
+            "first"
+          ],
+          [
+            "root-b",
+            "Second"
+          ],
+          [
+            "a-2-x",
+            ""
+          ],
+          [
+            "a-1",
+            null
+          ],
+          [
+            "b-1",
+            null
+          ]
+        ],
+        "total": 7
+      }
+    },
+    {
+      "name": "topn-zero",
+      "rql": "g.Nodes | sort Name | first 0 | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "sort",
+            "keys": [
+              {
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "first",
+            "n": 0
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 0
+      }
+    },
+    {
       "name": "first-n",
       "rql": "g.Nodes | recurse Children include-self=true | first 2 | select Name",
       "plan": {

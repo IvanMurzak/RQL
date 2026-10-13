@@ -1,6 +1,6 @@
 {
   "CapUsd": 25,
-  "SpentUsd": 0.45845803000000007,
+  "SpentUsd": 1.0171748769999973,
   "Runs": [
     {
       "id": "probe-20261013T203447Z",
@@ -61,6 +61,87 @@
       "split": "dev",
       "taskRuns": 186,
       "costUsd": 0.070343
+    },
+    {
+      "id": "20261013-205829-e4-prompt-v2-holdout",
+      "config": "e4-prompt-v2",
+      "split": "holdout",
+      "taskRuns": 81,
+      "costUsd": 0.028803
+    },
+    {
+      "id": "e5-dev partial (double-counted with 20261013-205943 entry; misdiagnosed as a crash \u2014 kept, conservative)",
+      "costUsd": 0.035321
+    },
+    {
+      "id": "20261013-210107-e5-json-format-dev",
+      "config": "e5-json-format",
+      "split": "dev",
+      "taskRuns": 186,
+      "costUsd": 0.063379
+    },
+    {
+      "id": "20261013-205943-e5-json-format-dev",
+      "config": "e5-json-format",
+      "split": "dev",
+      "taskRuns": 186,
+      "costUsd": 0.067746
+    },
+    {
+      "id": "20261013-210208-e6-schema-in-prompt-dev",
+      "config": "e6-schema-in-prompt",
+      "split": "dev",
+      "taskRuns": 185,
+      "costUsd": 0.047397
+    },
+    {
+      "id": "20261013-210326-e6-schema-in-prompt-dev",
+      "config": "e6-schema-in-prompt",
+      "split": "dev",
+      "taskRuns": 184,
+      "costUsd": 0.044363
+    },
+    {
+      "id": "20261013-210327-repro-dev",
+      "config": "repro",
+      "split": "dev",
+      "taskRuns": 4,
+      "costUsd": 0.001765
+    },
+    {
+      "id": "20261013-210346-e7-thinking-low-dev",
+      "config": "e7-thinking-low",
+      "split": "dev",
+      "taskRuns": 93,
+      "costUsd": 0.046092
+    },
+    {
+      "id": "20261013-210513-e5-json-format-dev",
+      "config": "e5-json-format",
+      "split": "dev",
+      "taskRuns": 186,
+      "costUsd": 0.062456
+    },
+    {
+      "id": "20261013-210737-e6-schema-in-prompt-dev",
+      "config": "e6-schema-in-prompt",
+      "split": "dev",
+      "taskRuns": 186,
+      "costUsd": 0.043329
+    },
+    {
+      "id": "20261013-210917-e7-thinking-low-dev",
+      "config": "e7-thinking-low",
+      "split": "dev",
+      "taskRuns": 186,
+      "costUsd": 0.098137
+    },
+    {
+      "id": "20261013-211304-legacy-smoke-dev",
+      "config": "legacy-smoke",
+      "split": "dev",
+      "taskRuns": 2,
+      "costUsd": 0.019933
     }
   ]
 }

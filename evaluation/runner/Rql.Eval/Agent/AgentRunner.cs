@@ -106,7 +106,7 @@ namespace Rql.Eval.Agent
 
         private string SystemPrompt(SampleHost host)
         {
-            var p = Prompts.Get(_cfg.Prompt);
+            var p = _cfg.Toolset == "legacy" ? LegacyTools.Prompt : Prompts.Get(_cfg.Prompt);
             if (_cfg.SchemaInPrompt) p += "\n\nSchema:\n" + host.Schema();
             return p;
         }
@@ -115,6 +115,7 @@ namespace Rql.Eval.Agent
 
         private (string text, bool error, string? code) Execute(SampleHost host, string tool, JsonObject? args, bool allowMutation)
         {
+            if (_cfg.Toolset == "legacy") return LegacyTools.Execute(host, tool, args ?? new JsonObject(), allowMutation);
             var format = AgentFormat.Parse(_cfg.Format);
             var budgets = new Rql.Budgets { MaxRows = _cfg.MaxRows };
             switch (tool)
@@ -158,7 +159,7 @@ namespace Rql.Eval.Agent
                 new JsonObject { ["role"] = "system", ["content"] = SystemPrompt(host) },
                 new JsonObject { ["role"] = "user", ["content"] = UserMessage(task) },
             };
-            var tools = Prompts.Tools(task.AllowMutation, _cfg.Toolset);
+            var tools = _cfg.Toolset == "legacy" ? LegacyTools.Definitions(task.AllowMutation) : Prompts.Tools(task.AllowMutation, _cfg.Toolset);
             string? answer = null;
             try
             {

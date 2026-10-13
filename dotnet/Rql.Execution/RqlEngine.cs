@@ -80,6 +80,9 @@ namespace Rql.Execution
         /// <summary>When false, $path tracking is computed only for plans that reference $path (default optimization).</summary>
         public bool AlwaysTrackPaths { get; set; }
 
+        /// <summary>Disable the sort+first top-N optimization (benchmark ablation only).</summary>
+        public bool DisableTopN { get; set; }
+
         public IReadOnlyDictionary<string, SourceRegistration> Sources => _sources;
         public IReadOnlyDictionary<string, Func<object?[], object?>> Functions => _functions;
         public IReadOnlyDictionary<string, StageHandler> Stages => _stages;
@@ -143,6 +146,25 @@ namespace Rql.Execution
             result.Stats.MembersRead = x.MembersRead;
             result.Stats.ElapsedMs = x.Elapsed.TotalMilliseconds;
             return result;
+        }
+
+        /// <summary>
+        /// Host API: run a query without a terminal stage and return the LIVE result objects (no encoding),
+        /// e.g. for adapters that hand objects to existing tooling. Read-only; budgets apply.
+        /// </summary>
+        public IReadOnlyList<object?> EvaluateLive(string text, out IReadOnlyList<Diagnostic> diagnostics, Budgets? budgets = null)
+        {
+            QueryPlan plan;
+            try { plan = RqlParser.Parse(text); }
+            catch (RqlException ex)
+            {
+                diagnostics = new[] { ex.ToDiagnostic() };
+                return Array.Empty<object?>();
+            }
+            var x = new Exec(this, budgets ?? new Budgets(), new QueryOptions(), plan);
+            var items = new Pipeline(x).LiveItems(x.MaxRows, out var diags);
+            diagnostics = diags;
+            return items;
         }
 
         // ------------------------------------------------------------ references

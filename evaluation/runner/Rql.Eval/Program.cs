@@ -192,17 +192,23 @@ namespace Rql.Eval
             var id = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + "-" + cfg.Name + "-" + split;
             var outDir = opts.TryGetValue("out", out var o) ? o : Path.Combine(EvalDir, "runs", id);
             Directory.CreateDirectory(outDir);
-            File.WriteAllText(Path.Combine(outDir, "config.json"), JsonSerializer.Serialize(new { cfg, split, catalog = Catalog.Version, tasks = tasks.Count, git = GitRev() }, new JsonSerializerOptions { WriteIndented = true }));
+            if (!opts.ContainsKey("resume") || !File.Exists(Path.Combine(outDir, "config.json"))) File.WriteAllText(Path.Combine(outDir, "config.json"), JsonSerializer.Serialize(new { cfg, split, catalog = Catalog.Version, tasks = tasks.Count, git = GitRev() }, new JsonSerializerOptions { WriteIndented = true }));
 
+            var results = new List<TaskResult>();
             var budget = new Budget(runCap, 0);
             using var client = new ChatClient(cfg.BaseUrl, ChatClient.LoadApiKey(), LoadPrices(), TimeSpan.FromSeconds(cfg.TimeoutSeconds));
             var runner = new AgentRunner(cfg, client, budget);
-            var results = new List<TaskResult>();
             var work = new List<(TaskInstance task, int repeat)>();
-            for (int r = 0; r < cfg.Repeats; r++) foreach (var t in tasks) work.Add((t, r));
+            // Resume: keep finished (task, repeat) pairs from an interrupted run in the same directory.
+            var resultsPath = Path.Combine(outDir, "results.jsonl");
+            var previous = File.Exists(resultsPath) && opts.ContainsKey("resume") ? LoadResults(outDir) : new List<TaskResult>();
+            var finished = new HashSet<string>(previous.Select(p => p.TaskId + "/" + p.Repeat));
+            results.AddRange(previous);
+            for (int r = 0; r < cfg.Repeats; r++) foreach (var t in tasks) if (!finished.Contains(t.Id + "/" + r)) work.Add((t, r));
+            if (previous.Count > 0) Console.WriteLine($"resuming: {previous.Count} finished task-runs kept");
             var gate = new SemaphoreSlim(Math.Max(1, cfg.Parallel));
             var lockObj = new object();
-            using var jsonl = new StreamWriter(Path.Combine(outDir, "results.jsonl"));
+            using var jsonl = new StreamWriter(Path.Combine(outDir, "results.jsonl"), append: opts.ContainsKey("resume"));
             Console.WriteLine($"run {id}: {work.Count} task-runs, run cap ${runCap:0.00} (global spent ${ledger.SpentUsd:0.00}/{ledger.CapUsd:0.00})");
             var all = work.Select(async w =>
             {
@@ -214,6 +220,14 @@ namespace Rql.Eval
                     lock (lockObj)
                     {
                         results.Add(res);
+                        // Incremental ledger: a killed run must still account for what it spent.
+                        var l = LoadLedger();
+                        l.SpentUsd += res.Usage.CostUsd;
+                        var entry = l.Runs.FirstOrDefault(r => r["id"]?.GetValue<string>() == id);
+                        if (entry == null) { entry = new JsonObject { ["id"] = id, ["config"] = cfg.Name, ["split"] = split, ["taskRuns"] = 0, ["costUsd"] = 0.0 }; l.Runs.Add(entry); }
+                        entry["taskRuns"] = entry["taskRuns"]!.GetValue<int>() + 1;
+                        entry["costUsd"] = Math.Round(entry["costUsd"]!.GetValue<double>() + res.Usage.CostUsd, 6);
+                        SaveLedger(l);
                         jsonl.WriteLine(JsonSerializer.Serialize(res, Json));
                         jsonl.Flush();
                         Console.WriteLine($"{(res.Success ? "PASS" : "FAIL")} {res.TaskId} r{res.Repeat} turns={res.ModelTurns} tools={res.ToolCalls} err={res.ToolErrors} tok={res.Usage.PromptTokens + res.Usage.CompletionTokens} ${res.Usage.CostUsd:0.0000} {res.WallMs / 1000:0.0}s {res.Outcome} | {Trim(res.GradeDetail, 80)}");
@@ -223,11 +237,6 @@ namespace Rql.Eval
             }).ToList();
             await Task.WhenAll(all);
 
-            var spent = results.Sum(r => r.Usage.CostUsd);
-            ledger = LoadLedger();
-            ledger.SpentUsd += spent;
-            ledger.Runs.Add(new JsonObject { ["id"] = id, ["config"] = cfg.Name, ["split"] = split, ["taskRuns"] = results.Count, ["costUsd"] = Math.Round(spent, 6) });
-            SaveLedger(ledger);
             var summary = Report.Summarize(cfg.Name, results);
             File.WriteAllText(Path.Combine(outDir, "summary.json"), JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true, NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals }));
             var md = Report.Markdown(summary, cfg);

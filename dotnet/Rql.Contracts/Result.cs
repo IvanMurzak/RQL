@@ -39,12 +39,19 @@ namespace Rql
         public int? MaxOutputBytes { get; set; }
         public int? MaxMutationTargets { get; set; }
 
+        private static bool IsIntegral(JsonElement e, out int v)
+        {
+            var d = e.GetDouble();
+            v = (int)d;
+            return Math.Floor(d) == d && d >= int.MinValue && d <= int.MaxValue;
+        }
+
         public static Budgets FromJson(JsonElement e)
         {
             var b = new Budgets();
             foreach (var p in e.EnumerateObject())
             {
-                if (p.Value.ValueKind != JsonValueKind.Number || !p.Value.TryGetInt32(out var v) || v < 0)
+                if (p.Value.ValueKind != JsonValueKind.Number || !(p.Value.TryGetInt32(out var v) || IsIntegral(p.Value, out v)) || v < 0)
                     throw new RqlException("invalid-plan", $"budget '{p.Name}' must be a non-negative integer");
                 switch (p.Name)
                 {

@@ -213,7 +213,7 @@ namespace Rql.Execution
                     }
                     // Implicit map over elements, flattening one level (spec §3).
                     var list = new List<object?>();
-                    foreach (var el in (IEnumerable)v)
+                    foreach (var el in V.Iterate(v))
                     {
                         var r = Member(x, el, site);
                         if (r is Missing) continue;
@@ -859,7 +859,7 @@ namespace Rql.Execution
             if (v == null || V.IsAbsent(v) || v is string) return null;
             var info = x.Types.Info(v.GetType());
             if (info.IsMap) return V.EnumerateMap(v, info);
-            if (info.IsList) return ((IEnumerable)v).Cast<object?>();
+            if (info.IsList) return V.Iterate(v);
             return null;
         }
 

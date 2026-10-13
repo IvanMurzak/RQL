@@ -282,3 +282,20 @@ To reduce agent errors the parser accepts, and canonicalizes away:
   `x is not T` to `not(...)`; a negated numeric literal folds into the literal.
 
 These never appear in canonical plans; plans only contain the core operators.
+
+## 12. Portability decisions (resolving runtime questions)
+
+Recorded from the TypeScript and C++ ports (`typescript/SPEC-QUESTIONS.md`, `cpp/SPEC-QUESTIONS.md`).
+
+| Topic | Decision |
+|---|---|
+| Null assignment | `null` may be assigned only to members the runtime descriptor marks nullable. In runtimes with implicit reference nullability (.NET reference types) every reference-typed member counts as nullable. Portable plans should only null members declared optional. |
+| Case-insensitive matching | Normative minimum is ASCII case folding; runtimes SHOULD apply simple Unicode case folding. Golden vectors use ASCII only. |
+| Ordinal string order | UTF-16 code-unit order (as in .NET and JS). A UTF-8 byte-order runtime differs only between supplementary characters and U+E000–U+FFFF; such deviation must be listed in its feature matrix. |
+| Number → text (`+` concatenation, map-key text) | Shortest round-trip digits. Exponent formatting is runtime-specific (.NET/C++ `1E+15`, JS `1000000000000000`); portable plans must not depend on it. |
+| `$type` of scalars/collections | Portable only for objects, structs and enums (the short declared type name). For scalars and collections it is runtime-specific. |
+| Session handles without a liveness hook | Hosts SHOULD provide liveness. Without it a runtime MAY re-validate `Type@n` by reachability over owning members (an object only reachable through references then reports `stale-ref`). |
+| Integers in JSON | Any JSON number with an integral value (`2`, `2.0`) — in plans and budgets. |
+| List assignment | Uses the runtime's natural semantics (alias in .NET/JS, copy in C++). Portable callers must not rely on aliasing. |
+| Extension stages | SHOULD be lazy (pull-based) so `first` bounds work; a runtime whose extension contract materializes input must say so. |
+| `maxOutputBytes` | Advisory size budget in UTF-8 bytes of the compact JSON encoding; runtimes may approximate within ±10%. |

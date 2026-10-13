@@ -51,10 +51,16 @@ Results come back as compact rows (header line, then col|col). Long results are 
             .Replace("Results come back as compact rows", "Navigate with paths in the source or with get (world.Assets[\"prefab/house\"].Dependencies, world.LocalPlayer.Inventory.Slots | get Item); select only projects output columns. Inside .any(...) etc. bare names refer to the element, falling back to the outer item.\nResults come back as compact rows")
             + RulesV2;
 
+        /// <summary>v3 — v2 + explicit recurse semantics (start items excluded unless include-self=true). Evidence: E6 failures.</summary>
+        public static readonly string V3 = V2.Replace(
+            "  recurse Children [max-depth=N] [include-self=true]   walk a hierarchy (cycle-safe)",
+            "  recurse Children [max-depth=N] [include-self=true]   all descendants via the member (cycle-safe); the input items themselves are NOT emitted unless include-self=true");
+
         public static string Get(string variant) => variant switch
         {
             "v1" => V1,
             "v2" => V2,
+            "v3" => V3,
             _ => throw new ArgumentException("unknown prompt variant " + variant),
         };
 
