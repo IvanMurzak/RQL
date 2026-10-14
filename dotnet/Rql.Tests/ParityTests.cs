@@ -145,6 +145,74 @@ namespace Rql.Tests
             Assert.Equal("pink", s.Renderers[0].First.color);
         }
 
+        public sealed class Shader { public int Id { get; set; } = 4; public Dictionary<string, double> Stats { get; } = new Dictionary<string, double> { ["hp"] = 1 }; public float Gloss = 0.5f; }
+
+        private sealed class ShaderMap : RqlTypeAdapter<Shader>
+        {
+            protected override void Members(MemberTable<Shader> m) =>
+                m.Map<float>("Floats", x => new[] { "_Gloss" }, (x, k) => x.Gloss, (x, k, v) => x.Gloss = v);
+        }
+
+        [Fact]
+        public void OwnerIsTheNearestEnclosingObject()
+        {
+            var s = new Scene();
+            var shader = new Shader();
+            var e = Engine(s);
+            e.AddSource("sh", () => shader);
+            e.AddAdapter(new ShaderMap());
+            var owners = new List<object>();
+            e.Mutations.Committed = recs => owners.AddRange(recs.Select(r => r.Owner));
+            Assert.True(e.Execute("sh | set Floats[\"_Gloss\"] = 0.25", options: Mutate).Ok);        // virtual map view → the shader
+            Assert.True(e.Execute("sh | set Stats[\"hp\"] = 2", options: Mutate).Ok);               // dictionary → the shader
+            Assert.True(e.Execute("s.Systems | set main.duration = 2", options: Mutate).Ok);         // handle struct → the system
+            Assert.Same(shader, owners[0]);
+            Assert.Same(shader, owners[1]);
+            Assert.Same(s.Systems[0], owners[2]);
+        }
+
+        [Fact]
+        public void VirtualMapsOnlyTakeExistingKeys()
+        {
+            var shader = new Shader();
+            var e = new RqlEngine();
+            e.AddSource("sh", () => shader);
+            e.Mutations.Enabled = true;
+            e.AddAdapter(new ShaderMap());
+            var r = e.Execute("sh | set Floats[\"_New\"] = 1", options: Mutate);
+            Assert.Equal("coercion-failed", r.Diagnostics[0].Code);
+            Assert.Contains("no entry '_New'", r.Diagnostics[0].Message);
+        }
+
+        [Fact]
+        public void ConstructionHonoursTheHostWritePolicy()
+        {
+            var s = new Scene();
+            var e = Engine(s);
+            e.Mutations.CanWrite = (t, m) => !(t == typeof(Mat) && m.Name == "color");
+            var r = e.Execute("s.Renderers | set sharedMaterial = {color: \"red\"}", options: Mutate);
+            Assert.Equal("permission-denied", r.Diagnostics[0].Code);
+            Assert.Equal("white", s.Renderers[0].First.color);
+        }
+
+        [Fact]
+        public void ExcludedTypesAreNeverConstructed()
+        {
+            var s = new Scene();
+            var e = Engine(s);
+            e.ExcludeTypes(t => t == typeof(SecretThing));
+            e.AddSource("h", () => new Holder());
+            var r = e.Execute("h | set Thing = {\"$type\": \"SecretThing\"}", options: Mutate);
+            Assert.Equal("coercion-failed", r.Diagnostics[0].Code);
+            Assert.Contains("no concrete type named 'SecretThing'", r.Diagnostics[0].Message);
+            Assert.True(e.Execute("h | set Thing = {\"$type\": \"PlainThing\"}", options: Mutate).Ok);
+        }
+
+        public class BaseThing { }
+        public sealed class SecretThing : BaseThing { }
+        public sealed class PlainThing : BaseThing { }
+        public sealed class Holder { public int Id { get; set; } = 1; public BaseThing? Thing { get; set; } }
+
         [Fact]
         public void PredicateHidingAndTypeExclusion()
         {

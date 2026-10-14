@@ -183,6 +183,9 @@ namespace Rql.Execution
             _cache.Clear();
         }
 
+        /// <summary>Whether <paramref name="t"/> is an excluded type (spec §13 exclusion); such types are never constructed either.</summary>
+        internal bool IsExcludedType(Type t) => _excluded != null && IsExcluded(t);
+
         // Element and generic-argument types form a finite tree (no cycles), so plain recursion suffices.
         private bool IsExcluded(Type t) =>
             _excluded!(t)
@@ -223,7 +226,9 @@ namespace Rql.Execution
         }
 
         /// <summary>A destroyed object (e.g. Unity's fake-null) reads as null everywhere (spec §13).</summary>
-        internal bool IsDead(object o) => LivenessOn && !(o is string) && !o.GetType().IsPrimitive && !IsAlive(o);
+        // Only objects (class instances, not collections, maps, structs or scalars) have liveness, so host hooks are
+        // only ever asked about host objects.
+        internal bool IsDead(object o) => LivenessOn && !(o is string) && !o.GetType().IsPrimitive && Info(o.GetType()).IsObject && !IsAlive(o);
 
         /// <summary>Applied where values enter expressions (member reads, elements, sources): destroyed objects become null.</summary>
         internal object? Live(object? v) => v != null && LivenessOn && IsDead(v) ? null : v;

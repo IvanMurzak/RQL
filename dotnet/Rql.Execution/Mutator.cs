@@ -101,7 +101,7 @@ namespace Rql.Execution
                     var slot = Resolve(item, target.Segments, out var container, out var owner);
                     if (!slot.Writable(_x))
                         throw new RqlException(slot.DenyCode, $"'{label}' on {_x.Engine.RefOf(item)} is not writable{slot.DenyReason}");
-                    if (!Coerce.TryTo(_x.Types, nv, slot.Type, out var coerced, out var why))
+                    if (!Coerce.TryTo(_x.Types, _x.Engine.Mutations.CanWrite, nv, slot.Type, out var coerced, out var why))
                         throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' ({TypeModel.FriendlyName(slot.Type)}): {why}");
                     if (slot.Validate(container, coerced) is string rejected)
                         throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' on {_x.Engine.RefOf(item)}: {rejected}");
@@ -198,8 +198,11 @@ namespace Rql.Execution
             public MapSlot(object key, Type value) { _key = key; _value = value; }
             public override Type Type => _value;
             public override object? Get(object container) => ((IDictionary)container).Contains(_key) ? ((IDictionary)container)[_key] : Missing.Value;
+            // Virtual maps only take writes to existing entries: a new key could not be removed again on rollback.
             public override string? Validate(object container, object? value) =>
-                container is IVirtualMap vm && _key is string k ? vm.ValidateEntry(k, value) : null;
+                container is IVirtualMap vm && _key is string k
+                    ? (((IDictionary)container).Contains(k) ? vm.ValidateEntry(k, value) : $"no entry '{k}'")
+                    : null;
             public override void Set(object container, object? value)
             {
                 if (value is Missing) ((IDictionary)container).Remove(_key);
@@ -263,16 +266,18 @@ namespace Rql.Execution
                 if (i == segs.Count - 1)
                 {
                     // Every copy on the way (value type or copy-on-read member) is written back into its parent: those parent
-                    // slots must be writable and allowed too (readonly struct fields, get-only properties, policy). The owner
-                    // whose state changes is the first container above the copies.
-                    int j = chain.Count - 1;
-                    for (; j >= 0 && NeedsWriteBack(chain[j].slot, chain[j].value); j--)
+                    // slots must be writable and allowed too (readonly struct fields, get-only properties, policy).
+                    for (int j = chain.Count - 1; j >= 0 && NeedsWriteBack(chain[j].slot, chain[j].value); j--)
                     {
                         if (!chain[j].slot.Writable(_x))
                             throw new RqlException(chain[j].slot.DenyCode, $"'{label}' on {_x.Engine.RefOf(root)} is not writable: '{segs[j]}' is a copy (value type or copy-on-read member) that must be written back through a non-writable member{chain[j].slot.DenyReason}");
                     }
                     container = cur;
-                    owner = j < 0 ? root : chain[j].value;
+                    // The owner whose state changes: the nearest enclosing object (never a collection, map view or struct),
+                    // e.g. the Material for Uniforms["_Color"], the ParticleSystem for main.duration (spec §13).
+                    owner = root;
+                    for (int k = chain.Count - 1; k >= 0; k--)
+                        if (_x.Types.Info(chain[k].value.GetType()).IsObject) { owner = chain[k].value; break; }
                     return slot;
                 }
                 object? next = SafeGet(slot, cur, label);
@@ -363,7 +368,7 @@ namespace Rql.Execution
                     for (int i = 0; i < ps.Count; i++)
                     {
                         if (i >= vals.Length) { cv[i] = ps[i].Default; continue; }
-                        if (!Coerce.TryTo(_x.Types, vals[i], ps[i].Type, out cv[i], out var w)) { ok = false; why = $"argument '{ps[i].Name}': {w}"; break; }
+                        if (!Coerce.TryTo(_x.Types, _x.Engine.Mutations.CanWrite, vals[i], ps[i].Type, out cv[i], out var w)) { ok = false; why = $"argument '{ps[i].Name}': {w}"; break; }
                     }
                     if (ok) { chosen = m; coerced = cv; break; }
                 }
@@ -408,9 +413,10 @@ namespace Rql.Execution
 
     internal static class Coerce
     {
-        // Per target type: concrete assignable types by full and short name (built once per target, spec §4.5 "$type").
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, Dictionary<string, Type[]>> SubtypeIndex =
-            new System.Collections.Concurrent.ConcurrentDictionary<Type, Dictionary<string, Type[]>>();
+        // Per target type: public concrete assignable types by full and short name (spec §4.5 "$type"); rebuilt when new
+        // assemblies load (plugins, domain reloads).
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, (int assemblies, Dictionary<string, Type[]> index)> SubtypeIndex =
+            new System.Collections.Concurrent.ConcurrentDictionary<Type, (int, Dictionary<string, Type[]>)>();
 
         private static bool TryInstantiate(Type t, out object instance, out string why)
         {
@@ -426,7 +432,7 @@ namespace Rql.Execution
         }
 
         /// <summary>Build <paramref name="target"/> from an object literal: concrete type, construction, member assignment (spec §4.5).</summary>
-        private static bool TryConstruct(TypeModel model, ObjectValue literal, Type target, out object? result, out string why)
+        private static bool TryConstruct(TypeModel model, Func<Type, MemberAccessor, bool>? policy, ObjectValue literal, Type target, out object? result, out string why)
         {
             result = null;
             why = "";
@@ -442,7 +448,7 @@ namespace Rql.Execution
                 foreach (var kv in literal)
                 {
                     if (!Compiler.TryCoerceKey(kv.Key, keyType, out var key) || key == null) { why = $"invalid key '{kv.Key}' for {TypeModel.FriendlyName(target)}"; return false; }
-                    if (!TryTo(model, kv.Value, valueType, out var mv, out var w)) { why = $"'{kv.Key}': {w}"; return false; }
+                    if (!TryTo(model, policy, kv.Value, valueType, out var mv, out var w)) { why = $"'{kv.Key}': {w}"; return false; }
                     map[key] = mv;
                 }
                 result = map;
@@ -454,8 +460,13 @@ namespace Rql.Execution
             if (literal.TryGetValue("$type", out var typeName))
             {
                 if (!(typeName is string tn)) { why = "\"$type\" must be a type name string"; return false; }
-                var index = SubtypeIndex.GetOrAdd(target, BuildSubtypeIndex);
-                var found = index.TryGetValue(tn, out var hits) ? hits : Array.Empty<Type>();
+                int loaded = AppDomain.CurrentDomain.GetAssemblies().Length;
+                var entry = SubtypeIndex.TryGetValue(target, out var cached) && cached.assemblies == loaded
+                    ? cached
+                    : SubtypeIndex[target] = (loaded, BuildSubtypeIndex(target));
+                var found = entry.index.TryGetValue(tn, out var hits)
+                    ? hits.Where(t => !model.IsExcludedType(t)).ToArray()
+                    : Array.Empty<Type>();
                 if (found.Length == 0) { why = $"no concrete type named '{tn}' derives from {TypeModel.FriendlyName(target)}"; return false; }
                 if (found.Length > 1) { why = $"'{tn}' is ambiguous: " + string.Join(", ", found.Select(t => t.FullName)); return false; }
                 concrete = found[0];
@@ -473,7 +484,10 @@ namespace Rql.Execution
                 var m = ci.Find(kv.Key);
                 if (m == null) { why = $"no member '{kv.Key}' on {ci.ShortName}"; return false; }
                 if (!m.CanWrite) { why = $"member '{m.Name}' of {ci.ShortName} is read-only"; return false; }
-                if (!TryTo(model, kv.Value, m.Type, out var mv, out var w)) { why = $"'{m.Name}': {w}"; return false; }
+                // Building a value assigns members, so the host's per-member write policy applies as for `set`.
+                if (policy != null && !policy(concrete, m))
+                    throw new RqlException("permission-denied", $"member '{m.Name}' of {ci.ShortName} may not be written (denied by host policy)");
+                if (!TryTo(model, policy, kv.Value, m.Type, out var mv, out var w)) { why = $"'{m.Name}': {w}"; return false; }
                 if (m.Validate?.Invoke(instance, mv) is string rejected) { why = $"'{m.Name}': {rejected}"; return false; }
                 try { m.SetValue(instance, mv); }
                 catch (Exception ex) when (!(ex is OutOfMemoryException)) { why = $"'{m.Name}': {ex.Message}"; return false; }
@@ -495,7 +509,7 @@ namespace Rql.Execution
             {
                 foreach (var t in TypeModel.LoadableTypes(asm))
                 {
-                    if (t.IsAbstract || t.IsInterface || t.ContainsGenericParameters || !target.IsAssignableFrom(t)) continue;
+                    if (!t.IsVisible || t.IsAbstract || t.IsInterface || t.ContainsGenericParameters || !target.IsAssignableFrom(t)) continue;
                     Add(t.FullName, t);
                     Add(TypeModel.ShortName(t), t);
                 }
@@ -504,7 +518,11 @@ namespace Rql.Execution
             return byName.ToDictionary(kv => kv.Key, kv => kv.Value.ToArray(), StringComparer.Ordinal);
         }
 
-        public static bool TryTo(TypeModel model, object? v, Type target, out object? result, out string why)
+        public static bool TryTo(TypeModel model, object? v, Type target, out object? result, out string why) =>
+            TryTo(model, null, v, target, out result, out why);
+
+        /// <summary>Coercion for writes; <paramref name="policy"/> (the host's per-member write policy) also governs construction.</summary>
+        public static bool TryTo(TypeModel model, Func<Type, MemberAccessor, bool>? policy, object? v, Type target, out object? result, out string why)
         {
             why = "";
             result = null;
@@ -537,7 +555,7 @@ namespace Rql.Execution
                 }
             }
 
-            if (v is ObjectValue literal) return TryConstruct(model, literal, target, out result, out why);
+            if (v is ObjectValue literal) return TryConstruct(model, policy, literal, target, out result, out why);
 
             if (target.IsEnum)
             {
@@ -591,7 +609,7 @@ namespace Rql.Execution
                 var items = new List<object?>();
                 foreach (var el in src)
                 {
-                    if (!TryTo(model, el, elem, out var ce, out var w)) { why = "element: " + w; return false; }
+                    if (!TryTo(model, policy, el, elem, out var ce, out var w)) { why = "element: " + w; return false; }
                     items.Add(ce);
                 }
                 if (target.IsArray)

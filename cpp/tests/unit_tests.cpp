@@ -1003,6 +1003,26 @@ void adapter_tests() {
         for (auto& d : r.diagnostics)
             if (d.code == "getter-threw" && d.severity == rql::Severity::Warning) warned = true;
         check(r.ok && warned && world.Materials[0]->Roughness == 0.75, "parity: committed failure → getter-threw warning, writes applied");
+        // owner rule: the nearest enclosing OBJECT (never a map view, list or struct handle)
+        rql::TypeAdapter matParams;
+        matParams.target = ur.descriptor<UMaterialInstance>();
+        matParams.configure_members = [](rql::MemberTable& t) {
+            t.map<UMaterialInstance>(
+                "ScalarParams", [](UMaterialInstance&) { return std::vector<std::string>{"Roughness"}; },
+                [](UMaterialInstance& m, const std::string&) { return m.Roughness; },
+                [](UMaterialInstance& m, const std::string&, double v) { m.Roughness = v; });
+        };
+        ue.add_adapter(std::move(matParams));
+        ue.mutations().before_write = [&](const std::vector<rql::MutationRecord>& recs) { before = recs; };
+        ue.mutations().committed = nullptr;
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Components"]},"stages":[{"op":"first","n":1},{"op":"set","assign":[{"target":{"path":["Material","ScalarParams",{"key":"Roughness"}]},"value":{"lit":0.2}},{"target":{"path":["Main","StartSpeed"]},"value":{"lit":9}}]}]})J", true);
+        check(r.ok && before.size() == 2 && before[0].owner.ptr() == world.Materials[0].get() && before[1].owner.ptr() == world.Components[0].get() &&
+                  world.Materials[0]->Roughness == 0.2 && world.Components[0]->Emitter.StartSpeed == 9,
+              "review: owner = material for a virtual-map entry, the component for a handle-struct member");
+        before.clear();
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Components"]},"stages":[{"op":"first","n":1},{"op":"set","assign":[{"target":{"path":["Material","ScalarParams",{"key":"Metallic"}]},"value":{"lit":0.2}}]}]})J", true);
+        check(!r.ok && first_code(r) == "coercion-failed" && r.diagnostics[0].message.find("no entry 'Metallic'") != std::string::npos && before.empty(),
+              "review: virtual maps reject writes to absent keys while planning");
         ue.mutations().before_write = nullptr;
         ue.mutations().committed = nullptr;
 
@@ -1066,7 +1086,52 @@ void adapter_tests() {
         check(r.ok && (*r.rows)[0][0].as_string() == "kid", "parity: constructed objects stay alive after the query");
     }
 
-    // ownership of literal-built objects: per slot (bounded), kept while raw-linked elsewhere
+    // review: map entry owner, construction policy, dead intermediates, exact ref, index safety
+    {
+        auto gr = conformance::load_graph(graph_path);
+        rql::Engine re(reg);
+        re.add_object_source("g", gr.get());
+        re.mutations().enabled = true;
+        conformance::register_test_adapters(re, reg);
+        std::vector<rql::MutationRecord> recs;
+        re.mutations().before_write = [&](const std::vector<rql::MutationRecord>& rr) { recs = rr; };
+        auto r = arun(re, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#1"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Props",{"key":"hp"}]},"value":{"lit":1}}]}]})J", true);
+        check(r.ok && recs.size() == 1 && recs[0].owner.ptr() == gr->Nodes[0].get(), "review: owner of a map entry is the owning object");
+        re.mutations().before_write = nullptr;
+        re.mutations().can_write = [](const rql::TypeDescriptor& t, const rql::MemberDescriptor& m) { return !(t.name == "Node" && m.name == "Name"); };
+        r = arun(re, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Peer"]},"value":{"object":[{"key":"Name","value":{"lit":"x"}}]}}]}]})J", true);
+        check(!r.ok && first_code(r) == "permission-denied" && gr->Nodes[2]->Peer == nullptr, "review: object-literal construction checks the host policy");
+        re.mutations().can_write = nullptr;
+        // dead intermediate: Node#8.Peer -> Node#5, then Node#5 is destroyed
+        r = arun(re, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Peer"]},"value":{"call":"ref","args":[{"lit":"Node#5"}]}}]}]})J", true);
+        gr->Nodes[1]->Tags.push_back("destroyed");
+        r = arun(re, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Peer","Name"]},"value":{"lit":"x"}}]}]})J", true);
+        check(!r.ok && first_code(r) == "coercion-failed" && r.diagnostics[0].message.find("is null") != std::string::npos && gr->Nodes[1]->Name == "root-b",
+              "review: a destroyed intermediate container fails as null, nothing written");
+        r = arun(re, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#1"}]},"stages":[{"op":"select","fields":[{"name":"i","expr":{"call":"insert","args":[{"path":["Tags"]},{"lit":1e300},{"lit":"x"}]}},{"name":"r","expr":{"call":"remove-at","args":[{"path":["Tags"]},{"lit":-1e300}]}}]}]})J");
+        check(r.ok && (*r.rows)[0][0].find("$error") && (*r.rows)[0][1].find("$error"), "review: huge insert / remove-at indexes are type-mismatch (no UB)");
+    }
+    {
+        // exact ref match is final, also through resolve_stable_ref: a destroyed exact match is stale-ref
+        auto gx = conformance::load_graph(graph_path);
+        rql::Engine xe(reg);
+        xe.add_object_source("g", gx.get());
+        conformance::Node* lonely = gx->Nodes[2].get();
+        conformance::Node* rootb = gx->Nodes[1].get();
+        xe.resolve_stable_ref = [&](const std::string&, const std::string& id) {
+            if (id == "8 lonely") return reg.wrap(lonely);
+            if (id == "8") return reg.wrap(rootb);
+            return rql::Value::missing();
+        };
+        xe.is_alive = [&](const rql::Value& v) { return v.ptr() != lonely; };
+        auto r = arun(xe, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8 lonely"}]},"stages":[{"op":"count"}]})J");
+        check(!r.ok && first_code(r) == "stale-ref", "review: a destroyed exact ref match is final (no display-form fallback)");
+        xe.is_alive = nullptr;
+        r = arun(xe, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8 (copied)"}]},"stages":[{"op":"select","fields":[{"name":"n","expr":{"path":["Name"]}}]}]})J");
+        check(r.ok && (*r.rows)[0][0].as_string() == "root-b", "review: an absent exact id still falls back to the display form");
+    }
+
+    // ownership of literal-built objects: retained by the engine until the host releases them
     {
         auto go = conformance::load_graph(graph_path);
         rql::Engine oe(reg);
@@ -1075,14 +1140,40 @@ void adapter_tests() {
         const char* set_peer = R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Peer"]},"value":{"object":[{"key":"Name","value":{"lit":"made"}}]}}]}]})J";
         bool all_ok = true;
         for (int i = 0; i < 5; ++i) all_ok = arun(oe, set_peer, true).ok && all_ok;
-        check(all_ok && oe.retained_literal_objects() == 1, "parity: repeated literal sets of one slot keep one object (bounded)");
-        // Node#5.Peer := Node#8.Peer (a raw copy of the link), then overwrite Node#8.Peer: the old object stays alive
+        // Node#5.Peer := Node#8.Peer (a raw copy of the link): every earlier object must still be alive
         auto r = arun(oe, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#5"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Peer"]},"value":{"path":["Peer"],"on":{"call":"ref","args":[{"lit":"Node#8"}]}}}]}]})J", true);
-        bool linked = r.ok && go->Nodes[1]->Peer == go->Nodes[2]->Peer;
         r = arun(oe, set_peer, true);
         r = arun(oe, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#5"}]},"stages":[{"op":"select","fields":[{"name":"n","expr":{"path":["Peer","Name"]}}]}]})J");
-        check(linked && r.ok && (*r.rows)[0][0].as_string() == "made" && oe.retained_literal_objects() == 2,
-              "parity: an object still linked from elsewhere is kept when its slot is overwritten");
+        check(all_ok && r.ok && (*r.rows)[0][0].as_string() == "made" && oe.retained_literal_objects() == 6,
+              "parity: literal-built objects are retained (never freed automatically), raw links stay valid");
+        run(oe, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"set","assign":[{"target":{"path":["Peer"]},"value":{"lit":null}}]}]})J", true, true);
+        size_t dry = oe.retained_literal_objects();
+        run(oe, set_peer, true, true);  // dry run: builds an object but retains nothing
+        go->Nodes[1]->Peer = nullptr;
+        go->Nodes[2]->Peer = nullptr;
+        oe.release_literal_objects();  // the host knows nothing links to them anymore
+        check(dry == 6 && oe.retained_literal_objects() == 0, "parity: dry runs retain nothing; release_literal_objects frees on request");
+    }
+    {
+        // host factory (Unreal NewObject seam): host-owned objects are never retained by the engine
+        struct HostNodePool {
+            std::vector<std::unique_ptr<conformance::Node>> owned;
+        };
+        static HostNodePool pool;
+        rql::TypeRegistry hr;
+        conformance::register_types(hr);
+        hr.object<conformance::Node>("Node").factory([] {
+            pool.owned.push_back(std::make_unique<conformance::Node>());
+            return pool.owned.back().get();
+        });
+        auto gh = conformance::load_graph(graph_path);
+        rql::Engine he(hr);
+        he.add_object_source("g", gh.get());
+        he.mutations().enabled = true;
+        auto r = arun(he, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Peer"]},"value":{"object":[{"key":"Name","value":{"lit":"hosted"}}]}}]}]})J", true);
+        check(r.ok && pool.owned.size() == 1 && gh->Nodes[2]->Peer == pool.owned[0].get() && gh->Nodes[2]->Peer->Name == "hosted" &&
+                  he.retained_literal_objects() == 0,
+              "parity: host-factory objects are host-owned (not retained by the engine)");
     }
 
     // configuration bugs → internal-error

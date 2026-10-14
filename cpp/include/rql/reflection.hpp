@@ -127,6 +127,8 @@ public:
     /// Default construction (object literals, spec §4.5): a new instance typed as THIS descriptor's type.
     /// Structs get one automatically; objects opt in with ClassBuilder::constructible().
     std::function<std::shared_ptr<void>()> create;
+    /// `create` returns host-owned objects (ClassBuilder::factory): the engine never retains them.
+    bool host_owned = false;
 
     /// Native type key (class/enum descriptors).
     TypeKey native_key = nullptr;
@@ -229,6 +231,7 @@ public:
     const TypeDescriptor* map_type(const TypeDescriptor* key, const TypeDescriptor* value, bool value_nullable);
     /// Registered object/struct/enum descriptors in registration order.
     std::vector<const TypeDescriptor*> registered() const;
+    size_t registered_count() const noexcept { return order_.size(); }
 
     /// Wrap a native pointer as an object Value with its most-derived registered type.
     template <class T>
@@ -721,6 +724,19 @@ public:
     ClassBuilder& constructible() {
         static_assert(std::is_default_constructible_v<T>, "constructible() requires a default constructor");
         d_->create = []() { return std::static_pointer_cast<void>(std::make_shared<T>()); };
+        d_->host_owned = false;
+        return *this;
+    }
+    /// Host factory for object literals (e.g. Unreal's NewObject): f() returns a new T* the HOST owns and
+    /// keeps alive (GC, scene, ...). The engine never retains or frees it.
+    template <class F>
+    ClassBuilder& factory(F f) {
+        d_->create = [f]() -> std::shared_ptr<void> {
+            T* p = f();
+            if (!p) throw std::runtime_error("host factory returned null");
+            return std::shared_ptr<void>(static_cast<void*>(p), [](void*) {});  // non-owning
+        };
+        d_->host_owned = true;
         return *this;
     }
     /// Dynamic-type hook (RTTI-free polymorphism): f(const T&) returns rql::type_key<MostDerived>().

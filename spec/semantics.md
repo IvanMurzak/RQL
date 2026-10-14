@@ -173,7 +173,10 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
   type named by the key `"$type"` (short or full name) among concrete types assignable to the target (no match or an
   ambiguous name → `coercion-failed`); the type must be constructible (a default/parameterless constructor or an adapter
   that coerces object literals); every other key must name a writable member of that type (unknown or read-only →
-  `coercion-failed`), and its value is coerced recursively to the member type and validated like a `set`. Members not
+  `coercion-failed`), the host's per-member write policy applies to it exactly as to `set` (`permission-denied`), and
+  its value is coerced recursively to the member type and validated like a `set`. Excluded types (§13) are never
+  constructed. Construction happens while the mutation is planned, so constructors run even for a dry-run or a
+  vetoed mutation; hosts whose constructors have side effects construct through an adapter instead. Members not
   named keep the type's defaults (numbers `0`, strings `""`, booleans `false`, empty lists/maps, null references) —
   an object literal builds a new value, it does not patch the old one (use member paths for that);
 * any other target type → `coercion-failed`.
@@ -233,8 +236,9 @@ conformance form.
 ## 7. References and identity
 
 * `ref()` resolves the exact text first, so ids may contain spaces and parentheses (asset paths such as
-  `"Material#Assets/My Mats/Red (1).mat"`). Only when that fails does it tolerate copied display forms: anything from the
-  first whitespace or `(` on is then ignored (`"Enemy#12(Goblin_0012)"` resolves `Enemy#12`).
+  `"Material#Assets/My Mats/Red (1).mat"`). An exact match is final (a destroyed exact match is `stale-ref`). Only when
+  nothing matches exactly does it tolerate copied display forms: anything from the first whitespace or `(` on is then
+  ignored (`"Enemy#12(Goblin_0012)"` resolves `Enemy#12`).
 * `$ref` = `"<Type>#<id>"` where `<id>` is a stable id from the runtime's identity provider
   (e.g. a declared `Id` member). Objects without a stable id get a session handle id
   `"<Type>@<n>"`, valid for the lifetime of the runtime session.
@@ -358,11 +362,12 @@ templates in the reflection layer) only implement the exact / base / interface t
 |---|---|
 | Members | Applied from the least to the most specific adapter, so a subclass adapter refines a base adapter. Can **add** virtual members (name, declared type, getter, optional setter with validation, description), **hide** members, keep **only** a whitelist, include **non-public fields** by predicate (e.g. Unity `[SerializeField]`), mark members read-only, non-owning reference, or **explicit-only** (never read implicitly: not by generic `recurse`, inline encoding, ref search or snapshots — only when a path names it; `describe` lists it with `"explicitOnly": true`). Hidden members are unreadable AND unwritable (reads → `unknown-member` warning, writes → `unknown-member` error). Virtual members are non-owning by default (computed values are not structural children). Identity and display members are chosen among non-explicit-only members (they are read for every `$ref` and summary). Configuring a member that does not exist — including `hide` / `only` with an unknown name — is a host bug and fails the query with `internal-error`. |
 | Methods | Add callable methods (name, typed parameters with optional defaults, result type, description) invoked by the `call` stage exactly like host-allowlisted methods: arguments are coerced to the parameter types (adapter coercion applies), overloads are chosen by arity then coercibility, results go to the receipt, `dryRun` invokes nothing, and calls are not rolled back. Runtimes with method reflection MAY also expose existing host methods by name (for engine types that cannot be annotated) and hide methods. `describe` lists every callable method as `name(type param, …)` plus the description. |
-| Virtual maps | A member whose value is a string-keyed map defined by the adapter: the owner's keys, per-key get, optional per-key set and validation. An optional per-key existence test avoids scanning the keys on lookups. Reads and writes use the ordinary map paths (`M["k"]`, `set M["k"] = v`): values are coerced to the declared value type, validation runs before any write (`coercion-failed` with the reason), writes take part in rollback, a map without setter is `readonly-member`, entries cannot be added beyond the owner's keys unless the setter accepts them, and entries are never removed. Schemas show the type as `Dictionary<string, T>`. |
+| Virtual maps | A member whose value is a string-keyed map defined by the adapter: the owner's keys, per-key get, optional per-key set and validation. An optional per-key existence test avoids scanning the keys on lookups. Reads and writes use the ordinary map paths (`M["k"]`, `set M["k"] = v`): values are coerced to the declared value type, validation runs before any write (`coercion-failed` with the reason), writes take part in rollback, a map without setter is `readonly-member`, writes go to existing entries only (an absent key is `coercion-failed` "no entry", because a new entry could not be
+removed again on rollback), and entries are never removed. Schemas show the type as `Dictionary<string, T>`. |
 | Encode | Replace the output encoding of values of the type (first adapter that encodes wins). |
 | Coerce | Convert a value supplied by a query (literal, list, other type) to the type on writes (`set`, `call` arguments). Values already of the target type bypass it. A failure carries a reason → `coercion-failed`, reason in the message. |
 | Compare | Equality and/or ordering of a value of the type with any other value (first adapter of the left operand that answers wins, then of the right operand with the result mirrored). Ordering applies everywhere values are ordered: comparison operators, `sort`, `min` / `max` (which also accept values whose type has an ordering adapter). An adapter typically coerces the other operand, so `Pos == "(1, -1)"` works. |
-| Identity / liveness | Stable id for `$ref`, resolution of `Type#id`, and an `IsAlive` verdict. A destroyed object (the liveness verdict — first answering adapter, then the host's liveness hook — is "not alive", e.g. Unity's fake-null) **reads as null everywhere**: the conversion happens where values enter expressions (member reads, list / map elements, sources), so `== null` / `is null` / `coalesce` / sort / `distinct` / encoding all see `null`, members of it read as members of null (no getter runs), stream expansion skips it like a null element (collection methods still see the `null`, e.g. `targets.any($ == null)`), it is therefore never a mutation target, and `ref()` to it is `stale-ref`. Adapters may choose the **identity** and **display** members by name (e.g. Unity's lowercase `name`). |
+| Identity / liveness | Stable id for `$ref`, resolution of `Type#id`, and an `IsAlive` verdict. A destroyed object (the liveness verdict — first answering adapter, then the host's liveness hook; only objects, never collections, maps, structs or scalars, are asked — is "not alive", e.g. Unity's fake-null) **reads as null everywhere**: the conversion happens where values enter expressions (member reads, list / map elements, sources), so `== null` / `is null` / `coalesce` / sort / `distinct` / encoding all see `null`, members of it read as members of null (no getter runs), stream expansion skips it like a null element (collection methods still see the `null`, e.g. `targets.any($ == null)`), it is therefore never a mutation target, and `ref()` to it is `stale-ref`. Adapters may choose the **identity** and **display** members by name (e.g. Unity's lowercase `name`). |
 | Write-back | A member can be marked **copy-on-read** (its getter returns a copy, e.g. Unity's `Renderer.sharedMaterials`, `Gradient.colorKeys`): writes into its value are assigned back through the member's setter exactly like value types (§8), with the same writability rules and rollback. A value type can be marked **writes-through** (a handle to shared state, e.g. Unity's `ParticleSystem.MainModule`): writes to its copies are live, so no write-back to the owner happens, get-only owners are fine, virtual setters on it are allowed, and its values may be mutation targets. |
 | Exclusion | Hide members by predicate (e.g. every `[Obsolete]` member), and engine-wide exclude member **types** (a member is dropped when its type, element type or a generic argument matches), e.g. delegates, native pointers or assemblies that must never be touched. |
 | Literals | Coercion receives object literals (§4.5) and may build values itself; an adapter may publish a JSON Schema of the literals it accepts, shown by `describe` as `literal`. |
@@ -380,8 +385,10 @@ rejected at configuration (they would write to a copy).
 member, old, new; for `call` the method) after planning and before any write, and may veto by failing
 (`permission-denied`, nothing changed); a *committed* hook receives the changes after every write succeeded (not on
 dry-run or after a rollback; completed calls are reported even when a later call fails). The **owner** is the object
-whose state changes: the last reference object on the written path (for `set Renderer.sharedMaterial.color` the
-Material, not the Renderer), which is what hosts mark dirty or record for undo. A failing committed hook is a
+whose state changes: the nearest enclosing object on the written path — never a list, map (including virtual-map
+views) or struct (including writes-through handles); the item when there is none. For `set Renderer.sharedMaterial.color`
+it is the Material, for `set Uniforms["_Color"]` the material owning the virtual map, for `set main.duration` the particle
+system. That is what hosts mark dirty or record for undo. A failing committed hook is a
 `getter-threw` warning; the writes stay applied.
 
 **Discovery and optional types (non-normative, runtime convenience).** Runtimes with assembly/module reflection MAY

@@ -113,8 +113,16 @@ copy; writes are assigned back), `writes_through()` handle structs (e.g. `FParti
 handles), `hide_where`, `Engine::exclude_types`, `identity` / `display` by name, `mixed_map`, a
 `literal_schema` shown by `describe`, liveness verdicts that make destroyed (pending-kill) objects
 read as null, and `MutationPolicy::before_write` / `committed` hooks whose records carry the
-**owner** (the last reference object on the written path, e.g. the material when setting through a
-mesh component) for undo / dirty marking.
+**owner** (the nearest enclosing object on the written path — never a list, map, virtual-map view or
+struct handle — e.g. the material when setting through a mesh component) for undo / dirty marking.
+
+**Object literals and ownership** (spec §4.5): `ClassBuilder::constructible()` lets literals build a
+type with `std::make_shared<T>()`; the engine then retains every object it built (set values and
+call arguments) and never frees them automatically — raw pointers in the graph or in host state
+(e.g. undo stacks holding hook records) may still reach them. Call `Engine::release_literal_objects()`
+only when nothing can reach them anymore (`retained_literal_objects()` reports the count). For
+host-managed lifetimes register `ClassBuilder::factory([] { return NewObject<...>(); })`: such
+objects are host-owned and never retained by the engine.
 
 Adapters are per `Engine`: the engine derives an adaptation of each descriptor an adapter applies to
 (members after adapters, id/display recomputed, per-capability adapter lists), so one `TypeRegistry`

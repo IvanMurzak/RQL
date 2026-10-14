@@ -1031,8 +1031,9 @@ Eval Compiler::compile_function(const Expr& c) {
             live_all(x, list);
             auto index = [&](const Value& iv, bool inserting, int64_t& out) {
                 double d;
-                if (!try_number(iv, d) || std::floor(d) != d) return false;
+                if (!try_number(iv, d) || !std::isfinite(d) || std::floor(d) != d) return false;
                 int64_t n = static_cast<int64_t>(list.size());
+                if (std::fabs(d) > static_cast<double>(n) + 1) return false;  // out of range: reject before casting (no UB)
                 int64_t i = static_cast<int64_t>(d);
                 if (i < 0) i += inserting ? n + 1 : n;
                 if (i < 0 || i > n || (!inserting && i == n)) return false;

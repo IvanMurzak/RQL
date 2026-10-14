@@ -2,6 +2,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -148,8 +149,14 @@ public:
     Value resolve_ref(const std::string& reference, std::string& error) noexcept;
     void clear_session_handles() noexcept;
 
-    /// Objects built from object literals that this engine keeps alive (owned per written slot, or pinned).
+    /// Objects this engine built from object literals (spec §4.5) and keeps alive. The engine never frees
+    /// them automatically: any raw pointer in the graph or in host state (e.g. an undo stack holding hook
+    /// records) may still reach them. Types with a host factory (ClassBuilder::factory) are host-owned and
+    /// never retained.
     size_t retained_literal_objects() noexcept;
+    /// Free the retained literal-built objects. Call it ONLY when no graph or host pointer can still reach
+    /// them (e.g. after the scene they were linked into was torn down); otherwise pointers dangle.
+    void release_literal_objects() noexcept;
 
     /// Capability manifest (spec/capability-manifest.schema.json). Null Json on internal failure.
     Json capabilities() noexcept;
@@ -187,27 +194,25 @@ private:
     std::vector<std::unique_ptr<TypeAdapter>> adapters_;
     std::array<bool, 6> caps_{};  // some adapter implements the capability (detail::Capability order)
     TypeExclusion excluded_;
-    // Objects constructed from object literals (spec §4.5) that committed writes linked into the graph:
-    // owned per written slot (item identity + path), released when a later literal replaces them and no
-    // link to them remains; pinned forever when that cannot be proven (rollback failures, call arguments).
-    std::mutex adopted_mutex_;
-    std::map<std::pair<const void*, std::string>, std::vector<std::shared_ptr<void>>> adopted_;
-    std::vector<std::shared_ptr<void>> pinned_;
-    void adopt_slot(const Value& item, const std::string& path, std::vector<std::shared_ptr<void>>& holders, detail::Exec* x);
-    void pin(std::vector<std::shared_ptr<void>>& holders);
+    // Objects the engine constructed from object literals (spec §4.5) for non-dry-run queries. They may be
+    // linked from anywhere (raw pointers, host undo stacks holding hook records), so the engine never frees
+    // them automatically: they live until release_literal_objects() or the engine's destruction.
+    std::mutex retained_mutex_;
+    std::vector<std::shared_ptr<void>> retained_;
+    void retain(std::vector<std::shared_ptr<void>>& objects) noexcept;
     // Object-literal "$type" lookups (spec §4.5): per target type, name → registered subtypes of its kind.
     mutable std::mutex subtypes_mutex_;
     mutable std::unordered_map<const TypeDescriptor*, std::unordered_map<std::string, std::vector<const TypeDescriptor*>>> subtypes_;
     mutable size_t subtypes_registered_ = 0;
     std::vector<const TypeDescriptor*> subtypes_named(const TypeDescriptor* target, const std::string& name) const;
-    /// Whether any member (owning or reference) of anything reachable from the sources points at `p`.
-    bool linked_anywhere(const void* p, detail::Exec* x);
     /// Some adapter, or a type exclusion that actually removes a member of a registered type: only then
     /// may types differ from their descriptors (adapter-free engines read descriptors directly).
     bool adapts() const;
+    // Cached answer of "does the exclusion remove a member of some registered type": a lock-free check on
+    // the hot path, recomputed (under the mutex) only when types were registered since the last scan.
     mutable std::mutex exclusion_mutex_;
-    mutable size_t exclusion_scanned_ = 0;  // registered-type count of the last scan
-    mutable bool exclusion_hits_ = false;
+    mutable std::atomic<size_t> exclusion_scanned_{0};  // registered-type count of the last scan (0 = none)
+    mutable std::atomic<bool> exclusion_hits_{false};
 
     mutable std::mutex adapted_mutex_;
     mutable std::unordered_map<const TypeDescriptor*, std::unique_ptr<detail::AdaptedType>> adapted_;

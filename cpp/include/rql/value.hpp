@@ -54,6 +54,9 @@ public:
     virtual std::string validate_entry(const Value& key, const Value& value) const;
     /// Declared value type of one entry (mixed-type maps), nullptr = the map's value type.
     virtual const TypeDescriptor* entry_type(const Value& key) const;
+    /// Writes only replace EXISTING entries (virtual maps): an absent key is rejected while planning,
+    /// because a rollback could not remove it again.
+    virtual bool fixed_keys() const { return false; }
     /// The value of an object literal { key: expr } (spec §4.5): coerced into maps / constructed objects on writes.
     virtual bool object_literal() const { return false; }
 };

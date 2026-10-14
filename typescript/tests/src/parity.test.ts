@@ -314,3 +314,130 @@ test('ref(): an exact id containing spaces wins over its trimmed display form, i
   assert.deepEqual(e.execute('ref("Object#Red (1)") | select Name').rows, [['exact']]);
   assert.deepEqual(e.execute('ref("Object#Red (copy)") | select Name').rows, [['short']]);
 });
+
+test('hook owner: nearest enclosing object (virtual-map entry → material, handle member → system, map entry → owner)', () => {
+  class Mat {
+    Id = 'm';
+    uniforms: Record<string, number> = { _Color: 0 };
+  }
+  class Mesh {
+    Id = 1;
+    material = new Mat();
+    weights = new Map<string, number>([['a', 1]]);
+  }
+  const mesh = new Mesh();
+  const { e: base, systems } = graphics();
+  const types = new TypeModel()
+    .register(Mat, { members: [{ name: 'Id', type: t.string }] })
+    .register(Mesh, { members: [{ name: 'Id', type: t.int }, { name: 'material', type: t.of(Mat) }, { name: 'weights', type: t.map(t.string, t.number) }] });
+  const e = new RqlEngine({ types })
+    .addSource('meshes', () => [mesh])
+    .addAdapter({
+      target: Mat,
+      members: (m) =>
+        m.map<number>('Uniforms', { keys: (o) => Object.keys(o.uniforms), get: (o, k) => o.uniforms[k]!, set: (o, k, v) => void (o.uniforms[k] = v) }, t.number),
+    });
+  e.mutations.enabled = true;
+  const owners: object[] = [];
+  e.mutations.committed = (records) => void owners.push(...records.map((r) => r.owner));
+  base.mutations.committed = (records) => void owners.push(...records.map((r) => r.owner));
+  assert.equal(e.execute('meshes | set material.Uniforms["_Color"] = 1, weights["a"] = 2', {}, mut).ok, true);
+  assert.equal(base.execute('systems | set main.duration = 3', {}, mut).ok, true);
+  assert.deepEqual(owners, [mesh.material, mesh, systems[0]]);
+});
+
+test('virtual maps accept writes to existing entries only (no entry → coercion-failed before validation)', () => {
+  let validated = 0;
+  let written = 0;
+  class Mat {
+    Id = 'm';
+    values: Record<string, number> = { a: 1 };
+  }
+  const mat = new Mat();
+  const types = new TypeModel().register(Mat, { members: [{ name: 'Id', type: t.string }] });
+  const e = new RqlEngine({ types })
+    .addSource('mats', () => [mat])
+    .addAdapter({
+      target: Mat,
+      members: (m) =>
+        m.map<number>('v', {
+          keys: (o) => Object.keys(o.values),
+          get: (o, k) => o.values[k]!,
+          set: (o, k, v) => {
+            written++;
+            o.values[k] = v;
+          },
+          validate: () => {
+            validated++;
+            return undefined;
+          },
+        }, t.number),
+    });
+  e.mutations.enabled = true;
+  const r = e.execute('mats | set v["a"] = 2, v["b"] = 3', {}, mut);
+  assert.equal(r.diagnostics[0]?.code, 'coercion-failed');
+  assert.ok(r.diagnostics[0]!.message.includes("no entry 'b'"));
+  assert.deepEqual([validated, written, mat.values], [1, 0, { a: 1 }]);
+});
+
+test('construction from object literals respects the host member policy (permission-denied)', () => {
+  class Stats {
+    Armor = 1;
+    Speed = 1;
+  }
+  class Hero {
+    Id = 1;
+    stats = new Stats();
+  }
+  const hero = new Hero();
+  const types = new TypeModel()
+    .register(Stats, { members: [{ name: 'Armor', type: t.int }, { name: 'Speed', type: t.int }] })
+    .register(Hero, { members: [{ name: 'Id', type: t.int }, { name: 'stats', type: t.of(Stats) }] });
+  const e = new RqlEngine({ types }).addSource('heroes', () => [hero]);
+  e.mutations.enabled = true;
+  e.mutations.canWrite = (type, member) => !(type.shortName === 'Stats' && member.name === 'Armor');
+  assert.equal(e.execute('heroes | set stats.Armor = 9999', {}, mut).diagnostics[0]?.code, 'permission-denied');
+  assert.equal(e.execute('heroes | set stats = {Armor: 9999}', {}, mut).diagnostics[0]?.code, 'permission-denied');
+  assert.equal(e.execute('heroes | set stats = {Speed: 2}', {}, mut).ok, true);
+  assert.deepEqual([hero.stats.Armor, hero.stats.Speed], [1, 2]);
+});
+
+test('set through a destroyed intermediate object fails like null and writes nothing', () => {
+  class Target {
+    hp = 5;
+    destroyed = false;
+  }
+  class Turret {
+    Id = 1;
+    Target = new Target();
+    shots = 0;
+  }
+  const turret = new Turret();
+  const types = new TypeModel()
+    .register(Target, { members: [{ name: 'hp', type: t.int }] })
+    .register(Turret, { members: [{ name: 'Id', type: t.int }, { name: 'Target', type: t.nullable(t.of(Target)) }, { name: 'shots', type: t.int }] });
+  const e = new RqlEngine({ types }).addSource('turrets', () => [turret]).addAdapter({ target: Target, isAlive: (x) => !x.destroyed });
+  e.mutations.enabled = true;
+  turret.Target.destroyed = true;
+  const r = e.execute('turrets | set shots = 1, Target.hp = 0', {}, mut);
+  assert.equal(r.diagnostics[0]?.code, 'coercion-failed');
+  assert.ok(r.diagnostics[0]!.message.includes("'Target' is null"), r.diagnostics[0]!.message);
+  assert.deepEqual([turret.shots, turret.Target.hp], [0, 5]);
+});
+
+test('ref(): an exact-id match is final, even when destroyed (no display-form fallback)', () => {
+  const assets = [{ Id: 'Red', Name: 'short', gone: false }, { Id: 'Red (1)', Name: 'exact', gone: true }];
+  const e = new RqlEngine().addSource('assets', () => assets);
+  e.isAlive = (o) => !(o as { gone?: boolean }).gone;
+  assert.equal(e.execute('ref("Object#Red (1)") | count').diagnostics[0]?.code, 'stale-ref');
+  assert.deepEqual(e.execute('ref("Object#Red (2)") | select Name').rows, [['short']]);
+});
+
+test('hooks are skipped when a set or call has no records', () => {
+  const { e } = graphics();
+  let calls = 0;
+  e.mutations.beforeWrite = () => void calls++;
+  e.mutations.committed = () => void calls++;
+  assert.equal(e.execute('renderers | where Id == 99 | set Name = "x"', {}, mut).ok, true);
+  assert.equal(calls, 0);
+});

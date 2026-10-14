@@ -417,7 +417,7 @@ namespace Rql.Tests
             Assert.Equal("coercion-failed", invalid.Diagnostics[0].Code);
             Assert.Contains("within [0, 1]", invalid.Diagnostics[0].Message);
             var unknown = e.Execute("u.Materials | set floats[\"_Nope\"] = 0.1", options: new QueryOptions { AllowMutation = true });
-            Assert.Contains("no float '_Nope'", unknown.Diagnostics[0].Message);
+            Assert.Contains("no entry '_Nope'", unknown.Diagnostics[0].Message); // virtual maps only take existing keys
 
             // The second write throws inside the engine: the first one is rolled back.
             var failed = e.Execute("u.Materials | set floats[\"_Glossiness\"] = 0.75, floats[\"_Metallic\"] = 0.95", options: new QueryOptions { AllowMutation = true });

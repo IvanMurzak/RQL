@@ -87,6 +87,7 @@ public:
     MapLookup find(const Value& key, Value& out) const override;
     const TypeDescriptor* type() const override { return spec_->type; }
     bool writable() const override { return static_cast<bool>(spec_->set); }
+    bool fixed_keys() const override { return true; }
     bool accepts_key(const Value& key) const override { return key.is_string() || key.is_number(); }
     void set(const Value& key, const Value& value) override;
     void erase(const Value& key) override;

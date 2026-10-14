@@ -26,17 +26,6 @@ void validate_name(const std::string& name, bool require_namespace) {
         throw std::invalid_argument("extension names must be namespaced (ns.name): '" + name + "'");
 }
 
-/// Runs f; true when it threw anything (host callbacks never escape).
-template <class F>
-bool capture_any(F&& f) {
-    try {
-        f();
-        return false;
-    } catch (...) {
-        return true;
-    }
-}
-
 const char* kCoreStageNames[] = {"where", "select", "sort", "first", "skip", "count", "describe", "get", "sum",
                                  "min", "max", "avg", "group-by", "distinct", "recurse", "set", "call"};
 const char* kFunctionNames[] = {"has", "is-null", "len", "lower", "upper", "abs", "round", "floor", "ceil", "coalesce", "ref",
@@ -168,7 +157,7 @@ Engine& Engine::exclude_types(TypeExclusion excluded) noexcept {
         }
         {
             std::lock_guard<std::mutex> lock(exclusion_mutex_);
-            exclusion_scanned_ = 0;  // force a rescan
+            exclusion_scanned_.store(static_cast<size_t>(-1), std::memory_order_release);  // force a rescan
         }
         std::lock_guard<std::mutex> lock(adapted_mutex_);
         adapted_.clear();
@@ -181,26 +170,29 @@ Engine& Engine::exclude_types(TypeExclusion excluded) noexcept {
 bool Engine::adapts() const {
     if (!adapters_.empty()) return true;
     if (!excluded_) return false;
-    std::lock_guard<std::mutex> lock(exclusion_mutex_);
-    const std::vector<const TypeDescriptor*> registered = types_->registered();
-    if (registered.size() != exclusion_scanned_) {  // rescan when types were registered since
-        exclusion_scanned_ = registered.size();
-        exclusion_hits_ = std::any_of(registered.begin(), registered.end(),
-                                      [&](const TypeDescriptor* t) { return detail::excludes_members(*t, excluded_); });
+    const size_t count = types_->registered_count();
+    if (count == exclusion_scanned_.load(std::memory_order_acquire)) return exclusion_hits_.load(std::memory_order_acquire);
+    std::lock_guard<std::mutex> lock(exclusion_mutex_);  // types were registered since the last scan
+    if (count != exclusion_scanned_.load(std::memory_order_relaxed)) {
+        const std::vector<const TypeDescriptor*> registered = types_->registered();
+        exclusion_hits_.store(std::any_of(registered.begin(), registered.end(),
+                                          [&](const TypeDescriptor* t) { return detail::excludes_members(*t, excluded_); }),
+                              std::memory_order_release);
+        exclusion_scanned_.store(count, std::memory_order_release);
     }
-    return exclusion_hits_;
+    return exclusion_hits_.load(std::memory_order_acquire);
 }
 
 std::vector<const TypeDescriptor*> Engine::subtypes_named(const TypeDescriptor* target, const std::string& name) const {
     std::lock_guard<std::mutex> lock(subtypes_mutex_);
-    const std::vector<const TypeDescriptor*> registered = types_->registered();
-    if (registered.size() != subtypes_registered_) {  // types were registered since: rebuild lazily
+    if (types_->registered_count() != subtypes_registered_) {  // types were registered since: rebuild lazily
         subtypes_.clear();
-        subtypes_registered_ = registered.size();
+        subtypes_registered_ = types_->registered_count();
     }
     auto it = subtypes_.find(target);
     if (it == subtypes_.end()) {
         std::unordered_map<std::string, std::vector<const TypeDescriptor*>> by_name;
+        const std::vector<const TypeDescriptor*> registered = types_->registered();
         for (const TypeDescriptor* t : registered)
             if (t->kind == target->kind && t->derives_from(target)) by_name[t->name].push_back(t);
         it = subtypes_.emplace(target, std::move(by_name)).first;
@@ -210,88 +202,30 @@ std::vector<const TypeDescriptor*> Engine::subtypes_named(const TypeDescriptor* 
 }
 
 size_t Engine::retained_literal_objects() noexcept {
-    std::lock_guard<std::mutex> lock(adopted_mutex_);
-    size_t n = pinned_.size();
-    for (auto& kv : adopted_) n += kv.second.size();
-    return n;
+    std::lock_guard<std::mutex> lock(retained_mutex_);
+    return retained_.size();
 }
 
-void Engine::pin(std::vector<std::shared_ptr<void>>& holders) {
-    if (holders.empty()) return;
-    std::lock_guard<std::mutex> lock(adopted_mutex_);
-    for (auto& h : holders) pinned_.push_back(std::move(h));
-    holders.clear();
-}
-
-void Engine::adopt_slot(const Value& item, const std::string& path, std::vector<std::shared_ptr<void>>& holders, detail::Exec* x) {
-    const void *a = nullptr, *b = nullptr;
-    item.identity(a, b);
-    std::vector<std::shared_ptr<void>> previous;
+void Engine::release_literal_objects() noexcept {
+    std::vector<std::shared_ptr<void>> released;
     {
-        std::lock_guard<std::mutex> lock(adopted_mutex_);
-        auto key = std::make_pair(a, path);
-        auto it = adopted_.find(key);
-        if (it != adopted_.end()) {
-            previous = std::move(it->second);
-            adopted_.erase(it);
-        }
-        if (!holders.empty()) adopted_.emplace(key, std::move(holders));
-        holders.clear();
+        std::lock_guard<std::mutex> lock(retained_mutex_);
+        released.swap(retained_);
     }
-    // What an earlier literal committed into this slot was just overwritten. Our reference is the last
-    // one only when no shared_ptr holds it; raw links are invisible, so search for them before freeing.
-    std::vector<std::shared_ptr<void>> keep;
-    for (auto& h : previous) {
-        if (h.use_count() == 1 && linked_anywhere(h.get(), x)) keep.push_back(std::move(h));
-        // The receipt / hook records of this query still show the replaced object as `old`: release it
-        // only when the query is done (the Exec drops `released` after the result is encoded).
-        else if (x) x->released.push_back(std::move(h));
-    }
-    pin(keep);
-}
+}  // freed here, outside the lock
 
-bool Engine::linked_anywhere(const void* p, detail::Exec* x) {
-    struct IdKey {
-        const void* a;
-        const void* b;
-        bool operator==(const IdKey& o) const { return a == o.a && b == o.b; }
-    };
-    struct IdHash {
-        size_t operator()(const IdKey& k) const { return std::hash<const void*>()(k.a) * 31u ^ std::hash<const void*>()(k.b); }
-    };
-    std::unordered_set<IdKey, IdHash> visited;
-    std::vector<Value> stack;
-    for (auto& s : sources_) {
-        Value v;
-        if (capture_any([&] { v = s.getter(); })) continue;
-        if (v.is_object() || v.is_list() || v.is_map()) stack.push_back(v);
+void Engine::retain(std::vector<std::shared_ptr<void>>& objects) noexcept {
+    if (objects.empty()) return;
+    try {
+        std::lock_guard<std::mutex> lock(retained_mutex_);
+        retained_.reserve(retained_.size() + objects.size());
+        for (auto& o : objects) retained_.push_back(std::move(o));
+        objects.clear();
+    } catch (...) {
+        // Out of memory: keep the objects alive forever rather than risk dangling links.
+        auto* leak = new (std::nothrow) std::vector<std::shared_ptr<void>>(std::move(objects));
+        (void)leak;
     }
-    int budget = defaults_.max_visited;
-    while (!stack.empty() && budget-- > 0) {
-        Value o = std::move(stack.back());
-        stack.pop_back();
-        if (o.is_object() && o.ptr() == p) return true;
-        const void *a, *b;
-        if (o.identity(a, b) && !visited.insert(IdKey{a, b}).second) continue;  // structs have no identity: always descend
-        if (o.is_list() || o.is_map()) {
-            std::vector<Value> els;
-            detail::elements(o, els);
-            for (auto& e : els) {
-                Value ev = e.is_entry() ? e.entry().value : e;
-                if (ev.is_object() || ev.is_struct() || ev.is_list() || ev.is_map()) stack.push_back(std::move(ev));
-            }
-            continue;
-        }
-        if (!o.is_object() && !o.is_struct()) continue;
-        const detail::TypeView tv = view_of(o.type(), x);
-        for (auto& m : tv.implicit_members()) {  // owning members AND references (links)
-            if (!m.type || m.type->kind == TypeKind::Enum || (m.type->kind == TypeKind::Scalar && m.type->scalar != ScalarKind::Any)) continue;
-            Value v;
-            if (capture_any([&] { v = m.getter(o.ptr()); })) continue;
-            if (v.is_object() || v.is_struct() || v.is_list() || v.is_map()) stack.push_back(std::move(v));
-        }
-    }
-    return budget <= 0;  // undecided within the budget: treat as linked (never free on doubt)
 }
 
 const detail::AdaptedType* Engine::adapted(const TypeDescriptor* type) const {
@@ -339,13 +273,14 @@ std::optional<std::string> Engine::stable_id_of(const Value& object, detail::Exe
 namespace detail {
 std::string Exec::ref_of(const Value& v) { return engine.ref_of_impl(v, this); }
 Value Exec::resolve_ref(const std::string& reference, std::string& error) { return engine.resolve_ref(reference, error, this); }
-void Exec::adopt_for_slot(const Value& item, const std::string& path, std::vector<std::shared_ptr<void>>& holders) {
-    engine.adopt_slot(item, path, holders, this);
-}
 std::vector<const TypeDescriptor*> Exec::subtypes_named(const TypeDescriptor* target, const std::string& name) {
     return engine.subtypes_named(target, name);
 }
-void Exec::pin_constructed(std::vector<std::shared_ptr<void>>& holders) { engine.pin(holders); }
+Exec::~Exec() {
+    // Literal-built objects of a non-dry-run query may now be linked from the graph or host state
+    // (also after a failed rollback): the engine retains them (spec §4.5 ownership).
+    if (!options.dry_run) engine.retain(constructed);
+}
 }  // namespace detail
 
 // ------------------------------------------------------------------ execution
@@ -646,7 +581,7 @@ Value Engine::resolve_ref_core(const std::string& reference, std::string& error,
                 return candidate;  // liveness already decided above
             } else if (!*verdict) {
                 error = "reference '" + reference + "' points to a destroyed object";
-                return fallback ? resolve_ref_core(*fallback, error, x, nullptr) : Value::missing();
+                return Value::missing();  // an exact match is final: no display-form fallback
             }
         }
     } else if (resolve_stable_ref) {
@@ -664,7 +599,8 @@ Value Engine::resolve_ref_core(const std::string& reference, std::string& error,
         }
     }
     Value resolved = check_resolved(found, reference, type, error, x);
-    if (resolved.is_missing() && fallback) return resolve_ref_core(*fallback, error, x, nullptr);
+    // An exact match is final (a destroyed one is stale-ref); only an absent exact id tries the display form.
+    if (resolved.is_missing() && fallback && !found.is_object()) return resolve_ref_core(*fallback, error, x, nullptr);
     return resolved;
 }
 

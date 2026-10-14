@@ -335,11 +335,15 @@ export class RqlEngine {
     // One source walk for both forms when they are stable refs of one type; handles / host resolvers are cheap lookups.
     if (short !== undefined && first.sep === '#' && short.sep === '#' && first.type === short.type && this.resolveStableRef === undefined) {
       const hits = this.searchSources(first.type, [first.id, short.id], x);
-      const r = this.finishRef(first, hits[0]);
-      return r.ok ? r : this.finishRef(short, hits[1]);
+      return this.matches(first, hits[0]) ? this.finishRef(first, hits[0]) : this.finishRef(short, hits[1]);
     }
-    const r = this.finishRef(first, this.lookup(first, x));
-    return r.ok || short === undefined ? r : this.finishRef(short, this.lookup(short, x));
+    // An exact-id match is final (a destroyed exact match is stale-ref, not a fallback to the display form).
+    const found = this.lookup(first, x);
+    return this.matches(first, found) || short === undefined ? this.finishRef(first, found) : this.finishRef(short, this.lookup(short, x));
+  }
+
+  private matches(ref: ParsedRef, found: unknown): found is object {
+    return typeof found === 'object' && found !== null && this.types.infoOf(found).isA(ref.type);
   }
 
   private lookup(ref: ParsedRef, x: Exec | undefined): unknown {
@@ -348,7 +352,7 @@ export class RqlEngine {
   }
 
   private finishRef(ref: ParsedRef, found: unknown): RefResolution {
-    if (typeof found !== 'object' || found === null || !this.types.infoOf(found).isA(ref.type)) {
+    if (!this.matches(ref, found)) {
       return { ok: false, error: `reference '${ref.text}' does not resolve to a live object` };
     }
     if (!this.alive(found)) return { ok: false, error: `reference '${ref.text}' points to a destroyed object` };

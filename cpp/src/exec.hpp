@@ -128,6 +128,9 @@ struct IsSite {
 class Exec {
 public:
     Exec(Engine& engine, const Budgets& budgets, const QueryOptions& options, const QueryPlan& plan);
+    ~Exec();
+    Exec(const Exec&) = delete;
+    Exec& operator=(const Exec&) = delete;
 
     Engine& engine;
     TypeRegistry& types;
@@ -185,16 +188,11 @@ public:
         return v;
     }
     bool liveness_enabled() const { return liveness_; }
-    /// Objects constructed from object literals during this query (kept alive; adopted by the engine on commit).
+    /// Objects constructed from object literals during this query (engine-owned; retained by the engine
+    /// when the query ends unless it was a dry run).
     std::vector<std::shared_ptr<void>> constructed;
-    /// Literal-built objects replaced by this query's writes: freed when the query ends (after encoding).
-    std::vector<std::shared_ptr<void>> released;
-    /// Hand the objects one committed write constructed to the engine (owned per slot).
-    void adopt_for_slot(const Value& item, const std::string& path, std::vector<std::shared_ptr<void>>& holders);
     /// Registered types named `name` deriving from `target` (cached per target).
     std::vector<const TypeDescriptor*> subtypes_named(const TypeDescriptor* target, const std::string& name);
-    /// Keep constructed objects alive for the engine's lifetime (ownership cannot be tied to a slot).
-    void pin_constructed(std::vector<std::shared_ptr<void>>& holders);
     /// Stable reference string (adapter stable ids, id member, session handles).
     std::string ref_of(const Value& v);
     /// Resolve a reference; fallback-search nodes count as visits; results cached per query.
