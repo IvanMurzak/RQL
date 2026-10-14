@@ -11,8 +11,9 @@
       "describe": "Vec2: write as \"(x, y)\" or [x, y]"
     },
     "Node": {
-      "members": "virtual member `childCount` (int, read-only) = Children count; virtual writable member `title` (string): get = Name upper-cased (ASCII), set = Name := value lower-cased (ASCII); validation rejects an empty string with reason \"title must not be empty\" (before any write); the setter itself THROWS \"node 3 is locked\" when the node's Id is 3 (exercises rollback); member `Note` is HIDDEN; member `Children` is EXPLICIT-ONLY (generic recurse does not follow it)",
-      "describe": "Node: a conformance graph node"
+      "members": "virtual member `childCount` (int, read-only) = Children count; virtual writable member `title` (string): get = Name upper-cased (ASCII), set = Name := value lower-cased (ASCII); validation rejects an empty string with reason \"title must not be empty\" (before any write); the setter itself THROWS \"node 3 is locked\" when the node's Id is 3 (exercises rollback); member `Note` is HIDDEN; member `Children` is EXPLICIT-ONLY (generic recurse does not follow it); virtual map `stats` (map<string, number>): keys = Props keys in order, get = Props[key], set = Props[key] := value, validation rejects a key not in Props with reason \"unknown stat '<key>'\" and a negative value with \"stats must be non-negative\"; read-only virtual map `labels` (map<string, string>): keys \"name\", \"kind\" -> Name, Kind (enum name)",
+      "describe": "Node: a conformance graph node",
+      "methods": "callable `bump(number by = 1)`: Value += by, returns the new Value; callable `greet(string who)`: returns \"hi <who>, I am <Name>\", no state change"
     },
     "Special": {
       "members": "virtual read-only member `powerLevel` (number) = Power / 1000 (applies IN ADDITION to the Node adapter: composition)"
@@ -1844,7 +1845,21 @@
                 "type": "string",
                 "writable": true,
                 "description": "upper-cased Name; assigning sets Name lower-cased"
+              },
+              {
+                "name": "stats",
+                "type": "Dictionary<string, double>",
+                "description": "Props as a validated map"
+              },
+              {
+                "name": "labels",
+                "type": "Dictionary<string, string>",
+                "description": "read-only labels"
               }
+            ],
+            "methods": [
+              "bump(double by) — Value += by; returns the new Value",
+              "greet(string who) — a greeting (no state change)"
             ]
           }
         ]
@@ -1887,6 +1902,1073 @@
             "code": "stale-ref"
           }
         ]
+      }
+    },
+    {
+      "name": "adapt-map-read",
+      "rql": "g.Nodes | select Name stats labels",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "stats",
+                "expr": {
+                  "path": [
+                    "stats"
+                  ]
+                }
+              },
+              {
+                "name": "labels",
+                "expr": {
+                  "path": [
+                    "labels"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "stats",
+          "labels"
+        ],
+        "rows": [
+          [
+            "root-a",
+            {
+              "hp": 100,
+              "mp": 5
+            },
+            {
+              "name": "root-a",
+              "kind": "Alpha"
+            }
+          ],
+          [
+            "root-b",
+            {
+              "hp": 50
+            },
+            {
+              "name": "root-b",
+              "kind": "Beta"
+            }
+          ],
+          [
+            "lonely",
+            {},
+            {
+              "name": "lonely",
+              "kind": "Gamma"
+            }
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "adapt-map-key-filter",
+      "rql": "g.Nodes | recurse Children | where stats[\"hp\"] > 10 | select Name stats[\"hp\"]",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": ">",
+              "args": [
+                {
+                  "path": [
+                    "stats",
+                    {
+                      "key": "hp"
+                    }
+                  ]
+                },
+                {
+                  "lit": 10
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "stats[\"hp\"]",
+                "expr": {
+                  "path": [
+                    "stats",
+                    {
+                      "key": "hp"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "stats[\"hp\"]"
+        ],
+        "rows": [
+          [
+            "root-a",
+            100
+          ],
+          [
+            "root-b",
+            50
+          ]
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "adapt-map-write",
+      "rql": "ref(\"Node#1\") | set stats[\"hp\"] = 80",
+      "then": "ref(\"Node#1\") | select Props",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "stats",
+                    {
+                      "key": "hp"
+                    }
+                  ]
+                },
+                "value": {
+                  "lit": 80
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "stats[\"hp\"]",
+            100,
+            80
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Props",
+                "expr": {
+                  "path": [
+                    "Props"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Props"
+        ],
+        "rows": [
+          [
+            {
+              "hp": 80,
+              "mp": 5
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-map-validate",
+      "rql": "ref(\"Node#1\") | set stats[\"hp\"] = -1",
+      "then": "ref(\"Node#1\") | select Props",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "stats",
+                    {
+                      "key": "hp"
+                    }
+                  ]
+                },
+                "value": {
+                  "lit": -1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Props",
+                "expr": {
+                  "path": [
+                    "Props"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Props"
+        ],
+        "rows": [
+          [
+            {
+              "hp": 100,
+              "mp": 5
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-map-unknown-key",
+      "rql": "ref(\"Node#1\") | set stats[\"luck\"] = 1",
+      "then": "ref(\"Node#1\") | select Props",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "stats",
+                    {
+                      "key": "luck"
+                    }
+                  ]
+                },
+                "value": {
+                  "lit": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Props",
+                "expr": {
+                  "path": [
+                    "Props"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Props"
+        ],
+        "rows": [
+          [
+            {
+              "hp": 100,
+              "mp": 5
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-map-readonly",
+      "rql": "ref(\"Node#1\") | set labels[\"name\"] = \"x\"",
+      "then": "ref(\"Node#1\") | select Name",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "labels",
+                    {
+                      "key": "name"
+                    }
+                  ]
+                },
+                "value": {
+                  "lit": "x"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "readonly-member"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "root-a"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-map-atomic",
+      "rql": "g.Nodes | set stats[\"hp\"] = 1",
+      "then": "g.Nodes | select Name Props",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "stats",
+                    {
+                      "key": "hp"
+                    }
+                  ]
+                },
+                "value": {
+                  "lit": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Props",
+                "expr": {
+                  "path": [
+                    "Props"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "Props"
+        ],
+        "rows": [
+          [
+            "root-a",
+            {
+              "hp": 100,
+              "mp": 5
+            }
+          ],
+          [
+            "root-b",
+            {
+              "hp": 50
+            }
+          ],
+          [
+            "lonely",
+            {}
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "adapt-call-method",
+      "rql": "ref(\"Node#8\") | call bump(2.5)",
+      "then": "ref(\"Node#8\") | select Value",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "args": [
+              {
+                "lit": 2.5
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "bump(double by)",
+            5.5
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Value"
+        ],
+        "rows": [
+          [
+            5.5
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-call-default-arg",
+      "rql": "ref(\"Node#8\") | call bump()",
+      "then": "ref(\"Node#8\") | select Value",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "args": []
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "bump(double by)",
+            4
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Value"
+        ],
+        "rows": [
+          [
+            4
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-call-coerce-fail",
+      "rql": "ref(\"Node#8\") | call bump(\"x\")",
+      "then": "ref(\"Node#8\") | select Value",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "args": [
+              {
+                "lit": "x"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Value"
+        ],
+        "rows": [
+          [
+            3
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-call-unknown",
+      "rql": "ref(\"Node#8\") | call nope()",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "nope",
+            "args": []
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "unknown-function"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-call-function-result",
+      "rql": "g.Nodes | call greet(\"Ann\")",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "greet",
+            "args": [
+              {
+                "lit": "Ann"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "greet(string who)",
+            "hi Ann, I am root-a"
+          ],
+          [
+            "Node#5",
+            "greet(string who)",
+            "hi Ann, I am root-b"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi Ann, I am lonely"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "adapt-call-dry-run",
+      "rql": "ref(\"Node#8\") | call bump(5)",
+      "then": "ref(\"Node#8\") | select Value",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "args": [
+              {
+                "lit": 5
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "bump(double by)",
+            "(dry-run)"
+          ]
+        ],
+        "total": 1,
+        "dryRun": true
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Value"
+        ],
+        "rows": [
+          [
+            3
+          ]
+        ],
+        "total": 1
       }
     }
   ]

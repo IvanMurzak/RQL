@@ -116,7 +116,8 @@ namespace Rql.Execution
         public Type? ElementType { get; internal set; }
         public Type? KeyType { get; internal set; }
         internal Func<object, int>? CountGetter { get; set; }
-        public IReadOnlyList<MethodInfo> Callable { get; internal set; } = Array.Empty<MethodInfo>();
+        /// <summary>Methods the <c>call</c> stage may invoke: [RqlCallable] plus adapter-defined / exposed methods (spec §13).</summary>
+        public IReadOnlyList<CallableMethod> Callable { get; internal set; } = Array.Empty<CallableMethod>();
         /// <summary>Applicable type adapters, most specific first (spec §13).</summary>
         public IReadOnlyList<RqlTypeAdapter> Adapters => AdapterArray;
         internal RqlTypeAdapter[] AdapterArray = Array.Empty<RqlTypeAdapter>();
@@ -308,9 +309,13 @@ namespace Rql.Execution
                 }
             }
 
+            var methods = t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                .Where(m => m.IsDefined(typeof(RqlCallableAttribute)) && !m.IsGenericMethodDefinition)
+                .Select(m => CallableMethod.FromReflection(m, m.GetCustomAttribute<RqlCallableAttribute>()?.Description))
+                .ToList();
             if (adapters.Length > 0)
             {
-                var table = new MemberTable(t, members, IncludeNonPublicFields);
+                var table = new MemberTable(t, members, methods, IncludeNonPublicFields);
                 for (int i = adapters.Length - 1; i >= 0; i--) adapters[i].ConfigureMembers(table);
             }
 
@@ -338,10 +343,7 @@ namespace Rql.Execution
             }
             info.DisplayMember = members.FirstOrDefault(m => !m.ExplicitOnly && m.IsDefined(typeof(RqlDisplayAttribute)))
                                  ?? members.FirstOrDefault(m => !m.ExplicitOnly && m.Name == "Name" && m.Type == typeof(string));
-            info.Callable = t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                .Where(m => m.IsDefined(typeof(RqlCallableAttribute)) && !m.IsGenericMethodDefinition)
-                .OrderBy(m => m.Name, StringComparer.Ordinal)
-                .ToArray();
+            info.Callable = methods.OrderBy(m => m.Name, StringComparer.Ordinal).ThenBy(m => m.Parameters.Count).ToArray();
         }
 
         /// <summary>Adds non-public instance fields of the type chain matching <paramref name="include"/> (MemberTable.IncludeFields).</summary>
@@ -434,6 +436,9 @@ namespace Rql.Execution
             var u = Nullable.GetUnderlyingType(t);
             if (u != null) return FriendlyName(u) + "?";
             if (t.IsArray) return FriendlyName(t.GetElementType()!) + "[]";
+            // Virtual maps read like any other string-keyed map in schemas (spec §13).
+            if (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(VirtualMap<>))
+                return "Dictionary<string, " + FriendlyName(t.GetGenericArguments()[0]) + ">";
             if (t.IsGenericType)
             {
                 var args = string.Join(", ", t.GetGenericArguments().Select(FriendlyName));

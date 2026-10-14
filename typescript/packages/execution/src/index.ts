@@ -15,6 +15,8 @@ export {
   MemberAccessor,
   MethodAccessor,
   RecordMap,
+  StringMap,
+  VirtualMap,
   TypeInfo,
   TypeModel,
   friendlyName,
@@ -27,6 +29,7 @@ export {
   type TypeKind,
   type TypeRef,
   type TypeSpec,
+  type VirtualMapSpec,
 } from './types.js';
 export { ErrorValue, MISSING, MapEntry, Missing, RowValue, UNKNOWN, Unknown, isAbsent } from './values.js';
 export {

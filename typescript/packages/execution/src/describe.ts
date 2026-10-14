@@ -37,7 +37,9 @@ export function typeDescriptor(model: TypeModel, info: TypeInfo, showWritable: b
     if (m.description !== undefined) mo.description = m.description;
     return mo;
   });
-  if (info.callable.length > 0) o.methods = info.callable.map((m) => m.signature(model));
+  if (info.callable.length > 0) {
+    o.methods = info.callable.map((m) => (m.description === undefined ? m.signature(model) : `${m.signature(model)} \u2014 ${m.description}`));
+  }
   return o;
 }
 

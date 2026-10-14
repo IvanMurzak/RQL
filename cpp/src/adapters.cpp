@@ -62,6 +62,98 @@ MemberTable& MemberTable::add(std::string name, const TypeDescriptor* type, Gett
     return *this;
 }
 
+std::function<void*(void*)> MemberTable::upcaster() const {
+    const TypeDescriptor* from = &type_;
+    const TypeDescriptor* to = current_target_ ? current_target_ : &type_;
+    if (from == to) return {};
+    return [from, to](void* self) -> void* {
+        void* p = from->upcast(self, to);
+        if (!p) throw std::logic_error("cannot view " + from->name + " as " + to->name);
+        return p;
+    };
+}
+
+MemberTable& MemberTable::method(std::string name, std::vector<ParamDescriptor> params, const TypeDescriptor* returns,
+                                 std::function<Value(void* self, const std::vector<Value>& args)> invoke, std::string description) {
+    if (name.empty()) throw std::logic_error("method name required");
+    if (!invoke) throw std::logic_error("method '" + name + "' needs an implementation");
+    MethodDescriptor m;
+    m.name = std::move(name);
+    m.params = std::move(params);
+    m.result = returns;
+    m.description = std::move(description);
+    if (auto up = upcaster()) {
+        m.invoke = [up, invoke = std::move(invoke)](void* self, const std::vector<Value>& args) { return invoke(up(self), args); };
+    } else {
+        m.invoke = std::move(invoke);
+    }
+    for (auto& existing : methods_) {
+        if (existing.name == m.name && existing.params.size() == m.params.size()) {
+            existing = std::move(m);
+            return *this;
+        }
+    }
+    methods_.push_back(std::move(m));
+    return *this;
+}
+
+MemberTable& MemberTable::hide_methods(const std::vector<std::string>& names) {
+    for (auto& n : names) {
+        bool found = false;
+        for (auto& m : methods_)
+            if (m.name == n) found = true;
+        if (!found) throw std::logic_error("type " + type_.name + " has no callable method '" + n + "' to hide");
+    }
+    methods_.erase(std::remove_if(methods_.begin(), methods_.end(),
+                                  [&](const MethodDescriptor& m) { return std::find(names.begin(), names.end(), m.name) != names.end(); }),
+                   methods_.end());
+    return *this;
+}
+
+MemberTable& MemberTable::map(std::string name, const TypeDescriptor* value_type, VirtualMapAdapter::Keys keys, VirtualMapAdapter::Get get,
+                              VirtualMapAdapter::Set set, VirtualMapAdapter::Validate validate, std::string description) {
+    if (!keys || !get) throw std::logic_error("virtual map '" + name + "' needs keys and get");
+    const TypeDescriptor* map_type = registry_.map_type(builtin::string_type(), value_type, false);
+    auto k = std::make_shared<const VirtualMapAdapter::Keys>(std::move(keys));
+    auto g = std::make_shared<const VirtualMapAdapter::Get>(std::move(get));
+    auto s = set ? std::make_shared<const VirtualMapAdapter::Set>(std::move(set)) : nullptr;
+    auto v = validate ? std::make_shared<const VirtualMapAdapter::Validate>(std::move(validate)) : nullptr;
+    // The map member itself is read-only (entries are written through the map); `self` is already the
+    // adapter-target pointer because add() upcasts for us.
+    return add(std::move(name), map_type,
+               [map_type, k, g, s, v](void* self) { return Value::map(std::make_shared<VirtualMapAdapter>(self, map_type, k, g, s, v)); },
+               {}, {}, std::move(description));
+}
+
+// ------------------------------------------------------------------ VirtualMapAdapter
+
+void VirtualMapAdapter::for_each(const std::function<bool(const Value&, const Value&)>& fn) const {
+    const std::vector<std::string> keys = (*keys_)(owner_);
+    for (auto& k : keys)
+        if (!fn(Value::string(k), (*get_)(owner_, k))) return;
+}
+
+MapLookup VirtualMapAdapter::find(const Value& key, Value& out) const {
+    if (!accepts_key(key)) return MapLookup::BadKey;
+    const std::string k = key_text(key);
+    const std::vector<std::string> keys = (*keys_)(owner_);
+    if (std::find(keys.begin(), keys.end(), k) == keys.end()) return MapLookup::NotFound;
+    out = (*get_)(owner_, k);
+    return MapLookup::Found;
+}
+
+void VirtualMapAdapter::set(const Value& key, const Value& value) {
+    if (!set_) throw std::runtime_error("read-only map");
+    if (value.is_missing()) throw std::runtime_error("entries of a virtual map cannot be removed");
+    (*set_)(owner_, key_text(key), value);
+}
+
+void VirtualMapAdapter::erase(const Value&) { throw std::runtime_error("entries of a virtual map cannot be removed"); }
+
+std::string VirtualMapAdapter::validate_entry(const Value& key, const Value& value) const {
+    return validate_ ? (*validate_)(owner_, key_text(key), value) : std::string();
+}
+
 MemberTable& MemberTable::retain(const std::vector<std::string>& names, bool keep) {
     // A misspelt name would silently leave a member exposed (e.g. hide({"Pasword"})): all-or-error.
     for (auto& n : names) member(n);
@@ -160,7 +252,8 @@ std::unique_ptr<AdaptedType> build_adapted(TypeRegistry& registry, const TypeDes
     if (configures && (type.kind == TypeKind::Object || type.kind == TypeKind::Struct)) {
         a->owns_members = true;
         a->members = type.members;
-        MemberTable table(registry, type, a->members);
+        a->methods = type.methods;
+        MemberTable table(registry, type, a->members, a->methods);
         // Least → most specific, so a subclass adapter refines what a base adapter configured.
         for (size_t i = a->adapters.size(); i-- > 0;) {
             const TypeAdapter* ad = a->adapters[i];

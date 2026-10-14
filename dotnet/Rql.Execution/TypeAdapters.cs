@@ -150,14 +150,67 @@ namespace Rql.Execution
     public sealed class MemberTable
     {
         private readonly List<MemberAccessor> _members;
+        private readonly List<CallableMethod> _methods;
         private readonly Type _type;
         private readonly Action<Type, List<MemberAccessor>, Func<FieldInfo, bool>> _includeFields;
 
-        internal MemberTable(Type type, List<MemberAccessor> members, Action<Type, List<MemberAccessor>, Func<FieldInfo, bool>> includeFields)
+        internal MemberTable(Type type, List<MemberAccessor> members, List<CallableMethod> methods,
+            Action<Type, List<MemberAccessor>, Func<FieldInfo, bool>> includeFields)
         {
             _type = type;
             _members = members;
+            _methods = methods;
             _includeFields = includeFields;
+        }
+
+        /// <summary>Methods the <c>call</c> stage may invoke on this type.</summary>
+        public IReadOnlyList<CallableMethod> Methods => _methods;
+
+        /// <summary>Add a callable method (replaces methods with the same name and arity).</summary>
+        public MemberTable AddMethod(CallableMethod method)
+        {
+            _methods.RemoveAll(m => m.Name == method.Name && m.Parameters.Count == method.Parameters.Count);
+            _methods.Add(method);
+            return this;
+        }
+
+        /// <summary>Add a callable method from parts; parameters may carry defaults.</summary>
+        public MemberTable AddMethod(string name, IReadOnlyList<CallableParameter> parameters, Type returnType,
+            Func<object, object?[], object?> invoke, string? description = null) =>
+            AddMethod(new CallableMethod(name, parameters, returnType, invoke, description));
+
+        /// <summary>
+        /// Make existing public instance CLR methods callable by name (all non-generic overloads) without
+        /// <c>[RqlCallable]</c> — for engine types the host cannot annotate (e.g. Unity's GameObject.SetActive).
+        /// </summary>
+        public MemberTable Expose(string name, string? description = null)
+        {
+            var found = _type.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                .Where(m => m.Name == name && !m.IsGenericMethodDefinition && !m.IsSpecialName && m.GetParameters().All(p => !p.ParameterType.IsByRef))
+                .ToList();
+            if (found.Count == 0) throw new ArgumentException($"type {_type.Name} has no public instance method '{name}' to expose");
+            foreach (var m in found) AddMethod(CallableMethod.FromReflection(m, description));
+            return this;
+        }
+
+        /// <summary>Remove callable methods by name (all overloads).</summary>
+        public MemberTable HideMethods(params string[] names)
+        {
+            foreach (var n in names)
+                if (!_methods.Any(m => m.Name == n)) throw new ArgumentException($"type {_type.Name} has no callable method '{n}' to hide");
+            _methods.RemoveAll(m => names.Contains(m.Name));
+            return this;
+        }
+
+        /// <summary>
+        /// Add a virtual map member: entries are the owner's <paramref name="keys"/>, read with <paramref name="get"/> and
+        /// assigned with <paramref name="set"/> (null = read-only). <paramref name="validate"/> runs before any write and returns a
+        /// rejection reason or null. Example: a Material's shader floats as <c>Floats["_Glossiness"]</c>.
+        /// </summary>
+        public MemberTable AddMap<TValue>(string name, Func<object, IEnumerable<string>> keys, Func<object, string, TValue> get,
+            Action<object, string, TValue>? set = null, Func<object, string, TValue, string?>? validate = null, string? description = null)
+        {
+            return Add(name, typeof(VirtualMap<TValue>), o => new VirtualMap<TValue>(o, keys, get, set, validate), description: description);
         }
 
         /// <summary>The runtime type whose members are being configured.</summary>
@@ -266,6 +319,46 @@ namespace Rql.Execution
         }
 
         public MemberTable<T> Hide(params string[] names) { Untyped.Hide(names); return this; }
+        public MemberTable<T> Expose(string name, string? description = null) { Untyped.Expose(name, description); return this; }
+        public MemberTable<T> HideMethods(params string[] names) { Untyped.HideMethods(names); return this; }
+
+        /// <summary>A callable method without result.</summary>
+        public MemberTable<T> Method(string name, Action<T> body, string? description = null) =>
+            Add(name, typeof(void), (o, a) => { body((T)o); return null; }, description);
+
+        public MemberTable<T> Method<A>(string name, Action<T, A> body, string p1, string? description = null) =>
+            Add(name, typeof(void), (o, a) => { body((T)o, (A)a[0]!); return null; }, description, (p1, typeof(A)));
+
+        public MemberTable<T> Method<A, B>(string name, Action<T, A, B> body, string p1, string p2, string? description = null) =>
+            Add(name, typeof(void), (o, a) => { body((T)o, (A)a[0]!, (B)a[1]!); return null; }, description, (p1, typeof(A)), (p2, typeof(B)));
+
+        /// <summary>A callable method with a result (returned in the <c>call</c> receipt).</summary>
+        public MemberTable<T> Function<R>(string name, Func<T, R> body, string? description = null) =>
+            Add(name, typeof(R), (o, a) => body((T)o), description);
+
+        public MemberTable<T> Function<A, R>(string name, Func<T, A, R> body, string p1, string? description = null) =>
+            Add(name, typeof(R), (o, a) => body((T)o, (A)a[0]!), description, (p1, typeof(A)));
+
+        public MemberTable<T> Function<A, B, R>(string name, Func<T, A, B, R> body, string p1, string p2, string? description = null) =>
+            Add(name, typeof(R), (o, a) => body((T)o, (A)a[0]!, (B)a[1]!), description, (p1, typeof(A)), (p2, typeof(B)));
+
+        private MemberTable<T> Add(string name, Type returns, Func<object, object?[], object?> invoke, string? description, params (string name, Type type)[] ps)
+        {
+            Untyped.AddMethod(name, ps.Select(p => new CallableParameter(p.name, p.type)).ToArray(), returns, invoke, description);
+            return this;
+        }
+
+        /// <summary>Typed <see cref="MemberTable.AddMap{TValue}"/>.</summary>
+        public MemberTable<T> Map<TValue>(string name, Func<T, IEnumerable<string>> keys, Func<T, string, TValue> get,
+            Action<T, string, TValue>? set = null, Func<T, string, TValue, string?>? validate = null, string? description = null)
+        {
+            if (set != null && typeof(T).IsValueType)
+                throw new ArgumentException($"virtual map setters on value type {typeof(T).Name} would write to a copy");
+            Untyped.AddMap<TValue>(name, o => keys((T)o), (o, k) => get((T)o, k),
+                set == null ? null : (Action<object, string, TValue>)((o, k, v) => set((T)o, k, v)),
+                validate == null ? null : (Func<object, string, TValue, string?>)((o, k, v) => validate((T)o, k, v)), description);
+            return this;
+        }
         public MemberTable<T> Only(params string[] names) { Untyped.Only(names); return this; }
         public MemberTable<T> ReadOnly(params string[] names) { Untyped.ReadOnly(names); return this; }
         public MemberTable<T> Reference(params string[] names) { Untyped.Reference(names); return this; }

@@ -182,8 +182,29 @@ export class EnumType {
 // ------------------------------------------------------------------ record maps
 
 /** A plain object exposed as a map (member declared as `t.map(...)` whose value is a plain object). */
-export class RecordMap {
-  constructor(readonly target: Record<string, unknown>) {}
+/** A string-keyed map view (plain-object records, adapter virtual maps): one shape for the map paths. */
+export abstract class StringMap {
+  abstract readonly size: number;
+  /** True when entries cannot be assigned (writes → readonly-member). */
+  get readOnly(): boolean {
+    return false;
+  }
+  abstract has(key: string): boolean;
+  abstract get(key: string): unknown;
+  abstract set(key: string, value: unknown): void;
+  abstract delete(key: string): void;
+  abstract entries(): IterableIterator<[string, unknown]>;
+  /** Rejection reason for assigning `value` to `key` (validation before any write), or undefined. */
+  validate(_key: string, _value: unknown): string | undefined {
+    return undefined;
+  }
+}
+
+/** A plain object exposed as a map (member declared as `t.map(...)` whose value is a plain object). */
+export class RecordMap extends StringMap {
+  constructor(readonly target: Record<string, unknown>) {
+    super();
+  }
   get size(): number {
     return Object.keys(this.target).length;
   }
@@ -201,6 +222,58 @@ export class RecordMap {
   }
   *entries(): IterableIterator<[string, unknown]> {
     for (const k of Object.keys(this.target)) yield [k, this.target[k]];
+  }
+}
+
+/** Adapter definition of a virtual map member (spec §13 "Virtual maps"). */
+export interface VirtualMapSpec<T extends object, V = unknown> {
+  /** The owner's keys, in order. */
+  keys(owner: T): Iterable<string>;
+  get(owner: T, key: string): V;
+  /** Per-key assignment; absent = read-only map. May accept keys beyond `keys` (entries are never removed). */
+  set?(owner: T, key: string, value: V): void;
+  /** Runs while a mutation is planned (before any write); returns a rejection reason. */
+  validate?(owner: T, key: string, value: V): string | undefined;
+}
+
+/**
+ * A map whose entries are defined by an adapter over its owner (e.g. a material's uniforms). Reads and
+ * writes use the ordinary map paths, so coercion, validation, dry-run and rollback apply.
+ */
+export class VirtualMap extends StringMap {
+  constructor(
+    private readonly owner: object,
+    private readonly spec: VirtualMapSpec<object>,
+  ) {
+    super();
+  }
+  override get readOnly(): boolean {
+    return this.spec.set === undefined;
+  }
+  get size(): number {
+    let n = 0;
+    for (const _ of this.spec.keys(this.owner)) n++;
+    return n;
+  }
+  has(key: string): boolean {
+    for (const k of this.spec.keys(this.owner)) if (k === key) return true;
+    return false;
+  }
+  get(key: string): unknown {
+    return this.has(key) ? this.spec.get(this.owner, key) : undefined;
+  }
+  set(key: string, value: unknown): void {
+    if (this.spec.set === undefined) throw new TypeError('read-only map');
+    this.spec.set(this.owner, key, value);
+  }
+  delete(_key: string): void {
+    throw new TypeError('entries of a virtual map cannot be removed');
+  }
+  *entries(): IterableIterator<[string, unknown]> {
+    for (const k of [...this.spec.keys(this.owner)]) yield [k, this.spec.get(this.owner, k)];
+  }
+  override validate(key: string, value: unknown): string | undefined {
+    return this.spec.validate?.(this.owner, key, value);
   }
 }
 
@@ -395,6 +468,7 @@ export class TypeInfo {
       ctor?: Ctor;
       adapters?: readonly AnyAdapter[];
       rawMembers?: readonly MemberAccessor[];
+      rawCallable?: readonly MethodAccessor[];
     } = {},
   ) {
     this.implicitMembers = members.some((m) => m.explicitOnly) ? members.filter((m) => !m.explicitOnly) : members;
@@ -410,6 +484,7 @@ export class TypeInfo {
     this.adapters = options.adapters ?? [];
     this.adapterSet = adapterSet(this.adapters);
     this.rawMembers = options.rawMembers ?? members;
+    this.rawCallable = options.rawCallable ?? this.callable;
     for (const m of members) {
       this.byName.set(m.name, m);
       const k = m.name.toUpperCase();
@@ -432,6 +507,8 @@ export class TypeInfo {
   readonly adapterSet: AdapterSet;
   /** Declared members before adapters shaped them (what subclasses inherit). */
   readonly rawMembers: readonly MemberAccessor[];
+  /** Declared callable methods before adapters added or hid some (what subclasses inherit). */
+  readonly rawCallable: readonly MethodAccessor[];
   /** Members read implicitly (all but explicit-only ones), for declared types. */
   readonly implicitMembers: readonly MemberAccessor[];
 
@@ -559,7 +636,7 @@ export class TypeModel {
     this.adapterSets.clear();
   }
 
-  private builtin(key: 'map' | 'record' | 'plain' | 'date'): TypeInfo {
+  private builtin(key: 'map' | 'record' | 'virtual-map' | 'plain' | 'date'): TypeInfo {
     let info = this.builtins.get(key);
     if (info === undefined) {
       switch (key) {
@@ -568,6 +645,9 @@ export class TypeModel {
           break;
         case 'record':
           info = new TypeInfo('map', 'Record', [], { adapters: this.adapterRegistry.for(Object) });
+          break;
+        case 'virtual-map':
+          info = new TypeInfo('map', 'VirtualMap');
           break;
         case 'plain': {
           const adapters = this.adapterRegistry.for(Object);
@@ -717,6 +797,7 @@ export class TypeModel {
     if (o instanceof EnumValue) return this.enumInfo(o.type);
     if (o instanceof Map) return this.builtin('map');
     if (o instanceof RecordMap) return this.builtin('record');
+    if (o instanceof VirtualMap) return this.builtin('virtual-map');
     if (o instanceof Set) return this.listInfo('Set', Set);
     if (o instanceof MapEntry) return this.entryInfo;
     if (o instanceof RowValue) return this.rowInfo;
@@ -773,10 +854,10 @@ export class TypeModel {
         const name = ctor.name || b.shortName;
         const adapters = this.adapterRegistry.for(ctor);
         // Same table as a registered subclass would get: the base's identity decision, read-only id, adapters.
-        const t = this.finishMembers(name, b.kind, adapters, [...b.rawMembers], b.idMember?.name ?? null, undefined, b.displayMember?.name ?? null, undefined);
+        const t = this.finishMembers(name, b.kind, adapters, [...b.rawMembers], [...b.rawCallable], b.idMember?.name ?? null, undefined, b.displayMember?.name ?? null, undefined);
         return new TypeInfo(b.kind, name, t.members, {
-          typeNames: [name, ...b.typeNames], idMember: t.idMember, displayMember: t.displayMember,
-          callable: b.callable, base: b, description: describeWith(adapters, b.description), ctor, adapters, rawMembers: b.rawMembers,
+          typeNames: [name, ...b.typeNames], idMember: t.idMember, displayMember: t.displayMember, callable: t.methods,
+          base: b, description: describeWith(adapters, b.description), ctor, adapters, rawMembers: b.rawMembers, rawCallable: b.rawCallable,
         });
       }
     }
@@ -801,17 +882,15 @@ export class TypeModel {
 
     const kind = spec.kind ?? base?.kind ?? 'object';
     const rawMembers = [...members];
+    const rawCallable: MethodAccessor[] = [...(base?.rawCallable ?? [])];
+    for (const ms of spec.methods ?? []) putMethod(rawCallable, this.makeMethod(ms));
     const adapters = this.adapterRegistry.for(ctor);
-    const { idMember, displayMember, members: finished } = this.finishMembers(name, kind, adapters, members, spec.id, base?.idMember, spec.display, base?.displayMember);
+    const t = this.finishMembers(name, kind, adapters, members, [...rawCallable], spec.id, base?.idMember, spec.display, base?.displayMember);
 
-    const callable = new Map<string, MethodAccessor>();
-    for (const m of base?.callable ?? []) callable.set(m.name, m);
-    for (const ms of spec.methods ?? []) callable.set(ms.name, this.makeMethod(ms));
-    const methods = [...callable.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-
-    return new TypeInfo(kind, name, finished, {
+    return new TypeInfo(kind, name, t.members, {
       typeNames: [name, ...(base?.typeNames ?? []), ...(spec.interfaces ?? [])],
-      idMember, displayMember, callable: methods, base, description: describeWith(adapters, spec.description), ctor, adapters, rawMembers,
+      idMember: t.idMember, displayMember: t.displayMember, callable: t.methods, base,
+      description: describeWith(adapters, spec.description), ctor, adapters, rawMembers, rawCallable,
     });
   }
 
@@ -825,13 +904,16 @@ export class TypeModel {
     kind: TypeKind,
     adapters: readonly AnyAdapter[],
     members: MemberAccessor[],
+    methods: MethodAccessor[],
     idSpec: string | null | undefined,
     inheritedId: MemberAccessor | undefined,
     displaySpec: string | null | undefined,
     inheritedDisplay: MemberAccessor | undefined,
-  ): { members: MemberAccessor[]; idMember: MemberAccessor | undefined; displayMember: MemberAccessor | undefined } {
+  ): { members: MemberAccessor[]; methods: MethodAccessor[]; idMember: MemberAccessor | undefined; displayMember: MemberAccessor | undefined } {
     const declared = new Set(members.map((m) => m.name));
-    this.applyAdapters(adapters, name, kind, members);
+    this.applyAdapters(adapters, name, kind, members, methods);
+    // Callable methods: by name (ordinal), then arity.
+    methods.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.params.length - b.params.length));
     const pick = (explicit: string | null | undefined, inherited: MemberAccessor | undefined, dflt: (m: MemberAccessor) => boolean): MemberAccessor | undefined => {
       if (explicit === null) return undefined;
       const implicit = (m: MemberAccessor): boolean => !m.explicitOnly;
@@ -850,13 +932,13 @@ export class TypeModel {
       idMember = ro;
     }
     const displayMember = pick(displaySpec, inheritedDisplay, (m) => m.name === 'Name' && unwrapNullable(m.type) === 'string');
-    return { members, idMember, displayMember };
+    return { members, methods, idMember, displayMember };
   }
 
   /** Runs the adapters' member configuration (least specific first) over `members`, in place. */
-  private applyAdapters(adapters: readonly AnyAdapter[], typeName: string, kind: TypeKind, members: MemberAccessor[]): void {
+  private applyAdapters(adapters: readonly AnyAdapter[], typeName: string, kind: TypeKind, members: MemberAccessor[], methods: MethodAccessor[]): void {
     if (!adapters.some((a) => a.members !== undefined)) return;
-    const table = new MemberTableImpl(typeName, kind, members, this);
+    const table = new MemberTableImpl(typeName, kind, members, methods, this);
     for (let i = adapters.length - 1; i >= 0; i--) adapters[i]!.members?.(table);
   }
 
@@ -1035,8 +1117,15 @@ function isSetterSomewhere(proto: object, key: string): boolean {
   return false;
 }
 
+/** Adds a method, replacing one with the same name and arity. */
+function putMethod(list: MethodAccessor[], m: MethodAccessor): void {
+  const i = list.findIndex((x) => x.name === m.name && x.params.length === m.params.length);
+  if (i >= 0) list.splice(i, 1);
+  list.push(m);
+}
+
 /** Engine-internal value classes: never adapted (spec §13 applies to host types). */
-const INTERNAL_CLASSES: ReadonlySet<object> = new Set<object>([RowValue, MapEntry, Missing, Unknown, ErrorValue, EnumValue, RecordMap]);
+const INTERNAL_CLASSES: ReadonlySet<object> = new Set<object>([RowValue, MapEntry, Missing, Unknown, ErrorValue, EnumValue, RecordMap, VirtualMap]);
 
 /**
  * Member configuration needs a declared member table (members of undeclared objects are discovered per
@@ -1060,8 +1149,43 @@ class MemberTableImpl implements MemberTable<object> {
     readonly typeName: string,
     private readonly kind: TypeKind,
     private readonly list: MemberAccessor[],
+    private readonly methodList: MethodAccessor[],
     private readonly model: TypeModel,
   ) {}
+
+  get methods(): readonly MethodAccessor[] {
+    return this.methodList;
+  }
+
+  method<A extends unknown[]>(name: string, params: readonly ParamSpec[], returns: TypeRef | undefined, fn: (target: object, ...args: A) => unknown, description?: string): this {
+    if (name.length === 0) throw new Error('method name required');
+    // Arguments arrive coerced to the declared parameter types, in parameter order.
+    putMethod(this.methodList, new MethodAccessor(name, params, returns, description, (o, args) => fn(o, ...(args as A))));
+    return this;
+  }
+
+  hideMethods(...names: string[]): this {
+    for (const n of names) if (!this.methodList.some((m) => m.name === n)) throw new Error(`type ${this.typeName} has no callable method '${n}' to hide`);
+    const kept = this.methodList.filter((m) => !names.includes(m.name));
+    this.methodList.length = 0;
+    this.methodList.push(...kept);
+    return this;
+  }
+
+  map<V>(name: string, spec: VirtualMapSpec<object, V>, valueType: TypeRef = 'any', description?: string): this {
+    if (spec.set !== undefined && this.kind === 'struct') throw new Error(`virtual map setters on value type ${this.typeName} would write to a copy`);
+    const views = new WeakMap<object, VirtualMap>();
+    const s = spec as VirtualMapSpec<object>;
+    return this.add(name, {
+      type: { kind: 'map', key: 'string', of: valueType },
+      get: (o: object) => {
+        let v = views.get(o);
+        if (v === undefined) views.set(o, (v = new VirtualMap(o, s)));
+        return v;
+      },
+      ...(description !== undefined ? { description } : {}),
+    });
+  }
 
   get members(): readonly MemberAccessor[] {
     return this.list;

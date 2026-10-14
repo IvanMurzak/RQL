@@ -424,6 +424,25 @@ struct Thing {
 struct Shelf {
     std::vector<std::unique_ptr<Thing>> Things;
 };
+// Unreal-style: a dynamic material instance's scalar parameters + an actor visibility method.
+struct MaterialInstanceDynamic {
+    std::vector<std::pair<std::string, double>> scalars{{"Roughness", 0.5}, {"Metallic", 0.0}, {"Opacity", 1.0}};
+    double* find(const std::string& n) {
+        for (auto& kv : scalars)
+            if (kv.first == n) return &kv.second;
+        return nullptr;
+    }
+};
+struct Actor {
+    int Id = 0;
+    std::string Name;
+    bool bHiddenInGame = false;
+    MaterialInstanceDynamic Material;
+    int log_calls = 0;
+};
+struct Level {
+    std::vector<std::unique_ptr<Actor>> Actors;
+};
 
 rql::QueryResult arun(rql::Engine& e, const std::string& plan, bool mutate = false) {
     rql::QueryOptions o;
@@ -757,6 +776,115 @@ void adapter_tests() {
         r = arun(oe, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"recurse","via":[{"path":["Children"]}]},{"op":"min","expr":{"path":[]}}]})J");
         check(r.ok && r.value.is_object() && r.value.find("name") && r.value.find("name")->as_string() == "a-2",
               "review: min $ over objects uses the ordering adapter (a-2, Value -4)");
+    }
+
+    // adapter methods + virtual maps (spec §13), Unreal-style host
+    {
+        rql::TypeRegistry ur;
+        ur.object<Actor>("Actor").member("Id", &Actor::Id).member("Name", &Actor::Name).member("bHiddenInGame", &Actor::bHiddenInGame);
+        ur.object<Level>("Level").member("Actors", &Level::Actors);
+        Level level;
+        for (int i = 1; i <= 2; ++i) {
+            level.Actors.push_back(std::make_unique<Actor>());
+            level.Actors.back()->Id = i;
+            level.Actors.back()->Name = "BP_Lamp" + std::to_string(i);
+        }
+        rql::Engine ue(ur);
+        ue.add_object_source("level", &level);
+        ue.mutations().enabled = true;
+        rql::TypeAdapter actor;
+        actor.target = ur.descriptor<Actor>();
+        actor.configure_members = [](rql::MemberTable& t) {
+            t.map<Actor>(
+                 "ScalarParams",
+                 [](Actor& a) {
+                     std::vector<std::string> k;
+                     for (auto& kv : a.Material.scalars) k.push_back(kv.first);
+                     return k;
+                 },
+                 [](Actor& a, const std::string& k) { return *a.Material.find(k); },
+                 [](Actor& a, const std::string& k, double v) { *a.Material.find(k) = v; },
+                 [](Actor& a, const std::string& k, const double& v) {
+                     if (!a.Material.find(k)) return "material has no scalar parameter '" + k + "'";
+                     return (v < 0 || v > 1) ? std::string("scalar parameters are in [0, 1]") : std::string();
+                 },
+                 "UMaterialInstanceDynamic scalar parameters")
+                .method<Actor>(
+                    "SetActorHiddenInGame", {rql::ParamDescriptor{"bNewHidden", rql::builtin::bool_type(), false, false, rql::Value()}},
+                    nullptr,
+                    [](Actor& a, const std::vector<rql::Value>& args) {
+                        a.bHiddenInGame = args[0].as_bool();
+                        return rql::Value::null();
+                    },
+                    "hide/show the actor in game")
+                .method<Actor>("Log", {}, rql::builtin::number_type(true, true, 4), [](Actor& a, const std::vector<rql::Value>&) {
+                    return rql::Value::number(++a.log_calls);
+                })
+                .method<Actor>(
+                    "Log", {rql::ParamDescriptor{"times", rql::builtin::double_type(), false, false, rql::Value()}}, nullptr,
+                    [](Actor& a, const std::vector<rql::Value>& args) {
+                        a.log_calls += static_cast<int>(args[0].as_number());
+                        return rql::Value::null();
+                    });
+        };
+        ue.add_adapter(std::move(actor));
+        auto r = arun(ue, R"J({"rql":"0.1","source":{"path":["level","Actors"]},"stages":[{"op":"first","n":1},{"op":"select","fields":[{"name":"p","expr":{"path":["ScalarParams"]}},{"name":"r","expr":{"path":["ScalarParams",{"key":"Roughness"}]}}]}]})J");
+        check(r.ok && (*r.rows)[0][0].find("Opacity") && (*r.rows)[0][1].as_number() == 0.5, "methods/maps: virtual map read (whole + key)");
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["level","Actors"]},"stages":[{"op":"set","assign":[{"target":{"path":["ScalarParams",{"key":"Roughness"}]},"value":{"lit":0.25}}]}]})J", true);
+        check(r.ok && level.Actors[0]->Material.scalars[0].second == 0.25 && level.Actors[1]->Material.scalars[0].second == 0.25 &&
+                  (*r.rows)[0][2].as_number() == 0.5,
+              "methods/maps: validated virtual map write (receipt old value)");
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["level","Actors"]},"stages":[{"op":"set","assign":[{"target":{"path":["ScalarParams",{"key":"Metallic"}]},"value":{"lit":0.9}},{"target":{"path":["ScalarParams",{"key":"Opacity"}]},"value":{"lit":2}}]}]})J", true);
+        check(!r.ok && first_code(r) == "coercion-failed" && r.diagnostics[0].message.find("[0, 1]") != std::string::npos &&
+                  level.Actors[0]->Material.scalars[1].second == 0.0,
+              "methods/maps: entry validation rejects before any write (all-or-nothing)");
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["level","Actors"]},"stages":[{"op":"set","assign":[{"target":{"path":["ScalarParams",{"key":"Emissive"}]},"value":{"lit":0.1}}]}]})J", true);
+        check(!r.ok && first_code(r) == "coercion-failed" && level.Actors[0]->Material.scalars.size() == 3, "methods/maps: no new entries beyond the owner's keys");
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["level","Actors"]},"stages":[{"op":"set","assign":[{"target":{"path":["ScalarParams"]},"value":{"lit":1}}]}]})J", true);
+        check(!r.ok && first_code(r) == "readonly-member", "methods/maps: the map member itself is not assignable");
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["level","Actors"]},"stages":[{"op":"where","pred":{"op":"==","args":[{"path":["Id"]},{"lit":2}]}},{"op":"call","method":"SetActorHiddenInGame","args":[{"lit":true}]}]})J", true);
+        check(r.ok && level.Actors[1]->bHiddenInGame && !level.Actors[0]->bHiddenInGame && (*r.rows)[0][1].as_string() == "SetActorHiddenInGame(bool bNewHidden)" &&
+                  (*r.rows)[0][2].is_null(),
+              "methods/maps: adapter method call (void result → null)");
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["level","Actors"]},"stages":[{"op":"first","n":1},{"op":"call","method":"setactorhiddeningame","args":[{"lit":"yes"}]}]})J", true);
+        check(!r.ok && first_code(r) == "coercion-failed" && !level.Actors[0]->bHiddenInGame, "methods/maps: argument coercion failure, nothing invoked");
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["level","Actors"]},"stages":[{"op":"first","n":1},{"op":"call","method":"Log","args":[]}]})J", true);
+        bool zero = r.ok && level.Actors[0]->log_calls == 1 && (*r.rows)[0][1].as_string() == "Log()";
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["level","Actors"]},"stages":[{"op":"first","n":1},{"op":"call","method":"Log","args":[{"lit":3}]}]})J", true);
+        check(zero && r.ok && level.Actors[0]->log_calls == 4 && (*r.rows)[0][1].as_string() == "Log(double times)", "methods/maps: overloads chosen by arity");
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["level","Actors"]},"stages":[{"op":"first","n":1},{"op":"describe"}]})J");
+        bool listed = false;
+        if (r.ok && r.types)
+            for (auto& m : r.types->at(0).find("methods")->items())
+                if (m.as_string() == "SetActorHiddenInGame(bool bNewHidden) \xE2\x80\x94 hide/show the actor in game") listed = true;
+        check(listed, "methods/maps: describe lists adapter methods with description");
+    }
+
+    // hide_methods + base-adapter methods on subclasses; unknown names → internal-error
+    {
+        auto gm = conformance::load_graph(graph_path);
+        rql::Engine me(reg);
+        me.add_object_source("g", gm.get());
+        me.mutations().enabled = true;
+        conformance::register_test_adapters(me, reg);
+        auto r = arun(me, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"first","n":1},{"op":"get","expr":{"path":["Children",{"index":1}]}},{"op":"call","method":"greet","args":[{"lit":"Bo"}]}]})J", true);
+        check(r.ok && (*r.rows)[0][0].as_string() == "Special#3" && (*r.rows)[0][2].as_string() == "hi Bo, I am a-2",
+              "methods/maps: Node adapter method callable on Special (upcast)");
+        rql::TypeAdapter hider;
+        hider.target = reg.descriptor<conformance::Special>();
+        hider.configure_members = [](rql::MemberTable& t) { t.hide_methods({"greet"}); };
+        me.add_adapter(std::move(hider));
+        r = arun(me, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"first","n":1},{"op":"get","expr":{"path":["Children",{"index":1}]}},{"op":"call","method":"greet","args":[{"lit":"Bo"}]}]})J", true);
+        check(!r.ok && first_code(r) == "unknown-function", "methods/maps: hide_methods on the subclass");
+        rql::Engine bad(reg);
+        bad.add_object_source("g", gm.get());
+        rql::TypeAdapter b;
+        b.target = reg.descriptor<conformance::Node>();
+        b.configure_members = [](rql::MemberTable& t) { t.hide_methods({"nope"}); };
+        bad.add_adapter(std::move(b));
+        r = arun(bad, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"count"}]})J");
+        auto r2 = arun(bad, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"select","fields":[{"name":"n","expr":{"path":["Name"]}}]}]})J");
+        check(!r2.ok && first_code(r2) == "internal-error", "methods/maps: hide_methods with an unknown name → internal-error");
     }
 
     // configuration bugs → internal-error

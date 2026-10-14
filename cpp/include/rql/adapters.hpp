@@ -55,10 +55,46 @@ private:
 /// The member table of one runtime type while adapters shape it. Errors (configuring a member that
 /// does not exist, virtual setters on value types) throw std::logic_error inside the engine, which
 /// fails the query with `internal-error` — they are host bugs.
+/// A string-keyed map defined by an adapter over its owner (spec §13 "Virtual maps"): the owner's keys,
+/// per-key get, optional per-key set and validation. Reads and writes use the ordinary map paths, so
+/// coercion, validation-before-write, rollback and readonly-member fall out. Entries are never removed.
+class VirtualMapAdapter final : public IMapAdapter {
+public:
+    using Keys = std::function<std::vector<std::string>(void* owner)>;
+    using Get = std::function<Value(void* owner, const std::string& key)>;
+    using Set = std::function<void(void* owner, const std::string& key, const Value& value)>;
+    using Validate = std::function<std::string(void* owner, const std::string& key, const Value& value)>;
+
+    VirtualMapAdapter(void* owner, const TypeDescriptor* type, std::shared_ptr<const Keys> keys, std::shared_ptr<const Get> get,
+                      std::shared_ptr<const Set> set, std::shared_ptr<const Validate> validate)
+        : owner_(owner), type_(type), keys_(std::move(keys)), get_(std::move(get)), set_(std::move(set)), validate_(std::move(validate)) {}
+
+    size_t size() const override { return (*keys_)(owner_).size(); }
+    void for_each(const std::function<bool(const Value&, const Value&)>& fn) const override;
+    MapLookup find(const Value& key, Value& out) const override;
+    const TypeDescriptor* type() const override { return type_; }
+    bool writable() const override { return set_ != nullptr; }
+    bool read_only() const override { return set_ == nullptr; }
+    bool accepts_key(const Value& key) const override { return key.is_string() || key.is_number(); }
+    void set(const Value& key, const Value& value) override;
+    void erase(const Value& key) override;
+    std::string validate_entry(const Value& key, const Value& value) const override;
+
+private:
+    void* owner_;
+    const TypeDescriptor* type_;
+    std::shared_ptr<const Keys> keys_;
+    std::shared_ptr<const Get> get_;
+    std::shared_ptr<const Set> set_;
+    std::shared_ptr<const Validate> validate_;
+    static std::string key_text(const Value& key) { return key.is_string() ? key.as_string() : to_text(key); }
+};
+
 class MemberTable {
 public:
-    MemberTable(TypeRegistry& registry, const TypeDescriptor& type, std::vector<MemberDescriptor>& members)
-        : registry_(registry), type_(type), members_(members) {}
+    MemberTable(TypeRegistry& registry, const TypeDescriptor& type, std::vector<MemberDescriptor>& members,
+                std::vector<MethodDescriptor>& methods)
+        : registry_(registry), type_(type), members_(members), methods_(methods) {}
 
     /// The runtime type whose members are being configured.
     const TypeDescriptor& type() const { return type_; }
@@ -123,6 +159,61 @@ public:
     MemberTable& explicit_only(const std::vector<std::string>& names);
     MemberTable& describe(const std::string& name, std::string description);
 
+    // ---- methods (spec §13 "Methods"): invoked by `call` like host-allowlisted methods
+
+    /// Add (or replace, same name and arity) a callable method. `self` is a pointer to the adapter's
+    /// target type; args arrive coerced to the parameter types (defaults filled in). `returns` nullptr =
+    /// no result. The receipt / describe show "name(type param, ...)".
+    MemberTable& method(std::string name, std::vector<ParamDescriptor> params, const TypeDescriptor* returns,
+                        std::function<Value(void* self, const std::vector<Value>& args)> invoke, std::string description = {});
+    /// Typed: f(T&, const std::vector<Value>& args) -> Value.
+    template <class T, class F>
+    MemberTable& method(std::string name, std::vector<ParamDescriptor> params, const TypeDescriptor* returns, F f,
+                        std::string description = {}) {
+        return method(std::move(name), std::move(params), returns,
+                      [f](void* self, const std::vector<Value>& args) -> Value { return f(*static_cast<T*>(self), args); },
+                      std::move(description));
+    }
+    /// Remove callable methods by name (all overloads). Every name must exist (else internal-error).
+    MemberTable& hide_methods(const std::vector<std::string>& names);
+
+    // ---- virtual maps (spec §13 "Virtual maps")
+
+    /// Add a read-only (set empty) or writable virtual map member of `value_type` values. Schemas show
+    /// "Dictionary<string, T>". Callbacks receive a pointer to the adapter's target type.
+    MemberTable& map(std::string name, const TypeDescriptor* value_type, VirtualMapAdapter::Keys keys, VirtualMapAdapter::Get get,
+                     VirtualMapAdapter::Set set = {}, VirtualMapAdapter::Validate validate = {}, std::string description = {});
+    /// Typed: keys(T&) -> std::vector<std::string>, get(T&, key) -> V, set(T&, key, V) (nullptr = read-only),
+    /// validate(T&, key, const V&) -> std::string reason (nullptr = none).
+    template <class T, class K, class G, class S = std::nullptr_t, class V = std::nullptr_t>
+    MemberTable& map(std::string name, K keys, G get, S set = nullptr, V validate = nullptr, std::string description = {}) {
+        using R = std::decay_t<decltype(get(std::declval<T&>(), std::declval<const std::string&>()))>;
+        TypeRegistry* r = &registry_;
+        VirtualMapAdapter::Set vs;
+        VirtualMapAdapter::Validate vv;
+        if constexpr (!std::is_same_v<S, std::nullptr_t>) {
+            vs = [r, set](void* self, const std::string& key, const Value& v) {
+                R tmp{};
+                Traits<R>::set(*r, tmp, v);
+                set(*static_cast<T*>(self), key, std::move(tmp));
+            };
+        }
+        if constexpr (!std::is_same_v<V, std::nullptr_t>) {
+            vv = [r, validate](void* self, const std::string& key, const Value& v) -> std::string {
+                R tmp{};
+                Traits<R>::set(*r, tmp, v);
+                return validate(*static_cast<T*>(self), key, tmp);
+            };
+        }
+        return map(
+            std::move(name), Traits<R>::type(*r), [keys](void* self) { return keys(*static_cast<T*>(self)); },
+            [r, get](void* self, const std::string& key) -> Value {
+                R tmp = get(*static_cast<T*>(self), key);
+                return snapshot(Traits<R>::get(*r, tmp));
+            },
+            std::move(vs), std::move(vv), std::move(description));
+    }
+
     /// Internal: the adapter being applied (its target receives `self`).
     void set_current_target(const TypeDescriptor* target) { current_target_ = target; }
 
@@ -130,7 +221,10 @@ private:
     TypeRegistry& registry_;
     const TypeDescriptor& type_;
     std::vector<MemberDescriptor>& members_;
+    std::vector<MethodDescriptor>& methods_;
     const TypeDescriptor* current_target_ = nullptr;
+    /// self → adapter-target pointer conversion (identity when no upcast is needed).
+    std::function<void*(void*)> upcaster() const;
     MemberDescriptor& member(const std::string& name);
     /// Keep (keep = true) or drop (keep = false) exactly the named members.
     MemberTable& retain(const std::vector<std::string>& names, bool keep);

@@ -102,6 +102,12 @@ uobj.is_alive = [&](const rql::Value& v) -> std::optional<bool> { return IsValid
 engine.add_adapter(std::move(vec)).add_adapter(std::move(uobj));
 ```
 
+Adapters can also add **callable methods** (`MemberTable::method(name, params, returns, fn,
+description)`, `hide_methods`) invoked by `call` exactly like registered host methods (coercion,
+defaults, overloads by arity, dry-run), and **virtual maps** (`MemberTable::map(name, keys, get, set,
+validate)`) read and written through the ordinary map paths, e.g. a `UMaterialInstanceDynamic`'s
+scalar parameters as `ScalarParams["Roughness"]` with validation before any write.
+
 Adapters are per `Engine`: the engine derives an adaptation of each descriptor an adapter applies to
 (members after adapters, id/display recomputed, per-capability adapter lists), so one `TypeRegistry`
 can serve engines with different adapter sets. An engine without adapters reads descriptors

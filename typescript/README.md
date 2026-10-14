@@ -85,6 +85,31 @@ engine.addAdapter({
 engine.explain(THREE.Vector3);               // ordered adapters with rank and priority
 ```
 
+Adapters can also add **callable methods** and **virtual maps** (spec §13):
+
+```ts
+engine.addAdapter({
+  target: THREE.Object3D,
+  members: (m) => m
+    .method('lookAt', [{ name: 'x', type: t.number }, { name: 'y', type: t.number }, { name: 'z', type: t.number }], undefined,
+      (o, x: number, y: number, z: number) => o.lookAt(x, y, z), 'turn towards a point')   // `call lookAt(1, 2, 3)`
+    .hideMethods('someDeclaredMethod'),
+});
+engine.addAdapter({
+  target: THREE.ShaderMaterial,
+  members: (m) => m.map<number>('u', {
+    keys: (mat) => Object.keys(mat.uniforms),
+    get: (mat, k) => mat.uniforms[k].value,
+    set: (mat, k, v) => { mat.uniforms[k].value = v; },            // omit for a read-only map
+    validate: (mat, k, v) => (k in mat.uniforms ? undefined : `no uniform '${k}'`),
+  }, t.number, 'shader uniforms'),                                   // `set u["uOpacity"] = 0.5`
+});
+```
+
+Methods are chosen by arity, then by whether the arguments coerce (adapter coercion applies, `default`
+fills missing trailing arguments). Virtual-map writes go through the ordinary map paths: coercion to the
+value type, validation before any write, rollback, `readonly-member` without a setter.
+
 Resolution: exact class (rank 0), base classes by prototype-chain distance (up to `Object`), then
 `matches` adapters; ties by priority (higher first), then registration order. Member configuration
 (`add`, `hide`, `only`, `readOnly`, `reference`, `explicitOnly`, `describe`) runs least → most specific

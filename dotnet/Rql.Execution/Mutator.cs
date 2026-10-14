@@ -81,7 +81,7 @@ namespace Rql.Execution
                         throw new RqlException(slot.DenyCode, $"'{label}' on {_x.Engine.RefOf(item)} is not writable{slot.DenyReason}");
                     if (!Coerce.TryTo(_x.Types, nv, slot.Type, out var coerced, out var why))
                         throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' ({TypeModel.FriendlyName(slot.Type)}): {why}");
-                    if (slot is MemberSlot ms && ms.M.Validate != null && ms.M.Validate(container, coerced) is string rejected)
+                    if (slot.Validate(container, coerced) is string rejected)
                         throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' on {_x.Engine.RefOf(item)}: {rejected}");
                     writes.Add(new PlannedWrite { Item = item, Segments = target.Segments, Label = label, Old = SafeGet(slot, container, label), New = coerced });
                 }
@@ -128,6 +128,8 @@ namespace Rql.Execution
             public abstract object? Get(object container);
             public abstract void Set(object container, object? value);
             public virtual bool Writable(Exec x) => true;
+            /// <summary>Adapter validation of a coerced value before any write: rejection reason or null.</summary>
+            public virtual string? Validate(object container, object? value) => null;
             public virtual string DenyCode => "readonly-member";
             public virtual string DenyReason => "";
         }
@@ -140,6 +142,7 @@ namespace Rql.Execution
             public override Type Type => M.Type;
             public override object? Get(object container) => M.Getter(container);
             public override void Set(object container, object? value) => M.SetValue(container, value);
+            public override string? Validate(object container, object? value) => M.Validate?.Invoke(container, value);
             private bool _policyDenied;
             public override bool Writable(Exec x)
             {
@@ -170,6 +173,8 @@ namespace Rql.Execution
             public MapSlot(object key, Type value) { _key = key; _value = value; }
             public override Type Type => _value;
             public override object? Get(object container) => ((IDictionary)container).Contains(_key) ? ((IDictionary)container)[_key] : Missing.Value;
+            public override string? Validate(object container, object? value) =>
+                container is IVirtualMap vm && _key is string k ? vm.ValidateEntry(k, value) : null;
             public override void Set(object container, object? value)
             {
                 if (value is Missing) ((IDictionary)container).Remove(_key);
@@ -182,8 +187,10 @@ namespace Rql.Execution
             var info = _x.Types.Info(container.GetType());
             if (info.IsMap)
             {
-                if (!(container is IDictionary))
+                if (!(container is IDictionary dict))
                     throw new RqlException("unsupported", $"map type {info.FriendlyName} does not support writes");
+                if (dict.IsReadOnly)
+                    throw new RqlException("readonly-member", $"'{label}': map is read-only");
                 if (seg.Kind == SegmentKind.Member && (string.Equals(seg.Name, "Count", StringComparison.OrdinalIgnoreCase)))
                     throw new RqlException("readonly-member", $"'{label}': Count of a map is read-only (use [\"Count\"] to address a key literally named Count)");
                 object? key = seg.Kind == SegmentKind.Member ? seg.Name : seg.Kind == SegmentKind.Key ? seg.Key : seg.Kind == SegmentKind.Index ? (object)(double)seg.Index : null;
@@ -289,14 +296,14 @@ namespace Rql.Execution
             CheckPolicy("call");
             var args = s.Args.Select(_c.Compile).ToArray();
             var targets = Targets(stream, "call");
-            var planned = new List<(object item, MethodInfo method, object?[] args)>();
+            var planned = new List<(object item, CallableMethod method, object?[] args)>();
             foreach (var item in targets)
             {
                 var info = _x.Types.Info(item.GetType());
                 var candidates = info.Callable.Where(m => string.Equals(m.Name, s.Method, StringComparison.OrdinalIgnoreCase)).ToList();
                 if (candidates.Count == 0)
                 {
-                    var all = info.Callable.Select(Describe.Signature).ToList();
+                    var all = info.Callable.Select(m => m.Signature).ToList();
                     bool exists = item.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance)
                         .Any(m => string.Equals(m.Name, s.Method, StringComparison.OrdinalIgnoreCase));
                     throw new RqlException(exists ? "permission-denied" : "unknown-function",
@@ -306,25 +313,25 @@ namespace Rql.Execution
                 _x.Current = item;
                     _x.CurrentDepth = -1;
                 var vals = args.Select(a => a(_x)).ToArray();
-                MethodInfo? chosen = null;
+                CallableMethod? chosen = null;
                 object?[]? coerced = null;
                 string why = "";
                 foreach (var m in candidates)
                 {
-                    var ps = m.GetParameters();
-                    if (ps.Length < vals.Length || ps.Skip(vals.Length).Any(p => !p.HasDefaultValue)) { why = $"expects {ps.Length} argument(s)"; continue; }
-                    var cv = new object?[ps.Length];
+                    var ps = m.Parameters;
+                    if (ps.Count < vals.Length || ps.Skip(vals.Length).Any(p => !p.HasDefault)) { why = $"expects {ps.Count} argument(s)"; continue; }
+                    var cv = new object?[ps.Count];
                     bool ok = true;
-                    for (int i = 0; i < ps.Length; i++)
+                    for (int i = 0; i < ps.Count; i++)
                     {
-                        if (i >= vals.Length) { cv[i] = ps[i].DefaultValue; continue; }
-                        if (!Coerce.TryTo(_x.Types, vals[i], ps[i].ParameterType, out cv[i], out var w)) { ok = false; why = $"argument '{ps[i].Name}': {w}"; break; }
+                        if (i >= vals.Length) { cv[i] = ps[i].Default; continue; }
+                        if (!Coerce.TryTo(_x.Types, vals[i], ps[i].Type, out cv[i], out var w)) { ok = false; why = $"argument '{ps[i].Name}': {w}"; break; }
                     }
                     if (ok) { chosen = m; coerced = cv; break; }
                 }
                 if (chosen == null)
                     throw new RqlException("coercion-failed", $"cannot call {s.Method} on {_x.Engine.RefOf(item)}: {why}", null,
-                        "signature: " + string.Join(", ", candidates.Select(Describe.Signature)));
+                        "signature: " + string.Join(", ", candidates.Select(m => m.Signature)));
                 planned.Add((item, chosen, coerced!));
             }
 
@@ -338,15 +345,14 @@ namespace Rql.Execution
                     try
                     {
                         result = method.Invoke(item, cargs);
-                        if (method.ReturnType == typeof(void)) result = null;
                     }
-                    catch (TargetInvocationException ex)
+                    catch (Exception ex) when (!(ex is OutOfMemoryException))
                     {
-                        throw new RqlException("getter-threw", $"{method.Name} on {_x.Engine.RefOf(item)} threw {ex.InnerException?.GetType().Name}: {ex.InnerException?.Message}; {done} earlier call(s) completed and are NOT rolled back");
+                        throw new RqlException("getter-threw", $"{method.Name} on {_x.Engine.RefOf(item)} threw {ex.GetType().Name}: {ex.Message}; {done} earlier call(s) completed and are NOT rolled back");
                     }
                 }
                 done++;
-                rows.Add(new object?[] { _x.Engine.RefOf(item), Describe.Signature(method), result });
+                rows.Add(new object?[] { _x.Engine.RefOf(item), method.Signature, result });
             }
             var r = _enc.Rows(new[] { "$ref", "method", "result" }, rows);
             r.DryRun = _x.Options.DryRun;

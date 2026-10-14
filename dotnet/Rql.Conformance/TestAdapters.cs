@@ -99,7 +99,16 @@ namespace Rql.Conformance
                         validate: (n, v) => string.IsNullOrEmpty(v) ? "title must not be empty" : null,
                         description: "upper-cased Name; assigning sets Name lower-cased")
                     .Hide("Note")
-                    .ExplicitOnly("Children");
+                    .ExplicitOnly("Children")
+                    .Map("stats", n => n.Props.Keys, (n, k) => n.Props[k], (n, k, v) => n.Props[k] = v,
+                        validate: (n, k, v) => !n.Props.ContainsKey(k) ? $"unknown stat '{k}'" : v < 0 ? "stats must be non-negative" : null,
+                        description: "Props as a validated map")
+                    .Map("labels", n => Labels, (n, k) => k == "name" ? n.Name : n.Kind.ToString(), description: "read-only labels")
+                    .Function<string, string>("greet", (n, who) => "hi " + who + ", I am " + n.Name, "who", "a greeting (no state change)")
+                    .Untyped.AddMethod("bump", new[] { new CallableParameter("by", typeof(double), true, 1.0) }, typeof(double),
+                        (o, args) => { var n = (Node)o; n.Value += (double)args[0]!; return n.Value; }, "Value += by; returns the new Value");
+
+            private static readonly string[] Labels = { "name", "kind" };
         }
 
         public sealed class SpecialAdapter : RqlTypeAdapter<Special>

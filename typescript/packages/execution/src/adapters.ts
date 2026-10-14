@@ -8,7 +8,7 @@
  * Ties: higher `priority` first, then registration order.
  */
 import type { JsonValue } from '@rql/contracts';
-import type { Ctor, MemberAccessor, TypeRef } from './types.js';
+import type { Ctor, MemberAccessor, MethodAccessor, ParamSpec, TypeRef, VirtualMapSpec } from './types.js';
 
 /** Outcome of an adapter coercion: `undefined` = not handled (defer to the next adapter / default). */
 export type CoerceOutcome = { ok: true; value: unknown } | { ok: false; reason: string } | undefined;
@@ -54,6 +54,22 @@ export interface MemberTable<T extends object = object> {
   /** Read only when a path names the member: never by generic recurse, inline encoding or ref search. */
   explicitOnly(...names: string[]): this;
   describe(name: string, description: string): this;
+
+  /** Methods the `call` stage may invoke on this type (declared ones plus those added by adapters). */
+  readonly methods: readonly MethodAccessor[];
+  /**
+   * Add a callable method (replaces one with the same name and arity). Arguments are coerced to the
+   * parameter types (adapter coercion applies) and missing trailing ones take their `default`; the
+   * result goes to the `call` receipt; `dryRun` invokes nothing.
+   */
+  method<A extends unknown[]>(name: string, params: readonly ParamSpec[], returns: TypeRef | undefined, fn: (target: T, ...args: A) => unknown, description?: string): this;
+  /** Remove callable methods by name (all overloads); unknown names fail the query. */
+  hideMethods(...names: string[]): this;
+  /**
+   * Add a virtual map member over the owner (e.g. a material's uniforms): `M["k"]` reads, `set M["k"] = v`
+   * writes through `set` after coercion to `valueType` and `validate`. Without `set` the map is read-only.
+   */
+  map<V>(name: string, spec: VirtualMapSpec<T, V>, valueType?: TypeRef, description?: string): this;
 }
 
 interface AdapterCapabilities<T extends object> {

@@ -1,4 +1,5 @@
 // Permissioned, all-or-nothing `set` / `call` (spec §8). Mirrors dotnet/Rql.Execution/Mutator.cs.
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -96,6 +97,7 @@ struct Slot {
 Slot slot_of(Exec& x, const Value& container, const Segment& seg, const std::string& label) {
     Slot s;
     if (container.is_map()) {
+        if (container.map().read_only()) throw RqlException("readonly-member", "'" + label + "': map is read-only");
         if (!container.map().writable())
             throw RqlException("unsupported", "map type " + friendly_type_of(container) + " does not support writes");
         if (seg.kind == SegmentKind::Member && iequals(seg.name, "Count"))
@@ -390,8 +392,11 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
             if (!coerced)
                 throw RqlException("coercion-failed", "cannot assign " + describe_value(nv) + " to '" + a.label + "' (" +
                                                           (slot.type ? slot.type->friendly_name() : std::string("object")) + "): " + why);
-            if (slot.kind == Slot::Member && slot.member->validate) {
-                std::string rejected = slot.member->validate(container.ptr(), *coerced);  // before any write (spec §13)
+            // Adapter validation runs before any write (spec §13): members and virtual-map entries.
+            std::string rejected;
+            if (slot.kind == Slot::Member && slot.member->validate) rejected = slot.member->validate(container.ptr(), *coerced);
+            else if (slot.kind == Slot::MapKey) rejected = container.map().validate_entry(slot.key, *coerced);
+            {
                 if (!rejected.empty())
                     throw RqlException("coercion-failed", "cannot assign " + describe_value(nv) + " to '" + a.label + "' on " +
                                                               x.ref_of(item) + ": " + rejected);
@@ -462,7 +467,8 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
         bool exists = false;
         std::vector<std::string> sigs;
         if (t) {
-            for (auto& m : t->methods) {
+            const TypeView view = x.view(t);  // host-registered + adapter methods (spec §13)
+            for (auto& m : view.methods()) {
                 if (!iequals(m.name, s.method)) {
                     if (m.callable) sigs.push_back(t->signature(m));
                     continue;
@@ -470,6 +476,9 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
                 exists = true;
                 if (m.callable) candidates.push_back(&m);
             }
+            // Overloads are chosen by arity, then coercibility.
+            std::stable_sort(candidates.begin(), candidates.end(),
+                             [](const MethodDescriptor* a, const MethodDescriptor* b) { return a->params.size() < b->params.size(); });
             for (auto* m : candidates) sigs.push_back(t->signature(*m));
         }
         std::string tn = type_name_of(item);

@@ -10,7 +10,7 @@ import { closest } from './suggest.js';
 import {
   EnumType,
   EnumValue,
-  RecordMap,
+  StringMap,
   friendlyName,
   isNullable,
   unwrapNullable,
@@ -38,6 +38,10 @@ abstract class Slot {
   writable(_x: Exec): boolean {
     return true;
   }
+  /** Adapter validation of a coerced value before any write: rejection reason or undefined. */
+  validate(_container: object, _value: unknown): string | undefined {
+    return undefined;
+  }
   get denyCode(): 'readonly-member' | 'permission-denied' {
     return 'readonly-member';
   }
@@ -63,6 +67,9 @@ class MemberSlot extends Slot {
   set(container: object, value: unknown): void {
     if (this.m.set === undefined) throw new TypeError(`member '${this.m.name}' has no setter`);
     this.m.set(container, value);
+  }
+  override validate(container: object, value: unknown): string | undefined {
+    return this.m.validate?.(container, value);
   }
   override writable(x: Exec): boolean {
     if (!this.m.canWrite) return false;
@@ -119,12 +126,15 @@ class MapSlot extends Slot {
   set(container: object, value: unknown): void {
     const m = container as MapLike;
     const raw = value instanceof EnumValue && unwrapNullable(this.type) instanceof EnumType ? value.value : value;
-    if (m instanceof RecordMap) {
+    if (m instanceof StringMap) {
       const k = String(this.key);
       if (value === MISSING) m.delete(k);
       else m.set(k, raw);
     } else if (value === MISSING) m.delete(this.key);
     else m.set(this.key, raw);
+  }
+  override validate(container: object, value: unknown): string | undefined {
+    return container instanceof StringMap ? container.validate(String(this.key), value) : undefined;
   }
 }
 
@@ -206,7 +216,7 @@ export class Mutator {
         const co = coerce(x.types, nv, slot.type);
         if (!co.ok) throw new RqlError('coercion-failed', `cannot assign ${describeValue(nv)} to '${lbl}' (${friendlyName(slot.type, x.types)}): ${co.why}`);
         // Validation runs while the mutation is planned, before any write (spec §13).
-        const rejected = slot instanceof MemberSlot ? slot.m.validate?.(container, co.value) : undefined;
+        const rejected = slot.validate(container, co.value);
         if (rejected !== undefined) throw new RqlError('coercion-failed', `cannot assign ${describeValue(nv)} to '${lbl}' on ${this.refOf(item)}: ${rejected}`);
         writes.push({ item, segments: target.segments, label: lbl, old: safeGet(slot, container, lbl), new: co.value });
       }
@@ -253,6 +263,7 @@ export class Mutator {
     const info = x.types.infoOf(container);
     const args = typeArgs(declared);
     if (info.isMap) {
+      if (container instanceof StringMap && container.readOnly) throw new RqlError('readonly-member', `'${lbl}': map is read-only`);
       if (seg.kind === 'member' && seg.name.toUpperCase() === 'COUNT') {
         throw new RqlError('readonly-member', `'${lbl}': Count of a map is read-only (use ["Count"] to address a key literally named Count)`);
       }
@@ -445,7 +456,7 @@ function coerceKey(m: MapLike, key: string | number, keyType: TypeRef, caseInsen
   const existing = findMapKey(m, key);
   if (existing.found && (caseInsensitive || typeof existing.key !== 'string' || typeof key !== 'string' || existing.key === key)) return existing.key;
   const kt = unwrapNullable(keyType);
-  if (m instanceof RecordMap || kt === 'string') return typeof key === 'number' ? String(key) : key;
+  if (m instanceof StringMap || kt === 'string') return typeof key === 'number' ? String(key) : key;
   if (kt === 'int' || kt === 'number') {
     const n = typeof key === 'number' ? key : Number(key);
     if (Number.isNaN(n) || (typeof key === 'string' && key.trim() === '') || (kt === 'int' && !Number.isInteger(n))) return undefined;

@@ -1,12 +1,12 @@
 /** Uniform access to list-like and map-like runtime values. */
 import { formatNumber } from '@rql/contracts';
-import { EnumValue, RecordMap, type TypeInfo, type TypeModel } from './types.js';
+import { EnumValue, StringMap, type TypeInfo, type TypeModel } from './types.js';
 import { MapEntry, MISSING } from './values.js';
 
-export type MapLike = Map<unknown, unknown> | RecordMap;
+export type MapLike = Map<unknown, unknown> | StringMap;
 
 export function isMapLike(v: unknown): v is MapLike {
-  return v instanceof Map || v instanceof RecordMap;
+  return v instanceof Map || v instanceof StringMap;
 }
 
 /** Elements of a list-kind value. */
@@ -26,7 +26,7 @@ export function elements(v: object, info: TypeInfo): Iterable<unknown> {
 export function sizeOf(v: unknown, types: TypeModel): number | undefined {
   if (typeof v === 'string') return v.length;
   if (Array.isArray(v)) return v.length;
-  if (v instanceof Map || v instanceof Set || v instanceof RecordMap) return v.size;
+  if (v instanceof Map || v instanceof Set || v instanceof StringMap) return v.size;
   if (typeof v !== 'object' || v === null) return undefined;
   const info = types.infoOf(v);
   if (!info.isList && !info.isMap) return undefined;
@@ -50,7 +50,7 @@ export function indexAt(list: object, idx: number): unknown {
  * string keys (and enum keys by name). Returns `found: false` when no key matches.
  */
 export function findMapKey(m: MapLike, key: unknown): { found: true; key: unknown } | { found: false } {
-  if (m instanceof RecordMap) {
+  if (m instanceof StringMap) {
     const k = typeof key === 'number' ? formatNumber(key) : key instanceof EnumValue ? key.name : key;
     if (typeof k !== 'string') return { found: false };
     if (m.has(k)) return { found: true, key: k };
@@ -79,5 +79,5 @@ export function findMapKey(m: MapLike, key: unknown): { found: true; key: unknow
 }
 
 export function mapGet(m: MapLike, key: unknown): unknown {
-  return m instanceof RecordMap ? m.get(key as string) : m.get(key);
+  return m instanceof StringMap ? m.get(key as string) : m.get(key);
 }

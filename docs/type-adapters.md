@@ -43,6 +43,8 @@ sealed class RendererAdapter : RqlTypeAdapter<Renderer>
 | Encode | `Encode(value, EncodeContext)` (context: `EncodeValue`, `Summary`, `Depth`) | Output cells |
 | Coerce | `TryCoerce(value, target, out result, out reason)` → `NotHandled` / `Ok` / `Failed` | `set` values, `call` arguments |
 | Compare | `AreEqual(value, other)`, `Compare(value, other)` | `==`, `!=`, `<`…, `sort`, `in`, `contains` |
+| Methods | `MemberTable.AddMethod`, typed `Method` / `Function`, `Expose(name)` for unannotated CLR methods, `HideMethods` | `call` stage, `describe` |
+| Virtual maps | `MemberTable.AddMap` / typed `Map<TValue>(name, keys, get, set?, validate?)` | `M["k"]` reads, `set M["k"] = v` writes |
 | Identity | `StableId(value)`, `IsAlive(value)` | `$ref` / `ref("Type#id")`, `stale-ref` |
 | Describe | `Description` | schema / `describe` |
 
@@ -69,10 +71,10 @@ What Unity-MCP does today through ReflectorNet converters, and the RQL equivalen
 |---|---|
 | Generic Unity converter: public members plus `[SerializeField]` private fields | `IncludeFields(f => f.IsDefined(typeof(SerializeField)))` on a `UnityEngine.Object` adapter (inherited by all subclasses) |
 | `UnityEngine.Object` fake-null, reference by instance id | `StableId` → `GetInstanceID()`, `IsAlive` → `o != null`; destroyed objects give `stale-ref` |
-| `GameObject`: `activeSelf` written through `SetActive`, noisy members ignored | virtual `active` member with getter `activeSelf` and setter `SetActive`; `Hide(...)` |
+| `GameObject`: `activeSelf` written through `SetActive`, noisy members ignored | virtual `active` member with getter `activeSelf` and setter `SetActive`, or `Expose("SetActive")` for `call SetActive(false)`; `Hide(...)` |
 | `Component` back-pointers (`gameObject`, `transform`) ignored to avoid cycles | `Reference("gameObject", "transform")`: still readable by path, not followed by generic `recurse` |
 | `Renderer` / `MeshFilter`: `material(s)` / `mesh` ignored (getters instantiate copies) | `ExplicitOnly("material", "materials", "mesh")`: never read implicitly; read only when a query names them |
-| `Material`: shader properties exposed as members | reads: a virtual `properties` map member computed per instance (`Materials.properties["_Glossiness"]`). Member tables are per type and shader properties are per instance, so writes need adapter-defined methods, which don't exist yet (see roadmap) |
+| `Material`: shader properties exposed as members | virtual maps per property kind, e.g. `Map<float>("floats", m => FloatNames(m.shader), (m, k) => m.GetFloat(k), (m, k, v) => m.SetFloat(k, v), validate: …)`: `Materials.floats["_Glossiness"]`, `set Materials.floats["_Glossiness"] = 0.3` with validation and rollback |
 | Asset references by id / path / GUID | `StableId` → asset GUID; host `ResolveStableRef` resolves `Texture2D#<guid>` |
 | `Texture` / `Sprite`: no cascade into pixel data | `Only("name", "width", "height", "format")` |
 | `Scene`: whitelist (other getters crash) | `Only(...)`: unlisted members do not exist for RQL, so they cannot be read by accident |

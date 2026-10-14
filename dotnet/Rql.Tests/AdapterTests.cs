@@ -344,6 +344,88 @@ namespace Rql.Tests
             Assert.Equal("Counter#1", max.Value!["$ref"]!.GetValue<string>());
         }
 
+        // Unity-shaped engine types: no RQL attributes possible, state behind methods.
+        public sealed class GameObjectApi
+        {
+            public int Id { get; set; } = 1;
+            public bool activeSelf { get; private set; } = true;
+            public void SetActive(bool value) => activeSelf = value;
+            public void Destroy() { }
+        }
+
+        public sealed class ShaderMaterial
+        {
+            private readonly Dictionary<string, float> _floats = new Dictionary<string, float> { ["_Glossiness"] = 0.5f, ["_Metallic"] = 0f };
+            public int Id { get; set; } = 7;
+            public IEnumerable<string> FloatNames => _floats.Keys;
+            public float GetFloat(string name) => _floats[name];
+            public void SetFloat(string name, float value) { if (name == "_Metallic" && value > 0.9f) throw new InvalidOperationException("driver rejects"); _floats[name] = value; }
+            public bool HasFloat(string name) => _floats.ContainsKey(name);
+        }
+
+        private sealed class UnityApi { public List<GameObjectApi> Objects { get; } = new List<GameObjectApi> { new GameObjectApi() }; public List<ShaderMaterial> Materials { get; } = new List<ShaderMaterial> { new ShaderMaterial() }; }
+
+        private sealed class GameObjectApiAdapter : RqlTypeAdapter<GameObjectApi>
+        {
+            protected override void Members(MemberTable<GameObjectApi> m) => m.Expose(nameof(GameObjectApi.SetActive), "activate / deactivate");
+        }
+
+        private sealed class MaterialFloats : RqlTypeAdapter<ShaderMaterial>
+        {
+            protected override void Members(MemberTable<ShaderMaterial> m) =>
+                m.Hide(nameof(ShaderMaterial.FloatNames))
+                 .Map<float>("floats", x => x.FloatNames, (x, k) => x.GetFloat(k), (x, k, v) => x.SetFloat(k, v),
+                     validate: (x, k, v) => !x.HasFloat(k) ? $"shader has no float '{k}'" : v < 0 || v > 1 ? "must be within [0, 1]" : null);
+        }
+
+        private static RqlEngine UnityApiEngine(UnityApi api)
+        {
+            var e = new RqlEngine();
+            e.AddSource("u", () => api);
+            e.Mutations.Enabled = true;
+            e.AddAdapter(new GameObjectApiAdapter()).AddAdapter(new MaterialFloats());
+            return e;
+        }
+
+        [Fact]
+        public void ExposedEngineMethodsAreCallableWithoutAttributes()
+        {
+            var api = new UnityApi();
+            var e = UnityApiEngine(api);
+            var r = e.Execute("u.Objects | call SetActive(false)", options: new QueryOptions { AllowMutation = true });
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.False(api.Objects[0].activeSelf);
+            var hidden = e.Execute("u.Objects | call Destroy()", options: new QueryOptions { AllowMutation = true });
+            Assert.Equal("permission-denied", hidden.Diagnostics[0].Code);
+            var schema = e.Execute("u.Objects | describe");
+            Assert.Contains("SetActive(bool value) — activate / deactivate", schema.ToJson(includeStats: false));
+        }
+
+        [Fact]
+        public void VirtualMapsReadWriteValidateAndRollBack()
+        {
+            var api = new UnityApi();
+            var e = UnityApiEngine(api);
+            var mat = api.Materials[0];
+            Assert.Equal("0.5", Cell(e.Execute("u.Materials | select g=floats[\"_Glossiness\"]")));
+
+            var ok = e.Execute("u.Materials | set floats[\"_Glossiness\"] = 0.25", options: new QueryOptions { AllowMutation = true });
+            Assert.True(ok.Ok, ok.ToJson(includeStats: false));
+            Assert.Equal(0.25f, mat.GetFloat("_Glossiness"));
+
+            var invalid = e.Execute("u.Materials | set floats[\"_Glossiness\"] = 3", options: new QueryOptions { AllowMutation = true });
+            Assert.Equal("coercion-failed", invalid.Diagnostics[0].Code);
+            Assert.Contains("within [0, 1]", invalid.Diagnostics[0].Message);
+            var unknown = e.Execute("u.Materials | set floats[\"_Nope\"] = 0.1", options: new QueryOptions { AllowMutation = true });
+            Assert.Contains("no float '_Nope'", unknown.Diagnostics[0].Message);
+
+            // The second write throws inside the engine: the first one is rolled back.
+            var failed = e.Execute("u.Materials | set floats[\"_Glossiness\"] = 0.75, floats[\"_Metallic\"] = 0.95", options: new QueryOptions { AllowMutation = true });
+            Assert.False(failed.Ok);
+            Assert.Equal(0.25f, mat.GetFloat("_Glossiness"));
+            Assert.Equal(0f, mat.GetFloat("_Metallic"));
+        }
+
         private sealed class EncodeOnly : RqlTypeAdapter<ComponentLike>
         {
             protected override JsonNode? Encode(ComponentLike c, EncodeContext context) => JsonValue.Create("component " + c.Name);

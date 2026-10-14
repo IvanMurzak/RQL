@@ -56,15 +56,9 @@ namespace Rql.Execution
             o["members"] = members;
             if (info.Callable.Count > 0)
                 o["methods"] = new JsonArray(info.Callable.Select(mi =>
-                {
-                    var desc = mi.GetCustomAttribute<RqlCallableAttribute>()?.Description;
-                    return (JsonNode)JsonValue.Create(desc == null ? Signature(mi) : Signature(mi) + " — " + desc)!;
-                }).ToArray());
+                    (JsonNode)JsonValue.Create(mi.Description == null ? mi.Signature : mi.Signature + " — " + mi.Description)!).ToArray());
             return o;
         }
-
-        public static string Signature(MethodInfo m) =>
-            m.Name + "(" + string.Join(", ", m.GetParameters().Select(p => TypeModel.FriendlyName(p.ParameterType) + " " + p.Name)) + ")";
 
         /// <summary>
         /// All types statically reachable from the given roots through member types, element types and

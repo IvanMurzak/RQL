@@ -49,6 +49,11 @@ public:
     virtual void erase(const Value& key);
     /// True for runtime-owned maps (no live view into host data); used instead of RTTI.
     virtual bool owned() const { return false; }
+    /// Read-only map: `set m["k"] = v` → readonly-member (e.g. an adapter virtual map without setter).
+    virtual bool read_only() const { return false; }
+    /// Rejection reason for assigning an (already coerced) value to a key, empty = accept. Runs while a
+    /// mutation is planned, before any write (spec §13 virtual maps).
+    virtual std::string validate_entry(const Value& key, const Value& value) const;
 };
 
 struct ErrorInfo {

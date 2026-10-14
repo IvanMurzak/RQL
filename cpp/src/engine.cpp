@@ -1,5 +1,6 @@
 #include "rql/engine.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <unordered_set>
 
@@ -521,9 +522,16 @@ Json Engine::describe_type_impl(const TypeDescriptor& t) const {
         members.push(std::move(mo));
     }
     o.set("members", std::move(members));
+    // Callable methods (host + adapter), sorted by name then arity: "name(type param, ...) — description".
+    std::vector<const MethodDescriptor*> callable;
+    for (auto& m : tv.methods())
+        if (m.callable) callable.push_back(&m);
+    std::stable_sort(callable.begin(), callable.end(), [](const MethodDescriptor* a, const MethodDescriptor* b) {
+        return a->name != b->name ? a->name < b->name : a->params.size() < b->params.size();
+    });
     Json methods = Json::array();
-    for (auto& m : t.methods)
-        if (m.callable) methods.push(Json(t.signature(m)));
+    for (auto* m : callable)
+        methods.push(Json(m->description.empty() ? t.signature(*m) : t.signature(*m) + " \xE2\x80\x94 " + m->description));
     if (methods.size() > 0) o.set("methods", std::move(methods));
     return o;
 }
@@ -570,9 +578,11 @@ Json Engine::capabilities_impl() {
     mut.set("enabled", mutations_.enabled);
     mut.set("maxTargets", mutations_.max_targets);
     Json callable = Json::array();
-    for (auto* t : types_->registered())
-        for (auto& m : t->methods)
+    for (auto* t : types_->registered()) {
+        const detail::TypeView tv = view_of(t, nullptr);  // includes adapter methods
+        for (auto& m : tv.methods())
             if (m.callable) callable.push(Json(t->name + "." + t->signature(m)));
+    }
     mut.set("callable", std::move(callable));
     o.set("mutations", std::move(mut));
     Json limits = Json::object();

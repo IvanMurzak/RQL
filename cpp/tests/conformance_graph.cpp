@@ -129,7 +129,41 @@ void register_test_adapters(rql::Engine& engine, rql::TypeRegistry& reg) {
                 [](Node&, const std::string& v) { return v.empty() ? std::string("title must not be empty") : std::string(); },
                 "upper-cased Name; assigning sets Name lower-cased")
             .hide({"Note"})
-            .explicit_only({"Children"});
+            .explicit_only({"Children"})
+            .map<Node>(
+                "stats",
+                [](Node& n) {
+                    std::vector<std::string> keys;
+                    for (auto& kv : n.Props) keys.push_back(kv.first);
+                    return keys;
+                },
+                [](Node& n, const std::string& k) { return n.Props.at(k); },
+                [](Node& n, const std::string& k, double v) { n.Props[k] = v; },
+                [](Node& n, const std::string& k, const double& v) {
+                    if (!n.Props.count(k)) return "unknown stat '" + k + "'";
+                    return v < 0 ? std::string("stats must be non-negative") : std::string();
+                },
+                "Props as a validated map")
+            .map<Node>(
+                "labels", [](Node&) { return std::vector<std::string>{"name", "kind"}; },
+                [](Node& n, const std::string& k) {
+                    if (k == "name") return n.Name;
+                    return std::string(n.Kind == NodeKind::Alpha ? "Alpha" : n.Kind == NodeKind::Beta ? "Beta" : "Gamma");
+                },
+                nullptr, nullptr, "read-only labels")
+            .method<Node>(
+                "bump", {rql::ParamDescriptor{"by", rql::builtin::double_type(), false, true, rql::Value::number(1)}},
+                rql::builtin::double_type(),
+                [](Node& n, const std::vector<rql::Value>& args) {
+                    n.Value += args[0].as_number();
+                    return rql::Value::number(n.Value);
+                },
+                "Value += by; returns the new Value")
+            .method<Node>(
+                "greet", {rql::ParamDescriptor{"who", rql::builtin::string_type(), false, false, rql::Value()}},
+                rql::builtin::string_type(),
+                [](Node& n, const std::vector<rql::Value>& args) { return rql::Value::string("hi " + args[0].as_string() + ", I am " + n.Name); },
+                "a greeting (no state change)");
     };
     engine.add_adapter(std::move(node));
 

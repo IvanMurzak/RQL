@@ -1,7 +1,7 @@
 /** The test adapter set specified in fixtures/adapters/cases.json ("adapters" section). */
 import { formatNumber } from '@rql/contracts';
 import { t, type RqlEngine, type TypeAdapter } from '@rql/execution';
-import { Node, Special, Vec2 } from './graph.js';
+import { Node, NodeKind, Special, Vec2 } from './graph.js';
 
 const asciiCase = (s: string, upper: boolean): string => (upper ? s.replace(/[a-z]+/g, (m) => m.toUpperCase()) : s.replace(/[A-Z]+/g, (m) => m.toLowerCase()));
 const length = (v: Vec2): number => Math.sqrt(v.x * v.x + v.y * v.y);
@@ -57,8 +57,33 @@ export const nodeAdapter: TypeAdapter<Node> = {
         description: 'upper-cased Name; assigning sets Name lower-cased',
       })
       .hide('Note')
-      .explicitOnly('Children'),
+      .explicitOnly('Children')
+      .map<number>(
+        'stats',
+        {
+          keys: (n) => n.Props.keys(),
+          get: (n, k) => n.Props.get(k)!,
+          set: (n, k, v) => void n.Props.set(k, v),
+          validate: (n, k, v) => (!n.Props.has(k) ? `unknown stat '${k}'` : v < 0 ? 'stats must be non-negative' : undefined),
+        },
+        t.number,
+        'Props as a validated map',
+      )
+      .map<string>('labels', { keys: () => LABELS, get: (n, k) => (k === 'name' ? n.Name : NodeKind[n.Kind]) }, t.string, 'read-only labels')
+      .method('greet', [{ name: 'who', type: t.string }], t.string, (n, who: string) => `hi ${who}, I am ${n.Name}`, 'a greeting (no state change)')
+      .method(
+        'bump',
+        [{ name: 'by', type: t.number, default: 1 }],
+        t.number,
+        (n, by: number) => {
+          n.Value += by;
+          return n.Value;
+        },
+        'Value += by; returns the new Value',
+      ),
 };
+
+const LABELS = ['name', 'kind'];
 
 export const specialAdapter: TypeAdapter<Special> = {
   target: Special,

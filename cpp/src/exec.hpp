@@ -42,6 +42,7 @@ struct AdaptedType {
     std::vector<MemberDescriptor> members;                                  // valid when owns_members
     const MemberDescriptor* id = nullptr;                                   // valid when owns_members
     const MemberDescriptor* display = nullptr;                              // valid when owns_members
+    std::vector<MethodDescriptor> methods;                                  // valid when owns_members (host + adapter methods)
     bool has_explicit_only = false;
     std::vector<MemberDescriptor> implicit;                                 // members minus explicit-only (when any)
 };
@@ -60,6 +61,8 @@ public:
     const MemberDescriptor* id() const { return a_ && a_->owns_members ? a_->id : t_->id_member(); }
     const MemberDescriptor* display() const { return a_ && a_->owns_members ? a_->display : t_->display_member(); }
     bool member_writable(const MemberDescriptor& m) const { return rql::member_writable(m, id()); }
+    /// Callable methods: host-registered plus adapter methods (spec §13), unsorted.
+    const std::vector<MethodDescriptor>& methods() const { return a_ && a_->owns_members ? a_->methods : t_->methods; }
     const std::string& description() const { return a_ ? a_->description : t_->description; }
     const std::vector<const TypeAdapter*>& adapters() const { return a_ ? a_->adapters : empty(); }
     const std::vector<const TypeAdapter*>& with(Capability c) const { return a_ ? a_->by_cap[static_cast<size_t>(c)] : empty(); }

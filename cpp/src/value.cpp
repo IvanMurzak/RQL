@@ -14,6 +14,7 @@ bool IMapAdapter::accepts_key(const Value& key) const {
 }
 void IMapAdapter::set(const Value&, const Value&) { throw std::runtime_error("map is not writable"); }
 void IMapAdapter::erase(const Value&) { throw std::runtime_error("map is not writable"); }
+std::string IMapAdapter::validate_entry(const Value&, const Value&) const { return {}; }
 
 // ------------------------------------------------------------------ Value
 

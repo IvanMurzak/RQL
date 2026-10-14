@@ -14,4 +14,4 @@ Conformance: all golden vectors pass (`cd typescript && npm test`). Gaps vs the 
 | Reflection of undeclared objects | partial | dynamic fallback: no int/enum/struct typing (TS types are erased) |
 | Float precision | n/a | JS numbers are doubles; no single-precision `float` member type |
 | `describe` type names | full | C#-like spelling shared with the reference (`int`, `double`, `List<T>`, `Dictionary<K, V>`, `T?` for value types) |
-| Type adapters (§13) | full | tiers: exact / base-class distance / `matches` predicate (no nominal generics or interfaces in JS); member shaping requires a registered descriptor; primitives not adaptable |
+| Type adapters (§13), incl. methods and virtual maps | full | tiers: exact / base-class distance / `matches` predicate (no nominal generics or interfaces in JS); member shaping requires a registered descriptor; primitives not adaptable |
