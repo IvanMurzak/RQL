@@ -26,6 +26,7 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Modules
                .AddSource("roots", RqlUnity.RootGameObjects, "root GameObjects of the loaded scenes")
                .AddSource("scenes", RqlUnity.Scenes, "loaded scenes")
                .AddSource("selection", RqlUnity.SelectedObjects, "objects selected in the Editor")
+               .AddSource("editor", () => RqlUnity.EditorApi, "Editor operations: call CreateGameObject(name, parent?, primitive?)")
                .AddFunction("unity.assets", RqlUnity.FindAssets)
                .AddFunction("unity.asset", RqlUnity.LoadAsset);
 

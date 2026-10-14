@@ -116,11 +116,15 @@ namespace RqlTest.EditorTools
         private static Material MaterialAsset(string name, Color color)
         {
             var path = $"{MaterialFolder}/{name}.mat";
+            // Always reset every property (evaluation runs change glossiness, metallic, alpha …).
+            var fresh = new Material(Shader.Find("Standard")) { color = color, name = name };
             var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
-            if (existing != null) { existing.color = color; EditorUtility.SetDirty(existing); return existing; }
-            var m = new Material(Shader.Find("Standard")) { color = color };
-            AssetDatabase.CreateAsset(m, path);
-            return m;
+            if (existing == null) { AssetDatabase.CreateAsset(fresh, path); return fresh; }
+            EditorUtility.CopySerialized(fresh, existing);
+            existing.name = name;
+            EditorUtility.SetDirty(existing);
+            Object.DestroyImmediate(fresh);
+            return existing;
         }
     }
 }

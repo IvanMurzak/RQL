@@ -161,6 +161,37 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Tests
         }
 
         [Test]
+        public void CreatesObjectsAddsComponentsReparentsAndDestroys()
+        {
+            var alphaRef = Cell(Q("objects | where name == \"Alpha\" | select $ref"));
+            var created = M($"editor | call CreateGameObject(\"Crate\", ref(\"{alphaRef}\"), \"Cube\")");
+            Assert.IsTrue(created.Ok, Table(created));
+            var crate = GameObject.Find("Crate");
+            Assert.IsNotNull(crate);
+            Assert.AreEqual(_a.transform, crate.transform.parent);
+            Assert.IsNotNull(crate.GetComponent<MeshRenderer>());
+
+            var add = M("objects | where name == \"Crate\" | call AddComponent(\"Rigidbody\")");
+            Assert.IsTrue(add.Ok, Table(add));
+            Assert.IsTrue(M("objects | get components | where $ is Rigidbody | set mass = 50").Ok);
+            Assert.AreEqual(50f, crate.GetComponent<Rigidbody>().mass, 1e-6f);
+
+            var betaRef = Cell(Q("objects | where name == \"Beta\" | select $ref"));
+            var reparent = M($"objects | where name == \"Crate\" | set transform.parent = ref(\"{betaRef}\")");
+            Assert.IsTrue(reparent.Ok, Table(reparent));
+            Assert.AreEqual(_b.transform, crate.transform.parent);
+
+            Assert.IsTrue(M("objects | where name == \"Crate\" | get components | where $ is BoxCollider | call Destroy()").Ok);
+            Assert.IsNull(crate.GetComponent<BoxCollider>());
+            Assert.IsTrue(M("objects | where name == \"Crate\" | call Destroy()").Ok);
+            Assert.IsTrue(crate == null);
+            Undo.PerformUndo();
+            Assert.IsNotNull(GameObject.Find("Crate"), "destroy is undoable");
+            Assert.AreEqual("unknown-function", M("objects | where name == \"Alpha\" | call AddComponent(\"NoSuchComponent\")").Diagnostics.Count == 0
+                ? "?" : "unknown-function");
+        }
+
+        [Test]
         public void SchemaListsSceneTypesAndOneType()
         {
             var overview = RqlUnitySchema.Render(RqlUnity.Engine, null);

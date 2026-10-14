@@ -30,8 +30,12 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
         public const int MaxAssets = 200;
 
         private static RqlEngine? _engine;
+        private static int _undoGroup = -1;
 
         public static RqlEngine Engine => _engine ??= Create();
+
+        /// <summary>Target of <c>editor | call …</c> (see <see cref="RqlEditorApi"/>).</summary>
+        public static RqlEditorApi EditorApi => RqlEditorApi.Instance;
 
         /// <summary>Drop the engine (tests, or after changing adapters).</summary>
         public static void Reset() => _engine = null;
@@ -49,13 +53,18 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
             engine.ResolveStableRef = ResolveStableRef;
 
             engine.Mutations.Enabled = true;
+            // One Undo group per mutation: recorded owners, created / destroyed objects and added components undo together.
             engine.Mutations.BeforeWrite = records =>
             {
+                Undo.IncrementCurrentGroup();
+                Undo.SetCurrentGroupName("RQL mutation");
+                _undoGroup = Undo.GetCurrentGroup();
                 var owners = Owners(records);
                 if (owners.Length > 0) Undo.RecordObjects(owners, "RQL mutation");
             };
             engine.Mutations.Committed = records =>
             {
+                if (_undoGroup >= 0) { Undo.CollapseUndoOperations(_undoGroup); _undoGroup = -1; }
                 foreach (var o in Owners(records))
                 {
                     EditorUtility.SetDirty(o);

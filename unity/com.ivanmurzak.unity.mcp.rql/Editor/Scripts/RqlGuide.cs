@@ -24,7 +24,7 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
 
         public const string Language =
             "RQL: source | stage | stage ...\n" +
-            "Sources: objects (every GameObject in the loaded scenes, inactive included), roots, scenes, selection. " +
+            "Sources: objects (every GameObject in the loaded scenes, inactive included), roots, scenes, selection, editor (Editor operations). " +
             "Assets: unity.assets(\"t:Material\") or unity.assets(\"t:Prefab\", \"Assets/Enemies\"), unity.asset(\"Assets/Mats/Red.mat\"). " +
             "ref(\"Light#1234\") resolves a $ref.\n" +
             "Stages:\n" +
@@ -71,6 +71,12 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
             "  objects | where tag == \"Enemy\" | set active = false\n" +
             "  unity.asset(\"Assets/Mats/Red.mat\") | set properties[\"_Color\"] = \"(1, 0, 0, 1)\"\n" +
             "  objects | where name == \"Spawner\" | set targets = append(targets, ref(\"GameObject#1234\"))\n" +
+            "Create / add / remove (call; the receipt's result column holds the new object's $ref for follow-up queries):\n" +
+            "  editor | call CreateGameObject(\"Props\")                                   new root GameObject\n" +
+            "  editor | call CreateGameObject(\"Crate\", ref(\"GameObject#1234\"), \"Cube\")    child of a parent, optional primitive\n" +
+            "  objects | where name == \"Crate\" | call AddComponent(\"Rigidbody\")           add a component by type name\n" +
+            "  objects | where name == \"Old\" | call Destroy()                             remove a GameObject (components: get components | where $ is X | call Destroy())\n" +
+            "  objects | where name == \"Lamp\" | set transform.parent = ref(\"GameObject#1234\")   reparent (keeps the local position)\n" +
             "Object literals build values: set settings = {speed: 2, \"$type\": \"FastSettings\"}. At most 20 targets per call.\n\n" +
             "Query syntax:\n" + Language;
 

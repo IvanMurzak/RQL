@@ -80,6 +80,24 @@ Batch mode (from this folder; `U` = the Unity 6000.6 binary):
 "$U" -batchmode -nographics -quit -projectPath "$PWD/RqlTestProject" -executeMethod RqlTest.EditorTools.RqlSmoke.Run -logFile -
 ```
 
+## Agent comparison inside Unity (ReflectorNet tools vs RQL tools)
+
+`RqlTestProject/Assets/Editor/Eval/` runs the same DeepSeek agent on 16 Editor tasks (material properties, lights,
+creating hierarchies, adding components, moving / reparenting, bulk script-field edits, two questions), once with
+Unity-MCP's ReflectorNet-based tools (`gameobject-*`, `object-*`, `assets-*`, `scene-*`, `type-get-json-schema`) and once
+with the three RQL tools. Equal conditions: one system prompt, tool names / descriptions / schemas taken from Unity-MCP's
+own tool list and executed through its `RunCallTool` pipeline, the scene rebuilt before every run. A run passes only if the
+task check holds AND a scene / material snapshot diff shows no change the task did not ask for.
+
+```bash
+export RQL_EVAL_API_KEY_FILE=<path to the agent-testing key>
+"$U" -batchmode -nographics -projectPath "$PWD/RqlTestProject" -executeMethod RqlTest.Eval.UnityEval.Run \
+     -evalRepeats 3 -evalBudget 2 -logFile RqlTestProject/Logs/eval.log    # no -quit; optional -evalTasks a,b -evalConditions rql
+```
+
+Output: `../evaluation/runs/<ts>-unity-inproc/` (`config.json`, `results.jsonl` with full transcripts, `summary.md`); spend
+goes into `../evaluation/baselines/spend-ledger.json`.
+
 ## Known limits
 
 - **Unity versions:** compiled and tested on Unity 6000.6.4f1 (macOS) only. Code paths for Unity < 6.5 (instance ids
