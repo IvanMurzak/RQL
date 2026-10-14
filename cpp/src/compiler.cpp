@@ -221,7 +221,8 @@ bool distinct_equal(Exec& x, const Value& a, const Value& b) {
     if (a.is_bool() && b.is_bool()) return a.as_bool() == b.as_bool();
     if (a.is_struct() && b.is_struct()) {
         if (a.type() != b.type()) return false;
-        for (auto& m : x.view(a.type()).implicit_members()) {  // never hidden / explicit-only members (spec §13)
+        const auto view = x.view(a.type());
+        for (auto& m : view.implicit_members()) {  // never hidden / explicit-only members (spec §13)
             Value ma, mb;
             try {
                 ma = m.getter(a.ptr());
@@ -250,7 +251,8 @@ size_t distinct_hash(Exec& x, const Value& v) {
         case Value::Kind::Enum: return std::hash<int64_t>()(v.enum_value()) ^ std::hash<const void*>()(v.type());
         case Value::Kind::Struct: {
             size_t h = std::hash<const void*>()(v.type());
-            for (auto& m : x.view(v.type()).implicit_members()) {
+            const auto view = x.view(v.type());
+            for (auto& m : view.implicit_members()) {
                 try {
                     h = h * 31 + distinct_hash(x, m.getter(v.ptr()));
                 } catch (const std::exception&) {
