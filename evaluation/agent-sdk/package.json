@@ -1,0 +1,9 @@
+{
+  "name": "rql-agent-sdk-probe",
+  "private": true,
+  "type": "module",
+  "description": "Short live runs of Unity-MCP tool presentations through the Claude Agent SDK (see README.md)",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "latest"
+  }
+}

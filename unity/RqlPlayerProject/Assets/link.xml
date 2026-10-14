@@ -1,0 +1,5 @@
+<linker>
+  <!-- RQL reads engine members by reflection only; IL2CPP's engine stripping would remove the ones no C# code calls
+       (e.g. Camera.fieldOfView). Keep the core engine types whole. -->
+  <assembly fullname="UnityEngine.CoreModule" preserve="all"/>
+</linker>

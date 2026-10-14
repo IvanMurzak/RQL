@@ -1,0 +1,7 @@
+{
+    "name": "RqlPlayer.Editor",
+    "references": [],
+    "includePlatforms": [ "Editor" ],
+    "excludePlatforms": [],
+    "autoReferenced": false
+}
