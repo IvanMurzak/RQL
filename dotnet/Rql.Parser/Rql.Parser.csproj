@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFrameworks>netstandard2.1;net8.0</TargetFrameworks>
+    <!-- Unity compiles C# 9 (and may compile these sources directly); Godot uses .NET 8. Keep library code C# 9. -->
+    <LangVersion>9.0</LangVersion>
     <RootNamespace>Rql</RootNamespace>
     <Description>RQL text parser (syntax only) producing canonical QueryPlans.</Description>
   </PropertyGroup>
