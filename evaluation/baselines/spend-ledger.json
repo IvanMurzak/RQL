@@ -1,6 +1,6 @@
 {
   "CapUsd": 25,
-  "SpentUsd": 4.1892973889999965,
+  "SpentUsd": 4.9308580489999967,
   "Runs": [
     {
       "id": "probe-20261013T203447Z",
@@ -329,6 +329,30 @@
       "config": "unity-inproc",
       "taskRuns": 180,
       "costUsd": 0.23782200000000001
+    },
+    {
+      "id": "20261014-201548-unity-inproc",
+      "config": "unity-inproc",
+      "taskRuns": 16,
+      "costUsd": 0.0048060000000000004
+    },
+    {
+      "id": "20261014-201822-unity-inproc",
+      "config": "unity-inproc",
+      "taskRuns": 16,
+      "costUsd": 0.52584699999999995
+    },
+    {
+      "id": "20261014-202015-unity-inproc",
+      "config": "unity-inproc",
+      "taskRuns": 3,
+      "costUsd": 0.0037919999999999998
+    },
+    {
+      "id": "20261014-202035-unity-inproc",
+      "config": "unity-inproc",
+      "taskRuns": 3,
+      "costUsd": 0.20711599999999999
     }
   ]
 }

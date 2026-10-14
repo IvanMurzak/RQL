@@ -278,6 +278,25 @@ namespace RqlTest.Eval
                 Prompt = "Which GameObjects render with the material \"Gold\"? Submit their names, comma-separated.",
                 Check = a => NameSetEquals(a, "Enemy_06", "Pillar_1", "Pillar_2", "Pillar_3", "Pillar_4") ? (true, "5 names") : (false, $"got '{a}'"),
             },
+            // Text-escaping probes: the name passes through tool results and arguments unchanged only if no layer mangles it.
+            new EvalTask
+            {
+                Id = "answer-tricky-name", Category = "escaping",
+                Prompt = "Exactly one GameObject has a name starting with \"Crate #7\". Submit its exact full name, character for character.",
+                Setup = () => new GameObject(TrickyName).transform.SetParent(Go("Level")!.transform, false),
+                Check = a => a?.Trim() == TrickyName ? (true, "exact") : (false, $"got '{a}'"),
+            },
+            new EvalTask
+            {
+                Id = "rename-tricky-name", Category = "escaping",
+                Prompt = "Rename the GameObject whose name starts with \"Crate #7\" to exactly: " + TrickyRename,
+                Setup = () => new GameObject(TrickyName).transform.SetParent(Go("Level")!.transform, false),
+                Check = _ => Go("Level/" + TrickyRename) != null ? (true, "renamed") : (false, "no Level/" + TrickyRename),
+                Allowed = k => k.StartsWith("Level/" + TrickyName, StringComparison.Ordinal) || k.StartsWith("Level/" + TrickyRename, StringComparison.Ordinal),
+            },
         };
+
+        private const string TrickyName = "Crate #7 <A+B> — café \"x\"";
+        private const string TrickyRename = "Box <1+1> naïve & 'ok' — ü";
     }
 }

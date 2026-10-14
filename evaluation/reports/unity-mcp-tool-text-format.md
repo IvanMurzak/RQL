@@ -70,3 +70,22 @@ Implementation (local branches, not published): McpPlugin `experiment/rql-tool-f
 `experiment/rql` `Editor/Scripts/Rql/ToolFormat/` (presentation + tests); mirror for the 0.93.4 project in
 `unity/com.ivanmurzak.unity.mcp.rql/Editor/Scripts/ToolFormat/`. After these runs the result text stopped escaping
 `+`, `<` and non-ASCII as `\u002B`-style sequences (slightly shorter results; not re-measured). Spend: $0.30 (ledger $4.19 of $25).
+
+## Escaping check on other providers (2026-10-14)
+
+After the result text stopped escaping `+`, `<`, `&`, `'` and non-ASCII (`ToolTextEscaping.Minimal`, now configurable:
+Minimal / Ascii / Json via McpPlugin `ToolPresentation.Escaping` and Unity-MCP config `toolTextEscaping`), a short run
+on two more models: 8 tasks × json / text × 1 repeat on the branch catalog, plus the 3 escaping tasks on 0.93.4+text.
+Two new probes use a GameObject named `Crate #7 <A+B> — café "x"`: read its exact name back
+(`answer-tricky-name`) and rename it to `Box <1+1> naïve & 'ok' — ü` (`rename-tricky-name`).
+
+| Model (provider) | branch json | branch text | 0.93.4 text (3 escaping tasks) | Cost |
+|---|---|---|---|---|
+| gpt-6-luna (OpenAI) | 8/8 | 7/8 | 3/3 | $0.009 |
+| claude-haiku-4-5 (DeepInfra) | 7/8 | 7/8 | 3/3 | $0.73 |
+
+Both probes passed in every condition on both models: no provider mangled the unescaped characters, in tool results or
+in arguments. The three failures were all `answer-gold-users`: the agent selected `Renderer.materials`, which in the
+Editor instantiates material copies (an unintended scene change). Fixed afterwards: `material` / `materials` now read
+and write the shared materials. Runs `20261014-201548`, `-201822`, `-202015`, `-202035` (`-unity-inproc`). Haiku 5.5 was
+not reachable (no Anthropic inference key; DeepInfra lists Haiku 4.5 only). gpt-6-luna prices from third-party listings.

@@ -101,11 +101,14 @@ namespace RqlTest.Eval
                 {
                     u.PromptTokens = usage["prompt_tokens"]?.GetValue<long>() ?? 0;
                     u.CompletionTokens = usage["completion_tokens"]?.GetValue<long>() ?? 0;
-                    u.CacheHitTokens = usage["prompt_cache_hit_tokens"]?.GetValue<long>() ?? 0;
+                    u.CacheHitTokens = usage["prompt_cache_hit_tokens"]?.GetValue<long>()
+                        ?? (usage["prompt_tokens_details"] as JsonObject)?["cached_tokens"]?.GetValue<long>() ?? 0;   // OpenAI-style
                     u.CacheMissTokens = usage["prompt_cache_miss_tokens"]?.GetValue<long>() ?? (u.PromptTokens - u.CacheHitTokens);
                 }
                 double f = IsPeak(DateTime.UtcNow) ? 1 : _offPeak;
                 u.CostUsd = f * (u.CacheHitTokens * _hit + u.CacheMissTokens * _miss + u.CompletionTokens * _output) / 1_000_000.0;
+                // DeepInfra reports the billed cost itself.
+                if ((json["usage"] as JsonObject)?["estimated_cost"] is JsonNode billed) u.CostUsd = double.Parse(billed.ToJsonString(), System.Globalization.CultureInfo.InvariantCulture);
                 return ((JsonObject)choice["message"]!.DeepClone(), choice["finish_reason"]?.GetValue<string>(), u, sw.Elapsed.TotalMilliseconds);
             }
         }

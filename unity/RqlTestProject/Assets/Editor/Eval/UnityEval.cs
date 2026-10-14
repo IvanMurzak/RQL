@@ -28,7 +28,9 @@ namespace RqlTest.Eval
     /// </summary>
     public static class UnityEval
     {
-        private const string Model = "deepseek-flash";
+        // -evalModel / -evalBaseUrl pick the provider (OpenAI-compatible chat completions); the key file is RQL_EVAL_API_KEY_FILE.
+        private static string Model => Arg("-evalModel", "deepseek-flash");
+        private static string BaseUrl => Arg("-evalBaseUrl", "https://api.deepseek.com");
         private const int MaxTokensPerCall = 4096;
         private const int MaxToolResultChars = 40_000;
 
@@ -183,7 +185,7 @@ namespace RqlTest.Eval
             var toolDefs = new Dictionary<string, JsonArray>();
             var config = new JsonObject
             {
-                ["runId"] = runId, ["model"] = Model, ["reasoningEffort"] = "none", ["temperature"] = 0, ["maxTokensPerCall"] = MaxTokensPerCall,
+                ["runId"] = runId, ["model"] = Model, ["baseUrl"] = BaseUrl, ["reasoningEffort"] = "none", ["temperature"] = 0, ["maxTokensPerCall"] = MaxTokensPerCall,
                 ["maxSteps"] = maxSteps, ["repeats"] = repeats, ["budgetUsd"] = budget, ["maxToolResultChars"] = MaxToolResultChars,
                 ["unity"] = UnityEngine.Application.unityVersion, ["unityMcp"] = UnityMcpPlugin.Version, ["systemPrompt"] = SystemPrompt,
                 ["tasks"] = new JsonArray(tasks.Select(t => (JsonNode)new JsonObject { ["id"] = t.Id, ["category"] = t.Category, ["prompt"] = t.Prompt }).ToArray()),
@@ -236,7 +238,7 @@ namespace RqlTest.Eval
                 return;
             }
 
-            using var client = new DeepSeekClient("https://api.deepseek.com", DeepSeekClient.LoadApiKey(), prices, TimeSpan.FromSeconds(120));
+            using var client = new DeepSeekClient(BaseUrl, DeepSeekClient.LoadApiKey(), prices, TimeSpan.FromSeconds(120));
             var results = new List<JsonObject>();
             double spent = 0;
             var ledgerRuns = ledger["Runs"]!.AsArray();
@@ -300,9 +302,12 @@ namespace RqlTest.Eval
                     if (budgetLeft() - usage.CostUsd <= 0) { outcome = "budget-exhausted"; break; }
                     var req = new JsonObject
                     {
-                        ["model"] = Model, ["messages"] = messages.DeepClone(), ["tools"] = tools.DeepClone(),
-                        ["max_tokens"] = MaxTokensPerCall, ["reasoning_effort"] = "none", ["temperature"] = 0,
+                        ["model"] = Model, ["messages"] = messages.DeepClone(), ["tools"] = tools.DeepClone(), ["temperature"] = 0,
                     };
+                    // Provider dialects: OpenAI wants max_completion_tokens; DeepInfra's Claude takes no reasoning_effort.
+                    if (BaseUrl.Contains("openai.com")) { req["max_completion_tokens"] = MaxTokensPerCall; req["reasoning_effort"] = "none"; }
+                    else if (BaseUrl.Contains("deepinfra.com")) req["max_tokens"] = MaxTokensPerCall;
+                    else { req["max_tokens"] = MaxTokensPerCall; req["reasoning_effort"] = "none"; }
                     var (msg, finish, u, latency) = await client.CompleteAsync(req);
                     usage.Add(u);
                     modelMs += latency;
