@@ -5,9 +5,10 @@
 import { diagnostic, failResult, formatNumber, type Budgets, type JsonObject, type QueryOptions, type QueryPlan, type QueryResult } from '@rql/contracts';
 import { isIdentStart, tryParse } from '@rql/parser';
 import { reachableTypes, typeDescriptor } from './describe.js';
-import { Exec, now } from './exec.js';
+import type { ClassAdapter, InterfaceAdapter, TypeAdapter } from './adapters.js';
+import { Exec, now, withActiveModel } from './exec.js';
 import { Pipeline } from './pipeline.js';
-import { EnumValue, TypeModel, type MemberAccessor, type TypeInfo } from './types.js';
+import { EnumValue, TypeModel, type Ctor, type MemberAccessor, type TypeInfo } from './types.js';
 import { MapEntry } from './values.js';
 import { elements } from './collections.js';
 
@@ -63,7 +64,10 @@ export interface EngineOptions {
 }
 
 export class RqlEngine {
-  readonly types: TypeModel;
+  /** Reflection model (descriptors + adapters). Replaced by a private fork on the first `addAdapter` if shared. */
+  get types(): TypeModel {
+    return this.model;
+  }
   readonly defaults: EngineDefaults = {
     maxVisited: 1_000_000,
     maxRows: 50,
@@ -93,8 +97,36 @@ export class RqlEngine {
   private nextHandle = 0;
   private knownMembers: { version: number; names: ReadonlyMap<string, string> } | undefined;
 
+  private model: TypeModel;
+  /** False while `model` may be shared with other engines (passed in via options). */
+  private ownsModel: boolean;
+
   constructor(options: EngineOptions = {}) {
-    this.types = options.types ?? new TypeModel();
+    this.model = options.types ?? new TypeModel();
+    this.ownsModel = options.types === undefined;
+  }
+
+  /**
+   * Registers a type adapter (spec §13): virtual/hidden/explicit-only members, encoding, coercion,
+   * comparison, identity and liveness. Register adapters before running queries. A model shared with
+   * other engines is forked first, so their behaviour does not change.
+   */
+  addAdapter<T extends object>(adapter: ClassAdapter<T>): this;
+  addAdapter(adapter: InterfaceAdapter): this;
+  addAdapter<T extends object>(adapter: TypeAdapter<T>): this;
+  addAdapter(adapter: TypeAdapter): this {
+    if (!this.ownsModel) {
+      this.model = this.model.fork();
+      this.ownsModel = true;
+    }
+    this.model.addAdapter(adapter);
+    this.knownMembers = undefined;
+    return this;
+  }
+
+  /** The ordered adapters applying to a class, most specific first (rank, priority). */
+  explain(ctor: Ctor): string[] {
+    return this.model.explain(ctor);
   }
 
   get sources(): ReadonlyMap<string, SourceRegistration> {
@@ -146,12 +178,12 @@ export class RqlEngine {
     const x = new Exec(this, budgets, options, plan);
     let result: QueryResult;
     try {
-      result = new Pipeline(x).run();
+      result = withActiveModel(this.model, () => new Pipeline(x).run());
     } catch (e) {
       // Last line of defence: untrusted queries must never crash the host with a raw exception.
       const name = e instanceof Error ? e.name : typeof e;
       const message = e instanceof Error ? e.message : String(e);
-      result = failResult([diagnostic('error', 'internal-error', `${name}: ${message}`, 'this is an RQL runtime bug; please report the query')]);
+      result = failResult([diagnostic('error', 'internal-error', `${name}: ${message}`, 'this is an RQL runtime bug (or a host type adapter threw); please report the query')]);
     }
     result.stats = { visited: x.visited, membersRead: x.membersRead, elapsedMs: now() - started };
     return result;
@@ -162,17 +194,17 @@ export class RqlEngine {
   /** Stable reference string for an object: "Type#id" or session handle "Type@n". */
   refOf(o: object): string {
     const info = this.types.infoOf(o);
-    const idm = info.idMemberOf(o);
-    if (idm !== undefined) {
-      let id: unknown;
-      try {
-        id = idm.get(o);
-      } catch {
-        id = null;
-      }
-      if (id !== null && id !== undefined) return info.shortName + '#' + idText(id);
+    const id = stableIdOf(o, info);
+    return id !== undefined ? info.shortName + '#' + id : info.shortName + '@' + String(this.handleOf(o));
+  }
+
+  /** Liveness: the first adapter verdict, else the host `isAlive` hook, else alive. */
+  alive(o: object): boolean {
+    for (const a of this.types.infoOf(o).adapters) {
+      const v = a.isAlive?.(o);
+      if (v !== undefined) return v;
     }
-    return info.shortName + '@' + String(this.handleOf(o));
+    return this.isAlive === undefined || this.isAlive(o);
   }
 
   private handleOf(o: object): number {
@@ -263,7 +295,7 @@ export class RqlEngine {
     if (typeof found !== 'object' || found === null || !this.types.infoOf(found).isA(type)) {
       return { ok: false, error: `reference '${ref}' does not resolve to a live object` };
     }
-    if (this.isAlive !== undefined && !this.isAlive(found)) return { ok: false, error: `reference '${ref}' points to a destroyed object` };
+    if (!this.alive(found)) return { ok: false, error: `reference '${ref}' points to a destroyed object` };
     return { ok: true, value: found };
   }
 
@@ -299,19 +331,10 @@ export class RqlEngine {
         continue;
       }
       if (!info.isObject) continue;
-      const idm = info.idMemberOf(o);
-      if (idm !== undefined && info.isA(type)) {
-        let v: unknown;
-        try {
-          v = idm.get(o);
-        } catch {
-          v = null;
-        }
-        if (v !== null && v !== undefined && idText(v) === id) return o;
-      }
+      if (info.isA(type) && stableIdOf(o, info) === id) return o;
       if (depth >= 32) continue;
       for (const m of info.membersOf(o)) {
-        if (!m.owning || m.declaredScalar) continue;
+        if (!m.owning || m.explicitOnly || m.declaredScalar) continue;
         let v: unknown;
         try {
           v = m.get(o);
@@ -323,6 +346,23 @@ export class RqlEngine {
     }
     return undefined;
   }
+}
+
+/** The "#id" part of a stable reference: adapter identity first, then the id member; undefined = none. */
+function stableIdOf(o: object, info: TypeInfo): string | undefined {
+  for (const a of info.adapters) {
+    const sid = a.stableId?.(o);
+    if (sid !== undefined) return sid;
+  }
+  const idm = info.idMemberOf(o);
+  if (idm === undefined) return undefined;
+  let id: unknown;
+  try {
+    id = idm.get(o);
+  } catch {
+    id = null;
+  }
+  return id === null || id === undefined ? undefined : idText(id);
 }
 
 function idText(id: unknown): string {

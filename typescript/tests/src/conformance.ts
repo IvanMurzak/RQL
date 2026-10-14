@@ -10,9 +10,10 @@ import { RqlError, deserializePlan, parseBudgets, planToJson, resultToJson, type
 import { RqlEngine } from '@rql/execution';
 import { parse } from '@rql/parser';
 import { conformanceModel, loadGraph } from './graph.js';
+import { registerTestAdapters } from './test-adapters.js';
 
 export interface Vector {
-  readonly suite: 'syntax' | 'codec' | 'negative-syntax' | 'negative-plan' | 'execution';
+  readonly suite: 'syntax' | 'codec' | 'negative-syntax' | 'negative-plan' | 'execution' | 'adapters';
   readonly name: string;
   readonly ok: boolean;
   readonly detail?: string;
@@ -100,24 +101,33 @@ export function negativeVectors(): Vector[] {
 }
 
 export function executionVectors(): Vector[] {
+  return caseVectors('execution', 'execution/cases.json', (e) => e);
+}
+
+/** fixtures/adapters: same harness, plus the test adapter set on every fresh engine. */
+export function adapterVectors(): Vector[] {
+  return caseVectors('adapters', 'adapters/cases.json', registerTestAdapters);
+}
+
+function caseVectors(suite: 'execution' | 'adapters', file: string, setup: (e: RqlEngine) => RqlEngine): Vector[] {
   const out: Vector[] = [];
   const model = conformanceModel();
   const graphJson = fixture('cross-runtime/graph.json');
-  for (const c of cases(fixture('execution/cases.json'))) {
+  for (const c of cases(fixture(file))) {
     const name = c.name as string;
     const graph = loadGraph(graphJson);
-    const engine = new RqlEngine({ types: model }).addSource('g', () => graph);
+    const engine = setup(new RqlEngine({ types: model }).addSource('g', () => graph));
     engine.mutations.enabled = true;
     const budgets: Budgets = c.budgets !== undefined ? parseBudgets(c.budgets) : {};
     const o = (c.options ?? {}) as { allowMutation?: boolean; dryRun?: boolean };
     const options: QueryOptions = { allowMutation: o.allowMutation ?? false, dryRun: o.dryRun ?? false };
-    out.push(step(engine, name, c.rql as string, c.plan, c.expect, budgets, options));
-    if (c.then !== undefined) out.push(step(engine, name + ' (then)', c.then as string, c.thenPlan, c.thenExpect, {}, {}));
+    out.push(step(suite, engine, name, c.rql as string, c.plan, c.expect, budgets, options));
+    if (c.then !== undefined) out.push(step(suite, engine, name + ' (then)', c.then as string, c.thenPlan, c.thenExpect, {}, {}));
   }
   return out;
 }
 
-function step(engine: RqlEngine, name: string, rql: string, planJson: unknown, expect: unknown, budgets: Budgets, options: QueryOptions): Vector {
+function step(suite: Vector['suite'], engine: RqlEngine, name: string, rql: string, planJson: unknown, expect: unknown, budgets: Budgets, options: QueryOptions): Vector {
   let result: QueryResult;
   try {
     if (planJson !== undefined) {
@@ -125,21 +135,21 @@ function step(engine: RqlEngine, name: string, rql: string, planJson: unknown, e
       try {
         plan = deserializePlan(planJson);
       } catch (e) {
-        return { suite: 'execution', name, ok: false, detail: 'stored plan rejected: ' + errMsg(e) };
+        return { suite, name, ok: false, detail: 'stored plan rejected: ' + errMsg(e) };
       }
       result = engine.execute(plan, budgets, options);
     } else {
       result = engine.execute(rql, budgets, options);
     }
   } catch (e) {
-    return { suite: 'execution', name, ok: false, detail: `'${rql}' threw ${e instanceof Error ? (e.stack ?? e.message) : String(e)}` };
+    return { suite, name, ok: false, detail: `'${rql}' threw ${e instanceof Error ? (e.stack ?? e.message) : String(e)}` };
   }
   const got = normalize(result);
-  return { suite: 'execution', name, ok: jsonEq(got, expect), detail: `'${rql}'\n  got:  ${JSON.stringify(got)}\n  want: ${JSON.stringify(expect)}` };
+  return { suite, name, ok: jsonEq(got, expect), detail: `'${rql}'\n  got:  ${JSON.stringify(got)}\n  want: ${JSON.stringify(expect)}` };
 }
 
 export function allVectors(): Vector[] {
-  return [...syntaxVectors(), ...negativeVectors(), ...executionVectors()];
+  return [...syntaxVectors(), ...negativeVectors(), ...executionVectors(), ...adapterVectors()];
 }
 
 export function summary(vs: readonly Vector[]): string {

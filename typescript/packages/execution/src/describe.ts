@@ -27,10 +27,13 @@ export function typeDescriptor(model: TypeModel, info: TypeInfo, showWritable: b
     o.members = [];
     return o;
   }
-  const members = sample instanceof RowValue ? sample.columns.map((c) => ({ name: c, type: 'any', canWrite: false, description: undefined })) : info.membersOf(sample);
+  const members = sample instanceof RowValue
+    ? sample.columns.map((c) => ({ name: c, type: 'any' as TypeRef, canWrite: false, explicitOnly: false, description: undefined }))
+    : info.membersOf(sample);
   o.members = members.map((m) => {
-    const mo: JsonObject = { name: m.name, type: friendlyName(m.type as TypeRef, model) };
+    const mo: JsonObject = { name: m.name, type: friendlyName(m.type, model) };
     if (showWritable && m.canWrite) mo.writable = true;
+    if (m.explicitOnly) mo.explicitOnly = true;
     if (m.description !== undefined) mo.description = m.description;
     return mo;
   });

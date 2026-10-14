@@ -8,6 +8,7 @@
  * registered still work through a dynamic fallback (own enumerable properties + prototype getters),
  * with the limits documented in the README (no enum/struct/int typing, per-instance member sets).
  */
+import { AdapterRegistry, type AnyAdapter, type ClassAdapter, type InterfaceAdapter, type MemberTable, type TypeAdapter, type VirtualMemberSpec } from './adapters.js';
 import { MapEntry, RowValue } from './values.js';
 
 /** Any class constructor (including abstract classes and classes with constructor parameters). */
@@ -48,19 +49,43 @@ export function isNullable(r: TypeRef): boolean {
   return r === 'any' || (typeof r === 'object' && !(r instanceof EnumType) && r.kind === 'nullable');
 }
 
+/**
+ * Readable declared type name for schemas, in the C#-like spelling the reference runtime uses so
+ * `describe` output is identical across runtimes: `int`, `double`, `string`, `bool`, `object`,
+ * `List<T>`, `Dictionary<K, V>`, class names; `?` only for nullable value-like types.
+ */
 export function friendlyName(r: TypeRef, model?: TypeModel): string {
-  if (typeof r === 'string') return r;
+  if (typeof r === 'string') {
+    switch (r) {
+      case 'number':
+        return 'double';
+      case 'any':
+        return 'object';
+      default:
+        return r;
+    }
+  }
   if (r instanceof EnumType) return r.name;
   switch (r.kind) {
-    case 'nullable':
-      return friendlyName(r.of, model) + '?';
+    case 'nullable': {
+      const inner = friendlyName(r.of, model);
+      return isReferenceType(r.of, model) ? inner : inner + '?';
+    }
     case 'list':
-      return `list<${friendlyName(r.of, model)}>`;
+      return `List<${friendlyName(r.of, model)}>`;
     case 'map':
-      return `map<${friendlyName(r.key, model)}, ${friendlyName(r.of, model)}>`;
+      return `Dictionary<${friendlyName(r.key, model)}, ${friendlyName(r.of, model)}>`;
     case 'class':
       return model?.infoForCtor(r.ctor)?.shortName ?? r.ctor.name;
   }
+}
+
+/** Reference-like declared types (nullability is implicit, as for .NET reference types). */
+function isReferenceType(r: TypeRef, model?: TypeModel): boolean {
+  if (r === 'string' || r === 'any') return true;
+  if (typeof r === 'string' || r instanceof EnumType) return false;
+  if (r.kind === 'class') return model?.infoForCtor(r.ctor)?.kind !== 'struct';
+  return r.kind === 'list' || r.kind === 'map';
 }
 
 // ------------------------------------------------------------------ enums
@@ -211,6 +236,8 @@ export interface MemberSpec<T extends object = object> {
   get?(target: T): unknown;
   /** Custom setter (default: `target[name] = value`; absent for getter-only accessors). */
   set?(target: T, value: unknown): void;
+  /** Validation of a coerced value before any write; returns a rejection reason (→ coercion-failed). */
+  validate?(target: T, value: unknown): string | undefined;
 }
 
 export interface ParamSpec {
@@ -253,28 +280,66 @@ export interface TypeSpec<T extends object = object> {
 
 export type TypeKind = 'scalar' | 'enum' | 'object' | 'struct' | 'list' | 'map';
 
+export interface MemberInit {
+  name: string;
+  type: TypeRef;
+  /** Reads the member (enum values wrapped, plain-object maps exposed as {@link RecordMap}). */
+  get: (target: object) => unknown;
+  /** Writes the member (enum values unwrapped); undefined when not writable. */
+  set?: ((target: object, value: unknown) => void) | undefined;
+  canWrite: boolean;
+  owning: boolean;
+  order: number;
+  description?: string | undefined;
+  /** Read only when a path names it (spec §13). */
+  explicitOnly?: boolean;
+  /** Validation of a coerced value while a mutation is planned; returns a rejection reason. */
+  validate?: ((target: object, value: unknown) => string | undefined) | undefined;
+  /** Defined by a type adapter rather than declared by the class. */
+  virtual?: boolean;
+}
+
 export class MemberAccessor {
   private declaredCache: 'scalar' | 'struct' | 'other' | undefined;
+  readonly name: string;
+  readonly type: TypeRef;
+  readonly get: (target: object) => unknown;
+  readonly set: ((target: object, value: unknown) => void) | undefined;
+  readonly canWrite: boolean;
+  /** False for non-owning references: not followed by generic recurse. */
+  readonly owning: boolean;
+  readonly order: number;
+  readonly description: string | undefined;
+  readonly explicitOnly: boolean;
+  readonly validate: ((target: object, value: unknown) => string | undefined) | undefined;
+  readonly virtual: boolean;
 
   constructor(
-    readonly name: string,
-    readonly type: TypeRef,
-    /** Reads the member (enum values wrapped, plain-object maps exposed as {@link RecordMap}). */
-    readonly get: (target: object) => unknown,
-    /** Writes the member (enum values unwrapped); undefined when not writable. */
-    readonly set: ((target: object, value: unknown) => void) | undefined,
-    readonly canWrite: boolean,
-    readonly owning: boolean,
-    readonly order: number,
-    readonly description: string | undefined,
+    init: MemberInit,
     private readonly model: TypeModel | undefined,
-  ) {}
+  ) {
+    this.name = init.name;
+    this.type = init.type;
+    this.get = init.get;
+    this.set = init.set;
+    this.canWrite = init.canWrite;
+    this.owning = init.owning;
+    this.order = init.order;
+    this.description = init.description;
+    this.explicitOnly = init.explicitOnly ?? false;
+    this.validate = init.validate;
+    this.virtual = init.virtual ?? false;
+  }
 
-  /** A copy with another write permission / order (identity members, inheritance). */
-  with(changes: { canWrite?: boolean; order?: number }): MemberAccessor {
+  /** A copy with some properties changed (identity members, inheritance, adapters). */
+  with(changes: Partial<Pick<MemberInit, 'canWrite' | 'order' | 'owning' | 'explicitOnly' | 'description'>>): MemberAccessor {
     return new MemberAccessor(
-      this.name, this.type, this.get, this.set, changes.canWrite ?? this.canWrite, this.owning,
-      changes.order ?? this.order, this.description, this.model,
+      {
+        name: this.name, type: this.type, get: this.get, set: this.set, canWrite: this.canWrite, owning: this.owning,
+        order: this.order, description: this.description, explicitOnly: this.explicitOnly, validate: this.validate,
+        virtual: this.virtual, ...changes,
+      },
+      this.model,
     );
   }
 
@@ -329,6 +394,8 @@ export class TypeInfo {
       enumType?: EnumType;
       dynamic?: DynamicResolver;
       ctor?: Ctor;
+      adapters?: readonly AnyAdapter[];
+      rawMembers?: readonly MemberAccessor[];
     } = {},
   ) {
     this.typeNames = new Set([...(options.typeNames ?? [shortName])].map((n) => n.toUpperCase()));
@@ -340,6 +407,8 @@ export class TypeInfo {
     this.enumType = options.enumType;
     this.dynamic = options.dynamic;
     this.ctor = options.ctor;
+    this.adapters = options.adapters ?? [];
+    this.rawMembers = options.rawMembers ?? members;
     for (const m of members) {
       this.byName.set(m.name, m);
       const k = m.name.toUpperCase();
@@ -356,6 +425,10 @@ export class TypeInfo {
   /** Set for undeclared types: members are discovered per instance. */
   readonly dynamic: DynamicResolver | undefined;
   readonly ctor: Ctor | undefined;
+  /** Applicable type adapters, most specific first (spec §13). */
+  readonly adapters: readonly AnyAdapter[];
+  /** Declared members before adapters shaped them (what subclasses inherit). */
+  readonly rawMembers: readonly MemberAccessor[];
 
   get isList(): boolean {
     return this.kind === 'list';
@@ -434,7 +507,6 @@ const SCALARS = {
   bigint: scalar('BigInt'),
   function: scalar('Function'),
   symbol: scalar('Symbol'),
-  date: scalar('Date'),
   null: scalar('Null'),
 } as const;
 
@@ -447,27 +519,79 @@ export class TypeModel {
   /** Incremented on every registration (lets caches derived from the model expire). */
   version = 0;
   private readonly infos = new Map<object, TypeInfo>();
-  private readonly tags = new WeakMap<object, Ctor>();
+  private tags = new WeakMap<object, Ctor>();
   private readonly enumInfos = new Map<EnumType, TypeInfo>();
   private readonly dynamicAccessors = new Map<string, MemberAccessor>();
   private readonly listInfos = new Map<string, TypeInfo>();
-  private readonly mapInfo = new TypeInfo('map', 'Map');
-  private readonly recordInfo = new TypeInfo('map', 'Record');
-  private readonly plainInfo: TypeInfo;
+  private adapterRegistry = new AdapterRegistry();
+  private mapInfo!: TypeInfo;
+  private recordInfo!: TypeInfo;
+  private plainInfo!: TypeInfo;
+  private dateInfo!: TypeInfo;
   private readonly entryInfo: TypeInfo;
   private readonly rowInfo = new TypeInfo('object', 'RowValue');
 
   constructor() {
-    this.plainInfo = new TypeInfo('object', 'Object', [], { dynamic: (o) => this.ownMembers(o, []) });
     const ro = (name: 'Key' | 'Value', i: number): MemberAccessor =>
-      new MemberAccessor(name, 'any', (e) => (e as MapEntry)[name], undefined, false, true, i, undefined, this);
+      new MemberAccessor({ name, type: 'any', get: (e) => (e as MapEntry)[name], canWrite: false, owning: true, order: i }, this);
     this.entryInfo = new TypeInfo('object', 'MapEntry', [ro('Key', 0), ro('Value', 1)]);
+    this.resetCaches();
+  }
+
+  private resetCaches(): void {
+    this.infos.clear();
+    this.listInfos.clear();
+    const ad = (c: Ctor): readonly AnyAdapter[] => this.adapterRegistry.for(c);
+    this.mapInfo = new TypeInfo('map', 'Map', [], { ctor: Map, adapters: ad(Map) });
+    this.recordInfo = new TypeInfo('map', 'Record', [], { adapters: ad(Object) });
+    this.plainInfo = new TypeInfo('object', 'Object', [], { dynamic: (o) => this.ownMembers(o, []), ctor: Object, adapters: ad(Object) });
+    this.dateInfo = new TypeInfo('scalar', 'Date', [], { ctor: Date, adapters: ad(Date) });
+  }
+
+  /** Whether any type adapter is registered (fast paths skip adapter lookups otherwise). */
+  get hasAdapters(): boolean {
+    return this.adapterRegistry.size > 0;
+  }
+
+  /**
+   * Registers a type adapter (spec §13). Clears cached metadata, so register adapters before queries
+   * run. Prefer `RqlEngine.addAdapter`, which keeps models shared with other engines unchanged.
+   */
+  addAdapter<T extends object>(adapter: ClassAdapter<T>): this;
+  addAdapter(adapter: InterfaceAdapter): this;
+  addAdapter<T extends object>(adapter: TypeAdapter<T>): this;
+  addAdapter(adapter: TypeAdapter): this {
+    this.adapterRegistry.add(adapter);
+    this.resetCaches();
+    this.version++;
+    return this;
+  }
+
+  /** Applicable adapters of a class, most specific first. */
+  adaptersFor(ctor: Ctor): readonly AnyAdapter[] {
+    return this.adapterRegistry.for(ctor);
+  }
+
+  /** The ordered adapters applying to a class, most specific first, with rank and priority. */
+  explain(ctor: Ctor): string[] {
+    return this.adapterRegistry.explain(ctor);
+  }
+
+  /** A copy with the same descriptors, tags and adapters (adapters added to the copy stay local). */
+  fork(): TypeModel {
+    const m = new TypeModel();
+    for (const [c, s] of this.specs) m.specs.set(c, s);
+    m.tags = this.tags;
+    this.adapterRegistry.copyTo(m.adapterRegistry);
+    m.resetCaches();
+    m.version = this.version;
+    return m;
   }
 
   /** Registers a class descriptor. */
   register<T extends object>(ctor: Ctor<T>, spec: TypeSpec<T>): this {
     this.specs.set(ctor, spec as unknown as TypeSpec);
-    this.infos.clear();
+    this.resetCaches();
     this.version++;
     return this;
   }
@@ -517,15 +641,15 @@ export class TypeModel {
     }
     const o = v as object | null;
     if (o === null) return SCALARS.null;
-    if (Array.isArray(o)) return this.listInfo('Array');
+    if (Array.isArray(o)) return this.listInfo('Array', Array);
     if (o instanceof EnumValue) return this.enumInfo(o.type);
     if (o instanceof Map) return this.mapInfo;
     if (o instanceof RecordMap) return this.recordInfo;
-    if (o instanceof Set) return this.listInfo('Set');
+    if (o instanceof Set) return this.listInfo('Set', Set);
     if (o instanceof MapEntry) return this.entryInfo;
     if (o instanceof RowValue) return this.rowInfo;
-    if (o instanceof Date) return SCALARS.date;
-    if (ArrayBuffer.isView(o) && !(o instanceof DataView)) return this.listInfo(o.constructor.name);
+    if (o instanceof Date) return this.dateInfo;
+    if (ArrayBuffer.isView(o) && !(o instanceof DataView)) return this.listInfo(o.constructor.name, o.constructor as Ctor);
     const tagged = this.tags.get(o);
     if (tagged !== undefined) return this.infoForCtor(tagged) ?? this.plainInfo;
     const proto = Object.getPrototypeOf(o) as object | null;
@@ -548,10 +672,10 @@ export class TypeModel {
     return info;
   }
 
-  private listInfo(name: string): TypeInfo {
+  private listInfo(name: string, ctor?: Ctor): TypeInfo {
     let info = this.listInfos.get(name);
     if (info === undefined) {
-      info = new TypeInfo('list', name);
+      info = new TypeInfo('list', name, [], ctor !== undefined ? { ctor, adapters: this.adapterRegistry.for(ctor) } : {});
       this.listInfos.set(name, info);
     }
     return info;
@@ -574,14 +698,18 @@ export class TypeModel {
         // Unregistered subclass of a registered class: inherits the declared members.
         const b = this.infoForCtor(anc)!;
         const name = ctor.name || b.shortName;
-        return new TypeInfo(b.kind, name, b.members, {
-          typeNames: [name, ...b.typeNames], idMember: b.idMember, displayMember: b.displayMember,
-          callable: b.callable, base: b, description: b.description, ctor,
+        const adapters = this.adapterRegistry.for(ctor);
+        const members = [...b.rawMembers];
+        this.applyAdapters(adapters, name, b.kind, members);
+        const byName = (m: MemberAccessor | undefined): MemberAccessor | undefined => (m === undefined ? undefined : members.find((x) => x.name === m.name));
+        return new TypeInfo(b.kind, name, members, {
+          typeNames: [name, ...b.typeNames], idMember: byName(b.idMember), displayMember: byName(b.displayMember),
+          callable: b.callable, base: b, description: describeWith(adapters, b.description), ctor, adapters, rawMembers: b.rawMembers,
         });
       }
     }
     if (sample !== undefined && typeof (sample as { [Symbol.iterator]?: unknown })[Symbol.iterator] === 'function') {
-      return this.listInfo(ctor?.name || 'Iterable');
+      return this.listInfo(ctor?.name || 'Iterable', ctor);
     }
     return this.buildDynamic(proto, ctor);
   }
@@ -590,7 +718,7 @@ export class TypeModel {
     const baseCtor = spec.base !== undefined ? spec.base ?? undefined : this.registeredAncestor(ctor);
     const base = baseCtor !== undefined ? this.infoForCtor(baseCtor) : undefined;
     const name = spec.name ?? ctor.name;
-    const members: MemberAccessor[] = base !== undefined ? [...base.members] : [];
+    const members: MemberAccessor[] = base !== undefined ? [...base.rawMembers] : [];
     for (const ms of spec.members) {
       const m = this.makeMember(ctor, typeof ms === 'string' ? { name: ms } : ms, members.length);
       const i = members.findIndex((x) => x.name === m.name);
@@ -599,12 +727,18 @@ export class TypeModel {
       else members.push(m);
     }
 
+    const kind = spec.kind ?? base?.kind ?? 'object';
+    const rawMembers = [...members];
+    // Adapters shape the table from the least to the most specific; id/display are computed after.
+    const adapters = this.adapterRegistry.for(ctor);
+    this.applyAdapters(adapters, name, kind, members);
+
     const pick = (explicit: string | null | undefined, inherited: MemberAccessor | undefined, dflt: (m: MemberAccessor) => boolean): MemberAccessor | undefined => {
       if (explicit === null) return undefined;
       if (explicit !== undefined) {
         const m = members.find((x) => x.name === explicit);
-        if (m === undefined) throw new Error(`type '${name}': member '${explicit}' is not declared`);
-        return m;
+        if (m === undefined && rawMembers.every((x) => x.name !== explicit)) throw new Error(`type '${name}': member '${explicit}' is not declared`);
+        return m; // undefined when an adapter hid it
       }
       if (inherited !== undefined) return members.find((x) => x.name === inherited.name);
       return members.find(dflt);
@@ -623,10 +757,17 @@ export class TypeModel {
     for (const ms of spec.methods ?? []) callable.set(ms.name, this.makeMethod(ms));
     const methods = [...callable.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
-    return new TypeInfo(spec.kind ?? base?.kind ?? 'object', name, members, {
+    return new TypeInfo(kind, name, members, {
       typeNames: [name, ...(base?.typeNames ?? []), ...(spec.interfaces ?? [])],
-      idMember, displayMember, callable: methods, base, description: spec.description, ctor,
+      idMember, displayMember, callable: methods, base, description: describeWith(adapters, spec.description), ctor, adapters, rawMembers,
     });
+  }
+
+  /** Runs the adapters' member configuration (least specific first) over `members`, in place. */
+  private applyAdapters(adapters: readonly AnyAdapter[], typeName: string, kind: TypeKind, members: MemberAccessor[]): void {
+    if (!adapters.some((a) => a.members !== undefined)) return;
+    const table = new MemberTableImpl(typeName, kind, members, this);
+    for (let i = adapters.length - 1; i >= 0; i--) adapters[i]!.members?.(table);
   }
 
   private makeMember(ctor: Ctor, spec: MemberSpec, order: number): MemberAccessor {
@@ -678,7 +819,8 @@ export class TypeModel {
       };
     }
     const canWrite = !spec.readonly && set !== undefined;
-    return new MemberAccessor(key, type, get, set, canWrite, !spec.reference, order, spec.description, this);
+    const validate = spec.validate !== undefined ? spec.validate.bind(spec) : undefined;
+    return new MemberAccessor({ name: key, type, get, set, canWrite, owning: !spec.reference, order, description: spec.description, validate }, this);
   }
 
   private makeMethod(spec: MethodSpec): MethodAccessor {
@@ -704,9 +846,13 @@ export class TypeModel {
       if (Object.prototype.hasOwnProperty.call(p, 'constructor') && c?.name) names.push(c.name);
     }
     const shortName = names[0] ?? 'Object';
+    // Member-shaping adapters need declared types; the other capabilities apply to dynamic classes too.
+    const adapters = ctor !== undefined ? this.adapterRegistry.for(ctor) : [];
     return new TypeInfo('object', shortName, getters, {
       typeNames: names.length > 0 ? names : ['Object'],
       dynamic: (o) => this.ownMembers(o, getters),
+      adapters,
+      ...(describeWith(adapters, undefined) !== undefined ? { description: describeWith(adapters, undefined)! } : {}),
       ...(ctor !== undefined ? { ctor } : {}),
     });
   }
@@ -724,9 +870,16 @@ export class TypeModel {
         const existing = out.findIndex((m) => m.name === key);
         const canWrite = d.set !== undefined || isSetterSomewhere(proto, key);
         const m = new MemberAccessor(
-          key, 'any', (o) => normalize((o as Record<string, unknown>)[key]),
-          canWrite ? (o, v) => { (o as Record<string, unknown>)[key] = v; } : undefined,
-          canWrite, true, existing >= 0 ? existing : out.length, undefined, this,
+          {
+            name: key,
+            type: 'any',
+            get: (o) => normalize((o as Record<string, unknown>)[key]),
+            set: canWrite ? (o, v) => { (o as Record<string, unknown>)[key] = v; } : undefined,
+            canWrite,
+            owning: true,
+            order: existing >= 0 ? existing : out.length,
+          },
+          this,
         );
         if (existing >= 0) out[existing] = m;
         else out.push(m);
@@ -753,11 +906,18 @@ export class TypeModel {
     let m = this.dynamicAccessors.get(cacheKey);
     if (m === undefined) {
       m = new MemberAccessor(
-        key, 'any', (o) => normalize((o as Record<string, unknown>)[key]),
-        (o, v) => {
-          (o as Record<string, unknown>)[key] = v;
+        {
+          name: key,
+          type: 'any',
+          get: (o) => normalize((o as Record<string, unknown>)[key]),
+          set: (o, v) => {
+            (o as Record<string, unknown>)[key] = v;
+          },
+          canWrite: true,
+          owning: true,
+          order,
         },
-        true, true, order, undefined, this,
+        this,
       );
       this.dynamicAccessors.set(cacheKey, m);
     }
@@ -782,3 +942,100 @@ function isSetterSomewhere(proto: object, key: string): boolean {
   }
   return false;
 }
+
+function describeWith(adapters: readonly AnyAdapter[], fallback: string | undefined): string | undefined {
+  for (const a of adapters) if (a.description !== undefined) return a.description;
+  return fallback;
+}
+
+/** {@link MemberTable} over a mutable member list (spec §13 member configuration). */
+class MemberTableImpl implements MemberTable<object> {
+  constructor(
+    readonly typeName: string,
+    private readonly kind: TypeKind,
+    private readonly list: MemberAccessor[],
+    private readonly model: TypeModel,
+  ) {}
+
+  get members(): readonly MemberAccessor[] {
+    return this.list;
+  }
+
+  has(name: string): boolean {
+    return this.list.some((m) => m.name === name);
+  }
+
+  add<V>(name: string, spec: VirtualMemberSpec<object, V>): this {
+    if (name.length === 0) throw new Error('virtual member name required');
+    if (spec.set !== undefined && this.kind === 'struct') {
+      throw new Error(`virtual setters on value type ${this.typeName} would write to a copy; expose a writable member instead`);
+    }
+    const i = this.list.findIndex((m) => m.name === name);
+    const order = i >= 0 ? this.list[i]!.order : this.list.reduce((mx, m) => Math.max(mx, m.order + 1), 0);
+    const s = spec as VirtualMemberSpec<object, unknown>;
+    const accessor = new MemberAccessor(
+      {
+        name,
+        type: spec.type ?? 'any',
+        get: (o) => {
+          const v = s.get(o);
+          return v === undefined ? null : v;
+        },
+        set: s.set !== undefined ? (o, v) => s.set!(o, v) : undefined,
+        canWrite: s.set !== undefined,
+        owning: spec.owning ?? false,
+        order,
+        description: spec.description,
+        validate: s.validate !== undefined ? (o, v) => s.validate!(o, v) : undefined,
+        virtual: true,
+      },
+      this.model,
+    );
+    if (i >= 0) this.list[i] = accessor;
+    else this.list.push(accessor);
+    return this;
+  }
+
+  hide(...names: string[]): this {
+    this.retain((m) => !names.includes(m.name));
+    return this;
+  }
+
+  only(...names: string[]): this {
+    this.retain((m) => names.includes(m.name));
+    return this;
+  }
+
+  readOnly(...names: string[]): this {
+    return this.change(names, (m) => m.with({ canWrite: false }));
+  }
+
+  reference(...names: string[]): this {
+    return this.change(names, (m) => m.with({ owning: false }));
+  }
+
+  explicitOnly(...names: string[]): this {
+    return this.change(names, (m) => m.with({ explicitOnly: true }));
+  }
+
+  describe(name: string, description: string): this {
+    return this.change([name], (m) => m.with({ description }));
+  }
+
+  private retain(keep: (m: MemberAccessor) => boolean): void {
+    const kept = this.list.filter(keep);
+    this.list.length = 0;
+    this.list.push(...kept);
+  }
+
+  private change(names: readonly string[], f: (m: MemberAccessor) => MemberAccessor): this {
+    for (const n of names) {
+      const i = this.list.findIndex((m) => m.name === n);
+      // A host bug: the query fails with internal-error.
+      if (i < 0) throw new Error(`type ${this.typeName} has no member '${n}' to configure`);
+      this.list[i] = f(this.list[i]!);
+    }
+    return this;
+  }
+}
+

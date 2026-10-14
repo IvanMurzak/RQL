@@ -513,7 +513,7 @@ export class Pipeline {
     }
     if (!info.isObject) return;
     for (const m of info.membersOf(v)) {
-      if (!m.owning || m.declaredValueLike) continue;
+      if (!m.owning || m.explicitOnly || m.declaredValueLike) continue;
       let cv: unknown;
       x.membersRead++;
       try {

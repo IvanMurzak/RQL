@@ -5,8 +5,8 @@
  */
 import { RqlError, diagnostic, formatNumber, type CallExpr, type Expr, type OpExpr, type PathExpr } from '@rql/contracts';
 import { elements, findMapKey, indexAt, isMapLike, mapEntries, mapGet, sizeOf, type MapLike } from './collections.js';
-import { Exec, IsSite, MemberSite, errorMessage } from './exec.js';
-import { EnumValue, type TypeInfo } from './types.js';
+import { Exec, IsSite, MemberSite, activeModel, errorMessage } from './exec.js';
+import { EnumValue, type TypeInfo, type TypeModel } from './types.js';
 import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, isAbsent, toNumber } from './values.js';
 
 export type Eval = (x: Exec) => unknown;
@@ -547,6 +547,10 @@ function isStructOrCollection(x: Exec, v: object): boolean {
 export function equal(x: Exec, a: unknown, b: unknown): Truth {
   if (isAbsent(a) || isAbsent(b)) return undefined;
   if (a === null || b === null) return a === null && b === null;
+  if (x.types.hasAdapters) {
+    const r = adapterEqual(x.types, a, b);
+    if (r !== undefined) return r;
+  }
   const na = toNumber(a);
   if (na !== undefined) {
     const nb = toNumber(b);
@@ -573,6 +577,40 @@ function enumEqual(e: EnumValue, other: unknown): Truth {
   return undefined;
 }
 
+/** First adapter of the left operand that answers, then of the right one (spec §13). */
+function adapterEqual(model: TypeModel, a: unknown, b: unknown): Truth {
+  if (typeof a === 'object' && a !== null) {
+    for (const ad of model.infoOf(a).adapters) {
+      const r = ad.equals?.(a, b);
+      if (r !== undefined) return r;
+    }
+  }
+  if (typeof b === 'object' && b !== null) {
+    for (const ad of model.infoOf(b).adapters) {
+      const r = ad.equals?.(b, a);
+      if (r !== undefined) return r;
+    }
+  }
+  return undefined;
+}
+
+/** Like {@link adapterEqual}; a right-operand answer is mirrored. */
+function adapterCompare(model: TypeModel, a: unknown, b: unknown): number | undefined {
+  if (typeof a === 'object' && a !== null) {
+    for (const ad of model.infoOf(a).adapters) {
+      const r = ad.compare?.(a, b);
+      if (r !== undefined && !Number.isNaN(r)) return Math.sign(r);
+    }
+  }
+  if (typeof b === 'object' && b !== null) {
+    for (const ad of model.infoOf(b).adapters) {
+      const r = ad.compare?.(b, a);
+      if (r !== undefined && !Number.isNaN(r)) return -Math.sign(r) || 0;
+    }
+  }
+  return undefined;
+}
+
 export function compareNumbers(a: number, b: number): number {
   if (a < b) return -1;
   if (a > b) return 1;
@@ -584,6 +622,11 @@ export function compareNumbers(a: number, b: number): number {
 /** Ordering comparison; undefined = incomparable. */
 export function compare(a: unknown, b: unknown): number | undefined {
   if (a === null || b === null || isAbsent(a) || isAbsent(b)) return undefined;
+  const model = activeModel();
+  if (model?.hasAdapters) {
+    const r = adapterCompare(model, a, b);
+    if (r !== undefined) return r;
+  }
   const na = toNumber(a);
   if (na !== undefined) {
     const nb = toNumber(b);

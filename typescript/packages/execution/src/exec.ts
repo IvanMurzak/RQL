@@ -3,6 +3,23 @@ import { RqlError, diagnostic, formatNumber, type Budgets, type Diagnostic, type
 import type { RqlEngine } from './engine.js';
 import { EnumValue, type MemberAccessor, type TypeInfo, type TypeModel } from './types.js';
 
+let active: TypeModel | undefined;
+
+/** The type model of the query being executed (adapter-aware equality, ordering and coercion). */
+export function activeModel(): TypeModel | undefined {
+  return active;
+}
+
+export function withActiveModel<T>(model: TypeModel, f: () => T): T {
+  const outer = active;
+  active = model;
+  try {
+    return f();
+  } finally {
+    active = outer;
+  }
+}
+
 const perf = (globalThis as { performance?: { now(): number } }).performance;
 export const now: () => number = perf !== undefined ? () => perf.now() : () => Date.now();
 

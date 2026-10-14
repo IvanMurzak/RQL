@@ -68,3 +68,27 @@ declared `t.map(...)` = maps, `EnumValue` (from enum-typed members, or stored by
 collections) = enums, `Date` = scalar. Enum members store the raw TS enum value back on `set`.
 Structs are mutated in place (JS objects are references); `set Pos.x = 5` additionally writes the struct
 back through a writable parent member, and assigning a whole struct assigns a copy.
+
+## Type adapters (spec §13)
+
+```ts
+engine.addAdapter({
+  target: THREE.Vector3,                     // class and subclasses; or { interfaceName, matches(ctor) }
+  priority: 0, name: 'Vector3Adapter', description: 'Vector3: write as "(x, y, z)" or [x, y, z]',
+  members: (m) => m.add('len', { type: t.number, get: (v) => v.length() }).hide('isVector3'),
+  encode: (v) => `(${v.x}, ${v.y}, ${v.z})`,
+  coerce: (value) => Array.isArray(value) ? { ok: true, value: new THREE.Vector3(...value) } : { ok: false, reason: 'expected [x, y, z]' },
+  equals: (v, other) => other instanceof THREE.Vector3 ? v.equals(other) : undefined,
+  compare: (v, other) => other instanceof THREE.Vector3 ? v.length() - other.length() : undefined,
+  stableId: undefined, isAlive: undefined,   // identity / liveness for object types
+});
+engine.explain(THREE.Vector3);               // ordered adapters with rank and priority
+```
+
+Resolution: exact class (rank 0), base classes by prototype-chain distance (up to `Object`), then
+`matches` adapters; ties by priority (higher first), then registration order. Member configuration
+(`add`, `hide`, `only`, `readOnly`, `reference`, `explicitOnly`, `describe`) runs least → most specific
+and needs a registered descriptor; the other capabilities also apply to undeclared class instances,
+`Array`/`Map`/`Set`/`Date`. Primitives (`string`, `number`, `boolean`) are not adaptable. Virtual members
+are non-owning by default; a virtual setter must round-trip its getter (rollback). `addAdapter` forks a
+`TypeModel` shared with other engines, so their behaviour does not change.

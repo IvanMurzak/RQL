@@ -29,3 +29,14 @@ export {
   type TypeSpec,
 } from './types.js';
 export { ErrorValue, MISSING, MapEntry, Missing, RowValue, UNKNOWN, Unknown, isAbsent } from './values.js';
+export {
+  adapterName,
+  rank as adapterRank,
+  type ClassAdapter,
+  type CoerceOutcome,
+  type EncodeContext,
+  type InterfaceAdapter,
+  type MemberTable,
+  type TypeAdapter,
+  type VirtualMemberSpec,
+} from './adapters.js';

@@ -5,6 +5,7 @@ import { describeValue, type Compiler, type Eval } from './compiler.js';
 import type { Encoder } from './encoder.js';
 import { errorMessage, type Exec } from './exec.js';
 import type { Item } from './pipeline.js';
+import { adapterName } from './adapters.js';
 import { closest } from './suggest.js';
 import {
   EnumType,
@@ -203,6 +204,9 @@ export class Mutator {
         if (!slot.writable(x)) throw new RqlError(slot.denyCode, `'${lbl}' on ${this.refOf(item)} is not writable${slot.denyReason}`);
         const co = coerce(x.types, nv, slot.type);
         if (!co.ok) throw new RqlError('coercion-failed', `cannot assign ${describeValue(nv)} to '${lbl}' (${friendlyName(slot.type, x.types)}): ${co.why}`);
+        // Validation runs while the mutation is planned, before any write (spec §13).
+        const rejected = slot instanceof MemberSlot ? slot.m.validate?.(container, co.value) : undefined;
+        if (rejected !== undefined) throw new RqlError('coercion-failed', `cannot assign ${describeValue(nv)} to '${lbl}' on ${this.refOf(item)}: ${rejected}`);
         writes.push({ item, segments: target.segments, label: lbl, old: safeGet(slot, container, lbl), new: co.value });
       }
     }
@@ -525,7 +529,17 @@ export function coerce(model: TypeModel, v: unknown, target: TypeRef): Coerced {
     case 'class': {
       const ti = model.infoForCtor(t.ctor);
       const ok = typeof v === 'object' && (v instanceof t.ctor || (ti !== undefined && model.infoOf(v).isA(ti.shortName)));
-      if (!ok) return { ok: false, why: `expected ${friendlyName(target, model)}` };
+      if (!ok) {
+        // Values already of the target type bypass adapters; others may be converted (spec §13).
+        for (const ad of model.hasAdapters ? model.adaptersFor(t.ctor) : []) {
+          const r = ad.coerce?.(v, t.ctor);
+          if (r === undefined) continue;
+          if (!r.ok) return { ok: false, why: r.reason };
+          if (r.value !== null && !(r.value instanceof t.ctor)) throw new Error(`adapter ${adapterName(ad)} coerced to ${describeValue(r.value)}, not ${t.ctor.name}`);
+          return { ok: true, value: r.value };
+        }
+        return { ok: false, why: `expected ${friendlyName(target, model)}` };
+      }
       // Structs have value semantics: assign a copy.
       if (ti?.kind === 'struct') return { ok: true, value: Object.assign(Object.create(Object.getPrototypeOf(v) as object | null) as object, v) };
       return { ok: true, value: v };
