@@ -58,10 +58,11 @@ namespace Rql.Execution
             public object? Old;
             public object? New;
             public object Owner = null!;
+            public IReadOnlyList<object> Owners = null!;
         }
 
         private IReadOnlyList<MutationRecord> Records(IEnumerable<PlannedWrite> writes) =>
-            writes.Select(w => new MutationRecord(w.Item, w.Owner, w.Label, w.Old, w.New, null)).ToList();
+            writes.Select(w => new MutationRecord(w.Item, w.Owner, w.Label, w.Old, w.New, null, w.Owners)).ToList();
 
         /// <summary>
         /// Runs a host hook (never on dry-run). Before-write failures veto the mutation (nothing written yet);
@@ -98,14 +99,14 @@ namespace Rql.Execution
                         throw new RqlException("coercion-failed", $"value for '{label}' on {_x.Engine.RefOf(item)} is missing");
                     if (nv is RqlError err)
                         throw new RqlException(err.Code == "stale-ref" ? "stale-ref" : "coercion-failed", $"value for '{label}' on {_x.Engine.RefOf(item)} failed: {err.Detail ?? err.Code}");
-                    var slot = Resolve(item, target.Segments, out var container, out var owner);
+                    var slot = Resolve(item, target.Segments, out var container, out var owner, out var owners);
                     if (!slot.Writable(_x))
                         throw new RqlException(slot.DenyCode, $"'{label}' on {_x.Engine.RefOf(item)} is not writable{slot.DenyReason}");
                     if (!Coerce.TryTo(_x.Kernel, nv, slot.Type, out var coerced, out var why))
                         throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' ({TypeModel.FriendlyName(slot.Type)}): {why}");
                     if (slot.Validate(container, coerced) is string rejected)
                         throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' on {_x.Engine.RefOf(item)}: {rejected}");
-                    writes.Add(new PlannedWrite { Item = item, Segments = target.Segments, Label = label, Old = SafeGet(slot, container, label), New = coerced, Owner = owner });
+                    writes.Add(new PlannedWrite { Item = item, Segments = target.Segments, Label = label, Old = SafeGet(slot, container, label), New = coerced, Owner = owner, Owners = owners });
                 }
             }
 
@@ -255,7 +256,7 @@ namespace Rql.Execution
             return new MemberSlot(container.GetType(), m);
         }
 
-        private Slot Resolve(object root, IReadOnlyList<Segment> segs, out object container, out object owner)
+        private Slot Resolve(object root, IReadOnlyList<Segment> segs, out object container, out object owner, out IReadOnlyList<object> owners)
         {
             string label = string.Concat(segs.Select(s => s.ToString()));
             object cur = root;
@@ -267,17 +268,30 @@ namespace Rql.Execution
                 {
                     // Every copy on the way (value type or copy-on-read member) is written back into its parent: those parent
                     // slots must be writable and allowed too (readonly struct fields, get-only properties, policy).
-                    for (int j = chain.Count - 1; j >= 0 && NeedsWriteBack(chain[j].slot, chain[j].value); j--)
+                    // Below a copy-on-read member everything is part of the copy, objects included, so the write-back goes
+                    // all the way up to that member.
+                    int copyRoot = CopyRoot(chain.Select(c => c.slot).ToList());
+                    for (int j = chain.Count - 1; j >= 0; j--)
                     {
+                        bool writeBack = NeedsWriteBack(chain[j].slot, chain[j].value);
+                        if (!writeBack)
+                        {
+                            if (copyRoot >= 0 && j > copyRoot) continue;
+                            break;
+                        }
                         if (!chain[j].slot.Writable(_x))
                             throw new RqlException(chain[j].slot.DenyCode, $"'{label}' on {_x.Engine.RefOf(root)} is not writable: '{segs[j]}' is a copy (value type or copy-on-read member) that must be written back through a non-writable member{chain[j].slot.DenyReason}");
                     }
                     container = cur;
                     // The owner whose state changes: the nearest enclosing object (never a collection, map view or struct),
-                    // e.g. the Material for Uniforms["_Color"], the ParticleSystem for main.duration (spec §13).
-                    owner = root;
-                    for (int k = chain.Count - 1; k >= 0; k--)
-                        if (_x.Types.Info(chain[k].value.GetType()).IsObject) { owner = chain[k].value; break; }
+                    // e.g. the Material for Uniforms["_Color"], the ParticleSystem for main.duration (spec §13). Inside a
+                    // copy-on-read member it is the object holding that member (the copies are not the real state).
+                    var enclosing = new List<object>();
+                    for (int k = (copyRoot >= 0 ? copyRoot : chain.Count) - 1; k >= 0; k--)
+                        if (_x.Types.Info(chain[k].value.GetType()).IsObject) enclosing.Add(chain[k].value);
+                    enclosing.Add(root);
+                    owner = enclosing[0];
+                    owners = enclosing;
                     return slot;
                 }
                 object? next = SafeGet(slot, cur, label);
@@ -315,11 +329,21 @@ namespace Rql.Execution
                 containers.Add(cur);
             }
             slots[slots.Count - 1].Set(containers[containers.Count - 1], value);
+            int copyRoot = CopyRoot(slots.Take(slots.Count - 1).ToList());
             for (int j = containers.Count - 1; j >= 1; j--)
             {
-                if (!NeedsWriteBack(slots[j - 1], containers[j])) break;
-                slots[j - 1].Set(containers[j - 1], containers[j]);
+                if (NeedsWriteBack(slots[j - 1], containers[j])) slots[j - 1].Set(containers[j - 1], containers[j]);
+                else if (copyRoot >= 0 && j - 1 > copyRoot) continue; // an object inside the copy: changed in place, keep going up
+                else break;
             }
+        }
+
+        /// <summary>Index of the outermost copy-on-read member slot on a path, or -1.</summary>
+        private static int CopyRoot(IReadOnlyList<Slot> slots)
+        {
+            for (int i = 0; i < slots.Count; i++)
+                if (slots[i] is MemberSlot ms && ms.M.CopyOnRead) return i;
+            return -1;
         }
 
         /// <summary>

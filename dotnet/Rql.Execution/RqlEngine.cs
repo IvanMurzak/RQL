@@ -27,10 +27,19 @@ namespace Rql.Execution
     /// <summary>One change made (or about to be made) by <c>set</c> or <c>call</c>, as seen by host hooks.</summary>
     public sealed class MutationRecord
     {
-        internal MutationRecord(object item, object owner, string member, object? oldValue, object? newValue, CallableMethod? method)
+        internal MutationRecord(object item, object owner, string member, object? oldValue, object? newValue, CallableMethod? method,
+                                IReadOnlyList<object>? owners = null)
         {
             Item = item; Owner = owner; Member = member; Old = oldValue; New = newValue; Method = method;
+            Owners = owners ?? new[] { owner };
         }
+
+        /// <summary>
+        /// Every object enclosing the change, nearest first, ending with the stream item — e.g. a plain view object, then the
+        /// engine object that holds it. Hosts whose undo / dirty tracking works on specific types (Unity: UnityEngine.Object)
+        /// take the first one they can record.
+        /// </summary>
+        public IReadOnlyList<object> Owners { get; }
 
         /// <summary>The mutation target (a stream item).</summary>
         public object Item { get; }
@@ -542,6 +551,9 @@ namespace Rql.Execution
         public int GetterErrors;
         public string? FirstGetterError;
         public readonly List<Diagnostic> Diagnostics = new List<Diagnostic>();
+
+        /// <summary>Distinct "code: detail" texts of encoded error cells (at most 3), copied to <see cref="QueryResult.CellErrors"/>.</summary>
+        public readonly List<string> CellErrors = new List<string>();
         public readonly List<MemberSite> Sites = new List<MemberSite>();
 
         public TimeSpan Elapsed => _sw.Elapsed;

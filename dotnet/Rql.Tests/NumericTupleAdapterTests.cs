@@ -35,6 +35,19 @@ namespace Rql.Tests
 
         private static string Cell(QueryResult r, int row, int col) => r.Rows![row][col]!.ToJsonString().Trim('"');
 
+        [Theory]
+        [InlineData(0.1, "0.1")]
+        [InlineData(1.0 / 3, "0.333333333333333")]
+        [InlineData(123456789.125, "123456789.125")]
+        [InlineData(1e-7, "1E-07")]
+        public void NumbersPrintShortestRoundTrip(double d, string expectedPrefix)
+        {
+            var s = V.FormatNumber(d);
+            Assert.StartsWith(expectedPrefix, s);
+            Assert.Equal(d, double.Parse(s, System.Globalization.CultureInfo.InvariantCulture));
+            Assert.Equal("0.1", V.FormatNumber(0.1f));
+        }
+
         [Fact]
         public void EncodesCompactly()
         {

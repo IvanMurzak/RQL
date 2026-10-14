@@ -68,6 +68,7 @@ namespace Rql.Execution
         private void AddWarnings(QueryResult result, bool onlyGeneral)
         {
             foreach (var d in _x.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Warning)) result.Diagnostics.Add(d);
+            result.CellErrors.AddRange(_x.CellErrors);
             if (_x.GetterErrors > 0)
                 result.Diagnostics.Add(Diagnostic.Warning("getter-threw", $"{_x.GetterErrors} member read(s) failed; first: {_x.FirstGetterError}"));
             if (onlyGeneral) return;

@@ -84,6 +84,11 @@ namespace Rql.Execution
                 case Unknown _:
                     return null;
                 case RqlError e:
+                    if (e.Detail != null && _x.CellErrors.Count < 3)
+                    {
+                        var text = e.Code + ": " + e.Detail;
+                        if (!_x.CellErrors.Contains(text)) _x.CellErrors.Add(text);
+                    }
                     return new JsonObject { ["$error"] = e.Code };
                 case bool b:
                     return JsonValue.Create(b);
@@ -92,7 +97,7 @@ namespace Rql.Execution
                 case char c:
                     return JsonValue.Create(c.ToString());
                 case float f:
-                    return Number(double.Parse(f.ToString("R", CultureInfo.InvariantCulture), CultureInfo.InvariantCulture));
+                    return Number(double.Parse(V.FormatNumber(f), CultureInfo.InvariantCulture));
                 case double d:
                     return Number(d);
                 case decimal m:
@@ -213,7 +218,8 @@ namespace Rql.Execution
         {
             if (Math.Abs(d) < 9007199254740992d && Math.Floor(d) == d) return JsonValue.Create((long)d);
             if (double.IsNaN(d) || double.IsInfinity(d)) return JsonValue.Create(V.FormatNumber(d));
-            return JsonValue.Create(d);
+            // Raw number text, so the output does not depend on the runtime's double formatting (Mono prints 17 digits).
+            return JsonNode.Parse(V.FormatNumber(d))!;
         }
     }
 }

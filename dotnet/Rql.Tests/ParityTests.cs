@@ -95,6 +95,43 @@ namespace Rql.Tests
             Assert.Same(replacement, s.Renderers[0].sharedMaterials[1]);
         }
 
+        // Like Unity's TerrainData.treePrototypes: the getter returns new copies of class objects, only the setter stores.
+        public sealed class Proto { public string name = ""; public double bend; }
+
+        public sealed class TerrainLike
+        {
+            private Proto[] _protos = { new Proto { name = "oak", bend = 0.1 }, new Proto { name = "pine", bend = 0.2 } };
+            public int Assignments;
+            public Proto[] prototypes
+            {
+                get => _protos.Select(p => new Proto { name = p.name, bend = p.bend }).ToArray();
+                set { Assignments++; _protos = value.Select(p => new Proto { name = p.name, bend = p.bend }).ToArray(); }
+            }
+            public Proto[] Stored => _protos;
+        }
+
+        private sealed class TerrainLikeAdapter : RqlTypeAdapter<TerrainLike>
+        {
+            protected override void Members(MemberTable<TerrainLike> m) => m.CopyOnRead(nameof(TerrainLike.prototypes)).Hide(nameof(TerrainLike.Stored), nameof(TerrainLike.Assignments));
+        }
+
+        [Fact]
+        public void WritesIntoObjectsInsideCopyOnReadMembersAreAssignedBack()
+        {
+            var t = new TerrainLike();
+            var e = new RqlEngine().AddSource("t", () => t).AddAdapter(new TerrainLikeAdapter());
+            e.Mutations.Enabled = true;
+            var r = e.Execute("t | set prototypes[1].bend = 0.7", options: Mutate);
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal(0.7, t.Stored[1].bend);
+            Assert.Equal(0.1, t.Stored[0].bend);
+
+            // All-or-nothing: a failing second assignment rolls the first back through the same write-back.
+            var bad = e.Execute("t | set prototypes[0].bend = 0.9, prototypes[0].name = 5", options: Mutate);
+            Assert.False(bad.Ok);
+            Assert.Equal(0.1, t.Stored[0].bend);
+        }
+
         [Fact]
         public void HandleStructsWriteThroughAndCanBeTargets()
         {
@@ -299,6 +336,44 @@ namespace Rql.Tests
             Assert.Equal(2, e.Types.Explain(typeof(Discovered)).Count);
         }
 
+        public sealed class ViewHolder { public string Name { get; set; } = "h"; public ViewLike View { get; } = new ViewLike(); }
+        public sealed class ViewLike { public double Tension { get; set; } }
+
+        [Fact]
+        public void MutationRecordsListEveryEnclosingObject()
+        {
+            var h = new ViewHolder();
+            var e = new RqlEngine().AddSource("h", () => h);
+            e.Mutations.Enabled = true;
+            IReadOnlyList<MutationRecord>? seen = null;
+            e.Mutations.BeforeWrite = records => seen = records;
+            Assert.True(e.Execute("h | set View.Tension = 0.5", options: Mutate).Ok);
+            Assert.Same(h.View, seen![0].Owner);
+            Assert.Equal(new object[] { h.View, h }, seen[0].Owners);
+        }
+
+        [Fact]
+        public void ErrorCellsExplainThemselvesInTheTableFormat()
+        {
+            var e = new RqlEngine().AddSource("items", () => new[] { 1, 2 })
+                .AddFunction("host.check", a => new RqlError("type-mismatch", "host.check expects a string"));
+            var r = e.Execute("items | select v=($) c=(host.check($))");
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal(new[] { "type-mismatch: host.check expects a string" }, r.CellErrors);
+            Assert.DoesNotContain("expects a string", r.ToJson(includeStats: false));                 // JSON contract unchanged
+            Assert.Contains("note: error cell type-mismatch: host.check expects a string", AgentFormat.Render(r, OutputFormat.Table));
+        }
+
+        public sealed class ModeHost { public ModesA.FilterMode A { get; set; } public ModesB.FilterMode B { get; set; } }
+
+        [Fact]
+        public void SchemaToleratesTypesWithTheSameShortName()
+        {
+            var e = new RqlEngine().AddSource("h", () => new ModeHost());
+            Assert.Contains("FilterMode", AgentFormat.Schema(e));
+            Assert.StartsWith("error unknown-type", AgentFormat.Schema(e, "NoSuchType"));
+        }
+
         [Fact]
         public void GuidesAreOrderedAndReplacedByTopic()
         {
@@ -338,3 +413,6 @@ namespace Rql.Tests
         }
     }
 }
+
+namespace Rql.Tests.ModesA { public enum FilterMode { Point, Bilinear } }
+namespace Rql.Tests.ModesB { public enum FilterMode { Off, On } }

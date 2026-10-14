@@ -101,6 +101,12 @@ namespace Rql
         public List<Diagnostic> Diagnostics { get; } = new List<Diagnostic>();
         public Stats Stats { get; } = new Stats();
 
+        /// <summary>
+        /// Messages of the first few distinct error cells (<c>{"$error": code}</c> in the JSON carries only the code). Not
+        /// part of the JSON contract; the agent table format prints them so a failing function in a select is explained.
+        /// </summary>
+        public List<string> CellErrors { get; } = new List<string>();
+
         public static QueryResult Fail(IEnumerable<Diagnostic> diagnostics)
         {
             var r = new QueryResult { Ok = false };

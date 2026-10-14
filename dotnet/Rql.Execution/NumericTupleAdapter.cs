@@ -54,7 +54,7 @@ namespace Rql.Execution
             for (int i = 0; i < Width; i++)
             {
                 if (i > 0) sb.Append(", ");
-                sb.Append(Part(value, i).ToString("R", CultureInfo.InvariantCulture));
+                sb.Append(V.FormatNumber(Part(value, i)));
             }
             return JsonValue.Create(sb.Append(')').ToString());
         }

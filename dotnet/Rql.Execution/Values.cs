@@ -166,7 +166,24 @@ namespace Rql.Execution
             _ => TypeModel.Get(v.GetType()).ShortName,
         };
 
-        public static string FormatNumber(double d) => d.ToString("R", CultureInfo.InvariantCulture);
+        /// <summary>
+        /// Shortest text that parses back to the same double. "R" is not shortest on every runtime (Mono, used by Unity,
+        /// prints 0.1 as 0.10000000000000001), so try 15 significant digits first.
+        /// </summary>
+        public static string FormatNumber(double d)
+        {
+            var s = d.ToString("G15", CultureInfo.InvariantCulture);
+            return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var back) && back.Equals(d)
+                ? s : d.ToString("G17", CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>Shortest text that parses back to the same float (0.1f prints as 0.1, not 0.100000001).</summary>
+        public static string FormatNumber(float f)
+        {
+            var s = f.ToString("G7", CultureInfo.InvariantCulture);
+            return float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var back) && back.Equals(f)
+                ? s : f.ToString("G9", CultureInfo.InvariantCulture);
+        }
     }
 
     /// <summary>Reference equality for identity sets (cycles, distinct).</summary>

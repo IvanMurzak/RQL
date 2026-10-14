@@ -41,6 +41,7 @@ namespace Rql.Execution
                     Header(sb, r, r.Rows!.Count, r.DryRun ? "DRY RUN — nothing changed; " : "");
                     sb.Append(string.Join("|", r.Columns!)).Append('\n');
                     foreach (var row in r.Rows!) sb.Append(string.Join("|", row.Select(Cell))).Append('\n');
+                    foreach (var e in r.CellErrors) sb.Append("note: error cell ").Append(e).Append('\n');
                     break;
                 case ResultKind.Items:
                     Header(sb, r, r.Items!.Count, "");
@@ -107,7 +108,9 @@ namespace Rql.Execution
                     sb.Append("  ").Append(f).Append("(…)").Append(engine.FunctionDescriptions.TryGetValue(f, out var fd) ? " — " + fd : "").Append('\n');
                 sb.Append("types (members: name type; ").Append(engine.Mutations.Enabled ? "ro = read-only; " : "").Append("derived types list only added members):\n");
             }
-            var byName = types.ToDictionary(t => t["name"]!.GetValue<string>(), t => t);
+            // Short names are not unique across namespaces (two FilterMode enums): the first one wins for base lookups.
+            var byName = new Dictionary<string, JsonObject>();
+            foreach (var t in types) byName.TryAdd(t["name"]!.GetValue<string>(), t);
             var shown = types.Where(t => typeFilter == null || string.Equals(t["name"]!.GetValue<string>(), typeFilter, StringComparison.OrdinalIgnoreCase)).ToList();
             if (typeFilter != null && shown.Count == 0) return UnknownTypeError(typeFilter, byName.Keys.ToList());
             foreach (var t in shown)
