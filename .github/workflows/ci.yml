@@ -13,7 +13,8 @@ concurrency:
 jobs:
   test-all:
     # Ephemeral Linux runners spawned by runner-manager in WSL2 (Ubuntu-24.04) on ANASTASIIA.
-    # The selector label is REQUIRED: runner-manager only answers jobs whose runs-on carries it.
+    # runner-manager answers a job only when EVERY runs-on label is one of the policy's routing labels
+    # (the policy carries rm-anastasiia-wsl-linux-x64, linux, self-hosted); the selector keeps other runners away.
     runs-on: [self-hosted, linux, rm-anastasiia-wsl-linux-x64]
     timeout-minutes: 30
     env:
