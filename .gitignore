@@ -16,3 +16,4 @@ cpp/build*/
 # eval raw traces (large); curated summaries live in evaluation/reports and baselines
 evaluation/runs/
 .scratch/
+*.tsbuildinfo
