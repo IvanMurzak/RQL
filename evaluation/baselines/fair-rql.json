@@ -1,0 +1,43 @@
+{
+ "run": "fair-rql",
+ "name": "RQL",
+ "split": "all",
+ "git": "849e7c6",
+ "config": {
+  "Name": "RQL",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-flash",
+  "ReasoningEffort": "none",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v4",
+  "Format": "table",
+  "Toolset": "rql",
+  "SchemaInPrompt": false,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 3,
+  "Repeats": 3
+ },
+ "n": 30,
+ "successes": 30,
+ "successRate": 1.0,
+ "ci95": [
+  0.8864829086095221,
+  1
+ ],
+ "costUsd": 0.006866952,
+ "costPerSuccess": 0.0002288984,
+ "meanTotalTokens": 5544.9,
+ "meanCompletionTokens": 197.7,
+ "meanToolCalls": 2.5,
+ "meanToolErrors": 0,
+ "meanToolResultChars": 2232.766666666667,
+ "medianWallSec": 4.97224305,
+ "p95WallSec": 7.755218304999999,
+ "cacheHitRatio": 0.8801117095551566,
+ "unintendedChangeTasks": 0,
+ "failures": []
+}

@@ -1,0 +1,46 @@
+{
+ "run": "fair-rn",
+ "name": "ReflectorNet",
+ "split": "all",
+ "git": "849e7c6",
+ "config": {
+  "Name": "ReflectorNet",
+  "BaseUrl": "https://api.deepseek.com",
+  "Model": "deepseek-flash",
+  "ReasoningEffort": "none",
+  "Temperature": 0,
+  "MaxSteps": 12,
+  "MaxTokensPerCall": 4096,
+  "TimeoutSeconds": 120,
+  "Prompt": "v4",
+  "Format": "table",
+  "Toolset": "reflectornet",
+  "SchemaInPrompt": false,
+  "MaxRows": 50,
+  "Parallel": 6,
+  "BudgetUsd": 3,
+  "Repeats": 3
+ },
+ "n": 30,
+ "successes": 25,
+ "successRate": 0.8333333333333334,
+ "ci95": [
+  0.6643529481431982,
+  0.9266356575964831
+ ],
+ "costUsd": 0.035469762,
+ "costPerSuccess": 0.00141879048,
+ "meanTotalTokens": 20188,
+ "meanCompletionTokens": 562.9,
+ "meanToolCalls": 8.4,
+ "meanToolErrors": 4.8,
+ "meanToolResultChars": 20512.566666666666,
+ "medianWallSec": 69.52675144999999,
+ "p95WallSec": 465.81920750999996,
+ "cacheHitRatio": 0.727646398404764,
+ "unintendedChangeTasks": 0,
+ "failures": [
+  "read-active-quest-gold@21",
+  "v2-read-quest-giver@31"
+ ]
+}

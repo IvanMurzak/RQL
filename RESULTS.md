@@ -179,10 +179,42 @@ Regression check: the final configuration rerun on dev with the hardened build s
 98.9% before, within noise. The only failures are the known `include-self` misreading on one template.
 Tokens, tool calls and cost were unchanged.
 
+### 3.6 Head-to-head with the real ReflectorNet library
+
+Requested by the owner: RQL vs **ReflectorNet 5.4.2** (NuGet, default settings), under conditions both can meet.
+The ReflectorNet toolset (`Toolset=reflectornet`, `Agent/ReflectorNetTools.cs`) exposes its own API:
+`View(path, MaxDepth, NamePattern)`, `TryReadAt(path)`, `Grep(namePattern)` and `TryPatch(json)`. The RQL side used the
+final language with **schema via tool**, so neither side gets a type map in its prompt. Same model, rules, 12-turn limit and
+hidden grader. Ten tasks ReflectorNet can genuinely do (reads, small searches/aggregates, writes; no method calls, no
+world-wide search by value, no scale tasks), × 3 repeats:
+`read-player-vitals@11, read-settings@11, read-rare-inventory@11, agg-inventory-value@21, read-active-quest-gold@21,
+agg-quest-level-gate@11, v2-read-item-tags@31, v2-read-quest-giver@31, mod-settings@11, mod-complete-quest@21`.
+
+| Run | Split | n | Success (95% CI) | Cost / success | Tokens / task | Tool calls | Tool errors | Tool-result chars | Median / p95 wall s | Cache hit |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| RQL | all | 30 | 100.0% (88.6–100.0) | $0.00023 | 5,545 | 2.50 | 0.00 | 2,233 | 4.97 / 7.76 | 88% |
+| ReflectorNet | all | 30 | 83.3% (66.4–92.7) | $0.00142 | 20,188 | 8.40 | 4.80 | 20,513 | 69.53 / 465.82 | 73% |
+
+Fairness notes:
+* The two asset tasks of the first draft were **replaced**. They hit a ReflectorNet path-parser bug (`[mat/wood]`
+  keys are unreachable because `/` splits the path even inside brackets), and a sandbox naming accident should not decide the
+  comparison.
+* ReflectorNet calls got guards equivalent to RQL's budgets (View depth ≤ 6, Grep depth ≤ 10, 30 s per call), because
+  unguarded runs never finished. 123 of its 144 tool errors are those 30 s timeouts.
+* Isolated, single-threaded timings on the same Medium world: point reads `TryReadAt(world/LocalPlayer/Level)` and
+  `View(world/Settings, depth 2)` take **0.02 s**. But `View(world/Quests/[0], depth 1)` and `View(world/LocalPlayer, depth 1)` take
+  **> 60 s**, and `View(world, depth 1)` ran > 10 min at 9.4 GB. `MaxDepth` does not bound serialization on graphs with shared
+  references.
+* **Caveat in ReflectorNet's favour:** the sandbox has no custom converters. In Unity-MCP, converters cut the
+  `object → scene → world` reference chains, so results on real Unity scenes would likely be considerably better for
+  ReflectorNet. Point reads show its core is fast.
+
+Both ReflectorNet findings were filed as https://github.com/IvanMurzak/ReflectorNet/issues/109 (minimal repro, no Unity).
+
 ## 4. Spend
 
-Total recorded DeepSeek spend for the whole session: **$3.48** of the $25 global cap (balance before
-start: $29.46), over 34 ledger entries (`evaluation/baselines/spend-ledger.json`). Costs are computed from
+Total recorded DeepSeek spend for the whole session: **$3.54** of the $25 global cap (balance before
+start: $29.46), over 40 ledger entries (`evaluation/baselines/spend-ledger.json`). Costs are computed from
 provider-reported token usage × the price snapshot. One entry is a known conservative double count (~$0.035; see the ledger).
 Cross-check against the provider's account balance endpoint at the end of the session: **$3.10 actually charged**
 ($29.46 → $26.36) vs $3.43 in the ledger, so the ledger, and every cost figure in this report, is a conservative upper bound (~10% high).
