@@ -137,6 +137,30 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Tests
         }
 
         [Test]
+        public void ChangesOnlyTheAlphaOfAMaterialColorPropertyFoundByInstanceId()
+        {
+            var shader = Shader.Find("Standard");
+            Assume.That(shader != null, "Standard shader not available in this render pipeline");
+            var material = new Material(shader) { name = "Glow" };
+            material.SetColor("_EmissionColor", new Color(0.2f, 0.4f, 0.6f, 1f));
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.GetComponent<MeshRenderer>().sharedMaterial = material;
+            var id = Cell(Q("objects | where $ is GameObject and components.any($ is MeshRenderer) | select $ref"));
+
+            var before = Q($"ref(\"{id}\") | get components | where $ is Renderer | select sharedMaterial.name c=sharedMaterial.properties[\"_EmissionColor\"]");
+            Assert.AreEqual("(0.2, 0.4, 0.6, 1)", Cell(before, 0, 1));
+
+            var set = M($"ref(\"{id}\") | get components | where $ is Renderer | set sharedMaterial.properties[\"_EmissionColor\"].a = 0.25");
+            Assert.IsTrue(set.Ok, Table(set));
+            var c = material.GetColor("_EmissionColor");
+            Assert.AreEqual(0.25f, c.a, 1e-6f);
+            Assert.AreEqual(0.2f, c.r, 1e-6f);
+            Assert.AreEqual(0.4f, c.g, 1e-6f);
+            Assert.AreEqual(0.6f, c.b, 1e-6f);
+            UnityEngine.Debug.Log("[RQL] alpha receipt:\n" + Table(set));
+        }
+
+        [Test]
         public void SchemaListsSceneTypesAndOneType()
         {
             var overview = RqlUnitySchema.Render(RqlUnity.Engine, null);
