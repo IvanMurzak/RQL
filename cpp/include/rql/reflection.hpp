@@ -58,6 +58,8 @@ enum class ScalarKind : uint8_t { None, Bool, Integer, Single, Double, String, A
 
 using Getter = std::function<Value(void* self)>;
 using Setter = std::function<void(void* self, const Value& value)>;
+/// Validation of a coerced value before any write: return a rejection reason, or empty to accept.
+using Validator = std::function<std::string(void* self, const Value& value)>;
 
 struct MemberDescriptor {
     std::string name;
@@ -71,7 +73,7 @@ struct MemberDescriptor {
     std::string description;
     bool explicit_only = false;  // read only when a path names it (adapters, spec §13)
     /// Adapter validation before any write: returns a rejection reason, empty = accept.
-    std::function<std::string(void* self, const Value& value)> validate;
+    Validator validate;
 
     bool has_setter() const { return setter && !readonly && (!assignable || assignable()); }
 };
@@ -132,6 +134,8 @@ public:
     const MemberDescriptor* find(const std::string& member) const;
     /// Self, bases and also_is names, case-insensitive.
     bool is_a(const std::string& type_name) const;
+    /// Whether this type or a base lists `interface_name` in also_is (case-insensitive).
+    bool implements(const std::string& interface_name) const;
     bool derives_from(const TypeDescriptor* other) const;
     /// Convert a pointer of this type to `target` (a base or self); nullptr if unrelated.
     void* upcast(void* p, const TypeDescriptor* target) const;
@@ -144,7 +148,7 @@ public:
     const MemberDescriptor* id_member_in(const std::vector<MemberDescriptor>& list) const;
     const MemberDescriptor* display_member_in(const std::vector<MemberDescriptor>& list) const;
     /// Identity members are always read-only through RQL.
-    bool member_writable(const MemberDescriptor& m) const { return m.has_setter() && &m != id_member(); }
+    bool member_writable(const MemberDescriptor& m) const;
 
     bool enum_name(int64_t v, std::string& out) const;
     bool enum_parse(const std::string& text, int64_t& out) const;  // case-insensitive name or integer text
@@ -155,6 +159,14 @@ public:
     std::string signature(const MethodDescriptor& m) const;
     bool is_value_type() const { return kind == TypeKind::Scalar || kind == TypeKind::Enum || kind == TypeKind::Struct; }
 };
+
+/// Exact (ordinal) name first, then a unique case-insensitive match; nullptr otherwise.
+const MemberDescriptor* find_member_in(const std::vector<MemberDescriptor>& members, const std::string& name);
+/// Writable through RQL: has a setter, not read-only, and not the identity member (always read-only).
+inline bool member_writable(const MemberDescriptor& m, const MemberDescriptor* id) { return m.has_setter() && &m != id; }
+inline bool TypeDescriptor::member_writable(const MemberDescriptor& m) const { return rql::member_writable(m, id_member()); }
+/// The value already has `type` (struct/enum of that type, or an object of it or a subtype).
+bool is_instance_of(const Value& v, const TypeDescriptor* type);
 
 /// Built-in scalar descriptors (process-wide).
 namespace builtin {

@@ -433,7 +433,7 @@ void adapter_tests() {
         e.add_adapter(mk("DerivedAdapter", reg.descriptor<Derived>(), -1));
         auto ex = e.explain(*reg.descriptor<Derived>());
         bool order = ex.size() == 5 && ex[0].rfind("DerivedAdapter (target Derived, rank 0", 0) == 0 &&
-                     ex[1].rfind("BaseHigh (target Base, rank 2, priority 5)", 0) == 0 && ex[2].rfind("BaseLow (", 0) == 0 &&
+                     ex[1].rfind("BaseHigh (target Base, rank 1, priority 5)", 0) == 0 && ex[2].rfind("BaseLow (", 0) == 0 &&
                      ex[3].rfind("BaseLow2 (", 0) == 0 && ex[4].rfind("IfaceAdapter (target interface IThing, rank 10000", 0) == 0;
         check(order, "adapters: ranking distance < priority < registration, interfaces last");
         check(e.explain(*reg.descriptor<Base>()).size() == 4, "adapters: subclass adapter does not apply to base");
@@ -530,6 +530,43 @@ void adapter_tests() {
             for (auto& m : r.types->at(0).find("members")->items())
                 if (m.find("name")->as_string() == "Secret" && m.find("explicitOnly")) flagged = true;
         check(flagged, "adapters: describe marks explicitOnly");
+    }
+
+    // distinct on structs compares implicit members only (explicit-only / hidden are never read implicitly)
+    {
+        auto g3 = conformance::load_graph(graph_path);
+        rql::Engine de(reg);
+        de.add_object_source("g", g3.get());
+        auto r = arun(de, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"recurse","via":[{"path":["Children"]}]},{"op":"get","expr":{"path":["Pos"]}},{"op":"distinct"},{"op":"count"}]})J");
+        check(r.ok && r.value.as_number() == 8, "adapters: baseline distinct Pos (no adapters)");
+        rql::TypeAdapter xo;
+        xo.target = reg.descriptor<conformance::Vec2>();
+        bool x_read = false;
+        xo.configure_members = [&x_read](rql::MemberTable& t) {
+            t.add("x", rql::builtin::double_type(), [&x_read](void* self) {
+                x_read = true;
+                return rql::Value::number(static_cast<conformance::Vec2*>(self)->x);
+            });
+            t.explicit_only({"x"});
+        };
+        de.add_adapter(std::move(xo));
+        r = arun(de, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"recurse","via":[{"path":["Children"]}]},{"op":"get","expr":{"path":["Pos"]}},{"op":"distinct"},{"op":"count"}]})J");
+        check(r.ok && r.value.as_number() == 7 && !x_read, "adapters: struct distinct skips explicit-only members (getter never called)");
+    }
+
+    // adapter liveness also applies to session handles ("Type@n")
+    {
+        auto g4 = conformance::load_graph(graph_path);
+        rql::Engine le(reg);
+        le.add_object_source("g", g4.get());
+        auto r = arun(le, R"J({"rql":"0.1","source":{"path":["g"]},"stages":[{"op":"select","fields":[{"name":"r","expr":{"path":[{"meta":"ref"}]}}]}]})J");
+        std::string handle = r.ok ? (*r.rows)[0][0].as_string() : "";
+        rql::TypeAdapter gone;
+        gone.target = reg.descriptor<conformance::Graph>();
+        gone.is_alive = [](const rql::Value&) -> std::optional<bool> { return false; };
+        le.add_adapter(std::move(gone));
+        r = arun(le, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":")J" + handle + R"J("}]},"stages":[{"op":"count"}]})J");
+        check(handle.rfind("Graph@", 0) == 0 && !r.ok && first_code(r) == "stale-ref", "adapters: adapter is_alive applies to session handles");
     }
 
     // configuration bugs → internal-error

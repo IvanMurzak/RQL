@@ -12,7 +12,15 @@ namespace Rql.Execution
     {
         private readonly Exec _x;
 
-        public Encoder(Exec x) { _x = x; }
+        private readonly Func<object?, int, JsonNode?> _encode;
+        private readonly Func<object, JsonObject> _summary;
+
+        public Encoder(Exec x)
+        {
+            _x = x;
+            _encode = Encode;
+            _summary = o => Summary(o, _x.Types.Info(o.GetType()));
+        }
 
         public QueryResult Rows(string[] columns, List<object?[]> rows)
         {
@@ -55,12 +63,12 @@ namespace Rql.Execution
 
         public JsonNode? Encode(object? v, int depth = 0)
         {
-            if (v != null && _x.Types.HasAdapters && !(v is Missing || v is Unknown || v is RqlError || v is RowValue || v is MapEntry))
+            if (v != null && (_x.Types.Caps & AdapterCaps.Encode) != 0)
             {
-                var adapters = _x.Types.Info(v.GetType()).AdapterArray;
+                var adapters = _x.Types.Info(v.GetType()).EncodeAdapters;
                 if (adapters.Length > 0)
                 {
-                    var ctx = new EncodeContext(Encode, o => Summary(o, _x.Types.Info(o.GetType())), depth);
+                    var ctx = new EncodeContext(_encode, _summary, depth);
                     foreach (var a in adapters)
                     {
                         var n = a.Encode(v, ctx);
@@ -144,9 +152,8 @@ namespace Rql.Execution
                 {
                     if (depth > 2) return JsonValue.Create("…");
                     var obj = new JsonObject();
-                    foreach (var m in info.Members)
+                    foreach (var m in info.ImplicitMembers)
                     {
-                        if (m.ExplicitOnly) continue;
                         object? mv;
                         try { mv = m.Getter(v); } catch (Exception ex) { mv = new RqlError("getter-threw", ex.Message); }
                         obj[m.Name] = Encode(mv, depth + 1);
@@ -168,9 +175,8 @@ namespace Rql.Execution
         private JsonObject Inline(object o, TypeInfo info, int depth)
         {
             var obj = new JsonObject();
-            foreach (var m in info.Members)
+            foreach (var m in info.ImplicitMembers)
             {
-                if (m.ExplicitOnly) continue;
                 object? mv;
                 try { mv = m.Getter(o); } catch (Exception ex) { mv = new RqlError("getter-threw", ex.Message); }
                 if (mv != null && !(mv is string) && !(mv is RqlError) && !(mv is Missing))

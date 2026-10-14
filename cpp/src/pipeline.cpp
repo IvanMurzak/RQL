@@ -52,6 +52,8 @@ Exec::Exec(Engine& e, const Budgets& b, const QueryOptions& o, const QueryPlan& 
     max_output_bytes = b.max_output_bytes.value_or(d.max_output_bytes);
     // Requests may change the per-request limit, but never beyond the host's hard ceiling.
     max_mutation_targets = std::min(b.max_mutation_targets.value_or(e.mutations().max_targets), e.mutations().hard_max_targets);
+    has_adapters_ = e.has_adapters();
+    caps_ = e.caps_;
 }
 
 void Exec::visit() {
@@ -295,14 +297,14 @@ int sort_rank(const Value& v) {
     return 3;
 }
 
-int compare_one(const Value& a, const Value& b, bool desc) {
+int compare_one(Exec& x, const Value& a, const Value& b, bool desc) {
     int ra = sort_rank(a), rb = sort_rank(b);
     if (ra == 9 || rb == 9) return ra < rb ? -1 : (ra > rb ? 1 : 0);  // nulls last in both directions
     if (ra != rb) return desc ? (rb < ra ? -1 : 1) : (ra < rb ? -1 : 1);
     int c;
     if (ra == 2) {
         c = a.as_bool() == b.as_bool() ? 0 : (a.as_bool() ? 1 : -1);
-    } else if (auto cc = rql_compare(a, b)) {
+    } else if (auto cc = rql_compare(x, a, b)) {
         c = *cc;
     } else {
         int t = to_text(a).compare(to_text(b));
@@ -330,7 +332,7 @@ public:
             x_.check_time();
             std::stable_sort(rows_.begin(), rows_.end(), [this](const Row& a, const Row& b) {
                 for (size_t k = 0; k < desc_.size(); ++k) {
-                    int c = compare_one(a.keys[k], b.keys[k], desc_[k]);
+                    int c = compare_one(x_, a.keys[k], b.keys[k], desc_[k]);
                     if (c != 0) return c < 0;
                 }
                 return false;
@@ -421,10 +423,12 @@ private:
 };
 
 struct ValueHash {
-    size_t operator()(const Value& v) const { return distinct_hash(v); }
+    Exec* x;
+    size_t operator()(const Value& v) const { return distinct_hash(*x, v); }
 };
 struct ValueEq {
-    bool operator()(const Value& a, const Value& b) const { return distinct_equal(a, b); }
+    Exec* x;
+    bool operator()(const Value& a, const Value& b) const { return distinct_equal(*x, a, b); }
 };
 
 class DistinctStream final : public Stream {
@@ -452,7 +456,7 @@ private:
     StreamPtr in_;
     Eval key_;
     int64_t i_ = 0;
-    std::unordered_set<Value, ValueHash, ValueEq> seen_;
+    std::unordered_set<Value, ValueHash, ValueEq> seen_{16, ValueHash{&x_}, ValueEq{&x_}};
 };
 
 class GroupByStream final : public Stream {
@@ -461,7 +465,7 @@ public:
     bool next(Item& out) override {
         if (!done_) {
             done_ = true;
-            std::unordered_map<Value, size_t, ValueHash, ValueEq> index;
+            std::unordered_map<Value, size_t, ValueHash, ValueEq> index(16, ValueHash{&x_}, ValueEq{&x_});
             std::vector<std::pair<Value, double>> groups;
             Item it;
             int64_t i = 0;
@@ -572,8 +576,9 @@ private:
             return;
         }
         if (!v.is_object()) return;
-        for (auto& m : x_.view(v.type()).members) {
-            if (!m.owning || m.explicit_only || !m.type) continue;
+        const TypeView view = x_.view(v.type());
+        for (auto& m : view.implicit_members()) {
+            if (!m.owning || !m.type) continue;
             if (m.type->kind == TypeKind::Enum || m.type->kind == TypeKind::Struct) continue;
             if (m.type->kind == TypeKind::Scalar && m.type->scalar != ScalarKind::Any) continue;
             Value cv;
@@ -839,7 +844,8 @@ std::vector<const TypeDescriptor*> reachable_types(Exec& x, std::vector<std::pai
         }
         if (t->kind == TypeKind::Scalar) continue;
         types.push_back(t);
-        for (auto& m : x.view(t).members) queue.push_back(m.type);
+        const TypeView view = x.view(t);
+        for (auto& m : view.members()) queue.push_back(m.type);
         if (t->kind == TypeKind::Object)
             for (auto* sub : registered)
                 if (sub != t && sub->derives_from(t)) queue.push_back(sub);
@@ -869,7 +875,8 @@ std::vector<std::string> holders(Exec& x, const std::string& type_name) {
     for (auto& r : roots)
         if (holds(r.second)) add("source " + r.first);
     for (auto* t : types) {
-        for (auto& m : x.view(t).members) {
+        const TypeView view = x.view(t);
+        for (auto& m : view.members()) {
             if (t->base && x.view(t->base).find(m.name)) continue;  // declared on the base
             if (holds(m.type)) add(t->name + "." + m.name);
         }
@@ -908,7 +915,10 @@ void add_warnings(Exec& x, QueryResult& r, bool only_general) {
             known_ready = true;
             known = {"key", "value", "count", "Count", "Length"};
             for (auto* t : reachable_types(x, nullptr))
-                for (auto& m : x.view(t).members) known.push_back(m.name);
+            {
+                const TypeView view = x.view(t);
+                for (auto& m : view.members()) known.push_back(m.name);
+            }
             for (auto& st : x.plan.stages)
                 if (st.kind == StageKind::Select)
                     for (auto& f : st.fields) known.push_back(f.name);
@@ -941,7 +951,8 @@ void add_warnings(Exec& x, QueryResult& r, bool only_general) {
         for (auto* t : site.miss_types) {
             if (type_names.size() < 4 && std::find(type_names.begin(), type_names.end(), t->name) == type_names.end())
                 type_names.push_back(t->name);
-            for (auto& m : x.view(t).members)
+            const TypeView view = x.view(t);
+            for (auto& m : view.members())
                 if (std::find(candidates.begin(), candidates.end(), m.name) == candidates.end()) candidates.push_back(m.name);
         }
         auto close = suggest_closest(site.name, candidates, 3);
@@ -1000,7 +1011,7 @@ QueryResult run_core(Exec& x) {
             r.ok = true;
             r.kind = ResultKind::Scalar;
             r.has_value = true;
-            r.value = enc.encode(reduce(values, terminal->op));
+            r.value = enc.encode(reduce(x, values, terminal->op));
             return r;
         }
         case StageKind::Set: return run_set(x, c, enc, *stream, *terminal);

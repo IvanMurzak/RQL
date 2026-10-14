@@ -396,18 +396,18 @@ namespace Rql.Execution
                         var t = Truth(a(x));
                         return t == null ? Unknown.Value : V.Bool(!t.Value);
                     };
-                case "==": return x => Tri(Equal(a(x), b!(x)));
+                case "==": return x => Tri(Equal(x.Types, a(x), b!(x)));
                 case "!=":
                     return x =>
                     {
-                        var t = Equal(a(x), b!(x));
+                        var t = Equal(x.Types, a(x), b!(x));
                         return t == null ? Unknown.Value : V.Bool(!t.Value);
                     };
-                case "<": return x => Ord(a(x), b!(x), c => c < 0);
-                case "<=": return x => Ord(a(x), b!(x), c => c <= 0);
-                case ">": return x => Ord(a(x), b!(x), c => c > 0);
-                case ">=": return x => Ord(a(x), b!(x), c => c >= 0);
-                case "contains": return x => Tri(Contains(a(x), b!(x)));
+                case "<": return x => Ord(x.Types, a(x), b!(x), c => c < 0);
+                case "<=": return x => Ord(x.Types, a(x), b!(x), c => c <= 0);
+                case ">": return x => Ord(x.Types, a(x), b!(x), c => c > 0);
+                case ">=": return x => Ord(x.Types, a(x), b!(x), c => c >= 0);
+                case "contains": return x => Tri(Contains(x.Types, a(x), b!(x)));
                 case "starts-with": return x => Tri(StringTest(a(x), b!(x), (s, t) => s.StartsWith(t, StringComparison.OrdinalIgnoreCase)));
                 case "ends-with": return x => Tri(StringTest(a(x), b!(x), (s, t) => s.EndsWith(t, StringComparison.OrdinalIgnoreCase)));
                 case "matches":
@@ -417,7 +417,7 @@ namespace Rql.Execution
                         x.CheckTime(); // the per-match regex timeout alone does not bound the whole query
                         return r;
                     };
-                case "in": return x => Tri(In(a(x), b!(x)));
+                case "in": return x => Tri(In(x.Types, a(x), b!(x)));
                 case "is":
                 {
                     var site = o.Args[1] is LitExpr tl && tl.Value is string tn ? new IsSite(tn, o.Span) : null;
@@ -473,12 +473,12 @@ namespace Rql.Execution
 
         private static object Tri(bool? b) => b == null ? Unknown.Value : V.Bool(b.Value);
 
-        /// <summary>Equality per spec §4.1; null = unknown.</summary>
-        internal static bool? Equal(object? a, object? b)
+        /// <summary>Equality per spec §4.1 (adapters per §13); null = unknown.</summary>
+        internal static bool? Equal(TypeModel? model, object? a, object? b)
         {
             if (V.IsAbsent(a) || V.IsAbsent(b)) return null;
             if (a == null || b == null) return a == null && b == null;
-            if (TypeModel.AnyAdapters && AdapterEqual(a, b) is bool adapted) return adapted;
+            if (model != null && (model.Caps & AdapterCaps.Equality) != 0 && AdapterEqual(model, a, b) is bool adapted) return adapted;
             if (V.TryNumber(a, out var da, out var sa))
             {
                 if (V.TryNumber(b, out var db, out var sb))
@@ -505,23 +505,20 @@ namespace Rql.Execution
             return ReferenceEquals(a, b);
         }
 
+        // First adapter answer for the left operand, then for the right operand (spec §13); ordering is mirrored.
         [MethodImpl(MethodImplOptions.NoInlining)]
-        private static bool? AdapterEqual(object a, object b)
+        private static bool? AdapterEqual(TypeModel model, object a, object b)
         {
-            var model = TypeModel.Active;
-            if (model == null || !model.HasAdapters) return null;
-            foreach (var ad in model.Info(a.GetType()).AdapterArray) { var r = ad.AreEqual(a, b); if (r.HasValue) return r; }
-            foreach (var ad in model.Info(b.GetType()).AdapterArray) { var r = ad.AreEqual(b, a); if (r.HasValue) return r; }
+            foreach (var ad in model.Info(a.GetType()).EqualityAdapters) { var r = ad.AreEqual(a, b); if (r.HasValue) return r; }
+            foreach (var ad in model.Info(b.GetType()).EqualityAdapters) { var r = ad.AreEqual(b, a); if (r.HasValue) return r; }
             return null;
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
-        private static int? AdapterCompare(object a, object b)
+        private static int? AdapterCompare(TypeModel model, object a, object b)
         {
-            var model = TypeModel.Active;
-            if (model == null || !model.HasAdapters) return null;
-            foreach (var ad in model.Info(a.GetType()).AdapterArray) { var r = ad.Compare(a, b); if (r.HasValue) return Math.Sign(r.Value); }
-            foreach (var ad in model.Info(b.GetType()).AdapterArray) { var r = ad.Compare(b, a); if (r.HasValue) return -Math.Sign(r.Value); }
+            foreach (var ad in model.Info(a.GetType()).OrderingAdapters) { var r = ad.Compare(a, b); if (r.HasValue) return Math.Sign(r.Value); }
+            foreach (var ad in model.Info(b.GetType()).OrderingAdapters) { var r = ad.Compare(b, a); if (r.HasValue) return -Math.Sign(r.Value); }
             return null;
         }
 
@@ -534,10 +531,10 @@ namespace Rql.Execution
         }
 
         /// <summary>Ordering comparison; null = incomparable.</summary>
-        internal static int? Compare(object? a, object? b)
+        internal static int? Compare(TypeModel? model, object? a, object? b)
         {
             if (a == null || b == null || V.IsAbsent(a) || V.IsAbsent(b)) return null;
-            if (TypeModel.AnyAdapters && AdapterCompare(a, b) is int adapted) return adapted;
+            if (model != null && (model.Caps & AdapterCaps.Ordering) != 0 && AdapterCompare(model, a, b) is int adapted) return adapted;
             if (V.TryNumber(a, out var da, out var sa))
             {
                 if (V.TryNumber(b, out var db, out var sb))
@@ -567,25 +564,25 @@ namespace Rql.Execution
             catch { value = null; return false; }
         }
 
-        private static object Ord(object? a, object? b, Func<int, bool> test)
+        private static object Ord(TypeModel model, object? a, object? b, Func<int, bool> test)
         {
-            var c = Compare(a, b);
+            var c = Compare(model, a, b);
             return c == null ? Unknown.Value : V.Bool(test(c.Value));
         }
 
-        private static bool? Contains(object? a, object? b)
+        private static bool? Contains(TypeModel model, object? a, object? b)
         {
             if (V.IsAbsent(a) || V.IsAbsent(b) || a == null) return null;
             if (V.IsString(a)) return b != null && V.IsString(b) ? V.AsString(a).IndexOf(V.AsString(b), StringComparison.OrdinalIgnoreCase) >= 0 : (bool?)null;
             if (V.IsList(a))
             {
-                foreach (var el in (IEnumerable)a!) if (Equal(el, b) == true) return true;
+                foreach (var el in (IEnumerable)a!) if (Equal(model, el, b) == true) return true;
                 return false;
             }
             var info = TypeModel.Get(a.GetType());
             if (info.IsMap)
             {
-                foreach (var e in V.EnumerateMap(a, info)) if (Equal(((MapEntry)e!).Key, b) == true) return true;
+                foreach (var e in V.EnumerateMap(a, info)) if (Equal(model, ((MapEntry)e!).Key, b) == true) return true;
                 return false;
             }
             return null;
@@ -617,11 +614,11 @@ namespace Rql.Execution
             catch (RegexMatchTimeoutException) { return null; }
         }
 
-        private static bool? In(object? a, object? b)
+        private static bool? In(TypeModel model, object? a, object? b)
         {
             if (V.IsAbsent(a) || V.IsAbsent(b) || b == null) return null;
-            if (!V.IsList(b)) return Equal(a, b);
-            foreach (var el in (IEnumerable)b) if (Equal(a, el) == true) return true;
+            if (!V.IsList(b)) return Equal(model, a, b);
+            foreach (var el in (IEnumerable)b) if (Equal(model, a, el) == true) return true;
             return false;
         }
 
@@ -714,7 +711,7 @@ namespace Rql.Execution
                 {
                     Arity(c, 1, 1);
                     var a = Compile(c.Args[0]);
-                    return x => Tri(Equal(a(x), null));
+                    return x => Tri(Equal(x.Types, a(x), null));
                 }
                 case "len":
                 {
@@ -1004,7 +1001,7 @@ namespace Rql.Execution
                     if (val == null || V.IsAbsent(val)) continue;
                     if (!V.IsNumber(val) && !V.IsString(val) && !(val is Enum)) continue;
                     if (best == null) { best = val; continue; }
-                    var c = Compare(val, best);
+                    var c = Compare(null, val, best); // numbers / strings / enums only: never adapted
                     if (c == null) continue;
                     if ((kind == "min" && c < 0) || (kind == "max" && c > 0)) best = val;
                     continue;

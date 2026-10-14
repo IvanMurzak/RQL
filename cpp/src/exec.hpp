@@ -1,6 +1,7 @@
 // Internal execution state shared by compiler / pipeline / encoder / mutator.
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <functional>
 #include <memory>
@@ -25,6 +26,65 @@ PathPtr path_text(PathPtr parent, std::string text);
 PathPtr path_member(const PathPtr& parent, const std::string& name);
 PathPtr path_at(const PathPtr& parent, int64_t i);
 PathPtr path_key(const PathPtr& parent, const Value& key);
+
+// ---------------------------------------------------------------- adapted types (spec §13)
+
+enum class Capability : uint8_t { Encode, Coerce, Equals, Compare, StableId, IsAlive };
+constexpr size_t kCapabilities = 6;
+
+/// What adapters change for one type in one engine. Only built when some adapter applies; members are
+/// copied only when an adapter configures them.
+struct AdaptedType {
+    std::vector<const TypeAdapter*> adapters;                               // most specific first
+    std::array<std::vector<const TypeAdapter*>, kCapabilities> by_cap;      // adapters implementing each capability
+    std::string description;                                                // effective type description
+    bool owns_members = false;                                              // members configured by an adapter
+    std::vector<MemberDescriptor> members;                                  // valid when owns_members
+    const MemberDescriptor* id = nullptr;                                   // valid when owns_members
+    const MemberDescriptor* display = nullptr;                              // valid when owns_members
+    bool has_explicit_only = false;
+    std::vector<MemberDescriptor> implicit;                                 // members minus explicit-only (when any)
+};
+
+/// Cheap handle: the descriptor plus its adaptation, if any. Without adapters every accessor reads the
+/// descriptor directly.
+class TypeView {
+public:
+    TypeView(const TypeDescriptor* type, const AdaptedType* adapted) noexcept : t_(type), a_(adapted) {}
+    const TypeDescriptor* type() const { return t_; }
+    const AdaptedType* adapted() const { return a_; }
+    const std::vector<MemberDescriptor>& members() const { return a_ && a_->owns_members ? a_->members : t_->members; }
+    /// Members read implicitly (generic recurse, inline/struct encoding, ref search, distinct): no explicit-only.
+    const std::vector<MemberDescriptor>& implicit_members() const { return a_ && a_->has_explicit_only ? a_->implicit : members(); }
+    const MemberDescriptor* find(const std::string& name) const { return find_member_in(members(), name); }
+    const MemberDescriptor* id() const { return a_ && a_->owns_members ? a_->id : t_->id_member(); }
+    const MemberDescriptor* display() const { return a_ && a_->owns_members ? a_->display : t_->display_member(); }
+    bool member_writable(const MemberDescriptor& m) const { return rql::member_writable(m, id()); }
+    const std::string& description() const { return a_ ? a_->description : t_->description; }
+    const std::vector<const TypeAdapter*>& adapters() const { return a_ ? a_->adapters : empty(); }
+    const std::vector<const TypeAdapter*>& with(Capability c) const { return a_ ? a_->by_cap[static_cast<size_t>(c)] : empty(); }
+
+private:
+    static const std::vector<const TypeAdapter*>& empty() {
+        static const std::vector<const TypeAdapter*> none;
+        return none;
+    }
+    const TypeDescriptor* t_;
+    const AdaptedType* a_;
+};
+
+std::vector<const TypeAdapter*> applicable_adapters(const std::vector<std::unique_ptr<TypeAdapter>>& all, const TypeDescriptor& type);
+/// nullptr when no adapter applies (the descriptor is then used directly).
+std::unique_ptr<AdaptedType> build_adapted(TypeRegistry& registry, const TypeDescriptor& type,
+                                           const std::vector<std::unique_ptr<TypeAdapter>>& adapters);
+
+/// First non-empty answer of `f(adapter)` over an adapter list.
+template <class F>
+auto first_answer(const std::vector<const TypeAdapter*>& list, F f) -> decltype(f(*list.front())) {
+    for (const TypeAdapter* a : list)
+        if (auto r = f(*a)) return r;
+    return std::nullopt;
+}
 
 struct Item {
     Value value;
@@ -81,15 +141,29 @@ public:
     std::unordered_map<std::string, std::shared_ptr<std::regex>> regex_cache;
     std::unordered_map<std::string, Value> ref_cache;  // fallback ref() search results
 
-    /// Adapted view of a type (per-query cache in front of the engine's cache).
-    const TypeView& view(const TypeDescriptor* t) {
-        auto it = views.find(t);
-        if (it != views.end()) return *it->second;
-        const TypeView& v = engine.view(t);
-        views.emplace(t, &v);
-        return v;
+    /// View of a type for this query. Adapter-free engines: one flag check, the descriptor itself.
+    TypeView view(const TypeDescriptor* t) {
+        if (!has_adapters_) return TypeView(t, nullptr);
+        auto it = adapted_.find(t);
+        if (it == adapted_.end()) it = adapted_.emplace(t, engine.adapted(t)).first;  // engine cache (locked) on first use
+        return TypeView(t, it->second);
     }
-    std::unordered_map<const TypeDescriptor*, const TypeView*> views;
+    /// Adapters of a value's type implementing a capability (empty when none / adapter-free engine).
+    const std::vector<const TypeAdapter*>& adapters_for(const Value& v, Capability c) {
+        static const std::vector<const TypeAdapter*> none;
+        if (!caps_[static_cast<size_t>(c)] || !v.type()) return none;
+        return view_with(v.type(), c);
+    }
+    const std::vector<const TypeAdapter*>& adapters_for(const TypeDescriptor* t, Capability c) {
+        static const std::vector<const TypeAdapter*> none;
+        if (!caps_[static_cast<size_t>(c)] || !t) return none;
+        return view_with(t, c);
+    }
+    bool has_capability(Capability c) const { return caps_[static_cast<size_t>(c)]; }
+    /// Stable reference string (adapter stable ids, id member, session handles).
+    std::string ref_of(const Value& v);
+    /// Resolve a reference; fallback-search nodes count as visits; results cached per query.
+    Value resolve_ref(const std::string& reference, std::string& error);
 
     void visit();
     void check_time() const;
@@ -98,39 +172,33 @@ public:
 
 private:
     std::chrono::steady_clock::time_point start_;
+    bool has_adapters_ = false;
+    std::array<bool, kCapabilities> caps_{};
+    std::unordered_map<const TypeDescriptor*, const AdaptedType*> adapted_;
+    const std::vector<const TypeAdapter*>& view_with(const TypeDescriptor* t, Capability c) {
+        TypeView tv = view(t);
+        static const std::vector<const TypeAdapter*> none;
+        return tv.adapted() ? tv.adapted()->by_cap[static_cast<size_t>(c)] : none;
+    }
 };
 
 using Eval = std::function<Value(Exec&)>;
 
-/// Engine whose query runs on this thread (adapter-aware equality / ordering / coercion), or null.
-Engine* active_engine() noexcept;
-class ActiveEngineScope {
-public:
-    explicit ActiveEngineScope(Engine* e) noexcept;
-    ~ActiveEngineScope();
-    ActiveEngineScope(const ActiveEngineScope&) = delete;
-    ActiveEngineScope& operator=(const ActiveEngineScope&) = delete;
-
-private:
-    Engine* saved_;
-};
-
-std::vector<const TypeAdapter*> applicable_adapters(const std::vector<std::unique_ptr<TypeAdapter>>& all, const TypeDescriptor& type);
-std::unique_ptr<TypeView> build_view(TypeRegistry& registry, const TypeDescriptor& type,
-                                     const std::vector<std::unique_ptr<TypeAdapter>>& adapters);
 
 // ---------------------------------------------------------------- value semantics (compiler.cpp)
 
 /// Kleene truth: bool → value, null → false, otherwise unknown (nullopt).
 std::optional<bool> truth(const Value& v);
 Value tri(std::optional<bool> b);
-std::optional<bool> rql_equal(const Value& a, const Value& b);
-std::optional<int> rql_compare(const Value& a, const Value& b);
+/// Equality / ordering (spec §4.1) with adapter hooks of the running query (spec §13).
+std::optional<bool> rql_equal(Exec& x, const Value& a, const Value& b);
+std::optional<int> rql_compare(Exec& x, const Value& a, const Value& b);
 bool try_number(const Value& v, double& d, bool& single);
 inline bool try_number(const Value& v, double& d) { bool s; return try_number(v, d, s); }
-Value reduce(const std::vector<Value>& values, const std::string& kind);
-bool distinct_equal(const Value& a, const Value& b);
-size_t distinct_hash(const Value& v);
+Value reduce(Exec& x, const std::vector<Value>& values, const std::string& kind);
+/// Value equality for distinct / group-by (structs member-wise over their implicit members).
+bool distinct_equal(Exec& x, const Value& a, const Value& b);
+size_t distinct_hash(Exec& x, const Value& v);
 /// Elements of a list (values) or a map (entries); false when v is not a collection.
 bool elements(const Value& v, std::vector<Value>& out);
 size_t collection_size(const Value& v);
@@ -189,7 +257,7 @@ QueryResult run_pipeline(Exec& x);
 QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s);
 QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s);
 /// Coerce a value to a member/parameter type (spec §8); nullopt + why on failure.
-std::optional<Value> coerce(const Value& v, const TypeDescriptor* target, bool nullable, std::string& why);
+std::optional<Value> coerce(Exec& x, const Value& v, const TypeDescriptor* target, bool nullable, std::string& why);
 
 // ---------------------------------------------------------------- describe (encoder.cpp)
 QueryResult run_describe(Exec& x, Stream& stream);

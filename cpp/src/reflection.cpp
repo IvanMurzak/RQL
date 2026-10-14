@@ -103,12 +103,12 @@ bool key_integral(const Value& key, double lo, double hi, double& out) {
 
 // ------------------------------------------------------------------ TypeDescriptor
 
-const MemberDescriptor* TypeDescriptor::find(const std::string& member) const {
+const MemberDescriptor* find_member_in(const std::vector<MemberDescriptor>& members, const std::string& name) {
     for (auto& m : members)
-        if (m.name == member) return &m;
+        if (m.name == name) return &m;
     const MemberDescriptor* hit = nullptr;
     for (auto& m : members) {
-        if (iequals(m.name, member)) {
+        if (iequals(m.name, name)) {
             if (hit) return nullptr;  // ambiguous
             hit = &m;
         }
@@ -116,13 +116,29 @@ const MemberDescriptor* TypeDescriptor::find(const std::string& member) const {
     return hit;
 }
 
-bool TypeDescriptor::is_a(const std::string& type_name) const {
-    for (const TypeDescriptor* t = this; t; t = t->base) {
-        if (iequals(t->name, type_name)) return true;
-        for (auto& n : t->also_is)
-            if (iequals(n, type_name)) return true;
+bool is_instance_of(const Value& v, const TypeDescriptor* type) {
+    if (!type || !v.type()) return false;
+    switch (type->kind) {
+        case TypeKind::Struct: return v.is_struct() && v.type() == type;
+        case TypeKind::Enum: return v.is_enum() && v.type() == type;
+        case TypeKind::Object: return v.is_object() && v.type()->derives_from(type);
+        default: return false;
     }
+}
+
+const MemberDescriptor* TypeDescriptor::find(const std::string& member) const { return find_member_in(members, member); }
+
+bool TypeDescriptor::implements(const std::string& interface_name) const {
+    for (const TypeDescriptor* t = this; t; t = t->base)
+        for (auto& n : t->also_is)
+            if (iequals(n, interface_name)) return true;
     return false;
+}
+
+bool TypeDescriptor::is_a(const std::string& type_name) const {
+    for (const TypeDescriptor* t = this; t; t = t->base)
+        if (iequals(t->name, type_name)) return true;
+    return implements(type_name);
 }
 
 bool TypeDescriptor::derives_from(const TypeDescriptor* other) const {

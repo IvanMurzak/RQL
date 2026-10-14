@@ -79,7 +79,7 @@ namespace Rql.Execution
                     var slot = Resolve(item, target.Segments, out var container);
                     if (!slot.Writable(_x))
                         throw new RqlException(slot.DenyCode, $"'{label}' on {_x.Engine.RefOf(item)} is not writable{slot.DenyReason}");
-                    if (!Coerce.TryTo(nv, slot.Type, out var coerced, out var why))
+                    if (!Coerce.TryTo(_x.Types, nv, slot.Type, out var coerced, out var why))
                         throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' ({TypeModel.FriendlyName(slot.Type)}): {why}");
                     if (slot is MemberSlot ms && ms.M.Validate != null && ms.M.Validate(container, coerced) is string rejected)
                         throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' on {_x.Engine.RefOf(item)}: {rejected}");
@@ -314,7 +314,7 @@ namespace Rql.Execution
                     for (int i = 0; i < ps.Length; i++)
                     {
                         if (i >= vals.Length) { cv[i] = ps[i].DefaultValue; continue; }
-                        if (!Coerce.TryTo(vals[i], ps[i].ParameterType, out cv[i], out var w)) { ok = false; why = $"argument '{ps[i].Name}': {w}"; break; }
+                        if (!Coerce.TryTo(_x.Types, vals[i], ps[i].ParameterType, out cv[i], out var w)) { ok = false; why = $"argument '{ps[i].Name}': {w}"; break; }
                     }
                     if (ok) { chosen = m; coerced = cv; break; }
                 }
@@ -352,7 +352,7 @@ namespace Rql.Execution
 
     internal static class Coerce
     {
-        public static bool TryTo(object? v, Type target, out object? result, out string why)
+        public static bool TryTo(TypeModel model, object? v, Type target, out object? result, out string why)
         {
             why = "";
             result = null;
@@ -367,10 +367,9 @@ namespace Rql.Execution
             if (under != null) target = under;
             if (target == typeof(object) || target.IsInstanceOfType(v)) { result = v; return true; }
 
-            var model = TypeModel.Active;
-            if (model != null && model.HasAdapters)
+            if ((model.Caps & AdapterCaps.Coerce) != 0)
             {
-                foreach (var ad in model.Info(target).AdapterArray)
+                foreach (var ad in model.Info(target).CoerceAdapters)
                 {
                     switch (ad.TryCoerce(v, target, out var adapted, out var reason))
                     {
@@ -438,7 +437,7 @@ namespace Rql.Execution
                 var items = new List<object?>();
                 foreach (var el in src)
                 {
-                    if (!TryTo(el, elem, out var ce, out var w)) { why = "element: " + w; return false; }
+                    if (!TryTo(model, el, elem, out var ce, out var w)) { why = "element: " + w; return false; }
                     items.Add(ce);
                 }
                 if (target.IsArray)

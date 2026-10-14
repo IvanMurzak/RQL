@@ -88,7 +88,8 @@ engine.explain(THREE.Vector3);               // ordered adapters with rank and p
 Resolution: exact class (rank 0), base classes by prototype-chain distance (up to `Object`), then
 `matches` adapters; ties by priority (higher first), then registration order. Member configuration
 (`add`, `hide`, `only`, `readOnly`, `reference`, `explicitOnly`, `describe`) runs least → most specific
-and needs a registered descriptor; the other capabilities also apply to undeclared class instances,
+and needs a registered descriptor (an adapter with `members` on an undeclared class fails the query with
+`internal-error`); the other capabilities also apply to undeclared class instances,
 `Array`/`Map`/`Set`/`Date`. Primitives (`string`, `number`, `boolean`) are not adaptable. Virtual members
 are non-owning by default; a virtual setter must round-trip its getter (rollback). `addAdapter` forks a
 `TypeModel` shared with other engines, so their behaviour does not change.

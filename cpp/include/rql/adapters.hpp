@@ -2,13 +2,15 @@
 // (virtual / hidden / explicit-only members), shown (encode), written (coerce + validation),
 // compared, identified (stable id) and checked for liveness — without changing the plan format.
 //
-// Adapters are registered per Engine (Engine::add_adapter). The engine derives an adapted TypeView of
-// each TypeDescriptor, so one TypeRegistry can serve engines with different adapter sets.
+// Adapters are registered per Engine (Engine::add_adapter). The engine derives an adapted view of each
+// TypeDescriptor it meets (members after adapters, per-capability adapter lists), so one TypeRegistry
+// can serve engines with different adapter sets. An engine without adapters reads descriptors directly.
 //
 // Applicability: an adapter targets a descriptor (exact type, or a base: applies to subclasses) or
 // an interface name (matched against TypeDescriptor::also_is). Order, most specific first: base-chain
-// distance d (rank 2d), then interfaces (rank 10000); ties by priority (higher first), then
-// registration order. There is no open-generic tier in C++ (spec §13 allows omitting it).
+// distance d (rank d), then interfaces (rank 10000); ties by priority (higher first), then
+// registration order. There is no open-generic tier in C++ (spec §13 allows omitting it). Engine-internal
+// values (projected rows, map entries, errors) never have adapters.
 //
 // This is the seam an Unreal provider uses for FVector/FRotator encoding & literals, UObject
 // IsValid / pending-kill liveness, and GUID-based stable ids.
@@ -30,26 +32,25 @@ namespace rql {
 /// Outcome of a capability that may decline: not handled (defer), succeeded, or failed with a reason.
 enum class AdapterOutcome : uint8_t { NotHandled, Ok, Failed };
 
-/// What an encode callback can use.
+namespace detail {
+class Encoder;
+}
+
+/// What an encode callback can use (valid only during the callback).
 class EncodeContext {
 public:
-    EncodeContext(std::function<Json(const Value&, int)> encode, std::function<Json(const Value&)> summary, int depth)
-        : encode_(std::move(encode)), summary_(std::move(summary)), depth_(depth) {}
+    EncodeContext(detail::Encoder& encoder, int depth) noexcept : encoder_(&encoder), depth_(depth) {}
     /// Nesting depth of the value being encoded (0 = a top-level cell).
     int depth() const { return depth_; }
     /// Encode another value with full adapter support (e.g. a member of this value).
-    Json encode_value(const Value& v) const { return encode_(v, depth_ + 1); }
+    Json encode_value(const Value& v) const;
     /// The standard object summary {"$ref": ..., "name": ...}.
-    Json summary(const Value& object) const { return summary_(object); }
+    Json summary(const Value& object) const;
 
 private:
-    std::function<Json(const Value&, int)> encode_;
-    std::function<Json(const Value&)> summary_;
+    detail::Encoder* encoder_;
     int depth_;
 };
-
-/// Validation of a coerced value before any write: return a rejection reason, or empty to accept.
-using Validator = std::function<std::string(void* self, const Value& value)>;
 
 /// The member table of one runtime type while adapters shape it. Errors (configuring a member that
 /// does not exist, virtual setters on value types) throw std::logic_error inside the engine, which
@@ -131,6 +132,8 @@ private:
     std::vector<MemberDescriptor>& members_;
     const TypeDescriptor* current_target_ = nullptr;
     MemberDescriptor& member(const std::string& name);
+    /// Keep (keep = true) or drop (keep = false) exactly the named members.
+    MemberTable& retain(const std::vector<std::string>& names, bool keep);
 };
 
 /// A type adapter. Every capability is optional (an empty std::function defers to the next adapter,
@@ -165,23 +168,8 @@ T* value_as(TypeRegistry& registry, const Value& v) {
     return static_cast<T*>(v.type()->upcast(v.ptr(), registry.descriptor<T>()));
 }
 
-/// The adapted view of a type for one engine: members after adapters, id/display recomputed,
-/// applicable adapters (most specific first) and the effective description.
-struct TypeView {
-    const TypeDescriptor* type = nullptr;
-    std::vector<MemberDescriptor> members;
-    const MemberDescriptor* id = nullptr;
-    const MemberDescriptor* display = nullptr;
-    std::vector<const TypeAdapter*> adapters;
-    std::string description;
-
-    /// Exact name, then a unique case-insensitive match.
-    const MemberDescriptor* find(const std::string& name) const;
-    /// Identity members are always read-only through RQL.
-    bool member_writable(const MemberDescriptor& m) const { return m.has_setter() && &m != id; }
-};
-
-/// Specificity rank of `adapter` for `type` (lower = more specific); -1 = not applicable.
+/// Specificity rank of `adapter` for `type` (lower = more specific): base-chain distance d (0 = the
+/// type itself), interfaces 10000; -1 = not applicable.
 int adapter_rank(const TypeAdapter& adapter, const TypeDescriptor& type);
 
 }  // namespace rql

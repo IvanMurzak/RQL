@@ -1,6 +1,7 @@
 // Host-facing RQL runtime over live C++ objects (mirrors dotnet/Rql.Execution/RqlEngine.cs).
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -21,6 +22,8 @@ namespace rql {
 
 namespace detail {
 class Exec;
+struct AdaptedType;
+class TypeView;
 }
 
 struct SourceRegistration {
@@ -61,7 +64,8 @@ struct EngineDefaults {
 
 class Engine {
 public:
-    explicit Engine(TypeRegistry& types) : types_(&types) {}
+    explicit Engine(TypeRegistry& types);
+    ~Engine();
     Engine(const Engine&) = delete;
     Engine& operator=(const Engine&) = delete;
 
@@ -101,13 +105,6 @@ public:
     /// Ordered adapters applying to a type, most specific first: "name (target T, rank r, priority p)".
     std::vector<std::string> explain(const TypeDescriptor& type) const noexcept;
     bool has_adapters() const noexcept { return !adapters_.empty(); }
-    /// Internal: adapted view of a type for this engine (cached). Throws std::logic_error for adapter
-    /// configuration bugs (the running query then fails with internal-error).
-    const TypeView& view(const TypeDescriptor* type) const;
-    /// Liveness: first adapter verdict, else the is_alive hook, else alive.
-    bool alive(const Value& object);
-    /// "#id" part of a stable reference: adapter stable_id first, then the id member; nullopt = none.
-    std::optional<std::string> stable_id_of(const Value& object);
 
     /// Last registration error (empty when the last registration succeeded).
     const std::string& last_error() const noexcept { return last_error_; }
@@ -129,9 +126,6 @@ public:
     std::string ref_of(const Value& v) noexcept;
     /// Resolve a reference string (copied display forms tolerated). On failure returns missing and sets error.
     Value resolve_ref(const std::string& reference, std::string& error) noexcept;
-    /// Internal: fallback-search nodes count as visits of the calling query; results cached per query.
-    /// May throw budget-exceeded/timeout internally when x is set (only called inside execution).
-    Value resolve_ref(const std::string& reference, std::string& error, detail::Exec* x);
     void clear_session_handles() noexcept;
 
     /// Capability manifest (spec/capability-manifest.schema.json). Null Json on internal failure.
@@ -140,6 +134,8 @@ public:
     Json describe_type(const TypeDescriptor& t) const noexcept;
 
 private:
+    friend class detail::Exec;
+
     struct HandleKey {
         const void* ptr;
         const void* type;
@@ -166,15 +162,27 @@ private:
     int64_t next_handle_ = 0;
     std::string last_error_;
     std::vector<std::unique_ptr<TypeAdapter>> adapters_;
-    mutable std::mutex view_mutex_;
-    mutable std::unordered_map<const TypeDescriptor*, std::unique_ptr<TypeView>> views_;
-    mutable std::vector<std::unique_ptr<TypeView>> retired_views_;  // kept alive after add_adapter invalidation
+    std::array<bool, 6> caps_{};  // some adapter implements the capability (detail::Capability order)
+    mutable std::mutex adapted_mutex_;
+    mutable std::unordered_map<const TypeDescriptor*, std::unique_ptr<detail::AdaptedType>> adapted_;
+
+    // Internals (may throw; only called inside execution or from noexcept wrappers). `x` is the running
+    // query when there is one: its per-query cache is used and visits are counted.
+    /// Adaptation of a type (cached, locked); nullptr when no adapter applies. Throws std::logic_error
+    /// for adapter configuration bugs (the running query then fails with internal-error).
+    const detail::AdaptedType* adapted(const TypeDescriptor* type) const;
+    detail::TypeView view_of(const TypeDescriptor* type, detail::Exec* x) const;
+    /// Liveness: first adapter verdict, else the is_alive hook, else alive.
+    bool alive(const Value& object, detail::Exec* x);
+    /// "#id" part of a stable reference: adapter stable_id first, then the id member; nullopt = none.
+    std::optional<std::string> stable_id_of(const Value& object, detail::Exec* x);
+    Value resolve_ref(const std::string& reference, std::string& error, detail::Exec* x);
 
     int64_t handle_of(const Value& v);
     Value search_sources(const std::string& type, const std::string& id, const Value* identity, detail::Exec* x);
     Json describe_type_impl(const TypeDescriptor& t) const;
     Json capabilities_impl();
-    std::string ref_of_impl(const Value& v);
+    std::string ref_of_impl(const Value& v, detail::Exec* x);
 };
 
 }  // namespace rql

@@ -2,7 +2,7 @@
 import { diagnostic, formatNumber, isJsonInteger, type JsonObject, type JsonValue, type QueryResult } from '@rql/contracts';
 import { elements, mapEntries, sizeOf, type MapLike } from './collections.js';
 import { toText } from './compiler.js';
-import type { EncodeContext } from './adapters.js';
+import { firstAnswer, type EncodeContext } from './adapters.js';
 import type { Exec } from './exec.js';
 import { EnumValue, friendlyName, type MemberAccessor, type TypeInfo } from './types.js';
 import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN } from './values.js';
@@ -75,18 +75,16 @@ export class Encoder {
 
   encode(v: unknown, depth = 0): JsonValue {
     if (v === null || v === undefined || v === MISSING || v === UNKNOWN) return null;
-    if (typeof v === 'object' && this.x.types.hasAdapters && !(v instanceof ErrorValue || v instanceof RowValue || v instanceof MapEntry)) {
-      const adapters = this.x.types.infoOf(v).adapters;
+    if (typeof v === 'object' && this.x.types.hasCapability('encode')) {
+      const adapters = this.x.types.infoOf(v).adapterSet.encode;
       if (adapters.length > 0) {
         const ctx: EncodeContext = {
           depth,
           encodeValue: (o) => this.encode(o, depth + 1),
           summary: (o) => this.summary(o, this.x.types.infoOf(o)),
         };
-        for (const a of adapters) {
-          const n = a.encode?.(v, ctx);
-          if (n !== undefined) return n;
-        }
+        const n = firstAnswer(adapters, (a) => a.encode!(v, ctx));
+        if (n !== undefined) return n;
       }
     }
     switch (typeof v) {
@@ -142,7 +140,7 @@ export class Encoder {
       case 'struct': {
         if (depth > 2) return '…';
         const obj: JsonObject = {};
-        for (const m of info.membersOf(v)) if (!m.explicitOnly) put(obj, m.name, this.encode(read(m, v), depth + 1));
+        for (const m of info.implicitMembersOf(v)) put(obj, m.name, this.encode(read(m, v), depth + 1));
         return obj;
       }
       case 'object':
@@ -159,8 +157,7 @@ export class Encoder {
    */
   private inline(o: object, info: TypeInfo, depth: number): JsonObject {
     const obj: JsonObject = {};
-    for (const m of info.membersOf(o)) {
-      if (m.explicitOnly) continue;
+    for (const m of info.implicitMembersOf(o)) {
       const mv = read(m, o);
       if (typeof mv === 'object' && mv !== null && !(mv instanceof ErrorValue)) {
         const mi = this.x.types.infoOf(mv);

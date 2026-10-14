@@ -9,6 +9,10 @@ namespace Rql.Execution
     /// <summary>Outcome of an adapter capability that may decline: not handled (defer), succeeded, or failed with a reason.</summary>
     public enum AdapterOutcome { NotHandled, Ok, Failed }
 
+    /// <summary>Capabilities an adapter overrides (detected at registration, so hot paths skip adapters that never answer).</summary>
+    [Flags]
+    internal enum AdapterCaps { None = 0, Encode = 1, Coerce = 2, Equality = 4, Ordering = 8, Identity = 16, Liveness = 32 }
+
     /// <summary>
     /// A host extension that customises how values of a type family are read, shown, written and compared (spec §13).
     /// Every capability is optional; the default implementation of each one defers to the next applicable adapter and
@@ -43,7 +47,8 @@ namespace Rql.Execution
 
         /// <summary>
         /// Convert <paramref name="value"/> (a query literal, list, or another runtime value) to <paramref name="target"/>,
-        /// which is the adapter's type or a subtype. Used for writes and for comparisons against values of the type.
+        /// which is the adapter's type or a subtype. Used for writes (<c>set</c>, <c>call</c> arguments) only; to make
+        /// comparisons accept the same literals, coerce the other operand in <see cref="AreEqual"/> / <see cref="Compare"/>.
         /// </summary>
         public virtual AdapterOutcome TryCoerce(object? value, Type target, out object? result, out string? reason)
         {
@@ -66,6 +71,32 @@ namespace Rql.Execution
 
         /// <summary>One line for schemas and <c>describe</c>, e.g. how agents should write literals of the type.</summary>
         public virtual string? Description => null;
+
+        internal AdapterCaps Caps { get; private set; }
+
+        internal void DetectCaps()
+        {
+            var caps = AdapterCaps.None;
+            if (Overrides("Encode")) caps |= AdapterCaps.Encode;
+            if (Overrides("TryCoerce")) caps |= AdapterCaps.Coerce;
+            if (Overrides("AreEqual", "Equal")) caps |= AdapterCaps.Equality;
+            if (Overrides("Compare", "Order")) caps |= AdapterCaps.Ordering;
+            if (Overrides("StableId", "Id")) caps |= AdapterCaps.Identity;
+            if (Overrides("IsAlive", "Alive")) caps |= AdapterCaps.Liveness;
+            Caps = caps;
+        }
+
+        /// <summary>True when a class between the concrete adapter and the library base types declares one of the methods.</summary>
+        private bool Overrides(params string[] names)
+        {
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+            for (var t = GetType(); t != null && t != typeof(RqlTypeAdapter); t = t.BaseType)
+            {
+                if (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(RqlTypeAdapter<>)) break;
+                if (t.GetMethods(flags).Any(m => names.Contains(m.Name))) return true;
+            }
+            return false;
+        }
     }
 
     /// <summary>Strongly typed convenience base: capabilities receive <typeparamref name="T"/> directly.</summary>
@@ -243,16 +274,30 @@ namespace Rql.Execution
 
         public bool Any => _adapters.Count > 0;
 
+        /// <summary>Union of the registered adapters' capabilities.</summary>
+        public AdapterCaps Caps { get; private set; }
+
         public void Add(RqlTypeAdapter adapter)
         {
-            lock (_adapters) _adapters.Add(adapter);
+            adapter.DetectCaps();
+            lock (_adapters)
+            {
+                _adapters.Add(adapter);
+                Caps |= adapter.Caps;
+            }
             _byType.Clear();
         }
+
+        // Engine-internal values (rows, map entries, absent markers, errors) are never adapted, whatever the target.
+        private static readonly HashSet<Type> Internal = new HashSet<Type>
+        {
+            typeof(RowValue), typeof(MapEntry), typeof(Missing), typeof(Unknown), typeof(RqlError),
+        };
 
         /// <summary>Applicable adapters, most specific first.</summary>
         public RqlTypeAdapter[] For(Type type)
         {
-            if (_adapters.Count == 0) return Array.Empty<RqlTypeAdapter>();
+            if (_adapters.Count == 0 || Internal.Contains(type)) return Array.Empty<RqlTypeAdapter>();
             return _byType.GetOrAdd(type, Resolve);
         }
 
@@ -275,8 +320,7 @@ namespace Rql.Execution
         {
             if (target.IsInterface)
             {
-                if (target.IsGenericTypeDefinition)
-                    return type.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == target) ? 20000 : -1;
+                if (target.IsGenericTypeDefinition) return TypeModel.FindGeneric(type, target) != null ? 20000 : -1;
                 return target.IsAssignableFrom(type) ? 10000 : -1;
             }
             int d = 0;

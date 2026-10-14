@@ -58,7 +58,7 @@ struct Slot {
     enum Kind { Member, ListIndex, MapKey } kind = Member;
     const MemberDescriptor* member = nullptr;
     const TypeDescriptor* owner = nullptr;
-    const TypeView* view = nullptr;
+    const MemberDescriptor* id = nullptr;  // identity member of the owner's view (always read-only)
     int64_t index = 0;
     Value key;
     const TypeDescriptor* type = nullptr;
@@ -147,12 +147,12 @@ Slot slot_of(Exec& x, const Value& container, const Segment& seg, const std::str
     else if (seg.kind == SegmentKind::Key && seg.key.type == Literal::Type::String) name = seg.key.s;
     else throw RqlException("invalid-plan", "'" + label + "': invalid segment " + seg.to_string() + " on " + type_name);
     const TypeDescriptor* t = (container.is_object() || container.is_struct()) ? container.type() : nullptr;
-    const TypeView* tv = t ? &x.view(t) : nullptr;
+    const std::optional<TypeView> tv = t ? std::optional<TypeView>(x.view(t)) : std::nullopt;
     const MemberDescriptor* m = tv ? tv->find(name) : nullptr;  // hidden members are unwritable (spec §13)
     if (!m) {
         std::vector<std::string> names;
         if (tv)
-            for (auto& mm : tv->members) names.push_back(mm.name);
+            for (auto& mm : tv->members()) names.push_back(mm.name);
         auto close = suggest_closest(name, names, 3);
         throw RqlException("unknown-member", "no member '" + name + "' on " + type_name,
                            !close.empty() ? "did you mean " + join(close, " / ") + "?" : "members: " + join(names, " "));
@@ -160,7 +160,7 @@ Slot slot_of(Exec& x, const Value& container, const Segment& seg, const std::str
     s.kind = Slot::Member;
     s.member = m;
     s.owner = t;
-    s.view = tv;
+    s.id = tv->id();
     s.type = m->type;
     s.nullable = m->nullable;
     return s;
@@ -177,11 +177,11 @@ Value safe_get(const Slot& slot, const Value& container, const std::string& labe
 /// Member slots must be writable and allowed by policy; list/map slots were checked by slot_of.
 void check_writable(Exec& x, const Slot& slot, const std::string& label, const Value& root, const std::string& what) {
     if (slot.kind != Slot::Member) return;
-    if (!slot.view->member_writable(*slot.member))
-        throw RqlException("readonly-member", "'" + label + "' on " + x.engine.ref_of(root) + " is not writable" + what + " (read-only member)");
+    if (!member_writable(*slot.member, slot.id))
+        throw RqlException("readonly-member", "'" + label + "' on " + x.ref_of(root) + " is not writable" + what + " (read-only member)");
     auto& policy = x.engine.mutations().can_write;
     if (policy && !policy(*slot.owner, *slot.member))
-        throw RqlException("permission-denied", "'" + label + "' on " + x.engine.ref_of(root) + " is not writable" + what + " (denied by host policy)");
+        throw RqlException("permission-denied", "'" + label + "' on " + x.ref_of(root) + " is not writable" + what + " (denied by host policy)");
 }
 
 Slot resolve(Exec& x, const Value& root, const std::vector<Segment>& segs, Value& container) {
@@ -202,7 +202,7 @@ Slot resolve(Exec& x, const Value& root, const std::vector<Segment>& segs, Value
         }
         Value next = safe_get(slot, cur, label);
         if (next.is_null() || next.is_missing())
-            throw RqlException("coercion-failed", "cannot set '" + label + "': '" + segs[i].to_string() + "' is null on " + x.engine.ref_of(root));
+            throw RqlException("coercion-failed", "cannot set '" + label + "': '" + segs[i].to_string() + "' is null on " + x.ref_of(root));
         chain.emplace_back(slot, next);
         cur = next;
     }
@@ -239,7 +239,7 @@ struct PlannedWrite {
 
 }  // namespace
 
-std::optional<Value> coerce(const Value& v, const TypeDescriptor* target, bool nullable, std::string& why) {
+std::optional<Value> coerce(Exec& x, const Value& v, const TypeDescriptor* target, bool nullable, std::string& why) {
     if (v.is_absent()) {
         why = "value is " + describe_value(v);
         return std::nullopt;
@@ -251,30 +251,20 @@ std::optional<Value> coerce(const Value& v, const TypeDescriptor* target, bool n
     }
     if (!target || (target->kind == TypeKind::Scalar && target->scalar == ScalarKind::Any)) return v;
     // Values already of the target type bypass adapters.
-    if ((target->kind == TypeKind::Struct && v.is_struct() && v.type() == target) ||
-        (target->kind == TypeKind::Object && v.is_object() && v.type()->derives_from(target)) ||
-        (target->kind == TypeKind::Enum && v.is_enum() && v.type() == target))
-        return v;
-    if (Engine* e = active_engine(); e && e->has_adapters()) {
-        for (const TypeAdapter* ad : e->view(target).adapters) {
-            if (!ad->coerce) continue;
-            Value adapted;
-            std::string reason;
-            switch (ad->coerce(v, *target, adapted, reason)) {
-                case AdapterOutcome::Ok: {
-                    bool ok = adapted.is_null() ||
-                              (target->kind == TypeKind::Struct && adapted.is_struct() && adapted.type() == target) ||
-                              (target->kind == TypeKind::Object && adapted.is_object() && adapted.type()->derives_from(target)) ||
-                              (target->kind == TypeKind::Enum && adapted.is_enum() && adapted.type() == target) ||
-                              (target->kind != TypeKind::Struct && target->kind != TypeKind::Object && target->kind != TypeKind::Enum);
-                    if (!ok) throw std::logic_error("adapter " + ad->name + " coerced to " + type_name_of(adapted) + ", not " + target->name);
-                    return adapted;
-                }
-                case AdapterOutcome::Failed:
-                    why = reason.empty() ? "rejected by " + ad->name : reason;
-                    return std::nullopt;
-                case AdapterOutcome::NotHandled: break;
-            }
+    if (is_instance_of(v, target)) return v;
+    const bool nominal = target->kind == TypeKind::Struct || target->kind == TypeKind::Object || target->kind == TypeKind::Enum;
+    for (const TypeAdapter* ad : x.adapters_for(target, Capability::Coerce)) {
+        Value adapted;
+        std::string reason;
+        switch (ad->coerce(v, *target, adapted, reason)) {
+            case AdapterOutcome::Ok:
+                if (nominal && !adapted.is_null() && !is_instance_of(adapted, target))
+                    throw std::logic_error("adapter " + ad->name + " coerced to " + type_name_of(adapted) + ", not " + target->name);
+                return adapted;
+            case AdapterOutcome::Failed:
+                why = reason.empty() ? "rejected by " + ad->name : reason;
+                return std::nullopt;
+            case AdapterOutcome::NotHandled: break;
         }
     }
     switch (target->kind) {
@@ -312,7 +302,6 @@ std::optional<Value> coerce(const Value& v, const TypeDescriptor* target, bool n
                 default: return v;
             }
         case TypeKind::Enum: {
-            if (v.is_enum() && v.type() == target) return v;
             int64_t e = 0;
             if (v.is_string() && target->enum_parse(v.as_string(), e) && target->enum_defined(e)) return Value::enumeration(target, e);
             double d;
@@ -322,11 +311,7 @@ std::optional<Value> coerce(const Value& v, const TypeDescriptor* target, bool n
             return std::nullopt;
         }
         case TypeKind::Object:
-            if (v.is_object() && v.type()->derives_from(target)) return v;
-            why = "expected " + target->friendly_name();
-            return std::nullopt;
-        case TypeKind::Struct:
-            if (v.is_struct() && v.type() == target) return v;
+        case TypeKind::Struct:  // instances returned above
             why = "expected " + target->friendly_name();
             return std::nullopt;
         case TypeKind::List: {
@@ -339,7 +324,7 @@ std::optional<Value> coerce(const Value& v, const TypeDescriptor* target, bool n
             size_t n = l.size();
             for (size_t i = 0; i < n; ++i) {
                 std::string w;
-                auto c = coerce(l.at(i), target->element, target->element_nullable, w);
+                auto c = coerce(x, l.at(i), target->element, target->element_nullable, w);
                 if (!c) {
                     why = "element: " + w;
                     return std::nullopt;
@@ -357,7 +342,7 @@ std::optional<Value> coerce(const Value& v, const TypeDescriptor* target, bool n
             bool ok = true;
             v.map().for_each([&](const Value& k, const Value& val) {
                 std::string w;
-                auto c = coerce(val, target->element, target->element_nullable, w);
+                auto c = coerce(x, val, target->element, target->element_nullable, w);
                 if (!c) {
                     why = "value: " + w;
                     ok = false;
@@ -392,16 +377,16 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
             x.current_depth = -1;
             Value nv = a.value(x);
             if (nv.is_missing() || nv.is_unknown())
-                throw RqlException("coercion-failed", "value for '" + a.label + "' on " + x.engine.ref_of(item) + " is missing");
+                throw RqlException("coercion-failed", "value for '" + a.label + "' on " + x.ref_of(item) + " is missing");
             if (nv.is_error())
                 throw RqlException(nv.error_code() == "stale-ref" ? "stale-ref" : "coercion-failed",
-                                   "value for '" + a.label + "' on " + x.engine.ref_of(item) + " failed: " +
+                                   "value for '" + a.label + "' on " + x.ref_of(item) + " failed: " +
                                        (nv.error_detail().empty() ? nv.error_code() : nv.error_detail()));
             Value container;
             Slot slot = resolve(x, item, a.target->segments, container);
             check_writable(x, slot, a.label, item, "");
             std::string why;
-            auto coerced = coerce(nv, slot.type, slot.nullable, why);
+            auto coerced = coerce(x, nv, slot.type, slot.nullable, why);
             if (!coerced)
                 throw RqlException("coercion-failed", "cannot assign " + describe_value(nv) + " to '" + a.label + "' (" +
                                                           (slot.type ? slot.type->friendly_name() : std::string("object")) + "): " + why);
@@ -409,7 +394,7 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
                 std::string rejected = slot.member->validate(container.ptr(), *coerced);  // before any write (spec §13)
                 if (!rejected.empty())
                     throw RqlException("coercion-failed", "cannot assign " + describe_value(nv) + " to '" + a.label + "' on " +
-                                                              x.engine.ref_of(item) + ": " + rejected);
+                                                              x.ref_of(item) + ": " + rejected);
             }
             writes.push_back({item, &a.target->segments, a.label, snapshot(safe_get(slot, container, a.label)), *coerced});
         }
@@ -437,7 +422,7 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
     }
 
     std::vector<std::vector<Value>> rows;
-    for (auto& w : writes) rows.push_back({Value::string(x.engine.ref_of(w.item)), Value::string(w.label), w.old_value, w.new_value});
+    for (auto& w : writes) rows.push_back({Value::string(x.ref_of(w.item)), Value::string(w.label), w.old_value, w.new_value});
     QueryResult r = enc.rows({"$ref", "member", "old", "new"}, rows);
     r.dry_run = x.options.dry_run;
     return r;
@@ -498,7 +483,7 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
                     continue;
                 }
                 std::string w;
-                auto r = coerce(vals[i], ps[i].type, ps[i].nullable, w);
+                auto r = coerce(x, vals[i], ps[i].type, ps[i].nullable, w);
                 if (!r) {
                     ok = false;
                     why = "argument '" + ps[i].name + "': " + w;
@@ -515,7 +500,7 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
         if (!chosen) {
             std::vector<std::string> cs;
             for (auto* m : candidates) cs.push_back(t->signature(*m));
-            throw RqlException("coercion-failed", "cannot call " + s.method + " on " + x.engine.ref_of(item) + ": " + why,
+            throw RqlException("coercion-failed", "cannot call " + s.method + " on " + x.ref_of(item) + ": " + why,
                                "signature: " + join(cs, ", "));
         }
         planned.push_back({item, chosen, std::move(coerced)});
@@ -529,12 +514,12 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
             try {
                 result = p.method->invoke(p.item.ptr(), p.args);
             } catch (const std::exception& ex) {
-                throw RqlException("getter-threw", p.method->name + " on " + x.engine.ref_of(p.item) + " threw: " + ex.what() + "; " +
+                throw RqlException("getter-threw", p.method->name + " on " + x.ref_of(p.item) + " threw: " + ex.what() + "; " +
                                                        std::to_string(done) + " earlier call(s) completed and are NOT rolled back");
             }
         }
         ++done;
-        rows.push_back({Value::string(x.engine.ref_of(p.item)), Value::string(p.item.type()->signature(*p.method)), result});
+        rows.push_back({Value::string(x.ref_of(p.item)), Value::string(p.item.type()->signature(*p.method)), result});
     }
     QueryResult r = enc.rows({"$ref", "method", "result"}, rows);
     r.dry_run = x.options.dry_run;

@@ -98,19 +98,57 @@ export type AnyAdapter = AdapterCapabilities<object> & { target?: Ctor; interfac
 
 const INTERFACE_RANK = 10000;
 
+/** Value capabilities an adapter may implement (member shaping is applied at type build time). */
+export const CAPABILITIES = ['equals', 'compare', 'encode', 'coerce', 'stableId', 'isAlive'] as const;
+export type Capability = (typeof CAPABILITIES)[number];
+
+/** Applicable adapters of one type split per capability, most specific first. */
+export type AdapterSet = { readonly [C in Capability]: readonly AnyAdapter[] };
+
+const EMPTY: readonly AnyAdapter[] = [];
+export const NO_ADAPTERS: AdapterSet = { equals: EMPTY, compare: EMPTY, encode: EMPTY, coerce: EMPTY, stableId: EMPTY, isAlive: EMPTY };
+
+export function adapterSet(adapters: readonly AnyAdapter[]): AdapterSet {
+  if (adapters.length === 0) return NO_ADAPTERS;
+  const pick = (c: Capability): readonly AnyAdapter[] => {
+    const l = adapters.filter((a) => typeof a[c] === 'function');
+    return l.length > 0 ? l : EMPTY;
+  };
+  return { equals: pick('equals'), compare: pick('compare'), encode: pick('encode'), coerce: pick('coerce'), stableId: pick('stableId'), isAlive: pick('isAlive') };
+}
+
+/** First defined answer of `ask` over `adapters` (most specific first); undefined when all defer. */
+export function firstAnswer<R>(adapters: readonly AnyAdapter[], ask: (a: AnyAdapter) => R | undefined): R | undefined {
+  for (const a of adapters) {
+    const r = ask(a);
+    if (r !== undefined) return r;
+  }
+  return undefined;
+}
+
 /** Adapter registry and deterministic resolution (spec §13). */
 export class AdapterRegistry {
   private readonly list: AnyAdapter[] = [];
   private readonly byCtor = new Map<Ctor, readonly AnyAdapter[]>();
+  private readonly any: Record<Capability, boolean> = { equals: false, compare: false, encode: false, coerce: false, stableId: false, isAlive: false };
+
+  /** @param internal engine-internal classes (rows, map entries, absent markers, errors): never adapted. */
+  constructor(private readonly internal: ReadonlySet<object>) {}
 
   get size(): number {
     return this.list.length;
+  }
+
+  /** Whether any registered adapter implements the capability (gates the hot paths). */
+  has(c: Capability): boolean {
+    return this.any[c];
   }
 
   add(adapter: TypeAdapter): void {
     const a = adapter as unknown as AnyAdapter;
     if (a.target === undefined && typeof a.matches !== 'function') throw new Error('type adapter needs a target class or a matches() predicate');
     this.list.push(a);
+    for (const c of CAPABILITIES) if (typeof a[c] === 'function') this.any[c] = true;
     this.byCtor.clear();
   }
 
@@ -118,9 +156,9 @@ export class AdapterRegistry {
     for (const a of this.list) other.add(a as TypeAdapter);
   }
 
-  /** Applicable adapters, most specific first. */
+  /** Applicable adapters, most specific first (none for engine-internal classes). */
   for(ctor: Ctor | undefined): readonly AnyAdapter[] {
-    if (ctor === undefined || this.list.length === 0) return [];
+    if (ctor === undefined || this.list.length === 0 || this.internal.has(ctor)) return EMPTY;
     let hit = this.byCtor.get(ctor);
     if (hit === undefined) {
       hit = this.list

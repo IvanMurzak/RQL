@@ -150,28 +150,14 @@ bool same_identity(const Value& a, const Value& b) {
 
 }  // namespace
 
-namespace {
-/// Adapters of a value's type for the running engine (spec §13), or null when none apply.
-const std::vector<const TypeAdapter*>* adapters_of(const Value& v) {
-    Engine* e = active_engine();
-    if (!e || !e->has_adapters() || !v.type() || v.is_row() || v.is_entry()) return nullptr;
-    const auto& list = e->view(v.type()).adapters;
-    return list.empty() ? nullptr : &list;
-}
-}  // namespace
-
-std::optional<bool> rql_equal(const Value& a, const Value& b) {
+std::optional<bool> rql_equal(Exec& x, const Value& a, const Value& b) {
     if (a.is_absent() || b.is_absent()) return std::nullopt;
     if (a.is_null() || b.is_null()) return a.is_null() && b.is_null();
-    // Adapters of the left operand first, then of the right operand (spec §13).
-    if (auto* la = adapters_of(a))
-        for (auto* ad : *la)
-            if (ad->equals)
-                if (auto r = ad->equals(a, b)) return r;
-    if (auto* ra = adapters_of(b))
-        for (auto* ad : *ra)
-            if (ad->equals)
-                if (auto r = ad->equals(b, a)) return r;
+    if (x.has_capability(Capability::Equals)) {
+        // Adapters of the left operand first, then of the right operand (spec §13).
+        if (auto r = first_answer(x.adapters_for(a, Capability::Equals), [&](const TypeAdapter& ad) { return ad.equals(a, b); })) return r;
+        if (auto r = first_answer(x.adapters_for(b, Capability::Equals), [&](const TypeAdapter& ad) { return ad.equals(b, a); })) return r;
+    }
     if (a.is_number()) {
         if (b.is_number()) {
             if (a.is_single() || b.is_single())
@@ -191,18 +177,16 @@ std::optional<bool> rql_equal(const Value& a, const Value& b) {
     return same_identity(a, b);
 }
 
-std::optional<int> rql_compare(const Value& a, const Value& b) {
+std::optional<int> rql_compare(Exec& x, const Value& a, const Value& b) {
     if (a.is_null() || b.is_null() || a.is_absent() || b.is_absent()) return std::nullopt;
-    // Adapters of the left operand first, then of the right operand with the result mirrored (spec §13).
-    auto sign = [](int c) { return c < 0 ? -1 : (c > 0 ? 1 : 0); };
-    if (auto* la = adapters_of(a))
-        for (auto* ad : *la)
-            if (ad->compare)
-                if (auto r = ad->compare(a, b)) return sign(*r);
-    if (auto* ra = adapters_of(b))
-        for (auto* ad : *ra)
-            if (ad->compare)
-                if (auto r = ad->compare(b, a)) return -sign(*r);
+    if (x.has_capability(Capability::Compare)) {
+        // Adapters of the left operand first, then of the right operand with the result mirrored (spec §13).
+        auto sign = [](int c) { return c < 0 ? -1 : (c > 0 ? 1 : 0); };
+        if (auto r = first_answer(x.adapters_for(a, Capability::Compare), [&](const TypeAdapter& ad) { return ad.compare(a, b); }))
+            return sign(*r);
+        if (auto r = first_answer(x.adapters_for(b, Capability::Compare), [&](const TypeAdapter& ad) { return ad.compare(b, a); }))
+            return -sign(*r);
+    }
     if (a.is_number()) {
         if (b.is_number()) {
             if (a.is_single() || b.is_single())
@@ -228,7 +212,7 @@ std::optional<int> rql_compare(const Value& a, const Value& b) {
     return std::nullopt;
 }
 
-bool distinct_equal(const Value& a, const Value& b) {
+bool distinct_equal(Exec& x, const Value& a, const Value& b) {
     if (a.is_null() || b.is_null()) return a.is_null() && b.is_null();
     if (a.is_number() && b.is_number())  // NaN groups with NaN
         return a.as_number() == b.as_number() || (std::isnan(a.as_number()) && std::isnan(b.as_number()));
@@ -237,7 +221,7 @@ bool distinct_equal(const Value& a, const Value& b) {
     if (a.is_bool() && b.is_bool()) return a.as_bool() == b.as_bool();
     if (a.is_struct() && b.is_struct()) {
         if (a.type() != b.type()) return false;
-        for (auto& m : a.type()->members) {
+        for (auto& m : x.view(a.type()).implicit_members()) {  // never hidden / explicit-only members (spec §13)
             Value ma, mb;
             try {
                 ma = m.getter(a.ptr());
@@ -245,14 +229,14 @@ bool distinct_equal(const Value& a, const Value& b) {
             } catch (const std::exception&) {
                 return false;
             }
-            if (!distinct_equal(ma, mb)) return false;
+            if (!distinct_equal(x, ma, mb)) return false;
         }
         return true;
     }
     return same_identity(a, b);
 }
 
-size_t distinct_hash(const Value& v) {
+size_t distinct_hash(Exec& x, const Value& v) {
     switch (v.kind()) {
         case Value::Kind::Null: return 0;
         case Value::Kind::Number: {
@@ -266,9 +250,9 @@ size_t distinct_hash(const Value& v) {
         case Value::Kind::Enum: return std::hash<int64_t>()(v.enum_value()) ^ std::hash<const void*>()(v.type());
         case Value::Kind::Struct: {
             size_t h = std::hash<const void*>()(v.type());
-            for (auto& m : v.type()->members) {
+            for (auto& m : x.view(v.type()).implicit_members()) {
                 try {
-                    h = h * 31 + distinct_hash(m.getter(v.ptr()));
+                    h = h * 31 + distinct_hash(x, m.getter(v.ptr()));
                 } catch (const std::exception&) {
                 }
             }
@@ -282,7 +266,7 @@ size_t distinct_hash(const Value& v) {
     }
 }
 
-Value reduce(const std::vector<Value>& values, const std::string& kind) {
+Value reduce(Exec& x, const std::vector<Value>& values, const std::string& kind) {
     double sum = 0;
     int64_t n = 0;
     bool minmax = kind == "min" || kind == "max";
@@ -293,7 +277,7 @@ Value reduce(const std::vector<Value>& values, const std::string& kind) {
             if (val.is_null() || val.is_absent()) continue;
             if (!val.is_number() && !val.is_string() && !val.is_enum()) continue;
             if (!has_best) { best = val; has_best = true; continue; }
-            auto c = rql_compare(val, best);
+            auto c = rql_compare(x, val, best);
             if (!c) continue;
             if ((kind == "min" && *c < 0) || (kind == "max" && *c > 0)) best = val;
             continue;
@@ -585,13 +569,13 @@ Eval Compiler::compile_meta_core(const std::string& name, Eval prev, bool of_cur
             if (v.is_null()) return Value::null();
             if (v.is_absent()) return v;
             if (!of_current_item && v.is_list())
-                return map_meta(v, [&x](const Value& e) { return e.is_object() ? Value::string(x.engine.ref_of(e)) : Value::missing(); });
+                return map_meta(v, [&x](const Value& e) { return e.is_object() ? Value::string(x.ref_of(e)) : Value::missing(); });
             if (v.is_row()) {
                 const RowData& row = v.row();
-                return row.values.size() == 1 && row.values[0].is_object() ? Value::string(x.engine.ref_of(row.values[0]))
+                return row.values.size() == 1 && row.values[0].is_object() ? Value::string(x.ref_of(row.values[0]))
                                                                             : Value::missing();
             }
-            return v.is_object() ? Value::string(x.engine.ref_of(v)) : Value::missing();
+            return v.is_object() ? Value::string(x.ref_of(v)) : Value::missing();
         };
     }
     if (name == "path") {
@@ -616,7 +600,7 @@ Eval Compiler::compile_meta_core(const std::string& name, Eval prev, bool of_cur
 
 namespace {
 
-std::optional<bool> contains_op(const Value& a, const Value& b) {
+std::optional<bool> contains_op(Exec& x, const Value& a, const Value& b) {
     if (a.is_absent() || b.is_absent() || a.is_null()) return std::nullopt;
     if (a.is_string()) {
         if (!b.is_string()) return std::nullopt;
@@ -626,13 +610,13 @@ std::optional<bool> contains_op(const Value& a, const Value& b) {
         auto& l = a.list();
         size_t n = l.size();
         for (size_t i = 0; i < n; ++i)
-            if (rql_equal(l.at(i), b) == std::optional<bool>(true)) return true;
+            if (rql_equal(x, l.at(i), b) == std::optional<bool>(true)) return true;
         return false;
     }
     if (a.is_map()) {
         bool found = false;
         a.map().for_each([&](const Value& k, const Value&) {
-            if (rql_equal(k, b) == std::optional<bool>(true)) { found = true; return false; }
+            if (rql_equal(x, k, b) == std::optional<bool>(true)) { found = true; return false; }
             return true;
         });
         return found;
@@ -670,13 +654,13 @@ std::optional<bool> matches_op(Exec& x, const Value& a, const Value& b) {
     }
 }
 
-std::optional<bool> in_op(const Value& a, const Value& b) {
+std::optional<bool> in_op(Exec& x, const Value& a, const Value& b) {
     if (a.is_absent() || b.is_absent() || b.is_null()) return std::nullopt;
-    if (!b.is_list()) return rql_equal(a, b);
+    if (!b.is_list()) return rql_equal(x, a, b);
     auto& l = b.list();
     size_t n = l.size();
     for (size_t i = 0; i < n; ++i)
-        if (rql_equal(a, l.at(i)) == std::optional<bool>(true)) return true;
+        if (rql_equal(x, a, l.at(i)) == std::optional<bool>(true)) return true;
     return false;
 }
 
@@ -735,24 +719,24 @@ Eval Compiler::compile_op_args(const std::string& op, const ExprPtr& ae, const E
             auto t = truth(a(x));
             return t ? Value::boolean(!*t) : Value::unknown();
         };
-    if (op == "==") return [a, b](Exec& x) { Value l = a(x); return tri(rql_equal(l, b(x))); };
+    if (op == "==") return [a, b](Exec& x) { Value l = a(x); return tri(rql_equal(x, l, b(x))); };
     if (op == "!=")
         return [a, b](Exec& x) {
             Value l = a(x);
-            auto t = rql_equal(l, b(x));
+            auto t = rql_equal(x, l, b(x));
             return t ? Value::boolean(!*t) : Value::unknown();
         };
     if (op == "<" || op == "<=" || op == ">" || op == ">=") {
         int kind = op == "<" ? 0 : op == "<=" ? 1 : op == ">" ? 2 : 3;
         return [a, b, kind](Exec& x) {
             Value l = a(x);
-            auto c = rql_compare(l, b(x));
+            auto c = rql_compare(x, l, b(x));
             if (!c) return Value::unknown();
             bool r = kind == 0 ? *c < 0 : kind == 1 ? *c <= 0 : kind == 2 ? *c > 0 : *c >= 0;
             return Value::boolean(r);
         };
     }
-    if (op == "contains") return [a, b](Exec& x) { Value l = a(x); return tri(contains_op(l, b(x))); };
+    if (op == "contains") return [a, b](Exec& x) { Value l = a(x); return tri(contains_op(x, l, b(x))); };
     if (op == "starts-with") return [a, b](Exec& x) { Value l = a(x); return tri(string_test(l, b(x), true)); };
     if (op == "ends-with") return [a, b](Exec& x) { Value l = a(x); return tri(string_test(l, b(x), false)); };
     if (op == "matches")
@@ -762,7 +746,7 @@ Eval Compiler::compile_op_args(const std::string& op, const ExprPtr& ae, const E
             x.check_time();  // a per-match bound alone does not bound the whole query
             return r;
         };
-    if (op == "in") return [a, b](Exec& x) { Value l = a(x); return tri(in_op(l, b(x))); };
+    if (op == "in") return [a, b](Exec& x) { Value l = a(x); return tri(in_op(x, l, b(x))); };
     if (op == "is") {
         IsSite* site = nullptr;
         if (be && be->kind == ExprKind::Lit && be->lit.type == Literal::Type::String) {
@@ -905,7 +889,7 @@ Value aggregate(Exec& x, const Value& v, const Eval* sel, const std::string& kin
             values.push_back(el);
         }
     }
-    return reduce(values, kind);
+    return reduce(x, values, kind);
 }
 
 }  // namespace
@@ -964,7 +948,7 @@ Eval Compiler::compile_function(const Expr& c) {
     if (name == "is-null") {
         arity(c, 1, 1);
         Eval a = compile(*c.args[0]);
-        return [a](Exec& x) { return tri(rql_equal(a(x), Value::null())); };
+        return [a](Exec& x) { return tri(rql_equal(x, a(x), Value::null())); };
     }
     if (name == "len") {
         arity(c, 1, 1);
@@ -1026,7 +1010,7 @@ Eval Compiler::compile_function(const Expr& c) {
                 for (auto& r : refs) {
                     if (!r.is_string()) return Value::error("type-mismatch", "ref() expects reference strings");
                     std::string err;
-                    Value o = x.engine.resolve_ref(r.as_string(), err, &x);
+                    Value o = x.resolve_ref(r.as_string(), err);
                     if (o.is_missing()) {
                         x.diagnostics.push_back(Diagnostic::error("stale-ref", err, "re-query to obtain a fresh $ref"));
                         return Value::error("stale-ref", err);

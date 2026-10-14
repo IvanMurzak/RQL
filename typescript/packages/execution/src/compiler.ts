@@ -5,7 +5,8 @@
  */
 import { RqlError, diagnostic, formatNumber, type CallExpr, type Expr, type OpExpr, type PathExpr } from '@rql/contracts';
 import { elements, findMapKey, indexAt, isMapLike, mapEntries, mapGet, sizeOf, type MapLike } from './collections.js';
-import { Exec, IsSite, MemberSite, activeModel, errorMessage } from './exec.js';
+import { firstAnswer } from './adapters.js';
+import { Exec, IsSite, MemberSite, errorMessage } from './exec.js';
 import { EnumValue, type TypeInfo, type TypeModel } from './types.js';
 import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, isAbsent, toNumber } from './values.js';
 
@@ -547,7 +548,7 @@ function isStructOrCollection(x: Exec, v: object): boolean {
 export function equal(x: Exec, a: unknown, b: unknown): Truth {
   if (isAbsent(a) || isAbsent(b)) return undefined;
   if (a === null || b === null) return a === null && b === null;
-  if (x.types.hasAdapters) {
+  if (x.types.hasCapability('equals')) {
     const r = adapterEqual(x.types, a, b);
     if (r !== undefined) return r;
   }
@@ -579,36 +580,18 @@ function enumEqual(e: EnumValue, other: unknown): Truth {
 
 /** First adapter of the left operand that answers, then of the right one (spec §13). */
 function adapterEqual(model: TypeModel, a: unknown, b: unknown): Truth {
-  if (typeof a === 'object' && a !== null) {
-    for (const ad of model.infoOf(a).adapters) {
-      const r = ad.equals?.(a, b);
-      if (r !== undefined) return r;
-    }
-  }
-  if (typeof b === 'object' && b !== null) {
-    for (const ad of model.infoOf(b).adapters) {
-      const r = ad.equals?.(b, a);
-      if (r !== undefined) return r;
-    }
-  }
-  return undefined;
+  const l = typeof a === 'object' && a !== null ? firstAnswer(model.infoOf(a).adapterSet.equals, (ad) => ad.equals!(a, b)) : undefined;
+  if (l !== undefined) return l;
+  return typeof b === 'object' && b !== null ? firstAnswer(model.infoOf(b).adapterSet.equals, (ad) => ad.equals!(b, a)) : undefined;
 }
 
 /** Like {@link adapterEqual}; a right-operand answer is mirrored. */
 function adapterCompare(model: TypeModel, a: unknown, b: unknown): number | undefined {
-  if (typeof a === 'object' && a !== null) {
-    for (const ad of model.infoOf(a).adapters) {
-      const r = ad.compare?.(a, b);
-      if (r !== undefined && !Number.isNaN(r)) return Math.sign(r);
-    }
-  }
-  if (typeof b === 'object' && b !== null) {
-    for (const ad of model.infoOf(b).adapters) {
-      const r = ad.compare?.(b, a);
-      if (r !== undefined && !Number.isNaN(r)) return -Math.sign(r) || 0;
-    }
-  }
-  return undefined;
+  const valid = (r: number | undefined): number | undefined => (r === undefined || Number.isNaN(r) ? undefined : Math.sign(r));
+  const l = typeof a === 'object' && a !== null ? firstAnswer(model.infoOf(a).adapterSet.compare, (ad) => valid(ad.compare!(a, b))) : undefined;
+  if (l !== undefined) return l;
+  const r = typeof b === 'object' && b !== null ? firstAnswer(model.infoOf(b).adapterSet.compare, (ad) => valid(ad.compare!(b, a))) : undefined;
+  return r === undefined ? undefined : -r || 0;
 }
 
 export function compareNumbers(a: number, b: number): number {
@@ -620,10 +603,9 @@ export function compareNumbers(a: number, b: number): number {
 }
 
 /** Ordering comparison; undefined = incomparable. */
-export function compare(a: unknown, b: unknown): number | undefined {
+export function compare(model: TypeModel, a: unknown, b: unknown): number | undefined {
   if (a === null || b === null || isAbsent(a) || isAbsent(b)) return undefined;
-  const model = activeModel();
-  if (model?.hasAdapters) {
+  if (model.hasCapability('compare')) {
     const r = adapterCompare(model, a, b);
     if (r !== undefined) return r;
   }
@@ -650,8 +632,8 @@ export function compare(a: unknown, b: unknown): number | undefined {
   return undefined;
 }
 
-function ord(_x: Exec, a: unknown, b: unknown, test: (c: number) => boolean): unknown {
-  const c = compare(a, b);
+function ord(x: Exec, a: unknown, b: unknown, test: (c: number) => boolean): unknown {
+  const c = compare(x.types, a, b);
   return c === undefined ? UNKNOWN : test(c);
 }
 
@@ -881,7 +863,7 @@ function aggregate(x: Exec, v: unknown, sel: Eval | undefined, kind: string): un
         values.push(sel(x));
       } else values.push(el);
     }
-    return reduce(values, kind);
+    return reduce(x.types, values, kind);
   } finally {
     x.outer.pop();
     x.current = saved;
@@ -890,7 +872,7 @@ function aggregate(x: Exec, v: unknown, sel: Eval | undefined, kind: string): un
 }
 
 /** sum / avg over numbers; min / max over numbers, strings and enums (spec §4.3). */
-export function reduce(values: Iterable<unknown>, kind: string): unknown {
+export function reduce(model: TypeModel, values: Iterable<unknown>, kind: string): unknown {
   let sum = 0;
   let n = 0;
   let best: unknown = null;
@@ -903,7 +885,7 @@ export function reduce(values: Iterable<unknown>, kind: string): unknown {
         best = val;
         continue;
       }
-      const c = compare(val, best);
+      const c = compare(model, val, best);
       if (c === undefined) continue;
       if ((kind === 'min' && c < 0) || (kind === 'max' && c > 0)) best = val;
       continue;

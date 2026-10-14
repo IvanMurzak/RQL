@@ -5,8 +5,8 @@
 import { diagnostic, failResult, formatNumber, type Budgets, type JsonObject, type QueryOptions, type QueryPlan, type QueryResult } from '@rql/contracts';
 import { isIdentStart, tryParse } from '@rql/parser';
 import { reachableTypes, typeDescriptor } from './describe.js';
-import type { ClassAdapter, InterfaceAdapter, TypeAdapter } from './adapters.js';
-import { Exec, now, withActiveModel } from './exec.js';
+import { firstAnswer, type ClassAdapter, type InterfaceAdapter, type TypeAdapter } from './adapters.js';
+import { Exec, now } from './exec.js';
 import { Pipeline } from './pipeline.js';
 import { EnumValue, TypeModel, type Ctor, type MemberAccessor, type TypeInfo } from './types.js';
 import { MapEntry } from './values.js';
@@ -178,7 +178,7 @@ export class RqlEngine {
     const x = new Exec(this, budgets, options, plan);
     let result: QueryResult;
     try {
-      result = withActiveModel(this.model, () => new Pipeline(x).run());
+      result = new Pipeline(x).run();
     } catch (e) {
       // Last line of defence: untrusted queries must never crash the host with a raw exception.
       const name = e instanceof Error ? e.name : typeof e;
@@ -200,10 +200,8 @@ export class RqlEngine {
 
   /** Liveness: the first adapter verdict, else the host `isAlive` hook, else alive. */
   alive(o: object): boolean {
-    for (const a of this.types.infoOf(o).adapters) {
-      const v = a.isAlive?.(o);
-      if (v !== undefined) return v;
-    }
+    const verdict = firstAnswer(this.types.infoOf(o).adapterSet.isAlive, (a) => a.isAlive!(o));
+    if (verdict !== undefined) return verdict;
     return this.isAlive === undefined || this.isAlive(o);
   }
 
@@ -333,8 +331,8 @@ export class RqlEngine {
       if (!info.isObject) continue;
       if (info.isA(type) && stableIdOf(o, info) === id) return o;
       if (depth >= 32) continue;
-      for (const m of info.membersOf(o)) {
-        if (!m.owning || m.explicitOnly || m.declaredScalar) continue;
+      for (const m of info.implicitMembersOf(o)) {
+        if (!m.owning || m.declaredScalar) continue;
         let v: unknown;
         try {
           v = m.get(o);
@@ -350,10 +348,8 @@ export class RqlEngine {
 
 /** The "#id" part of a stable reference: adapter identity first, then the id member; undefined = none. */
 function stableIdOf(o: object, info: TypeInfo): string | undefined {
-  for (const a of info.adapters) {
-    const sid = a.stableId?.(o);
-    if (sid !== undefined) return sid;
-  }
+  const sid = firstAnswer(info.adapterSet.stableId, (a) => a.stableId!(o));
+  if (sid !== undefined) return sid;
   const idm = info.idMemberOf(o);
   if (idm === undefined) return undefined;
   let id: unknown;

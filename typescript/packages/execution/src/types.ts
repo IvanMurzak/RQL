@@ -8,8 +8,8 @@
  * registered still work through a dynamic fallback (own enumerable properties + prototype getters),
  * with the limits documented in the README (no enum/struct/int typing, per-instance member sets).
  */
-import { AdapterRegistry, type AnyAdapter, type ClassAdapter, type InterfaceAdapter, type MemberTable, type TypeAdapter, type VirtualMemberSpec } from './adapters.js';
-import { MapEntry, RowValue } from './values.js';
+import { AdapterRegistry, adapterName, adapterSet, type AdapterSet, type AnyAdapter, type Capability, type ClassAdapter, type InterfaceAdapter, type MemberTable, type TypeAdapter, type VirtualMemberSpec } from './adapters.js';
+import { ErrorValue, MapEntry, Missing, RowValue, Unknown } from './values.js';
 
 /** Any class constructor (including abstract classes and classes with constructor parameters). */
 export type Ctor<T extends object = object> = abstract new (...args: never[]) => T;
@@ -281,66 +281,65 @@ export interface TypeSpec<T extends object = object> {
 export type TypeKind = 'scalar' | 'enum' | 'object' | 'struct' | 'list' | 'map';
 
 export interface MemberInit {
-  name: string;
-  type: TypeRef;
-  /** Reads the member (enum values wrapped, plain-object maps exposed as {@link RecordMap}). */
-  get: (target: object) => unknown;
-  /** Writes the member (enum values unwrapped); undefined when not writable. */
-  set?: ((target: object, value: unknown) => void) | undefined;
-  canWrite: boolean;
-  owning: boolean;
-  order: number;
-  description?: string | undefined;
-  /** Read only when a path names it (spec §13). */
-  explicitOnly?: boolean;
-  /** Validation of a coerced value while a mutation is planned; returns a rejection reason. */
-  validate?: ((target: object, value: unknown) => string | undefined) | undefined;
-  /** Defined by a type adapter rather than declared by the class. */
-  virtual?: boolean;
-}
-
-export class MemberAccessor {
-  private declaredCache: 'scalar' | 'struct' | 'other' | undefined;
   readonly name: string;
   readonly type: TypeRef;
+  /** Reads the member (enum values wrapped, plain-object maps exposed as {@link RecordMap}). */
   readonly get: (target: object) => unknown;
-  readonly set: ((target: object, value: unknown) => void) | undefined;
+  /** Writes the member (enum values unwrapped); undefined when not writable. */
+  readonly set?: ((target: object, value: unknown) => void) | undefined;
   readonly canWrite: boolean;
   /** False for non-owning references: not followed by generic recurse. */
   readonly owning: boolean;
   readonly order: number;
-  readonly description: string | undefined;
-  readonly explicitOnly: boolean;
-  readonly validate: ((target: object, value: unknown) => string | undefined) | undefined;
-  readonly virtual: boolean;
+  readonly description?: string | undefined;
+  /** Read only when a path names it (spec §13). */
+  readonly explicitOnly?: boolean;
+  /** Validation of a coerced value while a mutation is planned; returns a rejection reason. */
+  readonly validate?: ((target: object, value: unknown) => string | undefined) | undefined;
+}
+
+export class MemberAccessor {
+  private declaredCache: 'scalar' | 'struct' | 'other' | undefined;
 
   constructor(
-    init: MemberInit,
+    private readonly init: MemberInit,
     private readonly model: TypeModel | undefined,
-  ) {
-    this.name = init.name;
-    this.type = init.type;
-    this.get = init.get;
-    this.set = init.set;
-    this.canWrite = init.canWrite;
-    this.owning = init.owning;
-    this.order = init.order;
-    this.description = init.description;
-    this.explicitOnly = init.explicitOnly ?? false;
-    this.validate = init.validate;
-    this.virtual = init.virtual ?? false;
+  ) {}
+
+  get name(): string {
+    return this.init.name;
+  }
+  get type(): TypeRef {
+    return this.init.type;
+  }
+  get get(): (target: object) => unknown {
+    return this.init.get;
+  }
+  get set(): ((target: object, value: unknown) => void) | undefined {
+    return this.init.set;
+  }
+  get canWrite(): boolean {
+    return this.init.canWrite;
+  }
+  get owning(): boolean {
+    return this.init.owning;
+  }
+  get order(): number {
+    return this.init.order;
+  }
+  get description(): string | undefined {
+    return this.init.description;
+  }
+  get explicitOnly(): boolean {
+    return this.init.explicitOnly ?? false;
+  }
+  get validate(): ((target: object, value: unknown) => string | undefined) | undefined {
+    return this.init.validate;
   }
 
   /** A copy with some properties changed (identity members, inheritance, adapters). */
   with(changes: Partial<Pick<MemberInit, 'canWrite' | 'order' | 'owning' | 'explicitOnly' | 'description'>>): MemberAccessor {
-    return new MemberAccessor(
-      {
-        name: this.name, type: this.type, get: this.get, set: this.set, canWrite: this.canWrite, owning: this.owning,
-        order: this.order, description: this.description, explicitOnly: this.explicitOnly, validate: this.validate,
-        virtual: this.virtual, ...changes,
-      },
-      this.model,
-    );
+    return new MemberAccessor({ ...this.init, ...changes }, this.model);
   }
 
   /** Declared type is a scalar/enum or a struct: generic recursion never follows it. */
@@ -398,6 +397,7 @@ export class TypeInfo {
       rawMembers?: readonly MemberAccessor[];
     } = {},
   ) {
+    this.implicitMembers = members.some((m) => m.explicitOnly) ? members.filter((m) => !m.explicitOnly) : members;
     this.typeNames = new Set([...(options.typeNames ?? [shortName])].map((n) => n.toUpperCase()));
     this.idMember = options.idMember;
     this.displayMember = options.displayMember;
@@ -408,6 +408,7 @@ export class TypeInfo {
     this.dynamic = options.dynamic;
     this.ctor = options.ctor;
     this.adapters = options.adapters ?? [];
+    this.adapterSet = adapterSet(this.adapters);
     this.rawMembers = options.rawMembers ?? members;
     for (const m of members) {
       this.byName.set(m.name, m);
@@ -427,8 +428,12 @@ export class TypeInfo {
   readonly ctor: Ctor | undefined;
   /** Applicable type adapters, most specific first (spec §13). */
   readonly adapters: readonly AnyAdapter[];
+  /** The same adapters split per capability (hot paths loop only over implementers). */
+  readonly adapterSet: AdapterSet;
   /** Declared members before adapters shaped them (what subclasses inherit). */
   readonly rawMembers: readonly MemberAccessor[];
+  /** Members read implicitly (all but explicit-only ones), for declared types. */
+  readonly implicitMembers: readonly MemberAccessor[];
 
   get isList(): boolean {
     return this.kind === 'list';
@@ -443,6 +448,14 @@ export class TypeInfo {
   /** Members of a concrete value (static for declared types). */
   membersOf(o: unknown): readonly MemberAccessor[] {
     return this.dynamic !== undefined ? this.dynamic(o) : this.members;
+  }
+
+  /**
+   * Members that implicit traversals may read (inline/struct encoding, generic recurse, ref search,
+   * distinct keys): never explicit-only ones (spec §13).
+   */
+  implicitMembersOf(o: unknown): readonly MemberAccessor[] {
+    return this.dynamic !== undefined ? this.dynamic(o) : this.implicitMembers;
   }
 
   /** Exact ordinal match, then a unique case-insensitive match (spec §3). */
@@ -523,11 +536,9 @@ export class TypeModel {
   private readonly enumInfos = new Map<EnumType, TypeInfo>();
   private readonly dynamicAccessors = new Map<string, MemberAccessor>();
   private readonly listInfos = new Map<string, TypeInfo>();
-  private adapterRegistry = new AdapterRegistry();
-  private mapInfo!: TypeInfo;
-  private recordInfo!: TypeInfo;
-  private plainInfo!: TypeInfo;
-  private dateInfo!: TypeInfo;
+  private adapterRegistry = new AdapterRegistry(INTERNAL_CLASSES);
+  /** Builtin infos (Map, Record, plain Object, Date), built lazily because they carry adapters. */
+  private readonly builtins = new Map<string, TypeInfo>();
   private readonly entryInfo: TypeInfo;
   private readonly rowInfo = new TypeInfo('object', 'RowValue');
 
@@ -541,16 +552,42 @@ export class TypeModel {
   private resetCaches(): void {
     this.infos.clear();
     this.listInfos.clear();
-    const ad = (c: Ctor): readonly AnyAdapter[] => this.adapterRegistry.for(c);
-    this.mapInfo = new TypeInfo('map', 'Map', [], { ctor: Map, adapters: ad(Map) });
-    this.recordInfo = new TypeInfo('map', 'Record', [], { adapters: ad(Object) });
-    this.plainInfo = new TypeInfo('object', 'Object', [], { dynamic: (o) => this.ownMembers(o, []), ctor: Object, adapters: ad(Object) });
-    this.dateInfo = new TypeInfo('scalar', 'Date', [], { ctor: Date, adapters: ad(Date) });
+    this.builtins.clear();
   }
 
-  /** Whether any type adapter is registered (fast paths skip adapter lookups otherwise). */
+  private builtin(key: 'map' | 'record' | 'plain' | 'date'): TypeInfo {
+    let info = this.builtins.get(key);
+    if (info === undefined) {
+      switch (key) {
+        case 'map':
+          info = new TypeInfo('map', 'Map', [], { ctor: Map, adapters: this.adapterRegistry.for(Map) });
+          break;
+        case 'record':
+          info = new TypeInfo('map', 'Record', [], { adapters: this.adapterRegistry.for(Object) });
+          break;
+        case 'plain': {
+          const adapters = this.adapterRegistry.for(Object);
+          rejectMemberAdapters(adapters, 'Object');
+          info = new TypeInfo('object', 'Object', [], { dynamic: (o) => this.ownMembers(o, []), ctor: Object, adapters });
+          break;
+        }
+        case 'date':
+          info = new TypeInfo('scalar', 'Date', [], { ctor: Date, adapters: this.adapterRegistry.for(Date) });
+          break;
+      }
+      this.builtins.set(key, info);
+    }
+    return info;
+  }
+
+  /** Whether any type adapter is registered. */
   get hasAdapters(): boolean {
     return this.adapterRegistry.size > 0;
+  }
+
+  /** Whether any registered adapter implements `capability` (gates equality, ordering, encoding, coercion). */
+  hasCapability(capability: Capability): boolean {
+    return this.adapterRegistry.has(capability);
   }
 
   /**
@@ -643,17 +680,17 @@ export class TypeModel {
     if (o === null) return SCALARS.null;
     if (Array.isArray(o)) return this.listInfo('Array', Array);
     if (o instanceof EnumValue) return this.enumInfo(o.type);
-    if (o instanceof Map) return this.mapInfo;
-    if (o instanceof RecordMap) return this.recordInfo;
+    if (o instanceof Map) return this.builtin('map');
+    if (o instanceof RecordMap) return this.builtin('record');
     if (o instanceof Set) return this.listInfo('Set', Set);
     if (o instanceof MapEntry) return this.entryInfo;
     if (o instanceof RowValue) return this.rowInfo;
-    if (o instanceof Date) return this.dateInfo;
+    if (o instanceof Date) return this.builtin('date');
     if (ArrayBuffer.isView(o) && !(o instanceof DataView)) return this.listInfo(o.constructor.name, o.constructor as Ctor);
     const tagged = this.tags.get(o);
-    if (tagged !== undefined) return this.infoForCtor(tagged) ?? this.plainInfo;
+    if (tagged !== undefined) return this.infoForCtor(tagged) ?? this.builtin('plain');
     const proto = Object.getPrototypeOf(o) as object | null;
-    if (proto === null || proto === Object.prototype) return this.plainInfo;
+    if (proto === null || proto === Object.prototype) return this.builtin('plain');
     const cached = this.infos.get(proto);
     if (cached !== undefined) return cached;
     const info = this.buildFor(proto, o);
@@ -846,13 +883,15 @@ export class TypeModel {
       if (Object.prototype.hasOwnProperty.call(p, 'constructor') && c?.name) names.push(c.name);
     }
     const shortName = names[0] ?? 'Object';
-    // Member-shaping adapters need declared types; the other capabilities apply to dynamic classes too.
+    // Member-shaping adapters need a declared member table; the other capabilities apply to dynamic classes too.
     const adapters = ctor !== undefined ? this.adapterRegistry.for(ctor) : [];
+    rejectMemberAdapters(adapters, shortName);
+    const description = describeWith(adapters, undefined);
     return new TypeInfo('object', shortName, getters, {
       typeNames: names.length > 0 ? names : ['Object'],
       dynamic: (o) => this.ownMembers(o, getters),
       adapters,
-      ...(describeWith(adapters, undefined) !== undefined ? { description: describeWith(adapters, undefined)! } : {}),
+      ...(description !== undefined ? { description } : {}),
       ...(ctor !== undefined ? { ctor } : {}),
     });
   }
@@ -943,6 +982,20 @@ function isSetterSomewhere(proto: object, key: string): boolean {
   return false;
 }
 
+/** Engine-internal value classes: never adapted (spec §13 applies to host types). */
+const INTERNAL_CLASSES: ReadonlySet<object> = new Set<object>([RowValue, MapEntry, Missing, Unknown, ErrorValue, EnumValue, RecordMap]);
+
+/**
+ * Member configuration needs a declared member table (members of undeclared objects are discovered per
+ * instance). An adapter with `members` resolving to an undeclared class is a host bug → internal-error.
+ */
+function rejectMemberAdapters(adapters: readonly AnyAdapter[], typeName: string): void {
+  const a = adapters.find((x) => x.members !== undefined);
+  if (a !== undefined) {
+    throw new Error(`type adapter ${adapterName(a)} configures members of ${typeName}, which has no registered descriptor (register it with TypeModel.register)`);
+  }
+}
+
 function describeWith(adapters: readonly AnyAdapter[], fallback: string | undefined): string | undefined {
   for (const a of adapters) if (a.description !== undefined) return a.description;
   return fallback;
@@ -987,7 +1040,6 @@ class MemberTableImpl implements MemberTable<object> {
         order,
         description: spec.description,
         validate: s.validate !== undefined ? (o, v) => s.validate!(o, v) : undefined,
-        virtual: true,
       },
       this.model,
     );

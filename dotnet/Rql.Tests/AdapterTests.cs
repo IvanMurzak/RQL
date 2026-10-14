@@ -221,6 +221,29 @@ namespace Rql.Tests
             Assert.Contains("value type", s.Execute("v | select Key").Diagnostics[0].Message);
         }
 
+        [Fact]
+        public void CapabilitiesAreDetectedSoUnusedHooksCostNothing()
+        {
+            var e = new RqlEngine();
+            e.AddAdapter(new EngineObjectAdapter()).AddAdapter(new EncodeOnly());
+            var info = e.Types.Info(typeof(RendererLike));
+            Assert.Equal(2, info.Adapters.Count);
+            Assert.Empty(info.EqualityAdapters);
+            Assert.Empty(info.CoerceAdapters);
+            Assert.Single(info.EncodeAdapters);
+            Assert.Single(info.IdentityAdapters);
+            Assert.Single(info.LivenessAdapters);
+            Assert.Equal(AdapterCaps.Encode | AdapterCaps.Identity | AdapterCaps.Liveness, e.Types.Caps);
+            // Engine-internal values are never adapted, even by an adapter for object.
+            e.AddAdapter(new Named(typeof(object), "object"));
+            Assert.Empty(e.Types.Info(typeof(RowValue)).Adapters);
+        }
+
+        private sealed class EncodeOnly : RqlTypeAdapter<ComponentLike>
+        {
+            protected override JsonNode? Encode(ComponentLike c, EncodeContext context) => JsonValue.Create("component " + c.Name);
+        }
+
         private sealed class Typo : RqlTypeAdapter<Scene>
         {
             protected override void Members(MemberTable<Scene> m) => m.ReadOnly("Objectz");

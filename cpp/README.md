@@ -102,9 +102,10 @@ uobj.is_alive = [&](const rql::Value& v) -> std::optional<bool> { return IsValid
 engine.add_adapter(std::move(vec)).add_adapter(std::move(uobj));
 ```
 
-Adapters are per `Engine`: the engine derives an adapted `TypeView` of each descriptor (members after
-adapters, id/display recomputed), so one `TypeRegistry` can serve engines with different adapter
-sets. Member-table configuration bugs (unknown member names, virtual setters on value types) fail
+Adapters are per `Engine`: the engine derives an adaptation of each descriptor an adapter applies to
+(members after adapters, id/display recomputed, per-capability adapter lists), so one `TypeRegistry`
+can serve engines with different adapter sets. An engine without adapters reads descriptors
+directly (one flag check per lookup). Member-table configuration bugs (unknown member names, virtual setters on value types) fail
 the query with `internal-error`. Callbacks receive `self` as a pointer to the adapter's target type.
 
 ## Provider seam (how a future Unreal adapter plugs in)

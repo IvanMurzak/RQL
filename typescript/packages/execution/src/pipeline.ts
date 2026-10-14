@@ -201,7 +201,7 @@ export class Pipeline {
       }
       case 'expr': {
         const sel = this.c.compile(terminal.expr!);
-        const r = reduce(this.values(stream, sel), terminal.op);
+        const r = reduce(x.types, this.values(stream, sel), terminal.op);
         return { ok: true, kind: 'scalar', value: encoder.encode(r), diagnostics: [], stats: { visited: 0, membersRead: 0, elapsedMs: 0 } };
       }
       case 'set':
@@ -512,8 +512,8 @@ export class Pipeline {
       return;
     }
     if (!info.isObject) return;
-    for (const m of info.membersOf(v)) {
-      if (!m.owning || m.explicitOnly || m.declaredValueLike) continue;
+    for (const m of info.implicitMembersOf(v)) {
+      if (!m.owning || m.declaredValueLike) continue;
       let cv: unknown;
       x.membersRead++;
       try {
@@ -660,7 +660,7 @@ function compareSortKeys(x: Exec, a: unknown, b: unknown, desc: boolean): number
   let c: number;
   if (ra === 2) c = Number(a) - Number(b);
   else {
-    const cmp = compare(a, b);
+    const cmp = compare(x.types, a, b);
     if (cmp !== undefined) c = cmp;
     else {
       const ta = toText(x, a);
@@ -693,7 +693,7 @@ export function distinctKey(x: Exec, v: unknown): unknown {
   if (typeof v === 'object') {
     const info = x.types.infoOf(v);
     if (info.kind === 'struct') {
-      const parts = info.membersOf(v).map((m) => {
+      const parts = info.implicitMembersOf(v).map((m) => {
         const mv = m.get(v);
         const k = distinctKey(x, mv);
         return typeof k === 'string' ? k : '#';

@@ -14,6 +14,7 @@ import {
   friendlyName,
   isNullable,
   unwrapNullable,
+  type Ctor,
   type MemberAccessor,
   type MethodAccessor,
   type TypeInfo,
@@ -455,6 +456,11 @@ function rawValue(v: unknown, type: TypeRef): unknown {
 
 type Coerced = { ok: true; value: unknown } | { ok: false; why: string };
 
+/** Whether `v` already is a `ctor` value: an instance, or tagged/declared as that type or a subtype. */
+function isInstance(model: TypeModel, v: unknown, ctor: Ctor, ti: TypeInfo | undefined): boolean {
+  return typeof v === 'object' && v !== null && (v instanceof ctor || (ti !== undefined && model.infoOf(v).isA(ti.shortName)));
+}
+
 /**
  * Coerces a value to a declared type (spec §8): number → int only if integral and in range,
  * string → enum by name, null only for nullable/reference types, list literal → list type.
@@ -528,14 +534,16 @@ export function coerce(model: TypeModel, v: unknown, target: TypeRef): Coerced {
     }
     case 'class': {
       const ti = model.infoForCtor(t.ctor);
-      const ok = typeof v === 'object' && (v instanceof t.ctor || (ti !== undefined && model.infoOf(v).isA(ti.shortName)));
-      if (!ok) {
+      if (!isInstance(model, v, t.ctor, ti)) {
         // Values already of the target type bypass adapters; others may be converted (spec §13).
-        for (const ad of model.hasAdapters ? model.adaptersFor(t.ctor) : []) {
-          const r = ad.coerce?.(v, t.ctor);
+        const coercers = model.hasCapability('coerce') ? model.adaptersFor(t.ctor).filter((a) => a.coerce !== undefined) : [];
+        for (const ad of coercers) {
+          const r = ad.coerce!(v, t.ctor);
           if (r === undefined) continue;
           if (!r.ok) return { ok: false, why: r.reason };
-          if (r.value !== null && !(r.value instanceof t.ctor)) throw new Error(`adapter ${adapterName(ad)} coerced to ${describeValue(r.value)}, not ${t.ctor.name}`);
+          if (r.value !== null && !isInstance(model, r.value, t.ctor, ti)) {
+            throw new Error(`adapter ${adapterName(ad)} coerced to ${describeValue(r.value)}, not ${t.ctor.name}`);
+          }
           return { ok: true, value: r.value };
         }
         return { ok: false, why: `expected ${friendlyName(target, model)}` };

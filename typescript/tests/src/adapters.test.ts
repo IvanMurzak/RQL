@@ -99,3 +99,42 @@ test('virtual setters on struct types are rejected at configuration', () => {
     .addAdapter({ target: V, members: (m) => m.add('double', { get: (v) => v.x * 2, set: () => {} }) });
   assert.equal(e.execute('vs | select x').diagnostics[0]?.code, 'internal-error');
 });
+
+test('member adapters on an undeclared class are a host bug (internal-error); other capabilities still apply', () => {
+  class Loose {
+    a = 1;
+  }
+  const withMembers = new RqlEngine().addSource('xs', () => [new Loose()]).addAdapter({ target: Loose, members: (m) => m.hide('a') });
+  assert.equal(withMembers.execute('xs | select a').diagnostics[0]?.code, 'internal-error');
+  const encodeOnly = new RqlEngine().addSource('xs', () => [new Loose()]).addAdapter({ target: Loose, encode: () => 'loose' });
+  assert.deepEqual(encodeOnly.execute('xs').items, ['loose']);
+});
+
+test('capabilities are gated: an encode-only adapter adds no equality/ordering lookups', () => {
+  const e = new RqlEngine({ types: model() }).addAdapter({ target: Leaf, encode: () => 'x' });
+  assert.equal(e.types.hasCapability('encode'), true);
+  assert.equal(e.types.hasCapability('equals'), false);
+  assert.equal(e.types.hasCapability('compare'), false);
+  assert.equal(e.types.hasCapability('coerce'), false);
+});
+
+test('distinct on structs never reads explicit-only members', () => {
+  let reads = 0;
+  class P {
+    x = 1;
+    get heavy(): number {
+      reads++;
+      return 0;
+    }
+  }
+  class Box {
+    Id = 1;
+    P = new P();
+  }
+  const types = new TypeModel()
+    .register(P, { kind: 'struct', members: [{ name: 'x', type: t.number }, { name: 'heavy', type: t.number }] })
+    .register(Box, { members: [{ name: 'Id', type: t.int }, { name: 'P', type: t.of(P) }] });
+  const e = new RqlEngine({ types }).addSource('boxes', () => [new Box(), new Box()]).addAdapter({ target: P, members: (m) => m.explicitOnly('heavy') });
+  assert.equal(e.execute('boxes | distinct P | count').value, 1);
+  assert.equal(reads, 0);
+});

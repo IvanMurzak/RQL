@@ -96,5 +96,7 @@ What Unity-MCP does today through ReflectorNet converters, and the RQL equivalen
 TypeScript (ThreeJS hosts: `Vector3`, `Color`, `Object3D`) and C++ (Unreal: `FVector`, `FRotator`, `UObject`
 validity/pending-kill) implement the same capabilities with idiomatic APIs, limited to the resolution tiers their type
 systems can express (TS: exact / prototype chain / `matches(ctor)` predicate; C++: exact / base distance / interface
-name, no `IncludeFields` since C++ cannot reflect private fields). All three pass the same
+name, no `IncludeFields` since C++ cannot reflect private fields). In TS, member shaping needs a registered class:
+an adapter with `members` that resolves to an undeclared (per-instance) class fails the query with `internal-error`
+rather than silently not hiding anything. All three pass the same
 `fixtures/adapters/cases.json`.

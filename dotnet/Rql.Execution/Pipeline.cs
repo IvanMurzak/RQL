@@ -463,7 +463,7 @@ namespace Rql.Execution
                 rows.Add((it, kv));
             }
             _x.CheckTime();
-            var cmp = new SortComparer(keys.Select(k => k.desc).ToArray());
+            var cmp = new SortComparer(keys.Select(k => k.desc).ToArray(), _x.Types);
             // OrderBy is a stable sort.
             foreach (var r in rows.OrderBy(r => r.keys, cmp)) yield return r.item;
         }
@@ -471,7 +471,7 @@ namespace Rql.Execution
         private IEnumerable<Item> TopN(IEnumerable<Item> input, (Eval eval, bool desc)[] keys, int n)
         {
             if (n <= 0) yield break;
-            var cmp = new SortComparer(keys.Select(k => k.desc).ToArray());
+            var cmp = new SortComparer(keys.Select(k => k.desc).ToArray(), _x.Types);
             var best = new List<(Item item, object?[] keys)>(n + 1);
             var scratch = new object?[keys.Length];
             long i = 0;
@@ -612,9 +612,9 @@ namespace Rql.Execution
                 return;
             }
             if (!info.IsObject) return;
-            foreach (var m in info.Members)
+            foreach (var m in info.ImplicitMembers)
             {
-                if (!m.Owning || m.ExplicitOnly || TypeModel.IsScalarType(m.Type) || m.Type.IsValueType) continue;
+                if (!m.Owning || TypeModel.IsScalarType(m.Type) || m.Type.IsValueType) continue;
                 object? cv;
                 _x.MembersRead++;
                 try { cv = m.Getter(v); }
@@ -767,7 +767,8 @@ namespace Rql.Execution
     internal sealed class SortComparer : IComparer<object?[]>
     {
         private readonly bool[] _desc;
-        public SortComparer(bool[] desc) { _desc = desc; }
+        private readonly TypeModel _model;
+        public SortComparer(bool[] desc, TypeModel model) { _desc = desc; _model = model; }
 
         public int Compare(object?[]? a, object?[]? b)
         {
@@ -788,14 +789,14 @@ namespace Rql.Execution
             return 3;
         }
 
-        private static int CompareOne(object? a, object? b, bool desc)
+        private int CompareOne(object? a, object? b, bool desc)
         {
             int ra = Rank(a), rb = Rank(b);
             if (ra == 9 || rb == 9) return ra.CompareTo(rb); // nulls last in both directions
             if (ra != rb) return desc ? rb.CompareTo(ra) : ra.CompareTo(rb);
             int c;
             if (ra == 2) c = ((bool)a!).CompareTo((bool)b!);
-            else c = Compiler.Compare(a, b) ?? string.CompareOrdinal(Compiler.ToText(a), Compiler.ToText(b));
+            else c = Compiler.Compare(_model, a, b) ?? string.CompareOrdinal(Compiler.ToText(a), Compiler.ToText(b));
             return desc ? -c : c;
         }
     }
