@@ -32,3 +32,8 @@ Reading:
 - Tasks added in this run: duplicate-move, prefab-instantiate, answer-console-errors, select-archers (operations that
   moved from tools to RQL calls / sources).
 - Earlier comparison against 20 hand-picked ReflectorNet tools without script-execute: `unity-inproc-reflectornet-vs-rql.md`.
+
+## Control run after the extension migrations (core fixes: owner-chain undo, asset paths, unity.find, number formatting)
+
+Run `20261014-121500-unity-inproc`, same 20 tasks × 3, branch catalog (7 tools): **60/60**, 3.7 turns, 3.4 tool calls
+(0.2 errors), 23,274 prompt tokens, 553 result chars, $0.00036 per task, 4.8 s per task, 16.5 ms tool time.

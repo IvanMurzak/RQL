@@ -1,6 +1,6 @@
 {
   "CapUsd": 25,
-  "SpentUsd": 3.8659258439999959,
+  "SpentUsd": 3.8876473499999959,
   "Runs": [
     {
       "id": "probe-20261013T203447Z",
@@ -311,6 +311,12 @@
       "config": "unity-inproc",
       "taskRuns": 60,
       "costUsd": 0.023803999999999999
+    },
+    {
+      "id": "20261014-121500-unity-inproc",
+      "config": "unity-inproc",
+      "taskRuns": 60,
+      "costUsd": 0.021722000000000002
     }
   ]
 }
