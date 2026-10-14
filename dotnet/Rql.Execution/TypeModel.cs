@@ -321,8 +321,9 @@ namespace Rql.Execution
             foreach (var m in members) ci[m.Name] = ci.ContainsKey(m.Name) ? null : m;
             info.ByNameCI = ci;
 
-            info.IdMember = members.FirstOrDefault(m => m.IsDefined(typeof(RqlIdAttribute)))
-                            ?? members.FirstOrDefault(m => m.Name == "Id" && IsIdType(m.Type));
+            // Identity and display are read implicitly (every $ref and summary), so never explicit-only members (spec §13).
+            info.IdMember = members.FirstOrDefault(m => !m.ExplicitOnly && m.IsDefined(typeof(RqlIdAttribute)))
+                            ?? members.FirstOrDefault(m => !m.ExplicitOnly && m.Name == "Id" && IsIdType(m.Type));
             // Stable identities never change through RQL (refs would silently break).
             if (info.IdMember != null && info.IdMember.CanWrite)
             {
@@ -335,8 +336,8 @@ namespace Rql.Execution
                 info.ByNameCI[ro.Name] = info.ByNameCI.TryGetValue(ro.Name, out var prev) && prev == null ? null : ro;
                 info.IdMember = ro;
             }
-            info.DisplayMember = members.FirstOrDefault(m => m.IsDefined(typeof(RqlDisplayAttribute)))
-                                 ?? members.FirstOrDefault(m => m.Name == "Name" && m.Type == typeof(string));
+            info.DisplayMember = members.FirstOrDefault(m => !m.ExplicitOnly && m.IsDefined(typeof(RqlDisplayAttribute)))
+                                 ?? members.FirstOrDefault(m => !m.ExplicitOnly && m.Name == "Name" && m.Type == typeof(string));
             info.Callable = t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
                 .Where(m => m.IsDefined(typeof(RqlCallableAttribute)) && !m.IsGenericMethodDefinition)
                 .OrderBy(m => m.Name, StringComparer.Ordinal)

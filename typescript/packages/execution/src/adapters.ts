@@ -44,9 +44,9 @@ export interface MemberTable<T extends object = object> {
   has(name: string): boolean;
   /** Add (or replace) a virtual member. */
   add<V>(name: string, spec: VirtualMemberSpec<T, V>): this;
-  /** Remove members entirely (unreadable and unwritable). Absent names are ignored. */
+  /** Remove members entirely (unreadable and unwritable). Unknown names fail the query (internal-error). */
   hide(...names: string[]): this;
-  /** Keep only the named members. */
+  /** Keep only the named members (unknown names fail the query). */
   only(...names: string[]): this;
   readOnly(...names: string[]): this;
   /** Non-owning references: generic `recurse` does not follow them. */

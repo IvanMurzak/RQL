@@ -239,7 +239,7 @@ namespace Rql.Execution
                 {
                     var sel = _c.Compile(e.Expr!);
                     var values = Values(stream, sel);
-                    var r = Compiler.Reduce(values, e.Op);
+                    var r = Compiler.Reduce(_x.Types, values, e.Op);
                     var res = new QueryResult { Ok = true, Kind = ResultKind.Scalar, HasValue = true, Value = encoder.Encode(r) };
                     return res;
                 }

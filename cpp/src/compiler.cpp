@@ -277,7 +277,8 @@ Value reduce(Exec& x, const std::vector<Value>& values, const std::string& kind)
     for (auto& val : values) {
         if (minmax) {
             if (val.is_null() || val.is_absent()) continue;
-            if (!val.is_number() && !val.is_string() && !val.is_enum()) continue;
+            // Numbers, strings, enums — and any value whose type has an ordering adapter (spec §13).
+            if (!val.is_number() && !val.is_string() && !val.is_enum() && x.adapters_for(val, Capability::Compare).empty()) continue;
             if (!has_best) { best = val; has_best = true; continue; }
             auto c = rql_compare(x, val, best);
             if (!c) continue;

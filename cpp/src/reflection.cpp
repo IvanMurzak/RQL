@@ -117,11 +117,20 @@ const MemberDescriptor* find_member_in(const std::vector<MemberDescriptor>& memb
 }
 
 bool is_instance_of(const Value& v, const TypeDescriptor* type) {
-    if (!type || !v.type()) return false;
+    if (!type) return false;
+    if (type->kind != TypeKind::Scalar && !v.type()) return false;
     switch (type->kind) {
         case TypeKind::Struct: return v.is_struct() && v.type() == type;
         case TypeKind::Enum: return v.is_enum() && v.type() == type;
         case TypeKind::Object: return v.is_object() && v.type()->derives_from(type);
+        case TypeKind::Scalar:
+            switch (type->scalar) {
+                case ScalarKind::Any: return true;
+                case ScalarKind::Bool: return v.is_bool();
+                case ScalarKind::String: return v.is_string();
+                // Numbers carry their native scalar type; untyped literals are doubles.
+                default: return v.is_number() && (v.type() ? v.type() == type : type == builtin::double_type());
+            }
         default: return false;
     }
 }
@@ -172,16 +181,17 @@ void* TypeDescriptor::downcast_from(const TypeDescriptor* base_type, void* p) co
     return p;
 }
 
+// Identity and display are read implicitly (every $ref and summary), so never explicit-only members (spec §13).
 const MemberDescriptor* TypeDescriptor::id_member_in(const std::vector<MemberDescriptor>& list) const {
     if (kind != TypeKind::Object) return nullptr;
     if (id_explicit) {
         if (id_name.empty()) return nullptr;
         for (auto& m : list)
-            if (m.name == id_name) return &m;
+            if (m.name == id_name) return m.explicit_only ? nullptr : &m;
         return nullptr;
     }
     for (auto& m : list) {
-        if (m.name == "Id" && m.type && m.type->kind == TypeKind::Scalar &&
+        if (!m.explicit_only && m.name == "Id" && m.type && m.type->kind == TypeKind::Scalar &&
             (m.type->scalar == ScalarKind::Integer || m.type->scalar == ScalarKind::String))
             return &m;
     }
@@ -193,11 +203,11 @@ const MemberDescriptor* TypeDescriptor::display_member_in(const std::vector<Memb
     if (display_explicit) {
         if (display_name.empty()) return nullptr;
         for (auto& m : list)
-            if (m.name == display_name) return &m;
+            if (m.name == display_name) return m.explicit_only ? nullptr : &m;
         return nullptr;
     }
     for (auto& m : list)
-        if (m.name == "Name" && m.type && m.type->scalar == ScalarKind::String) return &m;
+        if (!m.explicit_only && m.name == "Name" && m.type && m.type->scalar == ScalarKind::String) return &m;
     return nullptr;
 }
 

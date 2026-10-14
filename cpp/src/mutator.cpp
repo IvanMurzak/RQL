@@ -402,9 +402,25 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
 
     if (!x.options.dry_run) {
         size_t applied = 0;
+        std::string failure;
+        bool failed = false;
         try {
             for (; applied < writes.size(); ++applied) assign(x, writes[applied].item, *writes[applied].segments, writes[applied].new_value);
         } catch (const std::exception& ex) {
+            failed = true;
+            failure = ex.what();
+        } catch (...) {  // non-std exceptions from host setters must roll back too
+            failed = true;
+            failure = "non-standard exception";
+        }
+        if (failed) {
+            // The failed write itself is restored too: adapter setters may change state before throwing.
+            bool self_restored = true;
+            try {
+                assign(x, writes[applied].item, *writes[applied].segments, writes[applied].old_value);
+            } catch (...) {
+                self_restored = false;
+            }
             size_t rollback_failures = 0;
             for (size_t k = applied; k-- > 0;) {
                 try {
@@ -417,7 +433,8 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
                                      ? std::to_string(applied) + " earlier write(s) were rolled back"
                                      : "rolling back " + std::to_string(applied) + " earlier write(s) FAILED for " +
                                            std::to_string(rollback_failures) + " of them - state may be partially modified";
-            throw RqlException("coercion-failed", "write '" + writes[applied].label + "' failed (" + ex.what() + "); " + rolled);
+            if (!self_restored) rolled += "; restoring '" + writes[applied].label + "' itself also failed, so it may be partially modified";
+            throw RqlException("coercion-failed", "write '" + writes[applied].label + "' failed (" + failure + "); " + rolled);
         }
     }
 

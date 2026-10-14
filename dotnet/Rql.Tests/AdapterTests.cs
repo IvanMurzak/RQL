@@ -239,6 +239,111 @@ namespace Rql.Tests
             Assert.Empty(e.Types.Info(typeof(RowValue)).Adapters);
         }
 
+        public sealed class Counter
+        {
+            public int Id { get; set; } = 1;
+            public int Value { get; set; }
+            public int NameReads;
+            public string Name { get { NameReads++; return "counter"; } }
+        }
+
+        private sealed class Holder { public List<Counter> Items { get; } = new List<Counter> { new Counter(), new Counter { Id = 2 } }; }
+
+        private sealed class HalfWritingSetter : RqlTypeAdapter<Counter>
+        {
+            // Changes state, then throws: the failed write itself must be rolled back too.
+            protected override void Members(MemberTable<Counter> m) =>
+                m.Add<int>("v", c => c.Value, (c, v) => { c.Value = v; if (c.Id == 2) throw new InvalidOperationException("boom"); });
+        }
+
+        [Fact]
+        public void RollbackAlsoRestoresTheWriteWhoseSetterThrew()
+        {
+            var h = new Holder();
+            var e = new RqlEngine();
+            e.AddSource("h", () => h);
+            e.Mutations.Enabled = true;
+            e.AddAdapter(new HalfWritingSetter());
+            var r = e.Execute("h.Items | set v = 5", options: new QueryOptions { AllowMutation = true });
+            Assert.False(r.Ok);
+            Assert.Contains("rolled back", r.Diagnostics[0].Message);
+            Assert.All(h.Items, c => Assert.Equal(0, c.Value));
+        }
+
+        private sealed class ExplicitName : RqlTypeAdapter<Counter>
+        {
+            protected override void Members(MemberTable<Counter> m) => m.ExplicitOnly("Name");
+        }
+
+        [Fact]
+        public void ExplicitOnlyMembersAreNeverIdOrDisplay()
+        {
+            var h = new Holder();
+            var e = new RqlEngine();
+            e.AddSource("h", () => h);
+            e.AddAdapter(new ExplicitName());
+            var r = e.Execute("h.Items | select $");
+            Assert.True(r.Ok);
+            Assert.Equal(0, h.Items[0].NameReads);
+            Assert.Equal("counter", Cell(e.Execute("h.Items | select Name")));
+        }
+
+        private sealed class HideTypo : RqlTypeAdapter<Counter>
+        {
+            protected override void Members(MemberTable<Counter> m) => m.Hide("Nmae");
+        }
+
+        [Fact]
+        public void HidingAMisspeltMemberFailsLoudly()
+        {
+            var e = new RqlEngine();
+            e.AddSource("h", () => new Holder());
+            e.AddAdapter(new HideTypo());
+            var r = e.Execute("h.Items | select Name");
+            Assert.Equal("internal-error", r.Diagnostics[0].Code);
+            Assert.Contains("'Nmae'", r.Diagnostics[0].Message);
+        }
+
+        public enum Urgency { Low, Medium, High }
+
+        public sealed class Task { public string Name { get; set; } = ""; public Urgency P { get; set; } }
+
+        private sealed class UrgencyOrder : RqlTypeAdapter<Urgency>
+        {
+            // Host order differs from the numeric enum order: Medium is the most urgent.
+            private static int Rank(Urgency p) => p == Urgency.Medium ? 2 : p == Urgency.High ? 1 : 0;
+            protected override int? Order(Urgency p, object? other) => other is Urgency o ? Rank(p).CompareTo(Rank(o)) : (int?)null;
+        }
+
+        [Fact]
+        public void MinMaxUseOrderingAdaptersLikeSort()
+        {
+            var tasks = new List<Task> { new Task { Name = "a", P = Urgency.High }, new Task { Name = "b", P = Urgency.Medium }, new Task { Name = "c", P = Urgency.Low } };
+            var e = new RqlEngine();
+            e.AddSource("t", () => tasks);
+            e.AddAdapter(new UrgencyOrder());
+            Assert.Equal("b", Cell(e.Execute("t | sort P desc | first 1 | select Name")));
+            var max = e.Execute("t | max P");
+            Assert.True(max.Ok, max.ToJson(includeStats: false));
+            Assert.Equal("\"Medium\"", max.Value!.ToJsonString());
+        }
+
+        private sealed class ByIdDesc : RqlTypeAdapter<Counter>
+        {
+            protected override int? Order(Counter c, object? other) => other is Counter o ? o.Id.CompareTo(c.Id) : (int?)null;
+        }
+
+        [Fact]
+        public void MinMaxAcceptAdapterOrderedObjects()
+        {
+            var e = new RqlEngine();
+            e.AddSource("h", () => new Holder());
+            e.AddAdapter(new ByIdDesc());
+            var max = e.Execute("h.Items | max $");
+            Assert.True(max.Ok, max.ToJson(includeStats: false));
+            Assert.Equal("Counter#1", max.Value!["$ref"]!.GetValue<string>());
+        }
+
         private sealed class EncodeOnly : RqlTypeAdapter<ComponentLike>
         {
             protected override JsonNode? Encode(ComponentLike c, EncodeContext context) => JsonValue.Create("component " + c.Name);

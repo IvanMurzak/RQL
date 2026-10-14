@@ -529,8 +529,10 @@ const SCALARS = {
  */
 export class TypeModel {
   private readonly specs = new Map<Ctor, TypeSpec>();
-  /** Incremented on every registration (lets caches derived from the model expire). */
-  version = 0;
+  /** Set on forks: descriptors registered on the parent later stay visible. */
+  private parent: TypeModel | undefined;
+  private parentVersion = 0;
+  private ownVersion = 0;
   private readonly infos = new Map<object, TypeInfo>();
   private tags = new WeakMap<object, Ctor>();
   private readonly enumInfos = new Map<EnumType, TypeInfo>();
@@ -539,6 +541,7 @@ export class TypeModel {
   private adapterRegistry = new AdapterRegistry(INTERNAL_CLASSES);
   /** Builtin infos (Map, Record, plain Object, Date), built lazily because they carry adapters. */
   private readonly builtins = new Map<string, TypeInfo>();
+  private readonly adapterSets = new Map<Ctor, AdapterSet>();
   private readonly entryInfo: TypeInfo;
   private readonly rowInfo = new TypeInfo('object', 'RowValue');
 
@@ -553,6 +556,7 @@ export class TypeModel {
     this.infos.clear();
     this.listInfos.clear();
     this.builtins.clear();
+    this.adapterSets.clear();
   }
 
   private builtin(key: 'map' | 'record' | 'plain' | 'date'): TypeInfo {
@@ -600,7 +604,7 @@ export class TypeModel {
   addAdapter(adapter: TypeAdapter): this {
     this.adapterRegistry.add(adapter);
     this.resetCaches();
-    this.version++;
+    this.ownVersion++;
     return this;
   }
 
@@ -609,28 +613,58 @@ export class TypeModel {
     return this.adapterRegistry.for(ctor);
   }
 
+  /** The same adapters split per capability (cached per class). */
+  adapterSetFor(ctor: Ctor): AdapterSet {
+    let set = this.adapterSets.get(ctor);
+    if (set === undefined) {
+      set = adapterSet(this.adapterRegistry.for(ctor));
+      this.adapterSets.set(ctor, set);
+    }
+    return set;
+  }
+
   /** The ordered adapters applying to a class, most specific first, with rank and priority. */
   explain(ctor: Ctor): string[] {
     return this.adapterRegistry.explain(ctor);
   }
 
-  /** A copy with the same descriptors, tags and adapters (adapters added to the copy stay local). */
+  /**
+   * A child model for adapters: it reads this model's descriptors and tags live (later registrations
+   * are visible), copies its current adapters, and keeps adapters added to it local.
+   */
   fork(): TypeModel {
     const m = new TypeModel();
-    for (const [c, s] of this.specs) m.specs.set(c, s);
+    m.parent = this;
+    m.parentVersion = this.version;
     m.tags = this.tags;
     this.adapterRegistry.copyTo(m.adapterRegistry);
     m.resetCaches();
-    m.version = this.version;
     return m;
+  }
+
+  /** Incremented on every registration here or on a parent (lets derived caches expire). */
+  get version(): number {
+    return this.ownVersion + (this.parent?.version ?? 0);
   }
 
   /** Registers a class descriptor. */
   register<T extends object>(ctor: Ctor<T>, spec: TypeSpec<T>): this {
     this.specs.set(ctor, spec as unknown as TypeSpec);
     this.resetCaches();
-    this.version++;
+    this.ownVersion++;
     return this;
+  }
+
+  private specOf(ctor: Ctor): TypeSpec | undefined {
+    return this.specs.get(ctor) ?? this.parent?.specOf(ctor);
+  }
+
+  /** Drops cached metadata when the parent registered descriptors since the last look. */
+  private sync(): void {
+    if (this.parent !== undefined && this.parent.version !== this.parentVersion) {
+      this.parentVersion = this.parent.version;
+      this.resetCaches();
+    }
   }
 
   /** Treats `obj` (e.g. a plain object literal) as an instance of the registered class `ctor`. */
@@ -640,11 +674,11 @@ export class TypeModel {
   }
 
   isRegistered(ctor: Ctor): boolean {
-    return this.specs.has(ctor);
+    return this.specOf(ctor) !== undefined;
   }
 
   get registeredTypes(): readonly Ctor[] {
-    return [...this.specs.keys()];
+    return [...new Set([...(this.parent?.registeredTypes ?? []), ...this.specs.keys()])];
   }
 
   enumInfo(e: EnumType): TypeInfo {
@@ -678,6 +712,7 @@ export class TypeModel {
     }
     const o = v as object | null;
     if (o === null) return SCALARS.null;
+    this.sync();
     if (Array.isArray(o)) return this.listInfo('Array', Array);
     if (o instanceof EnumValue) return this.enumInfo(o.type);
     if (o instanceof Map) return this.builtin('map');
@@ -700,10 +735,11 @@ export class TypeModel {
 
   /** Metadata of a registered class (or of a subclass of one); undefined when unknown. */
   infoForCtor(ctor: Ctor): TypeInfo | undefined {
+    this.sync();
     const proto = ctor.prototype as object;
     const cached = this.infos.get(proto);
     if (cached !== undefined) return cached;
-    if (!this.specs.has(ctor) && this.registeredAncestor(ctor) === undefined) return undefined;
+    if (!this.isRegistered(ctor) && this.registeredAncestor(ctor) === undefined) return undefined;
     const info = this.buildFor(proto, undefined);
     this.infos.set(proto, info);
     return info;
@@ -720,7 +756,7 @@ export class TypeModel {
 
   private registeredAncestor(ctor: Ctor): Ctor | undefined {
     for (let c = Object.getPrototypeOf(ctor) as Ctor | null; c !== null && c !== Function.prototype; c = Object.getPrototypeOf(c) as Ctor | null) {
-      if (this.specs.has(c)) return c;
+      if (this.isRegistered(c)) return c;
     }
     return undefined;
   }
@@ -728,7 +764,7 @@ export class TypeModel {
   private buildFor(proto: object, sample: object | undefined): TypeInfo {
     const ctor = (Object.prototype.hasOwnProperty.call(proto, 'constructor') ? (proto as { constructor: unknown }).constructor : undefined) as Ctor | undefined;
     if (ctor !== undefined && typeof ctor === 'function') {
-      const spec = this.specs.get(ctor);
+      const spec = this.specOf(ctor);
       if (spec !== undefined) return this.buildDeclared(ctor, spec);
       const anc = this.registeredAncestor(ctor);
       if (anc !== undefined) {
@@ -736,11 +772,10 @@ export class TypeModel {
         const b = this.infoForCtor(anc)!;
         const name = ctor.name || b.shortName;
         const adapters = this.adapterRegistry.for(ctor);
-        const members = [...b.rawMembers];
-        this.applyAdapters(adapters, name, b.kind, members);
-        const byName = (m: MemberAccessor | undefined): MemberAccessor | undefined => (m === undefined ? undefined : members.find((x) => x.name === m.name));
-        return new TypeInfo(b.kind, name, members, {
-          typeNames: [name, ...b.typeNames], idMember: byName(b.idMember), displayMember: byName(b.displayMember),
+        // Same table as a registered subclass would get: the base's identity decision, read-only id, adapters.
+        const t = this.finishMembers(name, b.kind, adapters, [...b.rawMembers], b.idMember?.name ?? null, undefined, b.displayMember?.name ?? null, undefined);
+        return new TypeInfo(b.kind, name, t.members, {
+          typeNames: [name, ...b.typeNames], idMember: t.idMember, displayMember: t.displayMember,
           callable: b.callable, base: b, description: describeWith(adapters, b.description), ctor, adapters, rawMembers: b.rawMembers,
         });
       }
@@ -766,38 +801,56 @@ export class TypeModel {
 
     const kind = spec.kind ?? base?.kind ?? 'object';
     const rawMembers = [...members];
-    // Adapters shape the table from the least to the most specific; id/display are computed after.
     const adapters = this.adapterRegistry.for(ctor);
-    this.applyAdapters(adapters, name, kind, members);
-
-    const pick = (explicit: string | null | undefined, inherited: MemberAccessor | undefined, dflt: (m: MemberAccessor) => boolean): MemberAccessor | undefined => {
-      if (explicit === null) return undefined;
-      if (explicit !== undefined) {
-        const m = members.find((x) => x.name === explicit);
-        if (m === undefined && rawMembers.every((x) => x.name !== explicit)) throw new Error(`type '${name}': member '${explicit}' is not declared`);
-        return m; // undefined when an adapter hid it
-      }
-      if (inherited !== undefined) return members.find((x) => x.name === inherited.name);
-      return members.find(dflt);
-    };
-    let idMember = pick(spec.id, base?.idMember, (m) => m.name === 'Id' && ID_TYPES.has(unwrapNullable(m.type)));
-    if (idMember !== undefined && idMember.canWrite) {
-      // Stable identities never change through RQL (refs would silently break).
-      const ro = idMember.with({ canWrite: false });
-      members[members.indexOf(idMember)] = ro;
-      idMember = ro;
-    }
-    const displayMember = pick(spec.display, base?.displayMember, (m) => m.name === 'Name' && unwrapNullable(m.type) === 'string');
+    const { idMember, displayMember, members: finished } = this.finishMembers(name, kind, adapters, members, spec.id, base?.idMember, spec.display, base?.displayMember);
 
     const callable = new Map<string, MethodAccessor>();
     for (const m of base?.callable ?? []) callable.set(m.name, m);
     for (const ms of spec.methods ?? []) callable.set(ms.name, this.makeMethod(ms));
     const methods = [...callable.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
-    return new TypeInfo(kind, name, members, {
+    return new TypeInfo(kind, name, finished, {
       typeNames: [name, ...(base?.typeNames ?? []), ...(spec.interfaces ?? [])],
       idMember, displayMember, callable: methods, base, description: describeWith(adapters, spec.description), ctor, adapters, rawMembers,
     });
+  }
+
+  /**
+   * Shapes a declared member table: adapters (least to most specific), then the identity and display
+   * members, chosen among implicit members only (an explicit-only member is never read by summaries,
+   * `$ref` or ref search), with the identity made read-only.
+   */
+  private finishMembers(
+    name: string,
+    kind: TypeKind,
+    adapters: readonly AnyAdapter[],
+    members: MemberAccessor[],
+    idSpec: string | null | undefined,
+    inheritedId: MemberAccessor | undefined,
+    displaySpec: string | null | undefined,
+    inheritedDisplay: MemberAccessor | undefined,
+  ): { members: MemberAccessor[]; idMember: MemberAccessor | undefined; displayMember: MemberAccessor | undefined } {
+    const declared = new Set(members.map((m) => m.name));
+    this.applyAdapters(adapters, name, kind, members);
+    const pick = (explicit: string | null | undefined, inherited: MemberAccessor | undefined, dflt: (m: MemberAccessor) => boolean): MemberAccessor | undefined => {
+      if (explicit === null) return undefined;
+      const implicit = (m: MemberAccessor): boolean => !m.explicitOnly;
+      if (explicit !== undefined) {
+        if (!declared.has(explicit) && !members.some((x) => x.name === explicit)) throw new Error(`type '${name}': member '${explicit}' is not declared`);
+        return members.find((x) => x.name === explicit && implicit(x)); // undefined when hidden or explicit-only
+      }
+      if (inherited !== undefined) return members.find((x) => x.name === inherited.name && implicit(x));
+      return members.find((x) => implicit(x) && dflt(x));
+    };
+    let idMember = pick(idSpec, inheritedId, (m) => m.name === 'Id' && ID_TYPES.has(unwrapNullable(m.type)));
+    if (idMember !== undefined && idMember.canWrite) {
+      // Stable identities never change through RQL (refs would silently break).
+      const ro = idMember.with({ canWrite: false });
+      members[members.indexOf(idMember)] = ro;
+      idMember = ro;
+    }
+    const displayMember = pick(displaySpec, inheritedDisplay, (m) => m.name === 'Name' && unwrapNullable(m.type) === 'string');
+    return { members, idMember, displayMember };
   }
 
   /** Runs the adapters' member configuration (least specific first) over `members`, in place. */
@@ -1049,13 +1102,20 @@ class MemberTableImpl implements MemberTable<object> {
   }
 
   hide(...names: string[]): this {
+    this.requireAll(names);
     this.retain((m) => !names.includes(m.name));
     return this;
   }
 
   only(...names: string[]): this {
+    this.requireAll(names);
     this.retain((m) => names.includes(m.name));
     return this;
+  }
+
+  /** A typo in hide("Pasword") must not leave Password exposed: unknown names are a host bug. */
+  private requireAll(names: readonly string[]): void {
+    for (const n of names) if (!this.has(n)) throw new Error(`type ${this.typeName} has no member '${n}' to configure`);
   }
 
   readOnly(...names: string[]): this {

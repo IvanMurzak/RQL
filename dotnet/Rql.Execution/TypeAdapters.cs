@@ -185,9 +185,10 @@ namespace Rql.Execution
             return this;
         }
 
-        /// <summary>Remove members entirely: hidden members are neither readable nor writable. Absent names are ignored.</summary>
+        /// <summary>Remove members entirely: hidden members are neither readable nor writable.</summary>
         public MemberTable Hide(params string[] names)
         {
+            RequireAll(names);
             _members.RemoveAll(m => names.Contains(m.Name));
             return this;
         }
@@ -195,8 +196,16 @@ namespace Rql.Execution
         /// <summary>Keep only the named members (whitelist), e.g. for types whose other getters are unsafe.</summary>
         public MemberTable Only(params string[] names)
         {
+            RequireAll(names);
             _members.RemoveAll(m => !names.Contains(m.Name));
             return this;
+        }
+
+        // A misspelt name would silently leave a member exposed (e.g. Hide("Pasword")): configuring is all-or-error.
+        private void RequireAll(string[] names)
+        {
+            foreach (var n in names)
+                if (!_members.Any(m => m.Name == n)) throw new ArgumentException($"type {_type.Name} has no member '{n}' to configure");
         }
 
         public MemberTable ReadOnly(params string[] names) => Change(names, m => m.With(canWrite: false));

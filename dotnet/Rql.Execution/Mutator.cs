@@ -96,6 +96,9 @@ namespace Rql.Execution
                 }
                 catch (Exception ex)
                 {
+                    // The failed write itself is restored too: adapter setters may change state before throwing.
+                    bool selfRestored = true;
+                    try { Assign(writes[applied].Item, writes[applied].Segments, writes[applied].Old); } catch { selfRestored = false; }
                     int rollbackFailures = 0;
                     for (int k = applied - 1; k >= 0; k--)
                     {
@@ -105,6 +108,7 @@ namespace Rql.Execution
                     var rolled = rollbackFailures == 0
                         ? $"{applied} earlier write(s) were rolled back"
                         : $"rolling back {applied} earlier write(s) FAILED for {rollbackFailures} of them — state may be partially modified";
+                    if (!selfRestored) rolled += $"; restoring '{writes[applied].Label}' itself also failed, so it may be partially modified";
                     throw new RqlException("coercion-failed", $"write '{writes[applied].Label}' failed ({inner.Message}); {rolled}");
                 }
             }

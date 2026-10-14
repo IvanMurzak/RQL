@@ -979,7 +979,7 @@ namespace Rql.Execution
                     }
                     values.Add(val);
                 }
-                return Reduce(values, kind);
+                return Reduce(x.Types, values, kind);
             }
             finally
             {
@@ -989,7 +989,10 @@ namespace Rql.Execution
             }
         }
 
-        internal static object? Reduce(IEnumerable<object?> values, string kind)
+        private static bool AdapterOrdered(TypeModel model, object val) =>
+            (model.Caps & AdapterCaps.Ordering) != 0 && model.Info(val.GetType()).OrderingAdapters.Length > 0;
+
+        internal static object? Reduce(TypeModel model, IEnumerable<object?> values, string kind)
         {
             double sum = 0;
             int n = 0;
@@ -999,9 +1002,9 @@ namespace Rql.Execution
                 if (kind == "min" || kind == "max")
                 {
                     if (val == null || V.IsAbsent(val)) continue;
-                    if (!V.IsNumber(val) && !V.IsString(val) && !(val is Enum)) continue;
+                    if (!V.IsNumber(val) && !V.IsString(val) && !(val is Enum) && !AdapterOrdered(model, val)) continue;
                     if (best == null) { best = val; continue; }
-                    var c = Compare(null, val, best); // numbers / strings / enums only: never adapted
+                    var c = Compare(model, val, best);
                     if (c == null) continue;
                     if ((kind == "min" && c < 0) || (kind == "max" && c > 0)) best = val;
                     continue;

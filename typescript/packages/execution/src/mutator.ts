@@ -217,6 +217,14 @@ export class Mutator {
       try {
         for (; applied < writes.length; applied++) this.assign(writes[applied]!.item, writes[applied]!.segments, writes[applied]!.new);
       } catch (e) {
+        const failed = writes[applied]!;
+        // Restore the failing write too: an adapter setter may change state before it throws.
+        let selfRestored = true;
+        try {
+          this.assign(failed.item, failed.segments, failed.old);
+        } catch {
+          selfRestored = false;
+        }
         let rollbackFailures = 0;
         for (let k = applied - 1; k >= 0; k--) {
           try {
@@ -225,10 +233,11 @@ export class Mutator {
             rollbackFailures++;
           }
         }
-        const rolled =
+        let rolled =
           rollbackFailures === 0
             ? `${applied} earlier write(s) were rolled back`
             : `rolling back ${applied} earlier write(s) FAILED for ${rollbackFailures} of them — state may be partially modified`;
+        if (!selfRestored) rolled += `; restoring '${failed.label}' itself also failed, so it may be partially modified`;
         throw new RqlError('coercion-failed', `write '${writes[applied]!.label}' failed (${errorMessage(e)}); ${rolled}`);
       }
     }
@@ -536,7 +545,7 @@ export function coerce(model: TypeModel, v: unknown, target: TypeRef): Coerced {
       const ti = model.infoForCtor(t.ctor);
       if (!isInstance(model, v, t.ctor, ti)) {
         // Values already of the target type bypass adapters; others may be converted (spec §13).
-        const coercers = model.hasCapability('coerce') ? model.adaptersFor(t.ctor).filter((a) => a.coerce !== undefined) : [];
+        const coercers = model.hasCapability('coerce') ? model.adapterSetFor(t.ctor).coerce : [];
         for (const ad of coercers) {
           const r = ad.coerce!(v, t.ctor);
           if (r === undefined) continue;

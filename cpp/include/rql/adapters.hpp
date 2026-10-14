@@ -111,9 +111,9 @@ public:
             std::move(val), std::move(description), false, Traits<R>::nullable);
     }
 
-    /// Remove members entirely (unreadable AND unwritable). Absent names are ignored.
+    /// Remove members entirely (unreadable AND unwritable). Every name must exist (else internal-error).
     MemberTable& hide(const std::vector<std::string>& names);
-    /// Keep only the named members (whitelist).
+    /// Keep only the named members (whitelist). Every name must exist (else internal-error).
     MemberTable& only(const std::vector<std::string>& names);
     MemberTable& read_only(const std::vector<std::string>& names);
     /// Non-owning references: generic recurse and ref search do not follow them.
@@ -157,7 +157,10 @@ struct TypeAdapter {
     std::function<std::optional<int>(const Value& value, const Value& other)> compare;
     /// Stable id for $ref ("Type#id") and ref resolution; nullopt defers to the id member / handles.
     std::function<std::optional<std::string>(const Value& value)> stable_id;
-    /// Liveness verdict (destroyed objects → stale-ref); nullopt defers to Engine::is_alive.
+    /// Liveness verdict (destroyed objects → stale-ref); nullopt defers to Engine::is_alive. When it
+    /// answers for a session handle ("Type@n") the stored pointer is trusted without a reachability
+    /// search, so it must decide liveness WITHOUT dereferencing a possibly destroyed object (e.g. via a
+    /// weak handle / object registry, as Unreal's IsValid on a UObject* tracked by the GC).
     std::function<std::optional<bool>(const Value& value)> is_alive;
 };
 

@@ -404,6 +404,26 @@ struct Settings {  // identity-less, nameless: encoded inline
 struct Holder2 {
     Settings Prefs;
 };
+struct Item {  // identity-less, nameless: session handles
+    int V = 7;
+};
+struct Box {
+    std::vector<std::unique_ptr<Item>> Items;
+};
+struct Counter2 {
+    int Id = 0;
+    int Count = 0;
+};
+struct Bag {
+    std::vector<std::unique_ptr<Counter2>> Counters;
+};
+struct Thing {
+    int Id = 1;
+    std::string Name = "thing";
+};
+struct Shelf {
+    std::vector<std::unique_ptr<Thing>> Things;
+};
 
 rql::QueryResult arun(rql::Engine& e, const std::string& plan, bool mutate = false) {
     rql::QueryOptions o;
@@ -567,6 +587,176 @@ void adapter_tests() {
         le.add_adapter(std::move(gone));
         r = arun(le, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":")J" + handle + R"J("}]},"stages":[{"op":"count"}]})J");
         check(handle.rfind("Graph@", 0) == 0 && !r.ok && first_code(r) == "stale-ref", "adapters: adapter is_alive applies to session handles");
+    }
+
+    // review fixes ------------------------------------------------------------------------------
+
+    // 1. handle fast path: a liveness adapter for ANOTHER type (or one that defers) must not make a
+    //    freed object's stale handle resolve (use-after-free); deciding never dereferences it.
+    {
+        rql::TypeRegistry r3;
+        r3.object<Item>("Item").member("V", &Item::V);
+        r3.object<Box>("Box").member("Items", &Box::Items);
+        Box box;
+        box.Items.push_back(std::make_unique<Item>());
+        rql::Engine le(r3);
+        le.add_object_source("b", &box);
+        rql::TypeAdapter other;  // liveness adapter for Box only
+        other.target = r3.descriptor<Box>();
+        other.is_alive = [](const rql::Value&) -> std::optional<bool> { return true; };
+        le.add_adapter(std::move(other));
+        rql::TypeAdapter defers;  // liveness adapter for Item that never answers
+        defers.target = r3.descriptor<Item>();
+        defers.is_alive = [](const rql::Value&) -> std::optional<bool> { return std::nullopt; };
+        le.add_adapter(std::move(defers));
+        auto r = arun(le, R"J({"rql":"0.1","source":{"path":["b","Items"]},"stages":[{"op":"select","fields":[{"name":"r","expr":{"path":[{"meta":"ref"}]}}]}]})J");
+        std::string handle = r.ok ? (*r.rows)[0][0].as_string() : "";
+        std::string ref_plan = R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":")J" + handle +
+                               R"J("}]},"stages":[{"op":"select","fields":[{"name":"v","expr":{"path":["V"]}}]}]})J";
+        r = arun(le, ref_plan);
+        check(handle.rfind("Item@", 0) == 0 && r.ok && (*r.rows)[0][0].as_number() == 7, "review: live handle still resolves (reachable)");
+        box.Items.clear();  // frees the Item
+        r = arun(le, ref_plan);
+        check(!r.ok && first_code(r) == "stale-ref", "review: freed handle with unrelated/deferring liveness adapters → stale-ref (no UAF)");
+    }
+
+    // 2+3. rollback runs for non-std exceptions and also restores the failed write itself
+    {
+        rql::TypeRegistry r4;
+        r4.object<Counter2>("Counter2").member("Id", &Counter2::Id).member("Count", &Counter2::Count);
+        r4.object<Bag>("Bag").member("Counters", &Bag::Counters);
+        Bag bag;
+        for (int i = 1; i <= 2; ++i) {
+            bag.Counters.push_back(std::make_unique<Counter2>());
+            bag.Counters.back()->Id = i;
+        }
+        rql::Engine me(r4);
+        me.add_object_source("b", &bag);
+        me.mutations().enabled = true;
+        rql::TypeAdapter a;
+        a.target = r4.descriptor<Counter2>();
+        a.configure_members = [](rql::MemberTable& t) {
+            t.property<Counter2>(
+                "level", [](Counter2& c) { return c.Count; },
+                [](Counter2& c, int v) {
+                    c.Count = v;                       // changes state ...
+                    if (c.Id == 2 && v == 5) throw 1;  // ... then throws a non-std exception
+                },
+                nullptr);
+        };
+        me.add_adapter(std::move(a));
+        auto r = arun(me, R"J({"rql":"0.1","source":{"path":["b","Counters"]},"stages":[{"op":"set","assign":[{"target":{"path":["level"]},"value":{"lit":5}}]}]})J", true);
+        check(!r.ok && first_code(r) == "coercion-failed" && bag.Counters[0]->Count == 0 && bag.Counters[1]->Count == 0,
+              "review: `throw 1` in a setter rolls back earlier writes and restores the failed write itself");
+    }
+
+    // 4. explicit-only id / display are never read implicitly (handles, no name in summaries)
+    {
+        rql::TypeRegistry r5;
+        r5.object<Thing>("Thing").member("Id", &Thing::Id).member("Name", &Thing::Name);
+        r5.object<Shelf>("Shelf").member("Things", &Shelf::Things);
+        Shelf shelf;
+        shelf.Things.push_back(std::make_unique<Thing>());
+        rql::Engine te(r5);
+        te.add_object_source("s", &shelf);
+        bool id_read = false, name_read = false;
+        rql::TypeAdapter a;
+        a.target = r5.descriptor<Thing>();
+        a.configure_members = [&](rql::MemberTable& t) {
+            t.computed<Thing>("Id", [&id_read](Thing& th) { id_read = true; return th.Id; });
+            t.computed<Thing>("Name", [&name_read](Thing& th) { name_read = true; return th.Name; });
+            t.explicit_only({"Id", "Name"});
+        };
+        te.add_adapter(std::move(a));
+        auto r = arun(te, R"J({"rql":"0.1","source":{"path":["s"]},"stages":[{"op":"select","fields":[{"name":"t","expr":{"path":["Things"]}},{"name":"r","expr":{"path":["Things",{"index":0},{"meta":"ref"}]}}]}]})J");
+        // No implicit id/display left: $ref is a session handle and the object encodes inline (value-like,
+        // spec §6) from its implicit members only — here none, so {}.
+        bool ok = r.ok && (*r.rows)[0][1].as_string().rfind("Thing@", 0) == 0 && (*r.rows)[0][0].at(0).is_object() &&
+                  (*r.rows)[0][0].at(0).size() == 0;
+        check(ok && !id_read && !name_read, "review: explicit-only id/display not used (session handle, inline {}, getters not called)");
+        r = arun(te, R"J({"rql":"0.1","source":{"path":["s","Things"]},"stages":[{"op":"select","fields":[{"name":"i","expr":{"path":["Id"]}}]}]})J");
+        check(r.ok && (*r.rows)[0][0].as_number() == 1 && id_read, "review: explicit-only id still readable by name");
+    }
+
+    // 5. scalar values of the target type bypass coerce adapters on builtin scalars
+    {
+        auto g5 = conformance::load_graph(graph_path);
+        rql::Engine se(reg);
+        se.add_object_source("g", g5.get());
+        se.mutations().enabled = true;
+        rql::TypeAdapter strict;
+        strict.target = rql::builtin::string_type();
+        strict.coerce = [](const rql::Value&, const rql::TypeDescriptor&, rql::Value&, std::string& why) {
+            why = "strings only via the adapter";
+            return rql::AdapterOutcome::Failed;
+        };
+        se.add_adapter(std::move(strict));
+        auto r = arun(se, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#1"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Name"]},"value":{"lit":"renamed"}}]}]})J", true);
+        check(r.ok && g5->Nodes[0]->Name == "renamed", "review: string value bypasses the string coerce adapter");
+        r = arun(se, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#1"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Name"]},"value":{"lit":5}}]}]})J", true);
+        check(!r.ok && first_code(r) == "coercion-failed" && r.diagnostics[0].message.find("strings only via the adapter") != std::string::npos,
+              "review: other kinds still go through the scalar coerce adapter");
+    }
+
+    // 6. hide / only with an unknown member → internal-error
+    for (int only = 0; only < 2; ++only) {
+        auto g6 = conformance::load_graph(graph_path);
+        rql::Engine he(reg);
+        he.add_object_source("g", g6.get());
+        rql::TypeAdapter a;
+        a.target = reg.descriptor<conformance::Node>();
+        a.configure_members = [only](rql::MemberTable& t) {
+            if (only) t.only({"Name", "Pasword"});
+            else t.hide({"Pasword"});
+        };
+        he.add_adapter(std::move(a));
+        auto r = arun(he, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"select","fields":[{"name":"n","expr":{"path":["Name"]}}]}]})J");
+        check(!r.ok && first_code(r) == "internal-error", only ? "review: only() with an unknown member → internal-error"
+                                                               : "review: hide() with an unknown member → internal-error");
+    }
+
+    // ordering adapters apply to min / max (spec §13): custom enum order Gamma < Alpha < Beta
+    {
+        auto g7 = conformance::load_graph(graph_path);
+        rql::Engine oe(reg);
+        oe.add_object_source("g", g7.get());
+        const rql::TypeDescriptor* kind = reg.descriptor<conformance::NodeKind>();
+        rql::TypeAdapter order;
+        order.target = kind;
+        order.compare = [kind](const rql::Value& v, const rql::Value& other) -> std::optional<int> {
+            if (!other.is_enum() || other.type() != kind) return std::nullopt;
+            auto rank = [](int64_t e) { return e == 2 ? 0 : (e == 0 ? 1 : 2); };  // Gamma, Alpha, Beta
+            int a = rank(v.enum_value()), b = rank(other.enum_value());
+            return a < b ? -1 : (a > b ? 1 : 0);
+        };
+        oe.add_adapter(std::move(order));
+        auto r = arun(oe, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"recurse","via":[{"path":["Children"]}]},{"op":"max","expr":{"path":["Kind"]}}]})J");
+        check(r.ok && r.value.as_string() == "Beta", "review: max uses the enum ordering adapter (Beta, not numeric Gamma)");
+        r = arun(oe, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"recurse","via":[{"path":["Children"]}]},{"op":"min","expr":{"path":["Kind"]}}]})J");
+        check(r.ok && r.value.as_string() == "Gamma", "review: min uses the enum ordering adapter (Gamma, not numeric Alpha)");
+    }
+
+    // min / max accept values ordered only by an adapter (objects): Nodes ordered by Value
+    {
+        auto g8 = conformance::load_graph(graph_path);
+        rql::Engine oe(reg);
+        oe.add_object_source("g", g8.get());
+        rql::TypeRegistry* rp = &reg;
+        rql::TypeAdapter byValue;
+        byValue.target = reg.descriptor<conformance::Node>();
+        byValue.compare = [rp](const rql::Value& v, const rql::Value& other) -> std::optional<int> {
+            auto* a = rql::value_as<conformance::Node>(*rp, v);
+            auto* b = rql::value_as<conformance::Node>(*rp, other);
+            if (!a || !b) return std::nullopt;
+            return a->Value < b->Value ? -1 : (a->Value > b->Value ? 1 : 0);
+        };
+        oe.add_adapter(std::move(byValue));
+        auto r = arun(oe, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"recurse","via":[{"path":["Children"]}]},{"op":"max","expr":{"path":[]}}]})J");
+        check(r.ok && r.value.is_object() && r.value.find("name") && r.value.find("name")->as_string() == "B-2",
+              "review: max $ over objects uses the ordering adapter (B-2, Value 1000)");
+        r = arun(oe, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"recurse","via":[{"path":["Children"]}]},{"op":"min","expr":{"path":[]}}]})J");
+        check(r.ok && r.value.is_object() && r.value.find("name") && r.value.find("name")->as_string() == "a-2",
+              "review: min $ over objects uses the ordering adapter (a-2, Value -4)");
     }
 
     // configuration bugs → internal-error

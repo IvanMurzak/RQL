@@ -430,10 +430,30 @@ Value Engine::resolve_ref(const std::string& reference_in, std::string& error, d
             if (it != handle_targets_.end()) candidate = it->second.value;
         }
         if (candidate.is_object()) {
-            // Without a liveness hook, only hand out objects that are still reachable from a source.
-            // A liveness verdict (host hook or adapter) replaces the reachability re-validation.
-            bool has_liveness = is_alive || caps_[static_cast<size_t>(detail::Capability::IsAlive)];
-            found = has_liveness ? candidate : search_sources(type, id, &candidate, x);
+            // The stored pointer may dangle. Trust it only when liveness is DECIDED for this handle's own
+            // type (the type stored with the handle; deciding this never dereferences the object): the host
+            // hook, or a liveness adapter of that type that answers. Otherwise re-validate by reachability
+            // (identity comparison only).
+            std::optional<bool> verdict;
+            if (is_alive) {
+                verdict = is_alive(candidate);
+            } else if (caps_[static_cast<size_t>(detail::Capability::IsAlive)]) {
+                const detail::TypeView tv = view_of(candidate.type(), x);
+                verdict = detail::first_answer(tv.with(detail::Capability::IsAlive),
+                                               [&](const TypeAdapter& a) { return a.is_alive(candidate); });
+            }
+            if (!verdict) {
+                found = search_sources(type, id, &candidate, x);
+            } else if (!*verdict) {
+                error = "reference '" + reference + "' points to a destroyed object";
+                return Value::missing();
+            } else {
+                if (!candidate.type()->is_a(type)) {
+                    error = "reference '" + reference + "' does not resolve to a live object";
+                    return Value::missing();
+                }
+                return candidate;  // liveness already decided above
+            }
         }
     } else {
         if (resolve_stable_ref) {

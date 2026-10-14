@@ -165,7 +165,8 @@ const MemberDescriptor* find_member_in(const std::vector<MemberDescriptor>& memb
 /// Writable through RQL: has a setter, not read-only, and not the identity member (always read-only).
 inline bool member_writable(const MemberDescriptor& m, const MemberDescriptor* id) { return m.has_setter() && &m != id; }
 inline bool TypeDescriptor::member_writable(const MemberDescriptor& m) const { return rql::member_writable(m, id_member()); }
-/// The value already has `type` (struct/enum of that type, or an object of it or a subtype).
+/// The value already has `type`: struct/enum of that type, an object of it or a subtype, or a scalar of the
+/// same kind (numbers: the same native scalar type; untyped literals count as double). Bypasses coercion.
 bool is_instance_of(const Value& v, const TypeDescriptor* type);
 
 /// Built-in scalar descriptors (process-wide).

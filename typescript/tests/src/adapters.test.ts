@@ -138,3 +138,107 @@ test('distinct on structs never reads explicit-only members', () => {
   assert.equal(e.execute('boxes | distinct P | count').value, 1);
   assert.equal(reads, 0);
 });
+
+test('a never-registered subclass inherits the read-only id (and the adapted table)', () => {
+  class Sub extends Base {}
+  const sub = new Sub();
+  const e = new RqlEngine({ types: model() })
+    .addSource('xs', () => [sub])
+    .addAdapter({ target: Base, members: (m) => m.add('tag', { type: t.string, get: () => 'base' }) });
+  e.mutations.enabled = true;
+  const r = e.execute('xs | set Id = 99', {}, { allowMutation: true });
+  assert.equal(r.diagnostics[0]?.code, 'readonly-member');
+  assert.equal(sub.Id, 1);
+  assert.deepEqual(e.execute('xs | select $ref $type tag').rows, [['Sub#1', 'Sub', 'base']]);
+});
+
+test('rollback restores the failing write when its setter changes state and then throws', () => {
+  class Acc {
+    Id = 1;
+    Name = 'acc';
+    balance = 10;
+  }
+  const accs = [new Acc(), Object.assign(new Acc(), { Id: 2 })];
+  const types = new TypeModel().register(Acc, { members: [{ name: 'Id', type: t.int }, { name: 'Name', type: t.string }, { name: 'balance', type: t.int }] });
+  const e = new RqlEngine({ types })
+    .addSource('accs', () => accs)
+    .addAdapter({
+      target: Acc,
+      members: (m) =>
+        m.add<number>('cents', {
+          type: t.int,
+          get: (a) => a.balance * 100,
+          set: (a, v) => {
+            a.balance = v / 100; // state changes first ...
+            if (a.Id === 2 && v !== 1000) throw new Error('ledger closed'); // ... then the setter throws (except when restoring)
+          },
+        }),
+    });
+  e.mutations.enabled = true;
+  const r = e.execute('accs | set cents = 5000', {}, { allowMutation: true });
+  assert.equal(r.diagnostics[0]?.code, 'coercion-failed');
+  assert.deepEqual(accs.map((a) => a.balance), [10, 10]);
+});
+
+test('explicit-only members are never used as id or display', () => {
+  let reads = 0;
+  class Secret {
+    get Id(): number {
+      reads++;
+      return 7;
+    }
+    get Name(): string {
+      reads++;
+      return 'hidden';
+    }
+    Label = 'x';
+  }
+  const types = new TypeModel().register(Secret, { members: [{ name: 'Id', type: t.int }, { name: 'Name', type: t.string }, 'Label'] });
+  const e = new RqlEngine({ types }).addSource('s', () => [new Secret()]).addAdapter({ target: Secret, members: (m) => m.explicitOnly('Id', 'Name') });
+  const r = e.execute('s | select $ref');
+  assert.ok(/^Secret@\d+$/.test(String(r.rows?.[0]?.[0])), String(r.rows?.[0]?.[0]));
+  assert.deepEqual(e.execute('s').items?.length, 1);
+  assert.equal(e.execute('ref("Secret#7") | count').diagnostics[0]?.code, 'stale-ref');
+  assert.equal(reads, 0);
+  assert.deepEqual(e.execute('s | select Id').rows, [[7]]); // explicit access still works
+});
+
+test('hide / only with an unknown member name fail the query (internal-error)', () => {
+  for (const cfg of [(m: { hide(...n: string[]): unknown }) => m.hide('Pasword'), (m: { only(...n: string[]): unknown }) => m.only('Name', 'Nmae')]) {
+    const e = new RqlEngine({ types: model() }).addSource('xs', () => [new Leaf()]).addAdapter({ target: Leaf, members: (m) => void cfg(m as never) });
+    const r = e.execute('xs | select Name');
+    assert.equal(r.diagnostics[0]?.code, 'internal-error');
+  }
+});
+
+test('a forked model sees types registered on the parent after addAdapter', () => {
+  class Late {
+    Id = 3;
+    Name = 'late';
+  }
+  const shared = model();
+  const e = new RqlEngine({ types: shared }).addSource('xs', () => [new Late()]).addAdapter({ target: Leaf, encode: () => 'leaf' });
+  assert.deepEqual(e.execute('xs | select $type').rows, [['Late']]); // undeclared: dynamic fallback
+  shared.register(Late, { name: 'LateType', members: [{ name: 'Id', type: t.int }, { name: 'Name', type: t.string }] });
+  assert.equal(e.types.isRegistered(Late), true);
+  assert.deepEqual(e.execute('xs | select $type $ref').rows, [['LateType', 'LateType#3']]);
+  assert.deepEqual(e.execute('xs | first 1').items, [{ $ref: 'LateType#3', name: 'late' }]);
+});
+
+test('ordering adapters apply to min / max (enum-like class with a custom order)', () => {
+  class Rarity {
+    constructor(readonly name: string) {}
+  }
+  const ORDER = ['common', 'rare', 'epic'];
+  const items = ['rare', 'common', 'epic', 'rare'].map((n) => ({ Id: n, r: new Rarity(n) }));
+  const e = new RqlEngine()
+    .addSource('items', () => items)
+    .addAdapter({
+      target: Rarity,
+      encode: (v) => v.name,
+      compare: (v, o) => (o instanceof Rarity ? ORDER.indexOf(v.name) - ORDER.indexOf(o.name) : undefined),
+    });
+  assert.equal(e.execute('items | max r').value, 'epic');
+  assert.equal(e.execute('items | min r').value, 'common');
+  assert.deepEqual(e.execute('items | sort r desc | first 1 | select r').rows, [['epic']]);
+});

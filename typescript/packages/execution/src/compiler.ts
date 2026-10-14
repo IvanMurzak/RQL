@@ -871,7 +871,12 @@ function aggregate(x: Exec, v: unknown, sel: Eval | undefined, kind: string): un
   }
 }
 
-/** sum / avg over numbers; min / max over numbers, strings and enums (spec §4.3). */
+/** Objects whose type has an ordering adapter (spec §13: ordering applies to min / max too). */
+function hasOrdering(model: TypeModel, v: unknown): boolean {
+  return typeof v === 'object' && v !== null && model.hasCapability('compare') && model.infoOf(v).adapterSet.compare.length > 0;
+}
+
+/** sum / avg over numbers; min / max over numbers, strings, enums and adapter-ordered values (spec §4.3, §13). */
 export function reduce(model: TypeModel, values: Iterable<unknown>, kind: string): unknown {
   let sum = 0;
   let n = 0;
@@ -880,7 +885,7 @@ export function reduce(model: TypeModel, values: Iterable<unknown>, kind: string
   for (const val of values) {
     if (minmax) {
       if (val === null || isAbsent(val)) continue;
-      if (toNumber(val) === undefined && typeof val !== 'string' && !(val instanceof EnumValue)) continue;
+      if (toNumber(val) === undefined && typeof val !== 'string' && !(val instanceof EnumValue) && !hasOrdering(model, val)) continue;
       if (best === null) {
         best = val;
         continue;

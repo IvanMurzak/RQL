@@ -63,6 +63,8 @@ MemberTable& MemberTable::add(std::string name, const TypeDescriptor* type, Gett
 }
 
 MemberTable& MemberTable::retain(const std::vector<std::string>& names, bool keep) {
+    // A misspelt name would silently leave a member exposed (e.g. hide({"Pasword"})): all-or-error.
+    for (auto& n : names) member(n);
     members_.erase(std::remove_if(members_.begin(), members_.end(),
                                   [&](const MemberDescriptor& m) {
                                       bool named = std::find(names.begin(), names.end(), m.name) != names.end();
