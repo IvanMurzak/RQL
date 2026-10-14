@@ -20,6 +20,8 @@ namespace RqlTest.EditorTools
         [MenuItem("Tools/RQL/Build Test Scene")]
         public static void Build()
         {
+            Selection.objects = new Object[0];
+            if (AssetDatabase.IsValidFolder("Assets/EvalOut")) AssetDatabase.DeleteAsset("Assets/EvalOut");
             Directory.CreateDirectory("Assets/Scenes");
             Directory.CreateDirectory(MaterialFolder);
             var red = MaterialAsset("Red", new Color(0.9f, 0.1f, 0.1f));

@@ -11,7 +11,6 @@ using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using com.IvanMurzak.McpPlugin.Common.Model;
 using com.IvanMurzak.Unity.MCP;
-using com.IvanMurzak.Unity.MCP.Rql.Editor;
 using RqlTest.EditorTools;
 using UnityEditor;
 using Debug = UnityEngine.Debug;
@@ -42,8 +41,35 @@ namespace RqlTest.Eval
                 "gameobject-component-modify", "object-get-data", "object-modify", "assets-find", "assets-get-data", "assets-modify",
                 "assets-shader-get-data", "scene-get-data", "scene-list-opened", "type-get-json-schema",
             },
-            ["rql"] = new[] { Tool_Rql.QueryToolId, Tool_Rql.MutateToolId, Tool_Rql.SchemaToolId },
+            ["rql"] = new[] { "rql-query", "rql-mutate", "rql-schema" },
         };
+
+        /// <summary>
+        /// Whole-catalog conditions: every tool Unity-MCP lists (exactly what an MCP client sees), minus the excluded name
+        /// prefixes. catalog-legacy = Unity-MCP without the standalone RQL package's tools.
+        /// </summary>
+        public static readonly Dictionary<string, string[]> Catalogs = new Dictionary<string, string[]>
+        {
+            ["catalog"] = Array.Empty<string>(),
+            ["catalog-legacy"] = new[] { "rql-" },
+        };
+
+        // Catalog conditions take the ENABLED tools only, as an MCP client sees them (disabled tools are not exposed).
+        private static string[] ToolNames(string condition, ICollection<string> listed, com.IvanMurzak.McpPlugin.IToolManager manager) =>
+            Catalogs.TryGetValue(condition, out var excluded)
+                ? listed.Where(n => manager.IsToolEnabled(n) && !excluded.Any(p => n.StartsWith(p, StringComparison.Ordinal)))
+                        .OrderBy(n => n, StringComparer.Ordinal).ToArray()
+                : Toolsets[condition];
+
+        // The engine of whichever RQL integration is installed (standalone package or Unity-MCP's own), reset between runs.
+        private static void ResetRql()
+        {
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                var t = asm.GetType("com.IvanMurzak.Unity.MCP.Rql.Editor.RqlUnity") ?? asm.GetType("com.IvanMurzak.Unity.MCP.Editor.Rql.RqlUnity");
+                t?.GetMethod("Reset", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)?.Invoke(null, null);
+            }
+        }
 
         private const string SystemPrompt =
             "You are an AI assistant working inside the Unity Editor through tools. The scene that is open is the one to work on.\n" +
@@ -94,6 +120,17 @@ namespace RqlTest.Eval
             if (UnityEngine.Application.isBatchMode) EditorApplication.Exit(exit);
         }
 
+        /// <summary>The RQL repo's evaluation folder: the nearest ancestor of the project with evaluation/configs/pricing.json.</summary>
+        private static string FindEvaluationRoot()
+        {
+            for (var dir = new DirectoryInfo(UnityEngine.Application.dataPath); dir != null; dir = dir.Parent)
+            {
+                var candidate = Path.Combine(dir.FullName, "evaluation");
+                if (File.Exists(Path.Combine(candidate, "configs", "pricing.json"))) return candidate;
+            }
+            throw new InvalidOperationException("evaluation/configs/pricing.json not found above the project");
+        }
+
         private static async Task RunCore()
         {
             var conditions = Arg("-evalConditions", "reflectornet,rql").Split(',', StringSplitOptions.RemoveEmptyEntries);
@@ -103,7 +140,7 @@ namespace RqlTest.Eval
             double budget = double.Parse(Arg("-evalBudget", "4"), CultureInfo.InvariantCulture);
             var tasks = EvalTasks.All().Where(t => taskFilter.Count == 0 || taskFilter.Contains(t.Id)).ToList();
 
-            var evalRoot = Path.GetFullPath(Path.Combine(UnityEngine.Application.dataPath, "../../../evaluation"));
+            var evalRoot = FindEvaluationRoot();
             var prices = JsonNode.Parse(File.ReadAllText(Path.Combine(evalRoot, "configs/pricing.json")))!["models"]![Model]!.AsObject();
             var ledgerPath = Path.Combine(evalRoot, "baselines/spend-ledger.json");
             var ledger = JsonNode.Parse(File.ReadAllText(ledgerPath))!.AsObject();
@@ -133,7 +170,8 @@ namespace RqlTest.Eval
             foreach (var c in conditions)
             {
                 var defs = new JsonArray();
-                foreach (var name in Toolsets[c])
+                var names = ToolNames(c, catalog.Keys, manager);
+                foreach (var name in names)
                 {
                     if (!catalog.TryGetValue(name, out var t)) throw new InvalidOperationException($"tool '{name}' is not in Unity-MCP's tool list (disabled?)");
                     var schema = t.InputSchema.ValueKind == JsonValueKind.Undefined ? new JsonObject { ["type"] = "object", ["properties"] = new JsonObject() }
@@ -146,7 +184,7 @@ namespace RqlTest.Eval
                 }
                 defs.Add(SubmitTool.DeepClone());
                 toolDefs[c] = defs;
-                condInfo[c] = new JsonObject { ["tools"] = new JsonArray(Toolsets[c].Select(n => (JsonNode)JsonValue.Create(n)!).ToArray()), ["toolDefinitionChars"] = defs.ToJsonString().Length };
+                condInfo[c] = new JsonObject { ["tools"] = new JsonArray(names.Select(n => (JsonNode)JsonValue.Create(n)!).ToArray()), ["toolDefinitionChars"] = defs.ToJsonString().Length };
             }
             config["conditions"] = condInfo;
             File.WriteAllText(Path.Combine(outDir, "config.json"), config.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
@@ -188,9 +226,11 @@ namespace RqlTest.Eval
                                                      int repeat, int maxSteps, Func<double> budgetLeft)
         {
             RqlTestSceneBuilder.Build();
-            RqlUnity.Reset();
+            ResetRql();
+            task.Setup?.Invoke();
             Undo.ClearAll();
             var before = SceneSnapshot.Take();
+            // Snapshot after setup, so whatever the setup changed is the baseline.
 
             var usage = new Usage();
             var steps = new JsonArray();

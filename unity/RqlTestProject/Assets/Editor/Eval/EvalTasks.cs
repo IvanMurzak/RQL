@@ -21,6 +21,8 @@ namespace RqlTest.Eval
         public string Prompt = "";
         public Func<string?, (bool ok, string detail)> Check = _ => (false, "no check");
         public Func<string, bool> Allowed = _ => false;
+        /// <summary>Runs after the scene is rebuilt and before the baseline snapshot (e.g. writes console messages).</summary>
+        public Action? Setup;
     }
 
     public static class EvalTasks
@@ -206,6 +208,63 @@ namespace RqlTest.Eval
                     return All((Ok("Enemies/Enemy_03"), "Enemy_03"), (Ok("Enemies/Enemy_05"), "Enemy_05"));
                 },
                 Allowed = Keys("Enemies/Enemy_03|Health.max", "Enemies/Enemy_03|Renderer.materials", "Enemies/Enemy_05|Health.max", "Enemies/Enemy_05|Renderer.materials"),
+            },
+            new EvalTask
+            {
+                Id = "duplicate-move", Category = "gameobject",
+                Prompt = "Duplicate the GameObject \"Pillar_1\" (under \"Level\") and move the copy to world position (0, 2, -10). The original must stay where it is.",
+                Check = _ =>
+                {
+                    var level = Go("Level")!.transform;
+                    var pillars = Enumerable.Range(0, level.childCount).Select(i => level.GetChild(i)).Where(t => t.name.StartsWith("Pillar_1", StringComparison.Ordinal)).ToList();
+                    var copy = pillars.FirstOrDefault(t => Near(t.position, new Vector3(0, 2, -10)));
+                    var original = pillars.FirstOrDefault(t => Near(t.position, new Vector3(-10, 2, -10)));
+                    return All((level.childCount == 6, "Level has one more child"), (copy != null, "a copy at (0, 2, -10)"), (original != null, "the original at (-10, 2, -10)"),
+                               (copy != null && copy.GetComponent<MeshRenderer>()?.sharedMaterial == Mat("Gold"), "the copy keeps the Gold material"));
+                },
+                Allowed = Prefixes("Level/Pillar_1"),
+            },
+            new EvalTask
+            {
+                Id = "prefab-instantiate", Category = "prefab",
+                Prompt = "Save the GameObject \"Spawner\" as a prefab asset at \"Assets/EvalOut/Spawner.prefab\" (create the folder if needed), then add a new instance of that prefab as a root GameObject at world position (5, 0, 5).",
+                Check = _ =>
+                {
+                    var prefab = AssetDatabase.LoadAssetAtPath<GameObject>("Assets/EvalOut/Spawner.prefab");
+                    var instances = SceneManager.GetActiveScene().GetRootGameObjects()
+                        .Where(g => prefab != null && PrefabUtility.GetCorrespondingObjectFromSource(g) == prefab).ToList();
+                    return All((prefab != null, "prefab asset exists"), (prefab != null && prefab.GetComponent<Spawner>() != null, "prefab has the Spawner component"),
+                               (instances.Any(g => Near(g.transform.position, new Vector3(5, 0, 5))), "an instance at (5, 0, 5)"));
+                },
+                Allowed = Prefixes("Spawner"),
+            },
+            new EvalTask
+            {
+                Id = "answer-console-errors", Category = "query",
+                Prompt = "How many error messages (log type Error) containing the text \"EvalError\" are in the Unity console log? Submit just the number.",
+                Setup = () =>
+                {
+                    Debug.ClearDeveloperConsole();
+                    com.IvanMurzak.Unity.MCP.UnityMcpPluginEditor.Instance.LogCollector?.Clear();
+                    Debug.LogError("EvalError: shader Foo failed to compile");
+                    Debug.LogWarning("EvalError mentioned in a warning (not an error)");
+                    Debug.LogError("EvalError: missing reference on Spawner");
+                    Debug.Log("EvalError in a normal log line");
+                    Debug.LogError("EvalError: NullReferenceException in Enemy.Update");
+                    Debug.LogError("Another error without the marker");
+                    com.IvanMurzak.Unity.MCP.UnityMcpPluginEditor.Instance.LogCollector?.Save();
+                },
+                Check = a => NumberEquals(a, 3) ? (true, "3") : (false, $"expected 3, got '{a}'"),
+            },
+            new EvalTask
+            {
+                Id = "select-archers", Category = "editor",
+                Prompt = "In the Unity Editor, select every enemy GameObject whose Enemy component has kind Archer (inactive ones included), and nothing else.",
+                Check = _ =>
+                {
+                    var names = Selection.objects.Select(o => o.name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+                    return names.SequenceEqual(new[] { "Enemy_03", "Enemy_05" }) ? (true, "Enemy_03, Enemy_05") : (false, "selected: " + string.Join(", ", names));
+                },
             },
             new EvalTask
             {
