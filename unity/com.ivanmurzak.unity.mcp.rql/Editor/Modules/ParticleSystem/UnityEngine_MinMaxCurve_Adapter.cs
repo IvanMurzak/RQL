@@ -28,20 +28,20 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Particles
         {
             result = null;
             reason = null;
-            switch (value)
+            if (value is IList<object?> list && list.Count == 2)
             {
-                case double d:
-                    result = new ParticleSystem.MinMaxCurve((float)d);
-                    return AdapterOutcome.Ok;
-                case IList<object?> list when list.Count == 2:
-                    if (!kernel.TryCoerce(list[0], typeof(float), out var min, out reason, "[0]")) return AdapterOutcome.Failed;
-                    if (!kernel.TryCoerce(list[1], typeof(float), out var max, out reason, "[1]")) return AdapterOutcome.Failed;
-                    result = new ParticleSystem.MinMaxCurve((float)min!, (float)max!);
-                    return AdapterOutcome.Ok;
-                default:
-                    reason = "expected a number or [min, max]";
-                    return AdapterOutcome.Failed;
+                if (!kernel.TryCoerce(list[0], typeof(float), out var min, out reason, "[0]")) return AdapterOutcome.Failed;
+                if (!kernel.TryCoerce(list[1], typeof(float), out var max, out reason, "[1]")) return AdapterOutcome.Failed;
+                result = new ParticleSystem.MinMaxCurve((float)min!, (float)max!);
+                return AdapterOutcome.Ok;
             }
+            if (!(value is IList<object?>) && kernel.TryCoerce(value, typeof(float), out var constant, out _))
+            {
+                result = new ParticleSystem.MinMaxCurve((float)constant!);
+                return AdapterOutcome.Ok;
+            }
+            reason = "expected a number or [min, max]";
+            return AdapterOutcome.Failed;
         }
     }
 }

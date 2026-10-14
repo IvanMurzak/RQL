@@ -30,7 +30,10 @@ com.ivanmurzak.unity.mcp.rql/Editor/
   Scripts/Tool_Rql.cs, RqlGuide.cs, RqlUnitySchema.cs   the MCP tools and their texts
   Scripts/Modules/UnityCoreModule.cs  sources, functions, core adapters, type blacklist
   Scripts/Adapters/<Group>/UnityEngine_<Type>_Adapter[.part][.pre-Unity.6.5].cs   one adapter per file
-  Modules/ParticleSystem/             OPTIONAL module: own asmdef, compiles only with com.unity.modules.particlesystem
+  Modules/ParticleSystem/, Physics/   OPTIONAL modules: own asmdef, compile only with com.unity.modules.particlesystem / .physics
+com.ivanmurzak.unity.mcp.rql/Tests/
+  Editor/Adapters/<Group>/<Adapter>Tests.cs   one test file per adapter (Editor/ParticleSystem, Editor/Physics: per module)
+  Runtime/RqlTestBehaviour.cs         test script with the member kinds adapters handle (runtime asmdef: components can't be editor types)
 ```
 
 - **Version split:** `X.cs` targets the current Unity (`#if UNITY_6000_5_OR_NEWER`); `X.pre-Unity.6.5.cs` targets everything
@@ -75,7 +78,7 @@ Batch mode (from this folder; `U` = the Unity 6000.6 binary):
 ```bash
 "$U" -batchmode -nographics -projectPath "$PWD/RqlTestProject" -rqlWaitReady -logFile -   # restore NuGet + compile, exit 0 when ready
 "$U" -batchmode -nographics -projectPath "$PWD/RqlTestProject" -runTests -testPlatform EditMode \
-     -assemblyNames "com.IvanMurzak.Unity.MCP.Rql.Editor.Tests;com.IvanMurzak.Unity.MCP.Rql.Editor.ParticleSystem.Tests" \
+     -assemblyNames "com.IvanMurzak.Unity.MCP.Rql.Editor.Tests;com.IvanMurzak.Unity.MCP.Rql.Editor.ParticleSystem.Tests;com.IvanMurzak.Unity.MCP.Rql.Editor.Physics.Tests" \
      -testResults results.xml -logFile -
 "$U" -batchmode -nographics -quit -projectPath "$PWD/RqlTestProject" -executeMethod RqlTest.EditorTools.RqlSmoke.Run -logFile -
 ```

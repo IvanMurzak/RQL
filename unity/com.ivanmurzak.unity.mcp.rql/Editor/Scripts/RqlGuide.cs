@@ -76,7 +76,7 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
             "  editor | call CreateGameObject(\"Crate\", ref(\"GameObject#1234\"), \"Cube\")    child of a parent, optional primitive\n" +
             "  objects | where name == \"Crate\" | call AddComponent(\"Rigidbody\")           add a component by type name\n" +
             "  objects | where name == \"Old\" | call Destroy()                             remove a GameObject (components: get components | where $ is X | call Destroy())\n" +
-            "  objects | where name == \"Lamp\" | set transform.parent = ref(\"GameObject#1234\")   reparent (keeps the local position)\n" +
+            "  objects | where name == \"Lamp\" | set transform.parent = ref(\"GameObject#1234\")   reparent (keeps the world position)\n" +
             "Object literals build values: set settings = {speed: 2, \"$type\": \"FastSettings\"}. At most 20 targets per call.\n\n" +
             "Query syntax:\n" + Language;
 
