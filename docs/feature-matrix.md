@@ -23,4 +23,10 @@ by design, ADR-0003). Details: [TypeScript](feature-matrix-typescript.md), [C++]
 | Top-N `sort | first n` fusion, allocation-optimized recurse | ✅ | — (full sort, same results) | — |
 | Extension sources/functions/stages | ✅ (lazy) | ✅ | ✅ (stages materialize input) |
 | Host function as query source (`ns.fn(…) \| …`, spec §2) | ✅ | — pending | — pending |
+| Adapter kernel, `IRqlModule` modules, module guides (`AddGuide`) | ✅ | — pending | — pending |
+| `TreatAsObject` (enumerable types read as objects) | ✅ | — pending (no enumerable ambiguity in TS) | — pending |
+| `MutationRecord.Owners` (enclosing-object chain for host undo) | ✅ | — pending | — pending |
+| Copy-on-read write-back through objects inside the copy | ✅ | — pending | — pending |
+| Error-cell messages in the agent table format (`CellErrors`, not in JSON) | ✅ | — pending | — pending |
+| `NumericTupleAdapter<T>` (vector-like struct literals) | ✅ | — pending | — pending |
 | AOT-safe accessor mode | ✅ `AccessorMode.Reflection` | n/a | n/a |
