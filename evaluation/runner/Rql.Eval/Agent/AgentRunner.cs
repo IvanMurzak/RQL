@@ -106,15 +106,16 @@ namespace Rql.Eval.Agent
 
         private string SystemPrompt(SampleHost host)
         {
-            var p = _cfg.Toolset == "legacy" ? LegacyTools.Prompt : Prompts.Get(_cfg.Prompt);
-            if (_cfg.SchemaInPrompt) p += "\n\nSchema:\n" + host.Schema();
+            var p = _cfg.Toolset == "legacy" ? LegacyTools.Prompt : _cfg.Toolset == "reflectornet" ? ReflectorNetTools.Prompt : Prompts.Get(_cfg.Prompt);
+            if (_cfg.SchemaInPrompt && _cfg.Toolset == "rql") p += "\n\nSchema:\n" + host.Schema();
             return p;
         }
 
         // ------------------------------------------------------------ tool execution
 
-        private (string text, bool error, string? code) Execute(SampleHost host, string tool, JsonObject? args, bool allowMutation)
+        private (string text, bool error, string? code) Execute(SampleHost host, string tool, JsonObject? args, bool allowMutation, ReflectorNetTools.Session? reflector = null)
         {
+            if (reflector != null) return ReflectorNetTools.Execute(reflector, tool, args ?? new JsonObject(), allowMutation);
             if (_cfg.Toolset == "legacy") return LegacyTools.Execute(host, tool, args ?? new JsonObject(), allowMutation);
             var format = AgentFormat.Parse(_cfg.Format);
             var budgets = new Rql.Budgets { MaxRows = _cfg.MaxRows };
@@ -159,7 +160,10 @@ namespace Rql.Eval.Agent
                 new JsonObject { ["role"] = "system", ["content"] = SystemPrompt(host) },
                 new JsonObject { ["role"] = "user", ["content"] = UserMessage(task) },
             };
-            var tools = _cfg.Toolset == "legacy" ? LegacyTools.Definitions(task.AllowMutation) : Prompts.Tools(task.AllowMutation, _cfg.Toolset);
+            var tools = _cfg.Toolset == "legacy" ? LegacyTools.Definitions(task.AllowMutation)
+                : _cfg.Toolset == "reflectornet" ? ReflectorNetTools.Definitions(task.AllowMutation)
+                : Prompts.Tools(task.AllowMutation, _cfg.Toolset);
+            var reflector = _cfg.Toolset == "reflectornet" ? new ReflectorNetTools.Session(host) : null;
             string? answer = null;
             try
             {
@@ -215,7 +219,7 @@ namespace Rql.Eval.Agent
                         else
                         {
                             var esw = Stopwatch.StartNew();
-                            var (text, error, code) = args == null ? ("error: arguments are not valid JSON", true, "bad-arguments") : Execute(host, name, args, task.AllowMutation);
+                            var (text, error, code) = args == null ? ("error: arguments are not valid JSON", true, "bad-arguments") : Execute(host, name, args, task.AllowMutation, reflector);
                             tc.ExecMs = esw.Elapsed.TotalMilliseconds;
                             result.ExecutorMs += tc.ExecMs;
                             output = text;

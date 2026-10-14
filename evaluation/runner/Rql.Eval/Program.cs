@@ -156,6 +156,11 @@ namespace Rql.Eval
         private static List<TaskInstance> Filter(List<TaskInstance> tasks, Dictionary<string, string> opts)
         {
             if (opts.TryGetValue("filter", out var f)) tasks = tasks.Where(t => t.Id.Contains(f) || t.Category == f).ToList();
+            if (opts.TryGetValue("tasks", out var ids))
+            {
+                var wanted = ids.Split(',').Select(x => x.Trim()).ToList();
+                tasks = wanted.Select(w => tasks.FirstOrDefault(t => t.Id == w) ?? throw new ArgumentException("unknown task id " + w)).ToList();
+            }
             if (opts.TryGetValue("limit", out var l)) tasks = tasks.Take(int.Parse(l, CultureInfo.InvariantCulture)).ToList();
             return tasks;
         }

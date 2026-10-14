@@ -16,6 +16,11 @@ jobs:
     # The selector label is REQUIRED: runner-manager only answers jobs whose runs-on carries it.
     runs-on: [self-hosted, linux, rm-anastasiia-wsl-linux-x64]
     timeout-minutes: 30
+    env:
+      # runner-manager's sandboxed runners are root without CAP_CHOWN: tool archives must not restore owners.
+      TAR_OPTIONS: --no-same-owner
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6

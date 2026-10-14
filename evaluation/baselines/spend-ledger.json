@@ -1,6 +1,6 @@
 {
   "CapUsd": 25,
-  "SpentUsd": 3.4790242259999973,
+  "SpentUsd": 3.5006223419999962,
   "Runs": [
     {
       "id": "probe-20261013T203447Z",
@@ -233,6 +233,34 @@
       "split": "dev",
       "taskRuns": 186,
       "costUsd": 0.044161
+    },
+    {
+      "id": "20261013-232451-rn-smoke-all",
+      "config": "rn-smoke",
+      "split": "all",
+      "taskRuns": 1,
+      "costUsd": 0.000377
+    },
+    {
+      "id": "20261013-232512-rn-smoke2-all",
+      "config": "rn-smoke2",
+      "split": "all",
+      "taskRuns": 1,
+      "costUsd": 0.000363
+    },
+    {
+      "id": "20261013-232530-RQL-all",
+      "config": "RQL",
+      "split": "all",
+      "taskRuns": 30,
+      "costUsd": 0.007174
+    },
+    {
+      "id": "20261013-232552-ReflectorNet-all",
+      "config": "ReflectorNet",
+      "split": "all",
+      "taskRuns": 4,
+      "costUsd": 0.013683
     }
   ]
 }

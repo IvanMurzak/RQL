@@ -8,6 +8,10 @@
     <Description>Tier B agent-in-the-loop evaluation runner for RQL (OpenAI-compatible provider).</Description>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Head-to-head comparison baseline only (Toolset=reflectornet); RQL itself never depends on ReflectorNet. -->
+    <PackageReference Include="com.IvanMurzak.ReflectorNet" Version="5.4.2" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\..\dotnet\Rql.SampleRuntime\Rql.SampleRuntime.csproj" />
     <ProjectReference Include="..\..\..\dotnet\Rql.Conformance\Rql.Conformance.csproj" />
   </ItemGroup>
