@@ -41,6 +41,20 @@ namespace Rql
             return plan;
         }
 
+        /// <summary>
+        /// Parses one expression with nothing after it, e.g. a value literal <c>{name: "Lamp", position: [1, 2, 3]}</c>
+        /// (hosts that accept RQL literals outside a query, such as tool arguments). Throws <see cref="RqlException"/>.
+        /// </summary>
+        public static Expr ParseValue(string text)
+        {
+            if (text == null) throw new ArgumentNullException(nameof(text));
+            var p = new RqlParser(text);
+            if (p.Peek().Kind == TokenKind.End) throw p.Error("empty value", p.Peek());
+            var e = p.ParseExpr();
+            if (p.Peek().Kind != TokenKind.End) throw p.Error($"unexpected {p.Peek().Describe()} after the value", p.Peek());
+            return e;
+        }
+
         public static bool TryParse(string text, out QueryPlan? plan, out Diagnostic? error)
         {
             try

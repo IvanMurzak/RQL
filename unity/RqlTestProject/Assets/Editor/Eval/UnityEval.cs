@@ -56,10 +56,27 @@ namespace RqlTest.Eval
 
         // Catalog conditions take the ENABLED tools only, as an MCP client sees them (disabled tools are not exposed).
         private static string[] ToolNames(string condition, ICollection<string> listed, com.IvanMurzak.McpPlugin.IToolManager manager) =>
-            Catalogs.TryGetValue(condition, out var excluded)
+            Catalogs.TryGetValue(BaseCondition(condition), out var excluded)
                 ? listed.Where(n => manager.IsToolEnabled(n) && !excluded.Any(p => n.StartsWith(p, StringComparison.Ordinal)))
                         .OrderBy(n => n, StringComparer.Ordinal).ToArray()
-                : Toolsets[condition];
+                : Toolsets[BaseCondition(condition)];
+
+        // "<condition>+text" = the same tools in the RQL text presentation (RqlToolPresentation): RQL-literal arguments,
+        // compact type text instead of JSON schema, compact results. "+lean" = the same without member descriptions.
+        private static string BaseCondition(string condition) => condition.Split('+')[0];
+
+        private static void UsePresentation(string condition)
+        {
+            var field = condition.EndsWith("+text", StringComparison.Ordinal) ? "Instance" : condition.EndsWith("+lean", StringComparison.Ordinal) ? "Lean" : null;
+            var text = field != null;
+            object? instance = null;
+            if (text)
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                    foreach (var name in new[] { "com.IvanMurzak.Unity.MCP.Editor.Rql.ToolFormat.RqlToolPresentation", "com.IvanMurzak.Unity.MCP.Rql.Editor.ToolFormat.RqlToolPresentation" })
+                        if (asm.GetType(name) is Type t) instance = t.GetField(field!)?.GetValue(null);
+            if (text && instance == null) throw new InvalidOperationException($"condition '{condition}' needs RqlToolPresentation, which is not installed");
+            com.IvanMurzak.McpPlugin.ToolPresentation.Current = (com.IvanMurzak.McpPlugin.IToolPresentation?)instance;
+        }
 
         // The engine of whichever RQL integration is installed (standalone package or Unity-MCP's own), reset between runs.
         private static void ResetRql()
@@ -154,9 +171,14 @@ namespace RqlTest.Eval
 
             UnityMcpPluginEditor.InitSingletonIfNeeded();
             var manager = UnityMcpPluginEditor.Instance.Tools ?? throw new InvalidOperationException("Unity-MCP tool manager unavailable");
-            var listed = await manager.RunListTool(new RequestListTool());
-            if (listed.Status == ResponseStatus.Error || listed.Value == null) throw new InvalidOperationException("tools/list failed: " + listed.Message);
-            var catalog = listed.Value.ToDictionary(t => t.Name, t => t);
+            // The tool list as the agent sees it, per presentation.
+            async Task<Dictionary<string, ResponseListTool>> List(string condition)
+            {
+                UsePresentation(condition);
+                var listed = await manager.RunListTool(new RequestListTool());
+                if (listed.Status == ResponseStatus.Error || listed.Value == null) throw new InvalidOperationException("tools/list failed: " + listed.Message);
+                return listed.Value.ToDictionary(t => t.Name, t => t);
+            }
 
             var toolDefs = new Dictionary<string, JsonArray>();
             var config = new JsonObject
@@ -170,6 +192,7 @@ namespace RqlTest.Eval
             foreach (var c in conditions)
             {
                 var defs = new JsonArray();
+                var catalog = await List(c);
                 var names = ToolNames(c, catalog.Keys, manager);
                 foreach (var name in names)
                 {
@@ -184,10 +207,34 @@ namespace RqlTest.Eval
                 }
                 defs.Add(SubmitTool.DeepClone());
                 toolDefs[c] = defs;
-                condInfo[c] = new JsonObject { ["tools"] = new JsonArray(names.Select(n => (JsonNode)JsonValue.Create(n)!).ToArray()), ["toolDefinitionChars"] = defs.ToJsonString().Length };
+                var perTool = new JsonObject();
+                foreach (var d in defs)
+                {
+                    var f = d!["function"]!;
+                    perTool[f["name"]!.GetValue<string>()] = new JsonObject
+                    {
+                        ["descriptionChars"] = f["description"]!.GetValue<string>().Length,
+                        ["schemaChars"] = f["parameters"]!.ToJsonString().Length,
+                    };
+                }
+                condInfo[c] = new JsonObject
+                {
+                    ["tools"] = new JsonArray(names.Select(n => (JsonNode)JsonValue.Create(n)!).ToArray()),
+                    ["toolDefinitionChars"] = defs.ToJsonString().Length,
+                    ["perTool"] = perTool,
+                };
             }
             config["conditions"] = condInfo;
             File.WriteAllText(Path.Combine(outDir, "config.json"), config.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            com.IvanMurzak.McpPlugin.ToolPresentation.Current = null;
+            if (repeats == 0)
+            {
+                var all = new JsonObject();
+                foreach (var kv in toolDefs) all[kv.Key] = kv.Value.DeepClone();
+                File.WriteAllText(Path.Combine(outDir, "tools.json"), all.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+                Debug.Log($"[EVAL] tool definitions only (no model calls): {outDir}");
+                return;
+            }
 
             using var client = new DeepSeekClient("https://api.deepseek.com", DeepSeekClient.LoadApiKey(), prices, TimeSpan.FromSeconds(120));
             var results = new List<JsonObject>();
@@ -217,6 +264,7 @@ namespace RqlTest.Eval
                           $"err={res["toolErrors"]} ${cost:0.0000} {(double)res["wallMs"]! / 1000:0.0}s {res["outcome"]} | {res["gradeDetail"]}");
             }
             done:
+            com.IvanMurzak.McpPlugin.ToolPresentation.Current = null;
             RqlTestSceneBuilder.Build();
             File.WriteAllText(Path.Combine(outDir, "summary.md"), Summary(runId, config, conditions, tasks, results, spent));
             Debug.Log($"[EVAL] done: {results.Count} runs, ${spent:0.0000}; {outDir}");
@@ -227,6 +275,7 @@ namespace RqlTest.Eval
         {
             RqlTestSceneBuilder.Build();
             ResetRql();
+            UsePresentation(condition);
             task.Setup?.Invoke();
             Undo.ClearAll();
             var before = SceneSnapshot.Take();

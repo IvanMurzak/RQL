@@ -39,6 +39,22 @@ namespace Rql.Tests
         }
 
         [Fact]
+        public void ParseValueReadsOneLiteral()
+        {
+            var o = Assert.IsType<ObjectExpr>(RqlParser.ParseValue("{name: \"Lamp\", \"quoted key\": -2.5, tags: [1, true, null]}"));
+            Assert.Equal(new[] { "name", "quoted key", "tags" }, o.Entries.Select(e => e.Key));
+            Assert.Equal(-2.5, Assert.IsType<LitExpr>(o.Entries[1].Value).Value);
+            Assert.Equal(3, Assert.IsType<ListExpr>(o.Entries[2].Value).Items.Count);
+        }
+
+        [Theory]
+        [InlineData("")]
+        [InlineData("{a: 1} {b: 2}")]
+        [InlineData("{a: }")]
+        public void ParseValueRejectsAnythingButOneExpression(string text) =>
+            Assert.Equal("syntax-error", Assert.Throws<RqlException>(() => RqlParser.ParseValue(text)).Code);
+
+        [Fact]
         public void PlanRoundTripsThroughCodec()
         {
             var plan = RqlParser.Parse("objects | where Components.any($ is LightComponent and Enabled == false) | sort Name desc | first 3 | select $ref Name p=(Transform.Position.y * 2)");
