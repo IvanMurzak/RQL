@@ -426,6 +426,38 @@ namespace Rql.Tests
             Assert.Equal(0f, mat.GetFloat("_Metallic"));
         }
 
+        // Unity's Transform is IEnumerable (its children) but must be queried as an object.
+        public class TransformLike : System.Collections.IEnumerable
+        {
+            public double x { get; set; } = 1.5;
+            public List<TransformLike> Kids { get; } = new List<TransformLike>();
+            public System.Collections.IEnumerator GetEnumerator() => Kids.GetEnumerator();
+        }
+
+        [Fact]
+        public void EnumerableTypesCanBeTreatedAsObjects()
+        {
+            TypeModel.TreatAsObject(typeof(TransformLike));
+            var e = new RqlEngine();
+            e.AddSource("t", () => new List<TransformLike> { new TransformLike() });
+            var r = e.Execute("t | select x");
+            Assert.Equal("1.5", Cell(r));
+            Assert.True(TypeModel.Get(typeof(TransformLike)).IsObject);
+        }
+
+        [Fact]
+        public void HostFunctionsCanStartAQuery()
+        {
+            var e = new RqlEngine();
+            e.AddSource("s", () => new Scene());
+            e.AddFunction("host.items", args => new List<object?> { "a" + args[0], "b" + args[0] });
+            var r = e.Execute("host.items(\"1\") | where $ starts-with \"b\" | select v=$");
+            Assert.Equal("b1", Cell(r));
+            var unknown = e.Execute("nope.items(1) | count");
+            Assert.Equal("unknown-source", unknown.Diagnostics[0].Code);
+            Assert.Contains("functions: host.items", unknown.Diagnostics[0].Hint);
+        }
+
         private sealed class EncodeOnly : RqlTypeAdapter<ComponentLike>
         {
             protected override JsonNode? Encode(ComponentLike c, EncodeContext context) => JsonValue.Create("component " + c.Name);

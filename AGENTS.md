@@ -12,6 +12,7 @@ on ReflectorNet, Unity, Unreal, MCP or any hosted service.
 - `cpp/` — C++17 library (QueryPlan codec, provider-based executor) + tests (CMake).
 - `evaluation/` — LLM agent evaluation: tasks, runner, configs, baselines, reports.
 - `docs/` — architecture, ADRs (`docs/decisions/`), evaluation methodology, security, feature matrix.
+- `unity/` — experiment: Unity-MCP extension package with RQL tools + Unity 6 test project (see `unity/README.md`).
 
 ## Rules
 1. **Semantics change = spec change.** Edit `spec/semantics.md` (and schemas) first, then every runtime,

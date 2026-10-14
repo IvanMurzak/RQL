@@ -55,6 +55,9 @@ The source is a `postfix` expression evaluated in **root scope**:
   segments navigate from it. Unknown root → error `unknown-source` (with suggestions).
 * `ref("Type#id", ...)` resolves stable object references (§7). Unresolvable → `stale-ref`.
   `ref()` may also be used inside expressions (e.g. `set Target = ref("Player#1")`).
+* A call to a registered host extension function (§9), e.g. `unity.assets("t:Material")`, evaluated with no current
+  item; its value is the source value. An error value fails the query with its code. (Implemented in .NET; TS/C++
+  parity pending.)
 
 If the source value is a `list` its elements become the item stream; a `map` yields its entries
 (§4.4); anything else yields a single item.

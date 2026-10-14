@@ -250,6 +250,27 @@ namespace Rql.Execution
 
         public static TypeInfo Get(Type t) => Shared.Info(t);
 
+        private static readonly ConcurrentDictionary<Type, bool> ObjectKinds = new ConcurrentDictionary<Type, bool>();
+
+        /// <summary>
+        /// Declare that an enumerable type (and its subclasses) is an object with members, not a collection — e.g. Unity's
+        /// <c>Transform</c>, which enumerates its children. Process-wide, because a value's kind must be the same for every
+        /// engine; register at startup, before queries run (spec §13).
+        /// </summary>
+        public static void TreatAsObject(Type type)
+        {
+            if (type == null) throw new ArgumentNullException(nameof(type));
+            if (ObjectKinds.TryAdd(type, true)) Shared._cache.Clear();
+        }
+
+        private static bool IsTreatedAsObject(Type t)
+        {
+            if (ObjectKinds.IsEmpty) return false;
+            for (var b = t; b != null; b = b.BaseType)
+                if (ObjectKinds.ContainsKey(b)) return true;
+            return false;
+        }
+
         // Cached delegate: a method-group argument would allocate a new delegate on every lookup.
         public TypeInfo Info(Type t) => _cache.TryGetValue(t, out var info) ? info : _cache.GetOrAdd(t, _build);
 
@@ -291,8 +312,14 @@ namespace Rql.Execution
             if (t.IsEnum) { info.Kind = TypeKind.Enum; return info; }
             if (IsScalarType(t)) { info.Kind = TypeKind.Scalar; return info; }
 
-            var dict = FindGeneric(t, typeof(IDictionary<,>)) ?? FindGeneric(t, typeof(IReadOnlyDictionary<,>));
-            if (dict != null || typeof(IDictionary).IsAssignableFrom(t))
+            // Hosts may declare an enumerable type to be an object (Unity's Transform enumerates its children).
+            bool asObject = IsTreatedAsObject(t);
+            var dict = asObject ? null : FindGeneric(t, typeof(IDictionary<,>)) ?? FindGeneric(t, typeof(IReadOnlyDictionary<,>));
+            if (asObject)
+            {
+                info.Kind = t.IsValueType ? TypeKind.Struct : TypeKind.Object;
+            }
+            else if (dict != null || typeof(IDictionary).IsAssignableFrom(t))
             {
                 info.Kind = TypeKind.Map;
                 info.KeyType = dict?.GetGenericArguments()[0];

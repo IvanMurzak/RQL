@@ -1,0 +1,14 @@
+{
+  "name": "com.ivanmurzak.unity.mcp.rql",
+  "displayName": "AI Game Developer — RQL tools (experimental)",
+  "author": {
+    "name": "Ivan Murzak",
+    "url": "https://github.com/IvanMurzak"
+  },
+  "version": "0.1.0",
+  "unity": "2022.3",
+  "description": "Experimental RQL (Reflection Query Language) MCP tools for Unity-MCP: rql-query, rql-mutate, rql-schema over the live Editor scene. Local experiment only, not published.",
+  "dependencies": {
+    "com.ivanmurzak.unity.mcp": "0.93.4"
+  }
+}
