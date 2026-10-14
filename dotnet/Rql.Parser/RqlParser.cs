@@ -625,6 +625,30 @@ namespace Rql
                         }
                         return At(new ListExpr(items), start, PrevEnd);
                     }
+                    if (t.Is("{"))
+                    {
+                        Next();
+                        var entries = new List<KeyValuePair<string, Expr>>();
+                        var keys = new HashSet<string>(StringComparer.Ordinal);
+                        if (!Accept("}"))
+                        {
+                            do
+                            {
+                                var k = Peek();
+                                if (k.Kind != TokenKind.Ident && k.Kind != TokenKind.QuotedIdent && k.Kind != TokenKind.String)
+                                    throw Error($"expected an object key (name or string), found {k.Describe()}", k);
+                                Next();
+                                var key = k.Kind == TokenKind.String ? (string)k.Value! : k.Text;
+                                if (key.Length == 0) throw Error("object keys must not be empty", k);
+                                if (!keys.Add(key)) throw Error($"duplicate object key '{key}'", k);
+                                Expect(":", "after an object key");
+                                entries.Add(new KeyValuePair<string, Expr>(key, ParseExpr()));
+                            }
+                            while (Accept(","));
+                            Expect("}", "to close the object");
+                        }
+                        return At(new ObjectExpr(entries), start, PrevEnd);
+                    }
                     break;
             }
             throw Error($"expected an expression, found {t.Describe()}", t);

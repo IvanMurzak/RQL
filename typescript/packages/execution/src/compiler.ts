@@ -8,13 +8,14 @@ import { elements, findMapKey, indexAt, isMapLike, mapEntries, mapGet, sizeOf, t
 import { firstAnswer } from './adapters.js';
 import { Exec, IsSite, MemberSite, errorMessage } from './exec.js';
 import { EnumValue, type TypeInfo, type TypeModel } from './types.js';
-import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, isAbsent, toNumber } from './values.js';
+import { ErrorValue, MISSING, MapEntry, ObjectValue, RowValue, UNKNOWN, isAbsent, toNumber } from './values.js';
 
 export type Eval = (x: Exec) => unknown;
 type Truth = boolean | undefined;
 
 export const CORE_FUNCTIONS = [
   'has', 'is-null', 'len', 'lower', 'upper', 'abs', 'round', 'floor', 'ceil', 'coalesce', 'ref',
+  'append', 'insert', 'remove-at', 'without',
   'contains', 'starts-with', 'ends-with', 'matches',
 ];
 
@@ -37,6 +38,14 @@ export class Compiler {
       case 'list': {
         const items = e.items.map((i) => this.compile(i));
         return (x) => items.map((i) => i(x));
+      }
+      case 'object': {
+        const entries = e.entries.map((en) => ({ key: en.key, value: this.compile(en.value) }));
+        return (x) => {
+          const o = new ObjectValue();
+          for (const en of entries) o.set(en.key, en.value(x));
+          return o;
+        };
       }
       case 'path':
         return this.compilePath(e);
@@ -326,6 +335,55 @@ export class Compiler {
           return num(a(x), (v) => roundAwayFromZero(v, dg));
         };
       }
+      // List editing (spec §4.3): pure functions returning a new list; assign the result with `set`.
+      case 'append': {
+        this.arity(c, 2, 64);
+        const args = c.args.map((e) => this.compile(e));
+        return (x) => {
+          const list = listArg(x, args[0]!(x));
+          if (list === undefined) return new ErrorValue('type-mismatch', 'append() expects a list first');
+          for (let i = 1; i < args.length; i++) list.push(args[i]!(x));
+          return list;
+        };
+      }
+      case 'insert': {
+        this.arity(c, 3, 3);
+        const [la, ia, va] = c.args.map((e) => this.compile(e)) as [Eval, Eval, Eval];
+        return (x) => {
+          const list = listArg(x, la(x));
+          if (list === undefined) return new ErrorValue('type-mismatch', 'insert() expects a list first');
+          const d = ia(x);
+          if (typeof d !== 'number' || Math.floor(d) !== d) return new ErrorValue('type-mismatch', 'insert() index must be an integer');
+          const i = d < 0 ? list.length + 1 + d : d;
+          if (i < 0 || i > list.length) return new ErrorValue('type-mismatch', `insert() index ${formatNumber(d)} out of range (count ${list.length})`);
+          list.splice(i, 0, va(x));
+          return list;
+        };
+      }
+      case 'remove-at': {
+        this.arity(c, 2, 2);
+        const [la, ia] = c.args.map((e) => this.compile(e)) as [Eval, Eval];
+        return (x) => {
+          const list = listArg(x, la(x));
+          if (list === undefined) return new ErrorValue('type-mismatch', 'remove-at() expects a list first');
+          const d = ia(x);
+          if (typeof d !== 'number' || Math.floor(d) !== d) return new ErrorValue('type-mismatch', 'remove-at() index must be an integer');
+          const i = d < 0 ? list.length + d : d;
+          if (i < 0 || i >= list.length) return new ErrorValue('type-mismatch', `remove-at() index ${formatNumber(d)} out of range (count ${list.length})`);
+          list.splice(i, 1);
+          return list;
+        };
+      }
+      case 'without': {
+        this.arity(c, 2, 2);
+        const [la, da] = c.args.map((e) => this.compile(e)) as [Eval, Eval];
+        return (x) => {
+          const list = listArg(x, la(x));
+          if (list === undefined) return new ErrorValue('type-mismatch', 'without() expects a list first');
+          const drop = da(x);
+          return list.filter((el) => equal(x, el, drop) !== true);
+        };
+      }
       case 'coalesce': {
         this.arity(c, 1, 16);
         const args = c.args.map((e) => this.compile(e));
@@ -436,6 +494,7 @@ function mapList(x: Exec, list: object, f: (el: unknown) => unknown): unknown[] 
 export function member(x: Exec, v: unknown, site: MemberSite): unknown {
   if (v === null || v === undefined) return MISSING;
   if (isAbsent(v)) return v;
+  if (x.types.isDead(v)) return MISSING; // members of a destroyed object read like members of null
   const info = x.types.infoOf(v);
   let m = site.cachedInfo === info ? site.cachedMember : undefined;
   if (m === undefined) {
@@ -547,6 +606,11 @@ function isStructOrCollection(x: Exec, v: object): boolean {
 /** Equality per spec §4.1; undefined = unknown. */
 export function equal(x: Exec, a: unknown, b: unknown): Truth {
   if (isAbsent(a) || isAbsent(b)) return undefined;
+  if (x.types.hasCapability('isAlive')) {
+    // A destroyed object reads as null everywhere (spec §13).
+    if (x.types.isDead(a)) a = null;
+    if (x.types.isDead(b)) b = null;
+  }
   if (a === null || b === null) return a === null && b === null;
   if (x.types.hasCapability('equals')) {
     const r = adapterEqual(x.types, a, b);
@@ -776,6 +840,12 @@ export function roundAwayFromZero(v: number, digits: number): number {
 }
 
 // ------------------------------------------------------------------ collection methods
+
+/** A fresh copy of a list value (never the live collection), or undefined when the value is not a list. */
+function listArg(x: Exec, v: unknown): unknown[] | undefined {
+  if (!isList(x, v)) return undefined;
+  return [...elements(v, x.types.infoOf(v))].map((e) => (e === undefined ? null : e));
+}
 
 function elementsOf(x: Exec, v: unknown): Iterable<unknown> | undefined {
   if (v === null || isAbsent(v) || typeof v !== 'object') return undefined;

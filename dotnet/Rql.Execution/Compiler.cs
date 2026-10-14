@@ -20,6 +20,7 @@ namespace Rql.Execution
         public static readonly string[] CoreFunctions =
         {
             "has", "is-null", "len", "lower", "upper", "abs", "round", "floor", "ceil", "coalesce", "ref",
+            "append", "insert", "remove-at", "without",
             "contains", "starts-with", "ends-with", "matches",
         };
 
@@ -37,6 +38,17 @@ namespace Rql.Execution
                 {
                     var v = l.Value;
                     return _ => v;
+                }
+                case ObjectExpr o:
+                {
+                    var keys = o.Entries.Select(kv => kv.Key).ToArray();
+                    var values = o.Entries.Select(kv => Compile(kv.Value)).ToArray();
+                    return x =>
+                    {
+                        var obj = new ObjectValue();
+                        for (int i = 0; i < keys.Length; i++) obj[keys[i]] = values[i](x);
+                        return obj;
+                    };
                 }
                 case ListExpr l:
                 {
@@ -196,6 +208,7 @@ namespace Rql.Execution
         {
             if (v == null) return Missing.Value;
             if (V.IsAbsent(v)) return v;
+            if (x.Types.IsDead(v)) return Missing.Value; // members of a destroyed object read like members of null
             var type = v.GetType();
             MemberAccessor? m;
             if (ReferenceEquals(type, site.CachedType))
@@ -477,6 +490,11 @@ namespace Rql.Execution
         internal static bool? Equal(TypeModel? model, object? a, object? b)
         {
             if (V.IsAbsent(a) || V.IsAbsent(b)) return null;
+            if (model != null && (model.Caps & AdapterCaps.Liveness) != 0)
+            {
+                if (a != null && model.IsDead(a)) a = null;
+                if (b != null && model.IsDead(b)) b = null;
+            }
             if (a == null || b == null) return a == null && b == null;
             if (model != null && (model.Caps & AdapterCaps.Equality) != 0 && AdapterEqual(model, a, b) is bool adapted) return adapted;
             if (V.TryNumber(a, out var da, out var sa))
@@ -748,6 +766,62 @@ namespace Rql.Execution
                         return Num(a(x), v => Math.Round(v, dg, MidpointRounding.AwayFromZero));
                     };
                 }
+                // List editing (spec §4.3): pure functions returning a new list; assign the result with `set`.
+                case "append":
+                {
+                    Arity(c, 2, 64);
+                    var args = c.Args.Select(Compile).ToArray();
+                    return x =>
+                    {
+                        var list = ListArg(args[0](x));
+                        if (list == null) return new RqlError("type-mismatch", "append() expects a list first");
+                        for (int i = 1; i < args.Length; i++) list.Add(args[i](x));
+                        return list;
+                    };
+                }
+                case "insert":
+                {
+                    Arity(c, 3, 3);
+                    var args = c.Args.Select(Compile).ToArray();
+                    return x =>
+                    {
+                        var list = ListArg(args[0](x));
+                        if (list == null) return new RqlError("type-mismatch", "insert() expects a list first");
+                        if (!(args[1](x) is double d) || Math.Floor(d) != d) return new RqlError("type-mismatch", "insert() index must be an integer");
+                        long i = d < 0 ? list.Count + 1 + (long)d : (long)d;
+                        if (i < 0 || i > list.Count) return new RqlError("type-mismatch", $"insert() index {d} out of range (count {list.Count})");
+                        list.Insert((int)i, args[2](x));
+                        return list;
+                    };
+                }
+                case "remove-at":
+                {
+                    Arity(c, 2, 2);
+                    var args = c.Args.Select(Compile).ToArray();
+                    return x =>
+                    {
+                        var list = ListArg(args[0](x));
+                        if (list == null) return new RqlError("type-mismatch", "remove-at() expects a list first");
+                        if (!(args[1](x) is double d) || Math.Floor(d) != d) return new RqlError("type-mismatch", "remove-at() index must be an integer");
+                        long i = d < 0 ? list.Count + (long)d : (long)d;
+                        if (i < 0 || i >= list.Count) return new RqlError("type-mismatch", $"remove-at() index {d} out of range (count {list.Count})");
+                        list.RemoveAt((int)i);
+                        return list;
+                    };
+                }
+                case "without":
+                {
+                    Arity(c, 2, 2);
+                    var args = c.Args.Select(Compile).ToArray();
+                    return x =>
+                    {
+                        var list = ListArg(args[0](x));
+                        if (list == null) return new RqlError("type-mismatch", "without() expects a list first");
+                        var drop = args[1](x);
+                        list.RemoveAll(e => Equal(x.Types, e, drop) == true);
+                        return list;
+                    };
+                }
                 case "coalesce":
                 {
                     Arity(c, 1, 16);
@@ -991,6 +1065,15 @@ namespace Rql.Execution
 
         private static bool AdapterOrdered(TypeModel model, object val) =>
             (model.Caps & AdapterCaps.Ordering) != 0 && model.Info(val.GetType()).OrderingAdapters.Length > 0;
+
+        /// <summary>A fresh list copy of a list value (never the live collection), or null when the value is not a list.</summary>
+        private static List<object?>? ListArg(object? v)
+        {
+            if (v == null || V.IsAbsent(v) || !V.IsList(v)) return null;
+            var copy = new List<object?>();
+            foreach (var e in (IEnumerable)v) copy.Add(e);
+            return copy;
+        }
 
         internal static object? Reduce(TypeModel model, IEnumerable<object?> values, string kind)
         {

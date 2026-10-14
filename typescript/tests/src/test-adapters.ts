@@ -1,6 +1,6 @@
 /** The test adapter set specified in fixtures/adapters/cases.json ("adapters" section). */
 import { formatNumber } from '@rql/contracts';
-import { t, type RqlEngine, type TypeAdapter } from '@rql/execution';
+import { ObjectValue, t, type RqlEngine, type TypeAdapter } from '@rql/execution';
 import { Node, NodeKind, Special, Vec2 } from './graph.js';
 
 const asciiCase = (s: string, upper: boolean): string => (upper ? s.replace(/[a-z]+/g, (m) => m.toUpperCase()) : s.replace(/[A-Z]+/g, (m) => m.toLowerCase()));
@@ -24,9 +24,17 @@ function toVec(value: unknown): Vec2 | undefined {
 export const vec2Adapter: TypeAdapter<Vec2> = {
   target: Vec2,
   description: 'Vec2: write as "(x, y)" or [x, y]',
+  literal: {
+    oneOf: [
+      { type: 'string' },
+      { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 },
+      { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' } } },
+    ],
+  },
   members: (m) => m.add('len', { type: t.number, get: length, description: 'vector length sqrt(x*x+y*y)' }),
   encode: (v) => `(${formatNumber(v.x)}, ${formatNumber(v.y)})`,
   coerce: (value) => {
+    if (value instanceof ObjectValue) return undefined; // object literals: default construction ({x: 3, y: 4})
     const v = toVec(value);
     return v !== undefined ? { ok: true, value: v } : { ok: false, reason: 'expected (x, y) or [x, y]' };
   },
@@ -43,6 +51,7 @@ export const vec2Adapter: TypeAdapter<Vec2> = {
 export const nodeAdapter: TypeAdapter<Node> = {
   target: Node,
   description: 'Node: a conformance graph node',
+  isAlive: (n) => !n.Tags.includes('destroyed'),
   members: (m) =>
     m
       .add('childCount', { type: t.int, get: (n) => n.Children.length, description: 'number of direct children' })
@@ -80,14 +89,39 @@ export const nodeAdapter: TypeAdapter<Node> = {
           return n.Value;
         },
         'Value += by; returns the new Value',
+      )
+      .add<string[]>('tagsCopy', {
+        type: t.list(t.string),
+        get: (n) => [...n.Tags],
+        set: (n, v) => {
+          n.Tags = [...v];
+        },
+        description: 'a copy of Tags (copy-on-read)',
+      })
+      .copyOnRead('tagsCopy')
+      .mixedMap(
+        'fields',
+        {
+          keys: () => FIELDS,
+          entryType: (_n, k) => (k === 'Name' ? t.string : k === 'Value' ? t.number : t.bool),
+          get: (n, k) => (k === 'Name' ? n.Name : k === 'Value' ? n.Value : n.Enabled),
+          set: (n, k, v) => {
+            if (k === 'Name') n.Name = v as string;
+            else if (k === 'Value') n.Value = v as number;
+            else n.Enabled = v as boolean;
+          },
+        },
+        'Name / Value / Enabled with per-key types',
       ),
 };
+
+const FIELDS = ['Name', 'Value', 'Enabled'];
 
 const LABELS = ['name', 'kind'];
 
 export const specialAdapter: TypeAdapter<Special> = {
   target: Special,
-  members: (m) => m.add('powerLevel', { type: t.number, get: (s) => s.Power / 1000, description: 'Power / 1000' }),
+  members: (m) => m.add('powerLevel', { type: t.number, get: (s) => s.Power / 1000, description: 'Power / 1000' }).display('title'),
 };
 
 export function registerTestAdapters(engine: RqlEngine): RqlEngine {

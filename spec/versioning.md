@@ -27,3 +27,8 @@
   reference / explicit-only), encoding, coercion, comparison, identity and liveness, with deterministic resolution
   order; golden vectors in `fixtures/adapters/cases.json`. No grammar or plan change. Capability manifest type
   descriptors gain `description` and member `explicitOnly` / `description`.
+* Object literals `{ key: expr }` (§4.5) with construction on writes (`"$type"` polymorphism); list functions
+  `append` / `insert` / `remove-at` / `without`; `ref()` resolves exact ids before trimming display forms.
+  Adapters (§13): methods, virtual (and mixed-type) maps, copy-on-read and writes-through write-back, predicate hiding
+  and type exclusion, destroyed objects read as null, identity/display choice, literal schemas, host write hooks with
+  owners — closing the ReflectorNet / Unity-MCP converter parity gaps (docs/type-adapters.md).

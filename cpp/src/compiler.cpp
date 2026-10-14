@@ -150,8 +150,11 @@ bool same_identity(const Value& a, const Value& b) {
 
 }  // namespace
 
-std::optional<bool> rql_equal(Exec& x, const Value& a, const Value& b) {
-    if (a.is_absent() || b.is_absent()) return std::nullopt;
+std::optional<bool> rql_equal(Exec& x, const Value& a_in, const Value& b_in) {
+    if (a_in.is_absent() || b_in.is_absent()) return std::nullopt;
+    // Destroyed objects read as null (spec §13 liveness).
+    const Value a = x.is_dead(a_in) ? Value::null() : a_in;
+    const Value b = x.is_dead(b_in) ? Value::null() : b_in;
     if (a.is_null() || b.is_null()) return a.is_null() && b.is_null();
     if (x.has_capability(Capability::Equals)) {
         // Adapters of the left operand first, then of the right operand (spec §13).
@@ -372,6 +375,7 @@ const TypeDescriptor* scalar_type_of(const Value& v) {
 Value member_of(Exec& x, const Value& v, MemberSite& site) {
     if (v.is_null()) return Value::missing();
     if (v.is_absent()) return v;
+    if (x.is_dead(v)) return Value::missing();  // members of a destroyed object read like members of null (no getter runs)
     switch (v.kind()) {
         case Value::Kind::List: {
             if (iequals(site.name, "Count") || iequals(site.name, "Length")) {
@@ -469,6 +473,18 @@ Eval Compiler::compile(const Expr& e) {
                 out.reserve(items.size());
                 for (auto& i : items) out.push_back(i(x));
                 return Value::list_of(std::move(out));
+            };
+        }
+        case ExprKind::Object: {
+            // An ordered string-keyed map (spec §4.5); coerced into maps / constructed objects on writes.
+            std::vector<std::string> keys = e.keys;
+            std::vector<Eval> values;
+            for (auto& v : e.args) values.push_back(compile(*v));
+            return [keys, values](Exec& x) {
+                std::vector<std::pair<Value, Value>> entries;
+                entries.reserve(keys.size());
+                for (size_t i = 0; i < keys.size(); ++i) entries.emplace_back(Value::string(keys[i]), values[i](x));
+                return Value::map(std::make_shared<OwnedMap>(nullptr, std::move(entries), true));
             };
         }
         case ExprKind::Path: return compile_path(e);
@@ -801,6 +817,7 @@ Eval Compiler::compile_op_args(const std::string& op, const ExprPtr& ae, const E
 namespace {
 
 const char* kCoreFunctions[] = {"has", "is-null", "len", "lower", "upper", "abs", "round", "floor", "ceil", "coalesce", "ref",
+                                "append", "insert", "remove-at", "without",
                                 "contains", "starts-with", "ends-with", "matches"};
 const char* kCoreMethods[] = {"any", "all", "count", "sum", "min", "max", "avg", "first", "keys", "values",
                               "contains", "starts-with", "ends-with", "matches", "lower", "upper", "len"};
@@ -985,6 +1002,47 @@ Eval Compiler::compile_function(const Expr& c) {
             double d;
             if (!try_number(v, d)) return Value::error("type-mismatch");
             return Value::number(round_away(d, dg));
+        };
+    }
+    // List editing (spec §4.3): pure functions returning a new list; assign the result with `set`.
+    if (name == "append" || name == "insert" || name == "remove-at" || name == "without") {
+        if (name == "append") arity(c, 2, 64);
+        else if (name == "insert") arity(c, 3, 3);
+        else arity(c, 2, 2);
+        std::vector<Eval> args;
+        for (auto& e : c.args) args.push_back(compile(*e));
+        return [args, name](Exec& x) -> Value {
+            Value first = args[0](x);
+            if (!first.is_list()) return Value::error("type-mismatch", name + "() expects a list first");
+            std::vector<Value> list;
+            elements(first, list);  // a fresh copy: the argument is never modified
+            auto index = [&](const Value& iv, bool inserting, int64_t& out) {
+                double d;
+                if (!try_number(iv, d) || std::floor(d) != d) return false;
+                int64_t n = static_cast<int64_t>(list.size());
+                int64_t i = static_cast<int64_t>(d);
+                if (i < 0) i += inserting ? n + 1 : n;
+                if (i < 0 || i > n || (!inserting && i == n)) return false;
+                out = i;
+                return true;
+            };
+            if (name == "append") {
+                for (size_t i = 1; i < args.size(); ++i) list.push_back(args[i](x));
+            } else if (name == "insert") {
+                int64_t i = 0;
+                if (!index(args[1](x), true, i)) return Value::error("type-mismatch", "insert() index must be an integer in range");
+                list.insert(list.begin() + i, args[2](x));
+            } else if (name == "remove-at") {
+                int64_t i = 0;
+                if (!index(args[1](x), false, i)) return Value::error("type-mismatch", "remove-at() index must be an integer in range");
+                list.erase(list.begin() + i);
+            } else {
+                Value drop = args[1](x);
+                list.erase(std::remove_if(list.begin(), list.end(),
+                                          [&](const Value& e) { return rql_equal(x, e, drop) == std::optional<bool>(true); }),
+                           list.end());
+            }
+            return Value::list_of(std::move(list));
         };
     }
     if (name == "coalesce") {

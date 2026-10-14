@@ -45,6 +45,13 @@ sealed class RendererAdapter : RqlTypeAdapter<Renderer>
 | Compare | `AreEqual(value, other)`, `Compare(value, other)` | `==`, `!=`, `<`…, `sort`, `in`, `contains` |
 | Methods | `MemberTable.AddMethod`, typed `Method` / `Function`, `Expose(name)` for unannotated CLR methods, `HideMethods` | `call` stage, `describe` |
 | Virtual maps | `MemberTable.AddMap` / typed `Map<TValue>(name, keys, get, set?, validate?)` | `M["k"]` reads, `set M["k"] = v` writes |
+| Mixed-type maps | `MemberTable.AddMixedMap(name, keys, entryType, get, set?, validate?)` | per-key value types (e.g. Material properties) |
+| Write-back | `CopyOnRead(names)`, `WritesThrough()` | copy-returning getters, handle structs |
+| Exclusion | `HideWhere(pred)`, `engine.ExcludeTypes(pred)` | `[Obsolete]` members, blacklisted types |
+| Identity / display | `Identity(name)`, `Display(name)` | `$ref` ids, summary names |
+| Literals | `LiteralSchema` (JSON Schema), object literals reach `TryCoerce` | `describe` → `literal` |
+| Host hooks | `engine.Mutations.BeforeWrite` / `Committed` (records with `Owner`) | undo, dirty marking, vetoes |
+| Discovery | `engine.AddAdaptersFrom(assemblies)`, `[RqlAdapterOrder]`, `RqlTypeAdapter(string typeName)` | module scanning, optional engine modules |
 | Identity | `StableId(value)`, `IsAlive(value)` | `$ref` / `ref("Type#id")`, `stale-ref` |
 | Describe | `Description` | schema / `describe` |
 
@@ -65,21 +72,35 @@ the pre-adapter build on every benchmark query, with dynamic PGO off for determi
 
 ## Unity-MCP converters → RQL adapters
 
-What Unity-MCP does today through ReflectorNet converters, and the RQL equivalent:
+Every customisation Unity-MCP makes through ReflectorNet 5.4.2 converters (`Runtime/Converter/`, registered in
+`Runtime/UnityMcpPlugin.Converters.cs`) and its RQL equivalent. None of the Unity-AI-* extensions define converters;
+they rely on the generic ones plus `SetDirty` after modifications (covered by the committed hook).
 
-| Unity-MCP converter behaviour | RQL adapter |
+| Unity-MCP behaviour | RQL |
 |---|---|
-| Generic Unity converter: public members plus `[SerializeField]` private fields | `IncludeFields(f => f.IsDefined(typeof(SerializeField)))` on a `UnityEngine.Object` adapter (inherited by all subclasses) |
-| `UnityEngine.Object` fake-null, reference by instance id | `StableId` → `GetInstanceID()`, `IsAlive` → `o != null`; destroyed objects give `stale-ref` |
-| `GameObject`: `activeSelf` written through `SetActive`, noisy members ignored | virtual `active` member with getter `activeSelf` and setter `SetActive`, or `Expose("SetActive")` for `call SetActive(false)`; `Hide(...)` |
-| `Component` back-pointers (`gameObject`, `transform`) ignored to avoid cycles | `Reference("gameObject", "transform")`: still readable by path, not followed by generic `recurse` |
-| `Renderer` / `MeshFilter`: `material(s)` / `mesh` ignored (getters instantiate copies) | `ExplicitOnly("material", "materials", "mesh")`: never read implicitly; read only when a query names them |
-| `Material`: shader properties exposed as members | virtual maps per property kind, e.g. `Map<float>("floats", m => FloatNames(m.shader), (m, k) => m.GetFloat(k), (m, k, v) => m.SetFloat(k, v), validate: …)`: `Materials.floats["_Glossiness"]`, `set Materials.floats["_Glossiness"] = 0.3` with validation and rollback |
-| Asset references by id / path / GUID | `StableId` → asset GUID; host `ResolveStableRef` resolves `Texture2D#<guid>` |
-| `Texture` / `Sprite`: no cascade into pixel data | `Only("name", "width", "height", "format")` |
-| `Scene`: whitelist (other getters crash) | `Only(...)`: unlisted members do not exist for RQL, so they cannot be read by accident |
-| Struct converters (`Vector3`, `Color`, `Quaternion`): fields only, readable literals | `Encode` to `"(x, y, z)"`, `TryCoerce` from string or `[x, y, z]`, `AreEqual` with epsilon, virtual `magnitude` |
-| `EntityId` serialized as a string | `Encode` → string, `TryCoerce` from string |
+| Generic converter for **all** types: private `[SerializeField]` fields added, `[Obsolete]` / `[NonSerialized]` dropped | one adapter on `object`: `IncludeFields(f => f.IsPrivate && f.IsDefined(typeof(SerializeField)))` and `HideWhere(m => m.Member?.IsDefined(typeof(ObsoleteAttribute), true) == true \|\| …NonSerialized…)` |
+| Type blacklist (~20 types: delegates, `IntPtr`, Span, TMPro/TextCore/RTHandle/Fusion/Addressables by assembly) | `engine.ExcludeTypes(t => …)`: members of those types, element types or generic arguments are dropped everywhere (delegates and by-ref-like types are never members anyway) |
+| `UnityEngine.Object`: reference as `{instanceID}`, fake-null serialised as null | `StableId` → `GetEntityId()` (Unity 6.5+) / `GetInstanceID()`, `IsAlive` → `o != null`: destroyed objects **read as null** (`where target == null` finds missing references), `ref()` to them is `stale-ref`; `Display("name")` for the lowercase name |
+| Object references assigned from `{instanceID}` JSON | `set target = ref("Texture2D#123")` |
+| `GameObject`: ignores `gameObject`, `transform`, `scene`, `transformHandle`; `activeSelf` written through `SetActive` | `Reference(…)` / `Hide(…)`; virtual `active` member with setter `SetActive`, or `Expose("SetActive")` → `call SetActive(false)`; a virtual `Components` member (what `GameObjectData` builds) |
+| Components: back-pointers `gameObject` / `transform` ignored | `Reference("gameObject", "transform")` |
+| `Transform`: non-public `parentInternal` ignored | non-public properties are never members |
+| `Renderer` / `MeshFilter` / `Collider`: `material(s)` / `mesh` ignored (getters instantiate copies) | `ExplicitOnly(…)`; `CopyOnRead("sharedMaterials")` so `set sharedMaterials[1] = ref(…)` is assigned back instead of lost; the Collider adapter targets `"UnityEngine.Collider"` by name and is inert without the physics module |
+| `Material`: shader properties (int / float / range / color / vector / texture) via `Has*` / `Get*` / `Set*`; `shader` set from a name via `Shader.Find`; `SetDirty` after writes | `AddMixedMap("properties", keys, entryType: per property type, get, set, validate)` → `set Materials.properties["_Color"] = "(1, 0, 0, 1)"`; `TryCoerce` string → `Shader`; the committed hook receives the Material as owner |
+| Assets: resolve by instanceID, asset path or GUID; Texture / Sprite reference-only with Sprite ↔ Texture conversion; `TextAsset.bytes` ignored | `ResolveStableRef` (`ref()` resolves exact ids first, so `ref("Material#Assets/My Mats/Red (1).mat")` works); summaries for reference-only types; `TryCoerce` Sprite ↔ Texture; `Hide("bytes")` |
+| Structs (Vector*, Color*, Quaternion, Matrix4x4, Bounds*, Rect*, gradient keys): fields only, whole-value writes | `Encode` / `TryCoerce` / `AreEqual` / `Compare`, `Only(…)`, `LiteralSchema`; object literals `{x: 1, y: 2, z: 3}` construct them |
+| `Scene`: whitelist of 8 safe properties | `Only(…)` |
+| `EntityId` as string or ulong | `Encode` / `TryCoerce` |
+| `Gradient` / `AnimationCurve`: whole-value set from JSON; arrays returned as copies | `TryCoerce` from object literals; `CopyOnRead("colorKeys", "keys")` |
+| Particle system modules (`ps.main` …): handle structs, writes go to the native object | `WritesThrough()` on each module type: `set main.duration = 4` is live without write-back |
+| `[Serializable]` class fields, `[SerializeReference]` subtype replacement (`$type`) | object literals construct values: `set effect = {"$type": "BurnEffect", damage: 3}` |
+| Collections: element writes, whole-list replacement | `set items[2] = …`, list literals, `append` / `insert` / `remove-at` / `without` |
+| Post-modification `EditorUtility.SetDirty` / repaint | `Mutations.Committed` with the owners; `Mutations.BeforeWrite` for `Undo.RecordObjects` or a veto |
+| Converter modules discovered by assembly scan | `engine.AddAdaptersFrom(assemblies)` with `[RqlAdapterOrder]`, failures isolated and reported |
+
+Deliberately different: RQL queries and assigns members instead of round-tripping whole serialized objects (no
+SerializedMember diff format, no JSON repair of malformed nesting); writes are all-or-nothing instead of partial
+success; method calls are limited to allowlisted / exposed instance methods.
 
 ## Compared with ReflectorNet converters
 

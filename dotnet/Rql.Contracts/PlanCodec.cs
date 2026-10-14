@@ -92,6 +92,18 @@ namespace Rql
                     foreach (var i in l.Items) WriteExpr(w, i);
                     w.WriteEndArray();
                     break;
+                case ObjectExpr o:
+                    w.WriteStartArray("object");
+                    foreach (var kv in o.Entries)
+                    {
+                        w.WriteStartObject();
+                        w.WriteString("key", kv.Key);
+                        w.WritePropertyName("value");
+                        WriteExpr(w, kv.Value);
+                        w.WriteEndObject();
+                    }
+                    w.WriteEndArray();
+                    break;
                 case PathExpr p:
                     w.WriteStartArray("path");
                     foreach (var s in p.Segments) WriteSegment(w, s);
@@ -303,6 +315,23 @@ namespace Rql
             {
                 AllowOnly(e, "list expression", "list");
                 return new ListExpr(ReadExprArray(list, "list"));
+            }
+            if (e.TryGetProperty("object", out var obj))
+            {
+                AllowOnly(e, "object expression", "object");
+                if (obj.ValueKind != JsonValueKind.Array) throw Invalid("object must be an array of {key, value}");
+                var entries = new List<KeyValuePair<string, Expr>>();
+                var keys = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var entry in obj.EnumerateArray())
+                {
+                    if (entry.ValueKind != JsonValueKind.Object) throw Invalid("object entries must be {key, value}");
+                    AllowOnly(entry, "object entry", "key", "value");
+                    var key = Required(entry, "key", "object entry");
+                    if (key.ValueKind != JsonValueKind.String || key.GetString()!.Length == 0) throw Invalid("object entry key must be a non-empty string");
+                    if (!keys.Add(key.GetString()!)) throw Invalid($"duplicate object key '{key.GetString()}'");
+                    entries.Add(new KeyValuePair<string, Expr>(key.GetString()!, ReadExpr(Required(entry, "value", "object entry"))));
+                }
+                return new ObjectExpr(entries);
             }
             if (e.TryGetProperty("path", out var path))
             {

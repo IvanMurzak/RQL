@@ -14,6 +14,7 @@ namespace Rql.Execution
             OpExpr o => o.Args.Any(a => UsesMeta(a, meta)),
             CallExpr c => c.Args.Any(a => UsesMeta(a, meta)) || (c.On != null && UsesMeta(c.On, meta)),
             ListExpr l => l.Items.Any(a => UsesMeta(a, meta)),
+            ObjectExpr o => o.Entries.Any(kv => UsesMeta(kv.Value, meta)),
             _ => false,
         };
 

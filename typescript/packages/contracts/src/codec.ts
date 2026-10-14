@@ -11,6 +11,7 @@ import {
   type Assignment,
   type Expr,
   type LiteralValue,
+  type ObjectEntry,
   type PathExpr,
   type QueryPlan,
   type Segment,
@@ -53,6 +54,8 @@ export function exprToJson(e: Expr): JsonObject {
       return { lit: literalToJson(e.value) };
     case 'list':
       return { list: e.items.map(exprToJson) };
+    case 'object':
+      return { object: e.entries.map((en) => ({ key: en.key, value: exprToJson(en.value) })) };
     case 'path': {
       const o: JsonObject = { path: e.segments.map(segmentToJson) };
       if (e.on !== undefined) o.on = exprToJson(e.on);
@@ -264,6 +267,22 @@ export function readExpr(e: Json): Expr {
     allowOnly(e, 'list expression', 'list');
     return { kind: 'list', items: readExprArray(e['list'], 'list') };
   }
+  if (has(e, 'object')) {
+    allowOnly(e, 'object expression', 'object');
+    const arr = e['object'];
+    if (!Array.isArray(arr)) throw invalid('object must be an array of {key, value}');
+    const keys = new Set<string>();
+    const entries: ObjectEntry[] = (arr as Json[]).map((en) => {
+      if (!isObject(en)) throw invalid('object entries must be {key, value}');
+      allowOnly(en, 'object entry', 'key', 'value');
+      const key = required(en, 'key', 'object entry');
+      if (typeof key !== 'string' || key.length === 0) throw invalid('object entry key must be a non-empty string');
+      if (keys.has(key)) throw invalid(`duplicate object key '${key}'`);
+      keys.add(key);
+      return { key, value: readExpr(required(en, 'value', 'object entry')) };
+    });
+    return { kind: 'object', entries };
+  }
   if (has(e, 'path')) {
     allowOnly(e, 'path expression', 'path', 'on');
     return readPath(e, e['path']);
@@ -286,7 +305,7 @@ export function readExpr(e: Json): Expr {
     if (has(e, 'on')) return { kind: 'call', name, args, on: readExpr(e['on']) };
     return { kind: 'call', name, args };
   }
-  throw invalid('expression must have one of: lit, list, path, op, call');
+  throw invalid('expression must have one of: lit, list, object, path, op, call');
 }
 
 function readPath(e: Obj, p: Json): PathExpr {

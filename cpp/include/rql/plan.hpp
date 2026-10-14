@@ -44,7 +44,7 @@ struct Segment {
     std::string to_string() const;
 };
 
-enum class ExprKind : uint8_t { Lit, List, Path, Op, Call };
+enum class ExprKind : uint8_t { Lit, List, Object, Path, Op, Call };
 
 struct Expr;
 using ExprPtr = std::shared_ptr<const Expr>;
@@ -52,7 +52,8 @@ using ExprPtr = std::shared_ptr<const Expr>;
 struct Expr {
     ExprKind kind = ExprKind::Lit;
     Literal lit;                    // Lit
-    std::vector<ExprPtr> args;      // List items / Op args / Call args
+    std::vector<ExprPtr> args;      // List items / Object values / Op args / Call args
+    std::vector<std::string> keys;  // Object keys (parallel to args; unique, non-empty)
     std::vector<Segment> segments;  // Path
     ExprPtr on;                     // Path / Call receiver (optional)
     std::string name;               // Op operator / Call function or method name
@@ -108,6 +109,8 @@ inline ExprPtr lit(bool v) { return lit(Literal::boolean(v)); }
 inline ExprPtr lit(const char* v) { return lit(Literal::string(v)); }
 inline ExprPtr lit(std::string v) { return lit(Literal::string(std::move(v))); }
 ExprPtr list(std::vector<ExprPtr> items);
+/// Object literal { key: expr, ... } (spec §4.5).
+ExprPtr object(std::vector<std::pair<std::string, ExprPtr>> entries);
 ExprPtr path(std::vector<Segment> segs, ExprPtr on = nullptr);
 /// Dotted member path, e.g. path("Pos.x").
 ExprPtr path(const std::string& dotted);

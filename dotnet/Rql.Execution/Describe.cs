@@ -38,6 +38,7 @@ namespace Rql.Execution
                 _ => "object",
             };
             if (info.Description != null) o["description"] = info.Description;
+            if (info.LiteralSchema != null) o["literal"] = info.LiteralSchema.DeepClone();
             if (info.Kind == TypeKind.Enum)
             {
                 o["values"] = new JsonArray(Enum.GetNames(t).Select(n => (JsonNode)JsonValue.Create(n)!).ToArray());

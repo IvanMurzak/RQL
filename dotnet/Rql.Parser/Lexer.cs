@@ -36,7 +36,7 @@ namespace Rql.Parsing
 
     public static class Lexer
     {
-        private static readonly string[] Puncts = { "==", "!=", "<=", ">=", "&&", "||", "|", ".", ",", "(", ")", "[", "]", "=", "<", ">", "+", "-", "*", "/", "%", "!" };
+        private static readonly string[] Puncts = { "==", "!=", "<=", ">=", "&&", "||", "|", ".", ",", "(", ")", "[", "]", "{", "}", ":", "=", "<", ">", "+", "-", "*", "/", "%", "!" };
 
         public static List<Token> Tokenize(string text)
         {

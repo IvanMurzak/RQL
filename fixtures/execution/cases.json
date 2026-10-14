@@ -9598,6 +9598,1202 @@
         ],
         "total": 2
       }
+    },
+    {
+      "name": "object-literal-read",
+      "rql": "g | select o={a: 1, b: [Version, Name], c: {d: null}}",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "o",
+                "expr": {
+                  "object": [
+                    {
+                      "key": "a",
+                      "value": {
+                        "lit": 1
+                      }
+                    },
+                    {
+                      "key": "b",
+                      "value": {
+                        "list": [
+                          {
+                            "path": [
+                              "Version"
+                            ]
+                          },
+                          {
+                            "path": [
+                              "Name"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": "c",
+                      "value": {
+                        "object": [
+                          {
+                            "key": "d",
+                            "value": {
+                              "lit": null
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "o"
+        ],
+        "rows": [
+          [
+            {
+              "a": 1,
+              "b": [
+                3,
+                "conformance"
+              ],
+              "c": {
+                "d": null
+              }
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "object-literal-member",
+      "rql": "g | select v=({a: 1, b: 2}.b) n=len({a: 1, b: 2})",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "v",
+                "expr": {
+                  "path": [
+                    "b"
+                  ],
+                  "on": {
+                    "object": [
+                      {
+                        "key": "a",
+                        "value": {
+                          "lit": 1
+                        }
+                      },
+                      {
+                        "key": "b",
+                        "value": {
+                          "lit": 2
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "name": "n",
+                "expr": {
+                  "call": "len",
+                  "args": [
+                    {
+                      "object": [
+                        {
+                          "key": "a",
+                          "value": {
+                            "lit": 1
+                          }
+                        },
+                        {
+                          "key": "b",
+                          "value": {
+                            "lit": 2
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "v",
+          "n"
+        ],
+        "rows": [
+          [
+            2,
+            2
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "object-literal-set-struct",
+      "rql": "ref(\"Node#8\") | set Pos = {x: 1.5, y: -2}",
+      "then": "ref(\"Node#8\") | select Pos",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Pos"
+                  ]
+                },
+                "value": {
+                  "object": [
+                    {
+                      "key": "x",
+                      "value": {
+                        "lit": 1.5
+                      }
+                    },
+                    {
+                      "key": "y",
+                      "value": {
+                        "lit": -2
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "Pos",
+            {
+              "x": -1,
+              "y": -1
+            },
+            {
+              "x": 1.5,
+              "y": -2
+            }
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Pos",
+                "expr": {
+                  "path": [
+                    "Pos"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Pos"
+        ],
+        "rows": [
+          [
+            {
+              "x": 1.5,
+              "y": -2
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "object-literal-set-map",
+      "rql": "ref(\"Node#8\") | set Props = {hp: 3, mp: 4}",
+      "then": "ref(\"Node#8\") | select Props",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Props"
+                  ]
+                },
+                "value": {
+                  "object": [
+                    {
+                      "key": "hp",
+                      "value": {
+                        "lit": 3
+                      }
+                    },
+                    {
+                      "key": "mp",
+                      "value": {
+                        "lit": 4
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "Props",
+            {},
+            {
+              "hp": 3,
+              "mp": 4
+            }
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Props",
+                "expr": {
+                  "path": [
+                    "Props"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Props"
+        ],
+        "rows": [
+          [
+            {
+              "hp": 3,
+              "mp": 4
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "object-literal-set-polymorphic",
+      "rql": "ref(\"Node#8\") | set Peer = {\"$type\": \"Special\", Name: \"made\", Power: 5, Tags: [\"new\"]}",
+      "then": "ref(\"Node#8\") | select Peer.Name Peer.$type Peer.Power Peer.Tags",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Peer"
+                  ]
+                },
+                "value": {
+                  "object": [
+                    {
+                      "key": "$type",
+                      "value": {
+                        "lit": "Special"
+                      }
+                    },
+                    {
+                      "key": "Name",
+                      "value": {
+                        "lit": "made"
+                      }
+                    },
+                    {
+                      "key": "Power",
+                      "value": {
+                        "lit": 5
+                      }
+                    },
+                    {
+                      "key": "Tags",
+                      "value": {
+                        "list": [
+                          {
+                            "lit": "new"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "Peer",
+            null,
+            {
+              "$ref": "Special#0",
+              "name": "made"
+            }
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Peer.Name",
+                "expr": {
+                  "path": [
+                    "Peer",
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Peer.$type",
+                "expr": {
+                  "path": [
+                    "Peer",
+                    {
+                      "meta": "type"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "Peer.Power",
+                "expr": {
+                  "path": [
+                    "Peer",
+                    "Power"
+                  ]
+                }
+              },
+              {
+                "name": "Peer.Tags",
+                "expr": {
+                  "path": [
+                    "Peer",
+                    "Tags"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Peer.Name",
+          "Peer.$type",
+          "Peer.Power",
+          "Peer.Tags"
+        ],
+        "rows": [
+          [
+            "made",
+            "Special",
+            5,
+            [
+              "new"
+            ]
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "object-literal-unknown-member",
+      "rql": "ref(\"Node#8\") | set Peer = {Nme: \"x\"}",
+      "then": "ref(\"Node#8\") | select Peer",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Peer"
+                  ]
+                },
+                "value": {
+                  "object": [
+                    {
+                      "key": "Nme",
+                      "value": {
+                        "lit": "x"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Peer",
+                "expr": {
+                  "path": [
+                    "Peer"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Peer"
+        ],
+        "rows": [
+          [
+            null
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "object-literal-readonly-member",
+      "rql": "ref(\"Node#8\") | set Peer = {Id: 5}",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Peer"
+                  ]
+                },
+                "value": {
+                  "object": [
+                    {
+                      "key": "Id",
+                      "value": {
+                        "lit": 5
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "object-literal-bad-subtype",
+      "rql": "ref(\"Node#8\") | set Peer = {\"$type\": \"Graph\"}",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Peer"
+                  ]
+                },
+                "value": {
+                  "object": [
+                    {
+                      "key": "$type",
+                      "value": {
+                        "lit": "Graph"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "object-literal-to-scalar",
+      "rql": "ref(\"Node#8\") | set Value = {a: 1}",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "object": [
+                    {
+                      "key": "a",
+                      "value": {
+                        "lit": 1
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "list-functions",
+      "rql": "g.Nodes | select Name a=append(Tags, \"x\", \"y\") i=insert(Tags, 0, \"first\") r=remove-at(Tags, -1) w=without(Tags, \"root\")",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "a",
+                "expr": {
+                  "call": "append",
+                  "args": [
+                    {
+                      "path": [
+                        "Tags"
+                      ]
+                    },
+                    {
+                      "lit": "x"
+                    },
+                    {
+                      "lit": "y"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "i",
+                "expr": {
+                  "call": "insert",
+                  "args": [
+                    {
+                      "path": [
+                        "Tags"
+                      ]
+                    },
+                    {
+                      "lit": 0
+                    },
+                    {
+                      "lit": "first"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "r",
+                "expr": {
+                  "call": "remove-at",
+                  "args": [
+                    {
+                      "path": [
+                        "Tags"
+                      ]
+                    },
+                    {
+                      "lit": -1
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "w",
+                "expr": {
+                  "call": "without",
+                  "args": [
+                    {
+                      "path": [
+                        "Tags"
+                      ]
+                    },
+                    {
+                      "lit": "root"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "a",
+          "i",
+          "r",
+          "w"
+        ],
+        "rows": [
+          [
+            "root-a",
+            [
+              "root",
+              "red",
+              "x",
+              "y"
+            ],
+            [
+              "first",
+              "root",
+              "red"
+            ],
+            [
+              "root"
+            ],
+            [
+              "red"
+            ]
+          ],
+          [
+            "root-b",
+            [
+              "root",
+              "x",
+              "y"
+            ],
+            [
+              "first",
+              "root"
+            ],
+            [],
+            []
+          ],
+          [
+            "lonely",
+            [
+              "x",
+              "y"
+            ],
+            [
+              "first"
+            ],
+            {
+              "$error": "type-mismatch"
+            },
+            []
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "list-function-errors",
+      "rql": "g.Nodes | first 1 | select r=remove-at(Tags, 99) a=append(Name, 1)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "first",
+            "n": 1
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "r",
+                "expr": {
+                  "call": "remove-at",
+                  "args": [
+                    {
+                      "path": [
+                        "Tags"
+                      ]
+                    },
+                    {
+                      "lit": 99
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "a",
+                "expr": {
+                  "call": "append",
+                  "args": [
+                    {
+                      "path": [
+                        "Name"
+                      ]
+                    },
+                    {
+                      "lit": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "r",
+          "a"
+        ],
+        "rows": [
+          [
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "list-set-append",
+      "rql": "ref(\"Node#1\") | set Tags = append(Tags, \"new\")",
+      "then": "ref(\"Node#1\") | select Tags",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Tags"
+                  ]
+                },
+                "value": {
+                  "call": "append",
+                  "args": [
+                    {
+                      "path": [
+                        "Tags"
+                      ]
+                    },
+                    {
+                      "lit": "new"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "Tags",
+            [
+              "root",
+              "red"
+            ],
+            [
+              "root",
+              "red",
+              "new"
+            ]
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Tags",
+                "expr": {
+                  "path": [
+                    "Tags"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Tags"
+        ],
+        "rows": [
+          [
+            [
+              "root",
+              "red",
+              "new"
+            ]
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "ref-display-form-fallback",
+      "rql": "ref(\"Node#8 lonely\") | select Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8 lonely"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "lonely"
+          ]
+        ],
+        "total": 1
+      }
     }
   ]
 }

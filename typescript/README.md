@@ -118,3 +118,18 @@ and needs a registered descriptor (an adapter with `members` on an undeclared cl
 `Array`/`Map`/`Set`/`Date`. Primitives (`string`, `number`, `boolean`) are not adaptable. Virtual members
 are non-owning by default; a virtual setter must round-trip its getter (rollback). `addAdapter` forks a
 `TypeModel` shared with other engines, so their behaviour does not change.
+
+### Writes and host integration
+
+- Object literals `{ key: expr }` build maps or construct registered classes on writes
+  (`set Peer = {"$type": "Special", Name: "made"}`); adapters' `coerce` runs first (return `undefined`
+  for an `ObjectValue` to defer to construction). `append` / `insert` / `remove-at` / `without` return new lists.
+- Table options: `copyOnRead(...)` (getter returns a copy → written back through the setter),
+  `writesThrough()` (struct handles: no write-back, may be targets), `hideWhere(pred)`, `identity(name)`,
+  `display(name)`, `mixedMap(name, { keys, entryType, get, set?, validate? })`; adapter `literal` (JSON Schema).
+  `engine.excludeTypes(pred)` drops members by declared type (also element / key / value types).
+- An adapter's `isAlive` returning false makes the object read as `null` everywhere (no getters run,
+  `stale-ref` for refs and mutation targets).
+- `engine.mutations.beforeWrite(records)` (throw = veto → `permission-denied`) and
+  `engine.mutations.committed(records)` receive `{ item, owner, member, old, new, method? }`; `owner` is
+  the last reference object on the written path. Neither runs on dry-run.

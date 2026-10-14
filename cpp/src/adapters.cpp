@@ -26,8 +26,9 @@ MemberTable& MemberTable::add(std::string name, const TypeDescriptor* type, Gett
                               std::string description, bool owning, bool nullable) {
     if (name.empty()) throw std::logic_error("virtual member name required");
     if (!get) throw std::logic_error("virtual member '" + name + "' needs a getter");
-    if (set && type_.kind == TypeKind::Struct)
-        throw std::logic_error("virtual setters on value type " + type_.name + " would write to a copy; expose a writable field instead");
+    if (set && type_.kind == TypeKind::Struct && !writes_through_)
+        throw std::logic_error("virtual setters on value type " + type_.name +
+                               " would write to a copy; expose a writable field instead (or mark the type writes_through if it is a handle)");
     MemberDescriptor m;
     m.name = std::move(name);
     m.type = type;
@@ -112,17 +113,63 @@ MemberTable& MemberTable::hide_methods(const std::vector<std::string>& names) {
 
 MemberTable& MemberTable::map(std::string name, const TypeDescriptor* value_type, VirtualMapAdapter::Keys keys, VirtualMapAdapter::Get get,
                               VirtualMapAdapter::Set set, VirtualMapAdapter::Validate validate, std::string description) {
+    return map_impl(std::move(name), value_type, std::move(keys), std::move(get), std::move(set), std::move(validate), {},
+                    std::move(description));
+}
+
+MemberTable& MemberTable::mixed_map(std::string name, VirtualMapAdapter::Keys keys, VirtualMapAdapter::EntryType entry_type,
+                                    VirtualMapAdapter::Get get, VirtualMapAdapter::Set set, VirtualMapAdapter::Validate validate,
+                                    std::string description) {
+    if (!entry_type) throw std::logic_error("mixed virtual map '" + name + "' needs entry types");
+    return map_impl(std::move(name), builtin::any_type(), std::move(keys), std::move(get), std::move(set), std::move(validate),
+                    std::move(entry_type), std::move(description));
+}
+
+MemberTable& MemberTable::map_impl(std::string name, const TypeDescriptor* value_type, VirtualMapAdapter::Keys keys, VirtualMapAdapter::Get get,
+                                   VirtualMapAdapter::Set set, VirtualMapAdapter::Validate validate, VirtualMapAdapter::EntryType entry_type,
+                                   std::string description) {
     if (!keys || !get) throw std::logic_error("virtual map '" + name + "' needs keys and get");
+    if (set && type_.kind == TypeKind::Struct && !writes_through_)
+        throw std::logic_error("virtual map setters on value type " + type_.name + " would write to a copy");
     const TypeDescriptor* map_type = registry_.map_type(builtin::string_type(), value_type, false);
     auto k = std::make_shared<const VirtualMapAdapter::Keys>(std::move(keys));
     auto g = std::make_shared<const VirtualMapAdapter::Get>(std::move(get));
     auto s = set ? std::make_shared<const VirtualMapAdapter::Set>(std::move(set)) : nullptr;
     auto v = validate ? std::make_shared<const VirtualMapAdapter::Validate>(std::move(validate)) : nullptr;
+    auto t = entry_type ? std::make_shared<const VirtualMapAdapter::EntryType>(std::move(entry_type)) : nullptr;
     // The map member itself is read-only (entries are written through the map); `self` is already the
     // adapter-target pointer because add() upcasts for us.
     return add(std::move(name), map_type,
-               [map_type, k, g, s, v](void* self) { return Value::map(std::make_shared<VirtualMapAdapter>(self, map_type, k, g, s, v)); },
+               [map_type, k, g, s, v, t](void* self) { return Value::map(std::make_shared<VirtualMapAdapter>(self, map_type, k, g, s, v, t)); },
                {}, {}, std::move(description));
+}
+
+MemberTable& MemberTable::hide_where(const std::function<bool(const MemberDescriptor&)>& hide) {
+    members_.erase(std::remove_if(members_.begin(), members_.end(), [&](const MemberDescriptor& m) { return hide(m); }), members_.end());
+    return *this;
+}
+
+MemberTable& MemberTable::copy_on_read(const std::vector<std::string>& names) {
+    for (auto& n : names) member(n).copy_on_read = true;
+    return *this;
+}
+
+MemberTable& MemberTable::writes_through() {
+    if (type_.kind != TypeKind::Struct) throw std::logic_error(type_.name + " is not a value type; writes_through applies to handle structs");
+    writes_through_ = true;
+    return *this;
+}
+
+MemberTable& MemberTable::identity(const std::string& name) {
+    member(name);
+    identity_name_ = name;
+    return *this;
+}
+
+MemberTable& MemberTable::display(const std::string& name) {
+    member(name);
+    display_name_ = name;
+    return *this;
 }
 
 // ------------------------------------------------------------------ VirtualMapAdapter
@@ -230,10 +277,26 @@ std::vector<const TypeAdapter*> applicable_adapters(const std::vector<std::uniqu
     return out;
 }
 
+namespace {
+/// A member type is excluded when it, its element type or its key type (recursively) matches.
+bool type_excluded(const TypeDescriptor* t, const TypeExclusion& excluded, int depth = 0) {
+    if (!t || depth > 16) return false;
+    if (excluded(*t)) return true;
+    if (t->kind == TypeKind::List || t->kind == TypeKind::Map)
+        return type_excluded(t->element, excluded, depth + 1) || type_excluded(t->key, excluded, depth + 1);
+    return false;
+}
+}  // namespace
+
 std::unique_ptr<AdaptedType> build_adapted(TypeRegistry& registry, const TypeDescriptor& type,
-                                           const std::vector<std::unique_ptr<TypeAdapter>>& adapters) {
+                                           const std::vector<std::unique_ptr<TypeAdapter>>& adapters, const TypeExclusion& excluded) {
     std::vector<const TypeAdapter*> applicable = applicable_adapters(adapters, type);
-    if (applicable.empty()) return nullptr;  // the descriptor is used directly
+    const bool shaped = type.kind == TypeKind::Object || type.kind == TypeKind::Struct;
+    bool excludes = false;
+    if (excluded && shaped)
+        for (auto& m : type.members)
+            if (type_excluded(m.type, excluded)) excludes = true;
+    if (applicable.empty() && !excludes) return nullptr;  // the descriptor is used directly
     auto a = std::make_unique<AdaptedType>();
     a->adapters = std::move(applicable);
     for (const TypeAdapter* ad : a->adapters) {
@@ -244,15 +307,21 @@ std::unique_ptr<AdaptedType> build_adapted(TypeRegistry& registry, const TypeDes
         if (ad->stable_id) a->by_cap[static_cast<size_t>(Capability::StableId)].push_back(ad);
         if (ad->is_alive) a->by_cap[static_cast<size_t>(Capability::IsAlive)].push_back(ad);
         if (a->description.empty() && !ad->description.empty()) a->description = ad->description;
+        if (!a->literal_schema && ad->literal_schema) a->literal_schema = ad->literal_schema;
     }
     if (a->description.empty()) a->description = type.description;
-    bool configures = false;
+    bool configures = excludes;
     for (const TypeAdapter* ad : a->adapters)
         if (ad->configure_members) configures = true;
-    if (configures && (type.kind == TypeKind::Object || type.kind == TypeKind::Struct)) {
+    if (configures && shaped) {
         a->owns_members = true;
         a->members = type.members;
         a->methods = type.methods;
+        // Engine-wide type exclusion first, then adapters (spec §13 Exclusion).
+        if (excludes)
+            a->members.erase(std::remove_if(a->members.begin(), a->members.end(),
+                                            [&](const MemberDescriptor& m) { return type_excluded(m.type, excluded); }),
+                             a->members.end());
         MemberTable table(registry, type, a->members, a->methods);
         // Least → most specific, so a subclass adapter refines what a base adapter configured.
         for (size_t i = a->adapters.size(); i-- > 0;) {
@@ -261,9 +330,16 @@ std::unique_ptr<AdaptedType> build_adapted(TypeRegistry& registry, const TypeDes
             table.set_current_target(ad->target);
             ad->configure_members(table);
         }
-        // Identity / display are recomputed after adapters (pointers into the final member list).
-        a->id = type.id_member_in(a->members);
-        a->display = type.display_member_in(a->members);
+        a->writes_through = table.is_writes_through();
+        // Identity / display are recomputed after adapters (pointers into the final member list), never
+        // explicit-only; an adapter may choose them by name.
+        auto by_name = [&](const std::string& n) -> const MemberDescriptor* {
+            for (auto& m : a->members)
+                if (m.name == n) return m.explicit_only ? nullptr : &m;
+            return nullptr;
+        };
+        a->id = table.identity_name().empty() ? type.id_member_in(a->members) : by_name(table.identity_name());
+        a->display = table.display_name().empty() ? type.display_member_in(a->members) : by_name(table.display_name());
         for (auto& m : a->members) {
             if (m.explicit_only) a->has_explicit_only = true;
             else a->implicit.push_back(m);

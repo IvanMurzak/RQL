@@ -24,8 +24,43 @@ namespace Rql.Execution
 
     public delegate IEnumerable<object?> StageHandler(IEnumerable<object?> input, IReadOnlyList<ArgEvaluator> args, IReadOnlyDictionary<string, ArgEvaluator> named);
 
+    /// <summary>One change made (or about to be made) by <c>set</c> or <c>call</c>, as seen by host hooks.</summary>
+    public sealed class MutationRecord
+    {
+        internal MutationRecord(object item, object owner, string member, object? oldValue, object? newValue, CallableMethod? method)
+        {
+            Item = item; Owner = owner; Member = member; Old = oldValue; New = newValue; Method = method;
+        }
+
+        /// <summary>The mutation target (a stream item).</summary>
+        public object Item { get; }
+        /// <summary>
+        /// The object whose state changes: the last reference object on the written path (for <c>set Renderer.sharedMaterial.color</c>
+        /// it is the Material, not the Renderer). Hosts mark it dirty / record it for undo.
+        /// </summary>
+        public object Owner { get; }
+        /// <summary>The written path (<c>set</c>) or the method signature (<c>call</c>).</summary>
+        public string Member { get; }
+        public object? Old { get; }
+        public object? New { get; }
+        /// <summary>The invoked method for <c>call</c>; null for <c>set</c>.</summary>
+        public CallableMethod? Method { get; }
+    }
+
     public sealed class MutationPolicy
     {
+        /// <summary>
+        /// Runs after planning and before anything is written (not on dry-run): e.g. Undo.RecordObjects on the owners.
+        /// Throwing vetoes the whole mutation (→ permission-denied, nothing changed).
+        /// </summary>
+        public Action<IReadOnlyList<MutationRecord>>? BeforeWrite { get; set; }
+
+        /// <summary>
+        /// Runs after every write succeeded (not on dry-run or rollback): e.g. EditorUtility.SetDirty on the owners.
+        /// An exception becomes a getter-threw warning; the writes stay applied.
+        /// </summary>
+        public Action<IReadOnlyList<MutationRecord>>? Committed { get; set; }
+
         /// <summary>Host-level switch. Requests must additionally set <see cref="QueryOptions.AllowMutation"/>.</summary>
         public bool Enabled { get; set; }
         /// <summary>Optional extra allow-check per (declaring object type, member).</summary>
@@ -75,6 +110,50 @@ namespace Rql.Execution
         /// Register a type adapter (spec §13): virtual/hidden members, encoding, coercion, comparison, identity, liveness.
         /// Register adapters before running queries; resolution order is deterministic (see <see cref="TypeModel.Explain"/>).
         /// </summary>
+        /// <summary>
+        /// Never expose members whose type (or element / generic argument type) matches <paramref name="excluded"/>,
+        /// e.g. <c>t => t.Assembly.GetName().Name == "Unity.TextMeshPro"</c> (spec §13). Configure before queries run.
+        /// </summary>
+        public RqlEngine ExcludeTypes(Func<Type, bool> excluded)
+        {
+            if (excluded == null) throw new ArgumentNullException(nameof(excluded));
+            if (ReferenceEquals(Types, TypeModel.Shared)) Types = new TypeModel(Types.Mode);
+            Types.ExcludeTypes(excluded);
+            _knownMembers = null;
+            return this;
+        }
+
+        /// <summary>
+        /// Register every public concrete <see cref="RqlTypeAdapter"/> with a public parameterless constructor found in the assemblies,
+        /// ordered by <see cref="RqlAdapterOrderAttribute"/> then full name. A failing adapter or assembly is skipped and reported
+        /// (the others still register), so one broken module cannot disable the rest.
+        /// </summary>
+        public IReadOnlyList<string> AddAdaptersFrom(params System.Reflection.Assembly[] assemblies)
+        {
+            var errors = new List<string>();
+            var found = new List<Type>();
+            foreach (var asm in assemblies)
+            {
+                Type[] types;
+                try { types = asm.GetTypes(); }
+                catch (System.Reflection.ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).ToArray()!; errors.Add($"{asm.GetName().Name}: some types failed to load ({ex.LoaderExceptions.FirstOrDefault()?.Message})"); }
+                catch (Exception ex) { errors.Add($"{asm.GetName().Name}: {ex.Message}"); continue; }
+                found.AddRange(types.Where(t => t.IsClass && t.IsVisible && !t.IsAbstract && !t.ContainsGenericParameters
+                                                && typeof(RqlTypeAdapter).IsAssignableFrom(t) && t.GetConstructor(Type.EmptyTypes) != null));
+            }
+            int Order(Type t) => (t.GetCustomAttributes(typeof(RqlAdapterOrderAttribute), false).FirstOrDefault() as RqlAdapterOrderAttribute)?.Order ?? 0;
+            foreach (var t in found.OrderBy(Order).ThenBy(t => t.FullName, StringComparer.Ordinal))
+            {
+                try
+                {
+                    var adapter = (RqlTypeAdapter)Activator.CreateInstance(t)!;
+                    if (adapter.IsBound) AddAdapter(adapter);
+                }
+                catch (Exception ex) { errors.Add($"{t.FullName}: {(ex.InnerException ?? ex).Message}"); }
+            }
+            return errors;
+        }
+
         public RqlEngine AddAdapter(RqlTypeAdapter adapter)
         {
             if (adapter == null) throw new ArgumentNullException(nameof(adapter));
@@ -281,10 +360,22 @@ namespace Rql.Execution
         internal object? ResolveRef(string reference, out string? error, Exec? x = null)
         {
             error = null;
-            // Tolerate copied display forms such as "Enemy#12(Goblin_0012)" or "Enemy#12 Goblin".
+            // Ids may contain spaces / parentheses (asset paths): resolve the exact text first, then tolerate copied
+            // display forms such as "Enemy#12(Goblin_0012)" or "Enemy#12 Goblin".
             reference = reference.Trim();
             int cut = reference.IndexOfAny(new[] { ' ', '(', '\t' });
-            if (cut > 0) reference = reference.Substring(0, cut);
+            if (cut > 0)
+            {
+                var exact = ResolveRefCore(reference, out var exactError, x);
+                if (exact != null) return exact;
+                reference = reference.Substring(0, cut);
+            }
+            return ResolveRefCore(reference, out error, x);
+        }
+
+        private object? ResolveRefCore(string reference, out string? error, Exec? x)
+        {
+            error = null;
             int i = reference.IndexOfAny(new[] { '#', '@' });
             if (i <= 0 || i == reference.Length - 1)
             {

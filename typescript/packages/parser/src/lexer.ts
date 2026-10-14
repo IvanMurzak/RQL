@@ -39,7 +39,7 @@ export function describeToken(t: Token): string {
 }
 
 // Longest punctuation first (order matters for the prefix match).
-const PUNCTS = ['==', '!=', '<=', '>=', '&&', '||', '|', '.', ',', '(', ')', '[', ']', '=', '<', '>', '+', '-', '*', '/', '%', '!'];
+const PUNCTS = ['==', '!=', '<=', '>=', '&&', '||', '|', '.', ',', '(', ')', '[', ']', '{', '}', ':', '=', '<', '>', '+', '-', '*', '/', '%', '!'];
 
 /** .NET char.IsWhiteSpace. */
 export function isWhiteSpace(c: number): boolean {

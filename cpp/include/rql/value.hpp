@@ -54,6 +54,10 @@ public:
     /// Rejection reason for assigning an (already coerced) value to a key, empty = accept. Runs while a
     /// mutation is planned, before any write (spec §13 virtual maps).
     virtual std::string validate_entry(const Value& key, const Value& value) const;
+    /// Declared value type of one entry (mixed-type maps), nullptr = the map's value type.
+    virtual const TypeDescriptor* entry_type(const Value& key) const;
+    /// The value of an object literal { key: expr } (spec §4.5): coerced into maps / constructed objects on writes.
+    virtual bool object_literal() const { return false; }
 };
 
 struct ErrorInfo {
@@ -153,31 +157,44 @@ struct RowData {
 /// Runtime-built list (literals, auto-map results, snapshots).
 class OwnedList final : public IListAdapter {
 public:
-    explicit OwnedList(std::vector<Value> items) : items_(std::move(items)) {}
+    /// mutable_copy: a private copy that may be written by index (copy-on-read write-back, spec §13).
+    explicit OwnedList(std::vector<Value> items, bool mutable_copy = false) : items_(std::move(items)), mutable_(mutable_copy) {}
     size_t size() const override { return items_.size(); }
     Value at(size_t i) const override { return items_[i]; }
     const TypeDescriptor* type() const override { return nullptr; }
     bool owned() const override { return true; }
+    bool writable() const override { return mutable_; }
+    void set(size_t i, const Value& v) override;
     const std::vector<Value>& items() const { return items_; }
 
 private:
     std::vector<Value> items_;
+    bool mutable_;
 };
 
 /// Runtime-built map (snapshots, coerced map assignments). Keys compare like RQL `==` for strings/numbers.
 class OwnedMap final : public IMapAdapter {
 public:
-    OwnedMap(const TypeDescriptor* type, std::vector<std::pair<Value, Value>> entries) : type_(type), entries_(std::move(entries)) {}
+    /// literal: the value of an object literal (string keys, spec §4.5); mutable_copy: writable private copy.
+    OwnedMap(const TypeDescriptor* type, std::vector<std::pair<Value, Value>> entries, bool literal = false, bool mutable_copy = false)
+        : type_(type), entries_(std::move(entries)), literal_(literal), mutable_(mutable_copy) {}
     size_t size() const override { return entries_.size(); }
     void for_each(const std::function<bool(const Value&, const Value&)>& fn) const override;
     MapLookup find(const Value& key, Value& out) const override;
     const TypeDescriptor* type() const override { return type_; }
     bool owned() const override { return true; }
+    bool object_literal() const override { return literal_; }
+    bool writable() const override { return mutable_; }
+    void set(const Value& key, const Value& value) override;
+    void erase(const Value& key) override;
     const std::vector<std::pair<Value, Value>>& entries() const { return entries_; }
 
 private:
     const TypeDescriptor* type_;
     std::vector<std::pair<Value, Value>> entries_;
+    bool literal_;
+    bool mutable_;
+    size_t index_of(const Value& key) const;
 };
 
 // ---------------------------------------------------------------- helpers

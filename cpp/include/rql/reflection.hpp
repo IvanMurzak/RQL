@@ -72,6 +72,7 @@ struct MemberDescriptor {
     std::function<bool()> assignable;  // optional runtime check (e.g. owning pointers are never assignable)
     std::string description;
     bool explicit_only = false;  // read only when a path names it (adapters, spec §13)
+    bool copy_on_read = false;   // getter returns a copy: writes into it are assigned back via the setter (spec §13)
     /// Adapter validation before any write: returns a rejection reason, empty = accept.
     Validator validate;
 
@@ -123,6 +124,9 @@ public:
     const TypeDescriptor* key = nullptr;      // map key
 
     std::function<std::shared_ptr<void>(const void*)> copy;  // struct copy
+    /// Default construction (object literals, spec §4.5): a new instance typed as THIS descriptor's type.
+    /// Structs get one automatically; objects opt in with ClassBuilder::constructible().
+    std::function<std::shared_ptr<void>()> create;
 
     /// Native type key (class/enum descriptors).
     TypeKey native_key = nullptr;
@@ -711,6 +715,14 @@ public:
     /// Disable automatic id/display detection ("Id" / "Name").
     ClassBuilder& no_identity() { d_->id_name.clear(); d_->id_explicit = true; d_->display_name.clear(); d_->display_explicit = true; return *this; }
     ClassBuilder& also_is(std::string type_name) { d_->also_is.push_back(std::move(type_name)); return *this; }
+    /// Allow object literals (spec §4.5) to construct instances: value-initialized T, members not named
+    /// in the literal keep their defaults. Constructed objects stored through raw pointers are kept alive
+    /// by the engine that built them; shared_ptr members share ownership.
+    ClassBuilder& constructible() {
+        static_assert(std::is_default_constructible_v<T>, "constructible() requires a default constructor");
+        d_->create = []() { return std::static_pointer_cast<void>(std::make_shared<T>()); };
+        return *this;
+    }
     /// Dynamic-type hook (RTTI-free polymorphism): f(const T&) returns rql::type_key<MostDerived>().
     /// Not needed when T has a `TypeKey rql_dynamic_type() const` member.
     template <class F>
@@ -845,6 +857,8 @@ ClassBuilder<T> TypeRegistry::structure(std::string name) {
     d->friendly = d->name;
     d->kind = TypeKind::Struct;
     d->copy = [](const void* p) { return std::static_pointer_cast<void>(std::make_shared<T>(*static_cast<const T*>(p))); };
+    if constexpr (std::is_default_constructible_v<T>)
+        d->create = []() { return std::static_pointer_cast<void>(std::make_shared<T>()); };
     mark_registered(d);
     return ClassBuilder<T>(*this, *d);
 }

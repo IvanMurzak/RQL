@@ -27,8 +27,36 @@ namespace Rql.Execution
             Priority = priority;
         }
 
+        /// <summary>
+        /// Target a type by full name (e.g. "UnityEngine.Collider" from an optional module). When no loaded assembly defines it,
+        /// the adapter is inert: it applies to nothing and registering it is not an error.
+        /// </summary>
+        protected RqlTypeAdapter(string targetTypeName, int priority = 0)
+        {
+            if (string.IsNullOrEmpty(targetTypeName)) throw new ArgumentException("type name required", nameof(targetTypeName));
+            Target = FindType(targetTypeName) ?? typeof(Inert);
+            Priority = priority;
+        }
+
+        private sealed class Inert { }
+
+        private static Type? FindType(string name)
+        {
+            var t = Type.GetType(name, throwOnError: false);
+            if (t != null) return t;
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try { t = asm.GetType(name, throwOnError: false); } catch { t = null; }
+                if (t != null) return t;
+            }
+            return null;
+        }
+
         /// <summary>The type (family) this adapter applies to.</summary>
         public Type Target { get; }
+
+        /// <summary>False when the adapter was targeted by a type name that no loaded assembly defines.</summary>
+        public bool IsBound => Target != typeof(Inert);
 
         /// <summary>Tie-break only: among adapters of equal specificity, higher priority runs first.</summary>
         public int Priority { get; }
@@ -71,6 +99,9 @@ namespace Rql.Execution
 
         /// <summary>One line for schemas and <c>describe</c>, e.g. how agents should write literals of the type.</summary>
         public virtual string? Description => null;
+
+        /// <summary>Optional JSON Schema of the literals <see cref="TryCoerce"/> accepts (shown by <c>describe</c> as <c>literal</c>).</summary>
+        public virtual JsonNode? LiteralSchema => null;
 
         internal AdapterCaps Caps { get; private set; }
 
@@ -213,6 +244,17 @@ namespace Rql.Execution
             return Add(name, typeof(VirtualMap<TValue>), o => new VirtualMap<TValue>(o, keys, get, set, validate), description: description);
         }
 
+        /// <summary>
+        /// A virtual map whose entries have different value types (e.g. a Material's properties: floats, Colors, Textures):
+        /// writes coerce each value to <paramref name="entryType"/>(owner, key) before validation (spec §13).
+        /// </summary>
+        public MemberTable AddMixedMap(string name, Func<object, IEnumerable<string>> keys, Func<object, string, Type> entryType,
+            Func<object, string, object?> get, Action<object, string, object?>? set = null,
+            Func<object, string, object?, string?>? validate = null, string? description = null)
+        {
+            return Add(name, typeof(VirtualMap<object?>), o => new VirtualMap<object?>(o, keys, get, set, validate, entryType), description: description);
+        }
+
         /// <summary>The runtime type whose members are being configured.</summary>
         public Type Type => _type;
 
@@ -229,8 +271,8 @@ namespace Rql.Execution
             Func<object, object?, string?>? validate = null, string? description = null, bool owning = false)
         {
             if (string.IsNullOrEmpty(name)) throw new ArgumentException("member name required", nameof(name));
-            if (set != null && _type.IsValueType)
-                throw new ArgumentException($"virtual setters on value type {_type.Name} would write to a copy; expose a writable field or property instead");
+            if (set != null && _type.IsValueType && !IsWritesThrough)
+                throw new ArgumentException($"virtual setters on value type {_type.Name} would write to a copy; expose a writable field or property instead (or mark the type WritesThrough if it is a handle)");
             var accessor = MemberAccessor.Virtual(name, type, _type, get, set, validate, description, owning, NextOrder(name));
             int i = _members.FindIndex(m => m.Name == name);
             if (i >= 0) _members[i] = accessor;
@@ -262,6 +304,41 @@ namespace Rql.Execution
         }
 
         public MemberTable ReadOnly(params string[] names) => Change(names, m => m.With(canWrite: false));
+
+        /// <summary>Hide every member matching <paramref name="hide"/> (e.g. <c>[Obsolete]</c> / <c>[NonSerialized]</c> members via <see cref="MemberAccessor.Member"/>).</summary>
+        public MemberTable HideWhere(Func<MemberAccessor, bool> hide)
+        {
+            _members.RemoveAll(m => hide(m));
+            return this;
+        }
+
+        /// <summary>
+        /// Getters that return a copy (e.g. Renderer.sharedMaterials, Gradient.colorKeys): writes into the value are assigned
+        /// back through the member's setter, like value types, so they are not silently lost.
+        /// </summary>
+        public MemberTable CopyOnRead(params string[] names) => Change(names, m => m.With(copyOnRead: true));
+
+        /// <summary>
+        /// For value types that are handles to shared state (e.g. Unity's ParticleSystem.MainModule): writes to a copy are
+        /// live, so no write-back to the owner happens, get-only owners are fine, virtual setters are allowed, and values of
+        /// the type can be mutation targets. Call before adding virtual setters.
+        /// </summary>
+        public MemberTable WritesThrough()
+        {
+            if (!_type.IsValueType) throw new ArgumentException($"{_type.Name} is not a value type; WritesThrough applies to handle structs");
+            IsWritesThrough = true;
+            return this;
+        }
+
+        internal bool IsWritesThrough { get; private set; }
+        internal string? IdentityName { get; private set; }
+        internal string? DisplayName { get; private set; }
+
+        /// <summary>The member used for stable refs <c>Type#id</c> (default: [RqlId], then <c>Id</c>).</summary>
+        public MemberTable Identity(string name) { RequireAll(new[] { name }); IdentityName = name; return this; }
+
+        /// <summary>The member shown as <c>name</c> in summaries (default: [RqlDisplay], then a string <c>Name</c>; e.g. Unity's lowercase <c>name</c>).</summary>
+        public MemberTable Display(string name) { RequireAll(new[] { name }); DisplayName = name; return this; }
 
         /// <summary>Mark non-owning references (generic recurse and snapshots do not follow them).</summary>
         public MemberTable Reference(params string[] names) => Change(names, m => m.With(owning: false));
@@ -319,6 +396,11 @@ namespace Rql.Execution
         }
 
         public MemberTable<T> Hide(params string[] names) { Untyped.Hide(names); return this; }
+        public MemberTable<T> HideWhere(Func<MemberAccessor, bool> hide) { Untyped.HideWhere(hide); return this; }
+        public MemberTable<T> CopyOnRead(params string[] names) { Untyped.CopyOnRead(names); return this; }
+        public MemberTable<T> WritesThrough() { Untyped.WritesThrough(); return this; }
+        public MemberTable<T> Identity(string name) { Untyped.Identity(name); return this; }
+        public MemberTable<T> Display(string name) { Untyped.Display(name); return this; }
         public MemberTable<T> Expose(string name, string? description = null) { Untyped.Expose(name, description); return this; }
         public MemberTable<T> HideMethods(params string[] names) { Untyped.HideMethods(names); return this; }
 
@@ -352,7 +434,7 @@ namespace Rql.Execution
         public MemberTable<T> Map<TValue>(string name, Func<T, IEnumerable<string>> keys, Func<T, string, TValue> get,
             Action<T, string, TValue>? set = null, Func<T, string, TValue, string?>? validate = null, string? description = null)
         {
-            if (set != null && typeof(T).IsValueType)
+            if (set != null && typeof(T).IsValueType && !Untyped.IsWritesThrough)
                 throw new ArgumentException($"virtual map setters on value type {typeof(T).Name} would write to a copy");
             Untyped.AddMap<TValue>(name, o => keys((T)o), (o, k) => get((T)o, k),
                 set == null ? null : (Action<object, string, TValue>)((o, k, v) => set((T)o, k, v)),

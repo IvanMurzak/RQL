@@ -717,6 +717,8 @@ function usesMeta(plan: Exec['plan'], meta: string): boolean {
         return e.args.some(inExpr) || (e.on !== undefined && inExpr(e.on));
       case 'list':
         return e.items.some(inExpr);
+      case 'object':
+        return e.entries.some((en) => inExpr(en.value));
       default:
         return false;
     }

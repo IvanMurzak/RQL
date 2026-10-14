@@ -5,6 +5,7 @@ export {
   type EngineOptions,
   type ExtensionFunction,
   type MutationPolicy,
+  type MutationRecord,
   type RefResolution,
   type SourceRegistration,
   type StageHandler,
@@ -31,7 +32,7 @@ export {
   type TypeSpec,
   type VirtualMapSpec,
 } from './types.js';
-export { ErrorValue, MISSING, MapEntry, Missing, RowValue, UNKNOWN, Unknown, isAbsent } from './values.js';
+export { ErrorValue, MISSING, MapEntry, Missing, ObjectValue, RowValue, UNKNOWN, Unknown, isAbsent } from './values.js';
 export {
   adapterName,
   rank as adapterRank,

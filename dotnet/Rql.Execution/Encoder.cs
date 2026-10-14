@@ -63,6 +63,7 @@ namespace Rql.Execution
 
         public JsonNode? Encode(object? v, int depth = 0)
         {
+            if (v != null && (_x.Types.Caps & AdapterCaps.Liveness) != 0 && _x.Types.IsDead(v)) return null;
             if (v != null && (_x.Types.Caps & AdapterCaps.Encode) != 0)
             {
                 var adapters = _x.Types.Info(v.GetType()).EncodeAdapters;

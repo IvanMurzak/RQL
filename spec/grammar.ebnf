@@ -49,12 +49,14 @@ additive        = multiplicative , { ( "+" | "-" ) , multiplicative } ;
 multiplicative  = unary , { ( "*" | "/" | "%" ) , unary } ;
 unary           = "-" , unary | postfix ;
 postfix         = primary , { "." , member | "." , name , call_args | "[" , expr , "]" } ;
-primary         = literal | list | "(" , expr , ")" | meta | name , [ call_args ] ;
+primary         = literal | list | object | "(" , expr , ")" | meta | name , [ call_args ] ;
 call_args       = "(" , [ expr , { "," , expr } ] , ")" ;
 member          = name | meta ;
 meta            = "$" , [ ident ] ;               (* "$" alone = current item; $type $ref $path $index *)
 type_name       = name | string ;
 list            = "[" , [ expr , { "," , expr } ] , "]" ;
+object          = "{" , [ entry , { "," , entry } ] , "}" ;   (* keys unique and non-empty, §4.5 *)
+entry           = ( name | string ) , ":" , expr ;
 literal         = number | string | "true" | "false" | "null" ;
 
 (* ---------- lexical ---------- *)

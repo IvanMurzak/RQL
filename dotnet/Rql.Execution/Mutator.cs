@@ -32,9 +32,11 @@ namespace Rql.Execution
                 if (it.Value == null) continue;
                 if (it.Value is RowValue)
                     throw new RqlException("invalid-plan", $"'{op}' needs objects, not projected rows; remove 'select' before '{op}'");
+                if (_x.Types.IsDead(it.Value))
+                    throw new RqlException("stale-ref", $"'{op}' target {_x.Engine.RefOf(it.Value)} is a destroyed object; nothing was changed");
                 if (it.Value is MapEntry)
                     throw new RqlException("invalid-plan", $"'{op}' cannot target map entries; set the map member with a key path instead (Stats[\"key\"] = ...)");
-                if (it.Value.GetType().IsValueType || TypeModel.IsScalarType(it.Value.GetType()))
+                if ((it.Value.GetType().IsValueType && !_x.Types.Info(it.Value.GetType()).WritesThrough) || TypeModel.IsScalarType(it.Value.GetType()))
                     throw new RqlException("invalid-plan", $"'{op}' needs objects with identity; '{_x.Types.Info(it.Value.GetType()).ShortName}' items are value copies, so the change would be lost",
                         null, "set the member from its owner instead, e.g. objects | where … | set Transform.Position.x = 0");
                 list.Add(it.Value);
@@ -56,6 +58,33 @@ namespace Rql.Execution
             public string Label = "";
             public object? Old;
             public object? New;
+            public object Owner = null!;
+        }
+
+        private IReadOnlyList<MutationRecord> Records(IEnumerable<PlannedWrite> writes) =>
+            writes.Select(w => new MutationRecord(w.Item, w.Owner, w.Label, w.Old, w.New, null)).ToList();
+
+        /// <summary>Host veto point before any write; a throwing hook aborts with nothing changed.</summary>
+        private void Before(Func<IReadOnlyList<MutationRecord>> records)
+        {
+            var hook = _x.Engine.Mutations.BeforeWrite;
+            if (hook == null || _x.Options.DryRun) return;
+            try { hook(records()); }
+            catch (Exception ex) when (!(ex is OutOfMemoryException))
+            {
+                throw new RqlException("permission-denied", $"the host rejected the change before anything was written: {ex.Message}");
+            }
+        }
+
+        private void Committed(Func<IReadOnlyList<MutationRecord>> records)
+        {
+            var hook = _x.Engine.Mutations.Committed;
+            if (hook == null || _x.Options.DryRun) return;
+            try { hook(records()); }
+            catch (Exception ex) when (!(ex is OutOfMemoryException))
+            {
+                _x.Diagnostics.Add(Diagnostic.Warning("getter-threw", $"host commit hook threw {ex.GetType().Name}: {ex.Message}; the writes were applied"));
+            }
         }
 
         public QueryResult Set(IEnumerable<Item> stream, SetStage s)
@@ -76,17 +105,18 @@ namespace Rql.Execution
                         throw new RqlException("coercion-failed", $"value for '{label}' on {_x.Engine.RefOf(item)} is missing");
                     if (nv is RqlError err)
                         throw new RqlException(err.Code == "stale-ref" ? "stale-ref" : "coercion-failed", $"value for '{label}' on {_x.Engine.RefOf(item)} failed: {err.Detail ?? err.Code}");
-                    var slot = Resolve(item, target.Segments, out var container);
+                    var slot = Resolve(item, target.Segments, out var container, out var owner);
                     if (!slot.Writable(_x))
                         throw new RqlException(slot.DenyCode, $"'{label}' on {_x.Engine.RefOf(item)} is not writable{slot.DenyReason}");
                     if (!Coerce.TryTo(_x.Types, nv, slot.Type, out var coerced, out var why))
                         throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' ({TypeModel.FriendlyName(slot.Type)}): {why}");
                     if (slot.Validate(container, coerced) is string rejected)
                         throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' on {_x.Engine.RefOf(item)}: {rejected}");
-                    writes.Add(new PlannedWrite { Item = item, Segments = target.Segments, Label = label, Old = SafeGet(slot, container, label), New = coerced });
+                    writes.Add(new PlannedWrite { Item = item, Segments = target.Segments, Label = label, Old = SafeGet(slot, container, label), New = coerced, Owner = owner });
                 }
             }
 
+            Before(() => Records(writes));
             if (!_x.Options.DryRun)
             {
                 int applied = 0;
@@ -113,6 +143,7 @@ namespace Rql.Execution
                 }
             }
 
+            Committed(() => Records(writes));
             var rows = writes.Select(w => new object?[] { _x.Engine.RefOf(w.Item), w.Label, w.Old, w.New }).ToList();
             var r = _enc.Rows(new[] { "$ref", "member", "old", "new" }, rows);
             r.DryRun = _x.Options.DryRun;
@@ -202,7 +233,8 @@ namespace Rql.Execution
                 }
                 if (key == null || !Compiler.TryCoerceKey(key, info.KeyType, out var k) || k == null)
                     throw new RqlException("coercion-failed", $"invalid map key in '{label}'");
-                return new MapSlot(k, info.ElementType ?? typeof(object));
+                var entryType = container is IVirtualMap vm && k is string sk ? vm.EntryType(sk) : null;
+                return new MapSlot(k, entryType ?? info.ElementType ?? typeof(object));
             }
             if (info.IsList)
             {
@@ -226,7 +258,7 @@ namespace Rql.Execution
             return new MemberSlot(container.GetType(), m);
         }
 
-        private Slot Resolve(object root, IReadOnlyList<Segment> segs, out object container)
+        private Slot Resolve(object root, IReadOnlyList<Segment> segs, out object container, out object owner)
         {
             string label = string.Concat(segs.Select(s => s.ToString()));
             object cur = root;
@@ -240,11 +272,15 @@ namespace Rql.Execution
                     // must be writable and allowed too (readonly struct fields, get-only properties, policy).
                     for (int j = chain.Count - 1; j >= 0; j--)
                     {
-                        if (!chain[j].value.GetType().IsValueType) break;
+                        if (!NeedsWriteBack(chain[j].slot, chain[j].value)) break;
                         if (!chain[j].slot.Writable(_x))
-                            throw new RqlException(chain[j].slot.DenyCode, $"'{label}' on {_x.Engine.RefOf(root)} is not writable: '{segs[j]}' is a value type held by a non-writable member{chain[j].slot.DenyReason}");
+                            throw new RqlException(chain[j].slot.DenyCode, $"'{label}' on {_x.Engine.RefOf(root)} is not writable: '{segs[j]}' is a copy (value type or copy-on-read member) that must be written back through a non-writable member{chain[j].slot.DenyReason}");
                     }
                     container = cur;
+                    // The owner whose state changes: walk up while the containers are copies written back into their parents.
+                    owner = cur;
+                    for (int j = chain.Count - 1; j >= 0 && NeedsWriteBack(chain[j].slot, chain[j].value); j--)
+                        owner = j == 0 ? root : chain[j - 1].value;
                     return slot;
                 }
                 object? next = SafeGet(slot, cur, label);
@@ -284,9 +320,19 @@ namespace Rql.Execution
             slots[slots.Count - 1].Set(containers[containers.Count - 1], value);
             for (int j = containers.Count - 1; j >= 1; j--)
             {
-                if (!containers[j].GetType().IsValueType) break;
+                if (!NeedsWriteBack(slots[j - 1], containers[j])) break;
                 slots[j - 1].Set(containers[j - 1], containers[j]);
             }
+        }
+
+        /// <summary>
+        /// Whether a container read through <paramref name="slot"/> is a copy that must be assigned back after writing into it:
+        /// value types (unless handles that write through) and members whose getter returns a copy (spec §13).
+        /// </summary>
+        private bool NeedsWriteBack(Slot slot, object container)
+        {
+            if (slot is MemberSlot ms && ms.M.CopyOnRead) return true;
+            return container.GetType().IsValueType && !_x.Types.Info(container.GetType()).WritesThrough;
         }
 
         // ------------------------------------------------------------ call
@@ -335,6 +381,9 @@ namespace Rql.Execution
                 planned.Add((item, chosen, coerced!));
             }
 
+            IReadOnlyList<MutationRecord> CallRecords() =>
+                planned.Select(p => new MutationRecord(p.item, p.item, p.method.Signature, null, null, p.method)).ToList();
+            Before(CallRecords);
             var rows = new List<object?[]>();
             int done = 0;
             foreach (var (item, method, cargs) in planned)
@@ -348,12 +397,16 @@ namespace Rql.Execution
                     }
                     catch (Exception ex) when (!(ex is OutOfMemoryException))
                     {
+                        // Completed calls are not rolled back, so the host still learns about them.
+                        int completed = done;
+                        Committed(() => CallRecords().Take(completed).ToList());
                         throw new RqlException("getter-threw", $"{method.Name} on {_x.Engine.RefOf(item)} threw {ex.GetType().Name}: {ex.Message}; {done} earlier call(s) completed and are NOT rolled back");
                     }
                 }
                 done++;
                 rows.Add(new object?[] { _x.Engine.RefOf(item), method.Signature, result });
             }
+            Committed(CallRecords);
             var r = _enc.Rows(new[] { "$ref", "method", "result" }, rows);
             r.DryRun = _x.Options.DryRun;
             return r;
@@ -362,6 +415,92 @@ namespace Rql.Execution
 
     internal static class Coerce
     {
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Type, string), Type[]> Subtypes =
+            new System.Collections.Concurrent.ConcurrentDictionary<(Type, string), Type[]>();
+
+        /// <summary>Build <paramref name="target"/> from an object literal: concrete type, construction, member assignment (spec §4.5).</summary>
+        private static bool TryConstruct(TypeModel model, ObjectValue literal, Type target, out object? result, out string why)
+        {
+            result = null;
+            why = "";
+            var info = model.Info(target);
+            if (info.IsMap)
+            {
+                var keyType = info.KeyType ?? typeof(string);
+                var valueType = info.ElementType ?? typeof(object);
+                var concreteMap = target.IsInterface || target.IsAbstract ? typeof(Dictionary<,>).MakeGenericType(keyType, valueType) : target;
+                if (!target.IsAssignableFrom(concreteMap) || !typeof(IDictionary).IsAssignableFrom(concreteMap)) { why = "unsupported map type " + TypeModel.FriendlyName(target); return false; }
+                IDictionary map;
+                try { map = (IDictionary)Activator.CreateInstance(concreteMap)!; }
+                catch { why = "cannot construct " + TypeModel.FriendlyName(concreteMap); return false; }
+                foreach (var kv in literal)
+                {
+                    if (!Compiler.TryCoerceKey(kv.Key, keyType, out var key) || key == null) { why = $"invalid key '{kv.Key}' for {TypeModel.FriendlyName(target)}"; return false; }
+                    if (!TryTo(model, kv.Value, valueType, out var mv, out var w)) { why = $"'{kv.Key}': {w}"; return false; }
+                    map[key] = mv;
+                }
+                result = map;
+                return true;
+            }
+            if (info.Kind != TypeKind.Object && info.Kind != TypeKind.Struct) { why = $"an object literal cannot become {TypeModel.FriendlyName(target)}"; return false; }
+
+            var concrete = target;
+            if (literal.TryGetValue("$type", out var typeName))
+            {
+                if (!(typeName is string tn)) { why = "\"$type\" must be a type name string"; return false; }
+                var found = Subtypes.GetOrAdd((target, tn), k => FindSubtypes(k.Item1, k.Item2));
+                if (found.Length == 0) { why = $"no concrete type named '{tn}' derives from {TypeModel.FriendlyName(target)}"; return false; }
+                if (found.Length > 1) { why = $"'{tn}' is ambiguous: " + string.Join(", ", found.Select(t => t.FullName)); return false; }
+                concrete = found[0];
+            }
+            if (concrete.IsAbstract || concrete.IsInterface)
+            {
+                why = $"{TypeModel.FriendlyName(concrete)} is abstract; add \"$type\" to choose a concrete type";
+                return false;
+            }
+            object instance;
+            try { instance = Activator.CreateInstance(concrete)!; }
+            catch (Exception ex) when (ex is MissingMethodException || ex is MemberAccessException || ex is TargetInvocationException || ex is NotSupportedException || ex is ArgumentException)
+            {
+                why = $"cannot construct {TypeModel.FriendlyName(concrete)} (needs a public parameterless constructor, or an adapter that coerces object literals)";
+                return false;
+            }
+            var ci = model.Info(concrete);
+            foreach (var kv in literal)
+            {
+                if (kv.Key == "$type") continue;
+                var m = ci.Find(kv.Key);
+                if (m == null) { why = $"no member '{kv.Key}' on {ci.ShortName}"; return false; }
+                if (!m.CanWrite) { why = $"member '{m.Name}' of {ci.ShortName} is read-only"; return false; }
+                if (!TryTo(model, kv.Value, m.Type, out var mv, out var w)) { why = $"'{m.Name}': {w}"; return false; }
+                if (m.Validate?.Invoke(instance, mv) is string rejected) { why = $"'{m.Name}': {rejected}"; return false; }
+                try { m.SetValue(instance, mv); }
+                catch (Exception ex) when (!(ex is OutOfMemoryException)) { why = $"'{m.Name}': {ex.Message}"; return false; }
+            }
+            result = instance;
+            return true;
+        }
+
+        private static Type[] FindSubtypes(Type target, string name)
+        {
+            var hits = new List<Type>();
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                Type[] types;
+                try { types = asm.GetTypes(); }
+                catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).ToArray()!; }
+                catch { continue; }
+                foreach (var t in types)
+                {
+                    if (t.IsAbstract || t.IsInterface || t.ContainsGenericParameters || !target.IsAssignableFrom(t)) continue;
+                    if (t.FullName == name || TypeModel.ShortName(t) == name) hits.Add(t);
+                }
+            }
+            // An exact full-name match wins over short-name matches.
+            var exact = hits.Where(t => t.FullName == name).ToArray();
+            return exact.Length == 1 ? exact : hits.Distinct().ToArray();
+        }
+
         public static bool TryTo(TypeModel model, object? v, Type target, out object? result, out string why)
         {
             why = "";
@@ -394,6 +533,8 @@ namespace Rql.Execution
                     }
                 }
             }
+
+            if (v is ObjectValue literal) return TryConstruct(model, literal, target, out result, out why);
 
             if (target.IsEnum)
             {

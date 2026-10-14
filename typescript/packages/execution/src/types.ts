@@ -8,8 +8,9 @@
  * registered still work through a dynamic fallback (own enumerable properties + prototype getters),
  * with the limits documented in the README (no enum/struct/int typing, per-instance member sets).
  */
-import { AdapterRegistry, adapterName, adapterSet, type AdapterSet, type AnyAdapter, type Capability, type ClassAdapter, type InterfaceAdapter, type MemberTable, type TypeAdapter, type VirtualMemberSpec } from './adapters.js';
-import { ErrorValue, MapEntry, Missing, RowValue, Unknown } from './values.js';
+import { AdapterRegistry, adapterName, adapterSet, firstAnswer, type AdapterSet, type AnyAdapter, type Capability, type ClassAdapter, type InterfaceAdapter, type MemberTable, type TypeAdapter, type VirtualMemberSpec } from './adapters.js';
+import type { JsonValue } from '@rql/contracts';
+import { ErrorValue, MapEntry, Missing, ObjectValue, RowValue, Unknown } from './values.js';
 
 /** Any class constructor (including abstract classes and classes with constructor parameters). */
 export type Ctor<T extends object = object> = abstract new (...args: never[]) => T;
@@ -234,6 +235,8 @@ export interface VirtualMapSpec<T extends object, V = unknown> {
   set?(owner: T, key: string, value: V): void;
   /** Runs while a mutation is planned (before any write); returns a rejection reason. */
   validate?(owner: T, key: string, value: V): string | undefined;
+  /** Mixed-type maps: the declared type of one entry; written values are coerced to it before validation. */
+  entryType?(owner: T, key: string): TypeRef | undefined;
 }
 
 /**
@@ -274,6 +277,10 @@ export class VirtualMap extends StringMap {
   }
   override validate(key: string, value: unknown): string | undefined {
     return this.spec.validate?.(this.owner, key, value);
+  }
+  /** Declared type of one entry (mixed-type maps), or undefined for the map's value type. */
+  entryType(key: string): TypeRef | undefined {
+    return this.spec.entryType?.(this.owner, key);
   }
 }
 
@@ -367,6 +374,8 @@ export interface MemberInit {
   readonly description?: string | undefined;
   /** Read only when a path names it (spec §13). */
   readonly explicitOnly?: boolean;
+  /** The getter returns a copy: writes into the value are assigned back through the setter (spec §13). */
+  readonly copyOnRead?: boolean;
   /** Validation of a coerced value while a mutation is planned; returns a rejection reason. */
   readonly validate?: ((target: object, value: unknown) => string | undefined) | undefined;
 }
@@ -403,6 +412,9 @@ export class MemberAccessor {
   get description(): string | undefined {
     return this.init.description;
   }
+  get copyOnRead(): boolean {
+    return this.init.copyOnRead ?? false;
+  }
   get explicitOnly(): boolean {
     return this.init.explicitOnly ?? false;
   }
@@ -411,7 +423,7 @@ export class MemberAccessor {
   }
 
   /** A copy with some properties changed (identity members, inheritance, adapters). */
-  with(changes: Partial<Pick<MemberInit, 'canWrite' | 'order' | 'owning' | 'explicitOnly' | 'description'>>): MemberAccessor {
+  with(changes: Partial<Pick<MemberInit, 'canWrite' | 'order' | 'owning' | 'explicitOnly' | 'description' | 'copyOnRead'>>): MemberAccessor {
     return new MemberAccessor({ ...this.init, ...changes }, this.model);
   }
 
@@ -464,6 +476,8 @@ export class TypeInfo {
       base?: TypeInfo;
       description?: string;
       enumType?: EnumType;
+      writesThrough?: boolean;
+      literalSchema?: JsonValue;
       dynamic?: DynamicResolver;
       ctor?: Ctor;
       adapters?: readonly AnyAdapter[];
@@ -479,6 +493,8 @@ export class TypeInfo {
     this.base = options.base;
     this.description = options.description;
     this.enumType = options.enumType;
+    this.writesThrough = options.writesThrough ?? false;
+    this.literalSchema = options.literalSchema;
     this.dynamic = options.dynamic;
     this.ctor = options.ctor;
     this.adapters = options.adapters ?? [];
@@ -498,6 +514,10 @@ export class TypeInfo {
   readonly base: TypeInfo | undefined;
   readonly description: string | undefined;
   readonly enumType: EnumType | undefined;
+  /** A struct whose copies are handles to shared state: no write-back, may be a mutation target (spec §13). */
+  readonly writesThrough: boolean;
+  /** JSON Schema of the literals adapters accept for the type (`describe` → `literal`). */
+  readonly literalSchema: JsonValue | undefined;
   /** Set for undeclared types: members are discovered per instance. */
   readonly dynamic: DynamicResolver | undefined;
   readonly ctor: Ctor | undefined;
@@ -619,6 +639,7 @@ export class TypeModel {
   /** Builtin infos (Map, Record, plain Object, Date), built lazily because they carry adapters. */
   private readonly builtins = new Map<string, TypeInfo>();
   private readonly adapterSets = new Map<Ctor, AdapterSet>();
+  private excluded: ((type: TypeRef) => boolean) | undefined;
   private readonly entryInfo: TypeInfo;
   private readonly rowInfo = new TypeInfo('object', 'RowValue');
 
@@ -636,7 +657,7 @@ export class TypeModel {
     this.adapterSets.clear();
   }
 
-  private builtin(key: 'map' | 'record' | 'virtual-map' | 'plain' | 'date'): TypeInfo {
+  private builtin(key: 'map' | 'object-literal' | 'record' | 'virtual-map' | 'plain' | 'date'): TypeInfo {
     let info = this.builtins.get(key);
     if (info === undefined) {
       switch (key) {
@@ -648,6 +669,9 @@ export class TypeModel {
           break;
         case 'virtual-map':
           info = new TypeInfo('map', 'VirtualMap');
+          break;
+        case 'object-literal':
+          info = new TypeInfo('map', 'ObjectValue');
           break;
         case 'plain': {
           const adapters = this.adapterRegistry.for(Object);
@@ -717,6 +741,7 @@ export class TypeModel {
     m.parent = this;
     m.parentVersion = this.version;
     m.tags = this.tags;
+    m.excluded = this.excluded;
     this.adapterRegistry.copyTo(m.adapterRegistry);
     m.resetCaches();
     return m;
@@ -795,6 +820,7 @@ export class TypeModel {
     this.sync();
     if (Array.isArray(o)) return this.listInfo('Array', Array);
     if (o instanceof EnumValue) return this.enumInfo(o.type);
+    if (o instanceof ObjectValue) return this.builtin('object-literal');
     if (o instanceof Map) return this.builtin('map');
     if (o instanceof RecordMap) return this.builtin('record');
     if (o instanceof VirtualMap) return this.builtin('virtual-map');
@@ -858,6 +884,7 @@ export class TypeModel {
         return new TypeInfo(b.kind, name, t.members, {
           typeNames: [name, ...b.typeNames], idMember: t.idMember, displayMember: t.displayMember, callable: t.methods,
           base: b, description: describeWith(adapters, b.description), ctor, adapters, rawMembers: b.rawMembers, rawCallable: b.rawCallable,
+          writesThrough: t.writesThrough, ...literalOf(adapters),
         });
       }
     }
@@ -891,6 +918,7 @@ export class TypeModel {
       typeNames: [name, ...(base?.typeNames ?? []), ...(spec.interfaces ?? [])],
       idMember: t.idMember, displayMember: t.displayMember, callable: t.methods, base,
       description: describeWith(adapters, spec.description), ctor, adapters, rawMembers, rawCallable,
+      writesThrough: t.writesThrough, ...literalOf(adapters),
     });
   }
 
@@ -909,9 +937,17 @@ export class TypeModel {
     inheritedId: MemberAccessor | undefined,
     displaySpec: string | null | undefined,
     inheritedDisplay: MemberAccessor | undefined,
-  ): { members: MemberAccessor[]; methods: MethodAccessor[]; idMember: MemberAccessor | undefined; displayMember: MemberAccessor | undefined } {
+  ): { members: MemberAccessor[]; methods: MethodAccessor[]; idMember: MemberAccessor | undefined; displayMember: MemberAccessor | undefined; writesThrough: boolean } {
     const declared = new Set(members.map((m) => m.name));
-    this.applyAdapters(adapters, name, kind, members, methods);
+    if (this.excluded !== undefined) {
+      const kept = members.filter((m) => !this.isExcludedType(m.type));
+      members.length = 0;
+      members.push(...kept);
+    }
+    const table = this.applyAdapters(adapters, name, kind, members, methods);
+    // Adapters may choose the identity / display members by name (most specific adapter wins).
+    if (table?.identityName !== undefined) idSpec = table.identityName;
+    if (table?.displayName !== undefined) displaySpec = table.displayName;
     // Callable methods: by name (ordinal), then arity.
     methods.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.params.length - b.params.length));
     const pick = (explicit: string | null | undefined, inherited: MemberAccessor | undefined, dflt: (m: MemberAccessor) => boolean): MemberAccessor | undefined => {
@@ -932,14 +968,48 @@ export class TypeModel {
       idMember = ro;
     }
     const displayMember = pick(displaySpec, inheritedDisplay, (m) => m.name === 'Name' && unwrapNullable(m.type) === 'string');
-    return { members, methods, idMember, displayMember };
+    return { members, methods, idMember, displayMember, writesThrough: table?.isWritesThrough ?? false };
   }
 
   /** Runs the adapters' member configuration (least specific first) over `members`, in place. */
-  private applyAdapters(adapters: readonly AnyAdapter[], typeName: string, kind: TypeKind, members: MemberAccessor[], methods: MethodAccessor[]): void {
-    if (!adapters.some((a) => a.members !== undefined)) return;
+  private applyAdapters(adapters: readonly AnyAdapter[], typeName: string, kind: TypeKind, members: MemberAccessor[], methods: MethodAccessor[]): MemberTableImpl | undefined {
+    if (!adapters.some((a) => a.members !== undefined)) return undefined;
     const table = new MemberTableImpl(typeName, kind, members, methods, this);
     for (let i = adapters.length - 1; i >= 0; i--) adapters[i]!.members?.(table);
+    return table;
+  }
+
+  /**
+   * Engine-wide member type exclusion (spec §13): members whose declared type, element / key / value type
+   * or class matches are dropped from every declared type.
+   */
+  excludeTypes(excluded: (type: TypeRef) => boolean): this {
+    const prev = this.excluded;
+    this.excluded = prev === undefined ? excluded : (t) => prev(t) || excluded(t);
+    this.resetCaches();
+    this.ownVersion++;
+    return this;
+  }
+
+  private isExcludedType(r: TypeRef): boolean {
+    if (this.excluded === undefined) return false;
+    if (this.excluded(r)) return true;
+    if (typeof r !== 'object' || r instanceof EnumType) return false;
+    switch (r.kind) {
+      case 'nullable':
+      case 'list':
+        return this.isExcludedType(r.of);
+      case 'map':
+        return this.isExcludedType(r.key) || this.isExcludedType(r.of);
+      default:
+        return false;
+    }
+  }
+
+  /** A destroyed object (an adapter's isAlive says false) reads as null everywhere (spec §13). */
+  isDead(v: unknown): boolean {
+    if (typeof v !== 'object' || v === null || !this.adapterRegistry.has('isAlive')) return false;
+    return firstAnswer(this.infoOf(v).adapterSet.isAlive, (a) => a.isAlive!(v)) === false;
   }
 
   private makeMember(ctor: Ctor, spec: MemberSpec, order: number): MemberAccessor {
@@ -1125,7 +1195,7 @@ function putMethod(list: MethodAccessor[], m: MethodAccessor): void {
 }
 
 /** Engine-internal value classes: never adapted (spec §13 applies to host types). */
-const INTERNAL_CLASSES: ReadonlySet<object> = new Set<object>([RowValue, MapEntry, Missing, Unknown, ErrorValue, EnumValue, RecordMap, VirtualMap]);
+const INTERNAL_CLASSES: ReadonlySet<object> = new Set<object>([RowValue, MapEntry, Missing, Unknown, ErrorValue, EnumValue, RecordMap, VirtualMap, ObjectValue]);
 
 /**
  * Member configuration needs a declared member table (members of undeclared objects are discovered per
@@ -1136,6 +1206,12 @@ function rejectMemberAdapters(adapters: readonly AnyAdapter[], typeName: string)
   if (a !== undefined) {
     throw new Error(`type adapter ${adapterName(a)} configures members of ${typeName}, which has no registered descriptor (register it with TypeModel.register)`);
   }
+}
+
+/** The literal schema of the most specific adapter that publishes one. */
+function literalOf(adapters: readonly AnyAdapter[]): { literalSchema?: JsonValue } {
+  const a = adapters.find((x) => x.literal !== undefined);
+  return a !== undefined ? { literalSchema: a.literal! } : {};
 }
 
 function describeWith(adapters: readonly AnyAdapter[], fallback: string | undefined): string | undefined {
@@ -1157,6 +1233,41 @@ class MemberTableImpl implements MemberTable<object> {
     return this.methodList;
   }
 
+  isWritesThrough = false;
+  identityName: string | undefined;
+  displayName: string | undefined;
+
+  hideWhere(hide: (m: MemberAccessor) => boolean): this {
+    this.retain((m) => !hide(m));
+    return this;
+  }
+
+  copyOnRead(...names: string[]): this {
+    return this.change(names, (m) => m.with({ copyOnRead: true }));
+  }
+
+  writesThrough(): this {
+    if (this.kind !== 'struct') throw new Error(`${this.typeName} is not a struct; writesThrough applies to handle value types`);
+    this.isWritesThrough = true;
+    return this;
+  }
+
+  identity(name: string): this {
+    this.requireAll([name]);
+    this.identityName = name;
+    return this;
+  }
+
+  display(name: string): this {
+    this.requireAll([name]);
+    this.displayName = name;
+    return this;
+  }
+
+  mixedMap(name: string, spec: VirtualMapSpec<object> & { entryType(owner: object, key: string): TypeRef }, description?: string): this {
+    return this.map(name, spec, 'any', description);
+  }
+
   method<A extends unknown[]>(name: string, params: readonly ParamSpec[], returns: TypeRef | undefined, fn: (target: object, ...args: A) => unknown, description?: string): this {
     if (name.length === 0) throw new Error('method name required');
     // Arguments arrive coerced to the declared parameter types, in parameter order.
@@ -1173,7 +1284,7 @@ class MemberTableImpl implements MemberTable<object> {
   }
 
   map<V>(name: string, spec: VirtualMapSpec<object, V>, valueType: TypeRef = 'any', description?: string): this {
-    if (spec.set !== undefined && this.kind === 'struct') throw new Error(`virtual map setters on value type ${this.typeName} would write to a copy`);
+    if (spec.set !== undefined && this.kind === 'struct' && !this.isWritesThrough) throw new Error(`virtual map setters on value type ${this.typeName} would write to a copy`);
     const views = new WeakMap<object, VirtualMap>();
     const s = spec as VirtualMapSpec<object>;
     return this.add(name, {
@@ -1197,8 +1308,8 @@ class MemberTableImpl implements MemberTable<object> {
 
   add<V>(name: string, spec: VirtualMemberSpec<object, V>): this {
     if (name.length === 0) throw new Error('virtual member name required');
-    if (spec.set !== undefined && this.kind === 'struct') {
-      throw new Error(`virtual setters on value type ${this.typeName} would write to a copy; expose a writable member instead`);
+    if (spec.set !== undefined && this.kind === 'struct' && !this.isWritesThrough) {
+      throw new Error(`virtual setters on value type ${this.typeName} would write to a copy; expose a writable member instead (or mark the type writesThrough() if it is a handle)`);
     }
     const i = this.list.findIndex((m) => m.name === name);
     const order = i >= 0 ? this.list[i]!.order : this.list.reduce((mx, m) => Math.max(mx, m.order + 1), 0);

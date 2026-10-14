@@ -512,6 +512,187 @@
     ]
    },
    "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "select",
+      "fields": [
+       {
+        "name": "o",
+        "expr": {
+         "object": [
+          {
+           "key": "a",
+           "value": {
+            "lit": 1
+           }
+          },
+          {
+           "key": "a",
+           "value": {
+            "lit": 2
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "select",
+      "fields": [
+       {
+        "name": "o",
+        "expr": {
+         "object": [
+          {
+           "key": "",
+           "value": {
+            "lit": 1
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "select",
+      "fields": [
+       {
+        "name": "o",
+        "expr": {
+         "object": [
+          {
+           "key": "a",
+           "value": {
+            "lit": 1
+           },
+           "extra": 1
+          }
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "select",
+      "fields": [
+       {
+        "name": "o",
+        "expr": {
+         "object": {
+          "a": {
+           "lit": 1
+          }
+         }
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "select",
+      "fields": [
+       {
+        "name": "o",
+        "expr": {
+         "object": [
+          {
+           "key": "a"
+          }
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "select",
+      "fields": [
+       {
+        "name": "o",
+        "expr": {
+         "object": [],
+         "lit": 1
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "code": "invalid-plan"
   }
  ]
 }

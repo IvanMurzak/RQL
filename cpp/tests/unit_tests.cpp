@@ -443,6 +443,38 @@ struct Actor {
 struct Level {
     std::vector<std::unique_ptr<Actor>> Actors;
 };
+// Unreal-style parity fixtures (hooks, write-back, exclusion, pending-kill).
+struct FVector3 {
+    double X = 0, Y = 0, Z = 0;
+};
+struct UMaterialInstance {
+    std::string Name = "MI_Lamp";
+    double Roughness = 0.5;
+};
+struct NativeHandle {
+    int fd = 3;
+};
+struct UEmitter {
+    double StartSpeed = 1;
+};
+struct FMainModule {  // a handle struct: copies write through to the emitter
+    UEmitter* emitter = nullptr;
+};
+struct UStaticMeshComponent {
+    std::string Name = "Mesh";
+    FVector3 RelativeLocation;
+    UMaterialInstance* Material = nullptr;
+    NativeHandle Handle;
+    std::vector<NativeHandle> Handles{NativeHandle{}};
+    int DeprecatedFlags = 7;
+    bool bPendingKill = false;
+    UEmitter Emitter;
+    std::vector<FVector3> Path{FVector3{}};
+};
+struct UWorld {
+    std::vector<std::unique_ptr<UStaticMeshComponent>> Components;
+    std::vector<std::unique_ptr<UMaterialInstance>> Materials;
+};
 
 rql::QueryResult arun(rql::Engine& e, const std::string& plan, bool mutate = false) {
     rql::QueryOptions o;
@@ -885,6 +917,150 @@ void adapter_tests() {
         r = arun(bad, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"count"}]})J");
         auto r2 = arun(bad, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"select","fields":[{"name":"n","expr":{"path":["Name"]}}]}]})J");
         check(!r2.ok && first_code(r2) == "internal-error", "methods/maps: hide_methods with an unknown name → internal-error");
+    }
+
+    // ---- parity: host hooks, write-back, exclusion, pending-kill, object literals (spec §4.5, §13)
+    {
+        rql::TypeRegistry ur;
+        ur.structure<FVector3>("FVector").member("X", &FVector3::X).member("Y", &FVector3::Y).member("Z", &FVector3::Z);
+        ur.object<UMaterialInstance>("UMaterialInstance").member("Name", &UMaterialInstance::Name).member("Roughness", &UMaterialInstance::Roughness);
+        ur.structure<NativeHandle>("NativeHandle").member("fd", &NativeHandle::fd);
+        ur.object<UEmitter>("UEmitter").member("StartSpeed", &UEmitter::StartSpeed).no_identity();
+        ur.structure<FMainModule>("FMainModule");
+        ur.object<UStaticMeshComponent>("UStaticMeshComponent")
+            .member("Name", &UStaticMeshComponent::Name)
+            .member("RelativeLocation", &UStaticMeshComponent::RelativeLocation)
+            .member("Material", &UStaticMeshComponent::Material).reference()
+            .member("Handle", &UStaticMeshComponent::Handle)
+            .member("Handles", &UStaticMeshComponent::Handles)
+            .member("DeprecatedFlags", &UStaticMeshComponent::DeprecatedFlags)
+            .member("Path", &UStaticMeshComponent::Path)
+            .property("Main", [](UStaticMeshComponent& c) { return FMainModule{&c.Emitter}; })  // get-only owner
+            .constructible();
+        ur.object<UWorld>("UWorld").member("Components", &UWorld::Components).member("Materials", &UWorld::Materials);
+        UWorld world;
+        world.Materials.push_back(std::make_unique<UMaterialInstance>());
+        for (int i = 0; i < 2; ++i) {
+            world.Components.push_back(std::make_unique<UStaticMeshComponent>());
+            world.Components.back()->Name = "Mesh" + std::to_string(i);
+            world.Components.back()->Material = world.Materials[0].get();
+        }
+        rql::Engine ue(ur);
+        ue.add_object_source("w", &world);
+        ue.mutations().enabled = true;
+        ue.exclude_types([](const rql::TypeDescriptor& t) { return t.name == "NativeHandle"; });
+        rql::TypeRegistry* rp = &ur;
+        rql::TypeAdapter comp;
+        comp.target = ur.descriptor<UStaticMeshComponent>();
+        comp.is_alive = [rp](const rql::Value& v) -> std::optional<bool> {  // pending-kill objects read as null
+            auto* c = rql::value_as<UStaticMeshComponent>(*rp, v);
+            return c ? std::optional<bool>(!c->bPendingKill) : std::nullopt;
+        };
+        comp.configure_members = [](rql::MemberTable& t) {
+            t.hide_where([](const rql::MemberDescriptor& m) { return m.name.rfind("Deprecated", 0) == 0; });
+        };
+        ue.add_adapter(std::move(comp));
+        rql::TypeAdapter mainModule;
+        mainModule.target = ur.descriptor<FMainModule>();
+        mainModule.configure_members = [](rql::MemberTable& t) {
+            t.writes_through().property<FMainModule>(
+                "StartSpeed", [](FMainModule& m) { return m.emitter->StartSpeed; }, [](FMainModule& m, double v) { m.emitter->StartSpeed = v; },
+                nullptr);
+        };
+        ue.add_adapter(std::move(mainModule));
+
+        std::vector<rql::MutationRecord> before, after;
+        int before_calls = 0, after_calls = 0;
+        ue.mutations().before_write = [&](const std::vector<rql::MutationRecord>& recs) { ++before_calls; before = recs; };
+        ue.mutations().committed = [&](const std::vector<rql::MutationRecord>& recs) { ++after_calls; after = recs; };
+
+        // owner = the material when writing through the component's reference; the component for struct paths
+        auto r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Components"]},"stages":[{"op":"first","n":1},{"op":"set","assign":[{"target":{"path":["Material","Roughness"]},"value":{"lit":0.25}},{"target":{"path":["RelativeLocation","Z"]},"value":{"lit":100}}]}]})J", true);
+        bool owners = before.size() == 2 && after.size() == 2 && before[0].owner.ptr() == world.Materials[0].get() &&
+                      before[0].item.ptr() == world.Components[0].get() && before[0].member == "Material.Roughness" &&
+                      before[0].old_value.as_number() == 0.5 && before[0].new_value.as_number() == 0.25 &&
+                      before[1].owner.ptr() == world.Components[0].get();
+        check(r.ok && owners && world.Materials[0]->Roughness == 0.25 && world.Components[0]->RelativeLocation.Z == 100,
+              "parity: hook records carry owner = last reference object (material via component; component for struct path)");
+        // veto: before_write throws → permission-denied, nothing written, committed not called
+        ue.mutations().before_write = [&](const std::vector<rql::MutationRecord>&) { throw std::runtime_error("asset is checked out"); };
+        after_calls = 0;
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Materials"]},"stages":[{"op":"set","assign":[{"target":{"path":["Roughness"]},"value":{"lit":0.9}}]}]})J", true);
+        check(!r.ok && first_code(r) == "permission-denied" && world.Materials[0]->Roughness == 0.25 && after_calls == 0,
+              "parity: before_write veto → permission-denied, nothing changed");
+        ue.mutations().before_write = [&](const std::vector<rql::MutationRecord>&) { throw 42; };  // non-std exception contained
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Materials"]},"stages":[{"op":"set","assign":[{"target":{"path":["Roughness"]},"value":{"lit":0.9}}]}]})J", true);
+        check(!r.ok && first_code(r) == "permission-denied" && world.Materials[0]->Roughness == 0.25, "parity: non-std veto contained");
+        // dry-run: no hooks
+        ue.mutations().before_write = [&](const std::vector<rql::MutationRecord>&) { ++before_calls; };
+        before_calls = after_calls = 0;
+        r = run(ue, R"J({"rql":"0.1","source":{"path":["w","Materials"]},"stages":[{"op":"set","assign":[{"target":{"path":["Roughness"]},"value":{"lit":0.9}}]}]})J", true, true);
+        check(r.ok && r.dry_run && before_calls == 0 && after_calls == 0 && world.Materials[0]->Roughness == 0.25, "parity: no hooks on dry-run");
+        // committed failure → getter-threw warning, writes stay
+        ue.mutations().committed = [&](const std::vector<rql::MutationRecord>&) { throw std::runtime_error("SetDirty failed"); };
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Materials"]},"stages":[{"op":"set","assign":[{"target":{"path":["Roughness"]},"value":{"lit":0.75}}]}]})J", true);
+        bool warned = false;
+        for (auto& d : r.diagnostics)
+            if (d.code == "getter-threw" && d.severity == rql::Severity::Warning) warned = true;
+        check(r.ok && warned && world.Materials[0]->Roughness == 0.75, "parity: committed failure → getter-threw warning, writes applied");
+        ue.mutations().before_write = nullptr;
+        ue.mutations().committed = nullptr;
+
+        // writes-through handle: no write-back through the get-only owner, and handle values are mutation targets
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Components"]},"stages":[{"op":"first","n":1},{"op":"set","assign":[{"target":{"path":["Main","StartSpeed"]},"value":{"lit":5}}]}]})J", true);
+        check(r.ok && world.Components[0]->Emitter.StartSpeed == 5, "parity: writes-through handle via a get-only owner");
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Components"]},"stages":[{"op":"get","expr":{"path":["Main"]}},{"op":"set","assign":[{"target":{"path":["StartSpeed"]},"value":{"lit":7}}]}]})J", true);
+        check(r.ok && world.Components[0]->Emitter.StartSpeed == 7 && world.Components[1]->Emitter.StartSpeed == 7, "parity: writes-through values are mutation targets");
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Components"]},"stages":[{"op":"get","expr":{"path":["RelativeLocation"]}},{"op":"set","assign":[{"target":{"path":["X"]},"value":{"lit":1}}]}]})J", true);
+        check(!r.ok && first_code(r) == "invalid-plan", "parity: ordinary structs are still not mutation targets");
+
+        // hide_where + engine-wide type exclusion (type, element type)
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Components"]},"stages":[{"op":"first","n":1},{"op":"describe"}]})J");
+        bool hidden = r.ok && r.types;
+        if (hidden)
+            for (auto& m : r.types->at(0).find("members")->items()) {
+                const std::string& n = m.find("name")->as_string();
+                if (n == "DeprecatedFlags" || n == "Handle" || n == "Handles") hidden = false;
+            }
+        check(hidden, "parity: hide_where and type exclusion (member type and element type) drop members");
+
+        // pending-kill: reads as null, members missing (no getter), not a mutation target
+        world.Components[1]->bPendingKill = true;
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Components"]},"stages":[{"op":"select","fields":[{"name":"n","expr":{"path":["Name"]}},{"name":"dead","expr":{"op":"==","args":[{"path":[]},{"lit":null}]}},{"name":"self","expr":{"path":[]}}]}]})J");
+        check(r.ok && (*r.rows)[1][0].is_null() && (*r.rows)[1][1].as_bool() && (*r.rows)[1][2].is_null() && !(*r.rows)[0][1].as_bool(),
+              "parity: pending-kill object reads as null");
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Components"]},"stages":[{"op":"set","assign":[{"target":{"path":["Name"]},"value":{"lit":"x"}}]}]})J", true);
+        check(!r.ok && first_code(r) == "stale-ref" && world.Components[0]->Name == "Mesh0" && world.Components[1]->Name == "Mesh1",
+              "parity: pending-kill mutation target → stale-ref, nothing changed");
+        world.Components[1]->bPendingKill = false;
+
+        // object literals: struct construction with defaults, list of structs, unknown member
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Components"]},"stages":[{"op":"first","n":1},{"op":"set","assign":[{"target":{"path":["RelativeLocation"]},"value":{"object":[{"key":"Y","value":{"lit":2}}]}},{"target":{"path":["Path"]},"value":{"list":[{"object":[{"key":"X","value":{"lit":1}}]},{"object":[]}]}}]}]})J", true);
+        const auto& c0 = *world.Components[0];
+        check(r.ok && c0.RelativeLocation.X == 0 && c0.RelativeLocation.Y == 2 && c0.RelativeLocation.Z == 0 && c0.Path.size() == 2 &&
+                  c0.Path[0].X == 1 && c0.Path[1].X == 0,
+              "parity: object literals construct structs (unnamed members keep defaults), also inside lists");
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Components"]},"stages":[{"op":"first","n":1},{"op":"set","assign":[{"target":{"path":["RelativeLocation"]},"value":{"object":[{"key":"W","value":{"lit":2}}]}}]}]})J", true);
+        check(!r.ok && first_code(r) == "coercion-failed" && r.diagnostics[0].message.find("no member 'W'") != std::string::npos,
+              "parity: object literal with an unknown member → coercion-failed");
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Components"]},"stages":[{"op":"first","n":1},{"op":"set","assign":[{"target":{"path":["Material"]},"value":{"object":[{"key":"Roughness","value":{"lit":0.1}}]}}]}]})J", true);
+        check(!r.ok && first_code(r) == "coercion-failed" && r.diagnostics[0].message.find("cannot construct") != std::string::npos,
+              "parity: non-constructible object type → coercion-failed");
+    }
+
+    // constructed objects stored through raw pointers stay alive (engine-owned); dry-run constructs nothing lasting
+    {
+        auto gc = conformance::load_graph(graph_path);
+        rql::Engine ce(reg);
+        ce.add_object_source("g", gc.get());
+        ce.mutations().enabled = true;
+        auto r = arun(ce, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Peer"]},"value":{"object":[{"key":"Name","value":{"lit":"made"}},{"key":"Children","value":{"list":[{"object":[{"key":"Name","value":{"lit":"kid"}}]}]}}]}}]}]})J", true);
+        conformance::Node* peer = gc->Nodes[2]->Peer;
+        check(r.ok && peer && peer->Name == "made" && peer->Id == 0 && peer->Children.size() == 1 && peer->Children[0]->Name == "kid" &&
+                  !peer->Note && peer->Tags.empty() && peer->Parent == nullptr,
+              "parity: constructed Node defaults + nested construction into shared_ptr children");
+        r = arun(ce, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8"}]},"stages":[{"op":"select","fields":[{"name":"n","expr":{"path":["Peer","Children",{"index":0},"Name"]}}]}]})J");
+        check(r.ok && (*r.rows)[0][0].as_string() == "kid", "parity: constructed objects stay alive after the query");
     }
 
     // configuration bugs → internal-error

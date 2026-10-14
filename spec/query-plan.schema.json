@@ -16,6 +16,7 @@
       "oneOf": [
         { "$ref": "#/$defs/lit" },
         { "$ref": "#/$defs/list" },
+        { "$ref": "#/$defs/object" },
         { "$ref": "#/$defs/path" },
         { "$ref": "#/$defs/op" },
         { "$ref": "#/$defs/call" }
@@ -28,6 +29,11 @@
     "list": {
       "type": "object", "required": ["list"], "additionalProperties": false,
       "properties": { "list": { "type": "array", "items": { "$ref": "#/$defs/expr" } } }
+    },
+    "object": {
+      "description": "Object literal (semantics §4.5): ordered entries with unique non-empty keys.",
+      "type": "object", "required": ["object"], "additionalProperties": false,
+      "properties": { "object": { "type": "array", "items": { "type": "object", "required": ["key", "value"], "additionalProperties": false, "properties": { "key": { "type": "string", "minLength": 1 }, "value": { "$ref": "#/$defs/expr" } } } } }
     },
     "path": {
       "description": "Navigation from the current item ($), or from 'on' when present. An empty path is $ itself.",

@@ -1,5 +1,5 @@
 /** Type descriptors for `describe` and the host schema (capability-manifest.schema.json#typeDescriptor). */
-import type { JsonObject, QueryResult } from '@rql/contracts';
+import type { JsonObject, JsonValue, QueryResult } from '@rql/contracts';
 import { emptyStats } from './encoder.js';
 import type { Exec } from './exec.js';
 import { EnumType, friendlyName, unwrapNullable, type TypeInfo, type TypeModel, type TypeRef } from './types.js';
@@ -22,6 +22,7 @@ export function typeDescriptor(model: TypeModel, info: TypeInfo, showWritable: b
   if (info.base !== undefined) o.base = info.base.shortName;
   o.kind = info.kind === 'enum' ? 'enum' : info.kind === 'struct' ? 'struct' : 'object';
   if (info.description !== undefined) o.description = info.description;
+  if (info.literalSchema !== undefined) o.literal = JSON.parse(JSON.stringify(info.literalSchema)) as JsonValue;
   if (info.enumType !== undefined) {
     o.values = info.enumType.values.map((v) => v.name);
     o.members = [];

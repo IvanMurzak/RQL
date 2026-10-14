@@ -45,6 +45,8 @@ struct AdaptedType {
     std::vector<MethodDescriptor> methods;                                  // valid when owns_members (host + adapter methods)
     bool has_explicit_only = false;
     std::vector<MemberDescriptor> implicit;                                 // members minus explicit-only (when any)
+    bool writes_through = false;                                            // handle struct: no write-back (spec §13)
+    std::optional<Json> literal_schema;                                     // from the most specific adapter providing one
 };
 
 /// Cheap handle: the descriptor plus its adaptation, if any. Without adapters every accessor reads the
@@ -65,6 +67,8 @@ public:
     const std::vector<MethodDescriptor>& methods() const { return a_ && a_->owns_members ? a_->methods : t_->methods; }
     const std::string& description() const { return a_ ? a_->description : t_->description; }
     const std::vector<const TypeAdapter*>& adapters() const { return a_ ? a_->adapters : empty(); }
+    bool writes_through() const { return a_ && a_->writes_through; }
+    const Json* literal_schema() const { return a_ && a_->literal_schema ? &*a_->literal_schema : nullptr; }
     const std::vector<const TypeAdapter*>& with(Capability c) const { return a_ ? a_->by_cap[static_cast<size_t>(c)] : empty(); }
 
 private:
@@ -79,7 +83,7 @@ private:
 std::vector<const TypeAdapter*> applicable_adapters(const std::vector<std::unique_ptr<TypeAdapter>>& all, const TypeDescriptor& type);
 /// nullptr when no adapter applies (the descriptor is then used directly).
 std::unique_ptr<AdaptedType> build_adapted(TypeRegistry& registry, const TypeDescriptor& type,
-                                           const std::vector<std::unique_ptr<TypeAdapter>>& adapters);
+                                           const std::vector<std::unique_ptr<TypeAdapter>>& adapters, const TypeExclusion& excluded);
 
 /// First non-empty answer of `f(adapter)` over an adapter list.
 template <class F>
@@ -163,6 +167,15 @@ public:
         return view_with(t, c);
     }
     bool has_capability(Capability c) const { return caps_[static_cast<size_t>(c)]; }
+    /// A destroyed object (a liveness adapter says not alive) reads as null everywhere (spec §13).
+    bool is_dead(const Value& v) {
+        if (!caps_[static_cast<size_t>(Capability::IsAlive)] || !(v.is_object() || v.is_struct())) return false;
+        auto alive = first_answer(adapters_for(v, Capability::IsAlive), [&](const TypeAdapter& a) { return a.is_alive(v); });
+        return alive && !*alive;
+    }
+    /// Objects constructed from object literals during this query (kept alive; adopted by the engine on commit).
+    std::vector<std::shared_ptr<void>> constructed;
+    void adopt_constructed();
     /// Stable reference string (adapter stable ids, id member, session handles).
     std::string ref_of(const Value& v);
     /// Resolve a reference; fallback-search nodes count as visits; results cached per query.

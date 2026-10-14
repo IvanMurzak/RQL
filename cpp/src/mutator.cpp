@@ -24,10 +24,17 @@ std::vector<Value> targets(Exec& x, Stream& stream, const std::string& op) {
         if (it.value.is_null()) continue;
         if (it.value.is_row())
             throw RqlException("invalid-plan", "'" + op + "' needs objects, not projected rows; remove 'select' before '" + op + "'");
+        if (x.is_dead(it.value))
+            throw RqlException("stale-ref", "'" + op + "' target " + x.ref_of(it.value) + " is a destroyed object; nothing was changed");
         if (it.value.is_entry())
             throw RqlException("invalid-plan", "'" + op + "' cannot target map entries; set the map member with a key path instead (Stats[\"key\"] = ...)");
         const Value& v = it.value;
-        if (v.is_struct() || v.is_number() || v.is_string() || v.is_bool() || v.is_enum())
+        bool handle = false;
+        if (v.is_struct()) {
+            const TypeView tv = x.view(v.type());
+            handle = tv.writes_through();  // a handle to shared state: its copies write through (spec §13)
+        }
+        if ((v.is_struct() && !handle) || v.is_number() || v.is_string() || v.is_bool() || v.is_enum())
             throw RqlException("invalid-plan",
                                "'" + op + "' needs objects with identity; '" + type_name_of(v) + "' items are value copies, so the change would be lost",
                                "set the member from its owner instead, e.g. objects | where ... | set Transform.Position.x = 0");
@@ -125,6 +132,7 @@ Slot slot_of(Exec& x, const Value& container, const Segment& seg, const std::str
         const TypeDescriptor* mt = container.map().type();
         s.type = mt ? mt->element : nullptr;
         s.nullable = mt ? mt->element_nullable : true;
+        if (const TypeDescriptor* et = container.map().entry_type(key)) s.type = et;  // mixed-type virtual maps (spec §13)
         return s;
     }
     if (container.is_list()) {
@@ -186,23 +194,58 @@ void check_writable(Exec& x, const Slot& slot, const std::string& label, const V
         throw RqlException("permission-denied", "'" + label + "' on " + x.ref_of(root) + " is not writable" + what + " (denied by host policy)");
 }
 
-Slot resolve(Exec& x, const Value& root, const std::vector<Segment>& segs, Value& container) {
+/// Whether a container read through `slot` is a copy that must be assigned back after writing into it:
+/// members whose getter returns a copy, and value types unless they are write-through handles (spec §13).
+bool needs_write_back(Exec& x, const Slot& slot, const Value& container) {
+    if (slot.kind == Slot::Member && slot.member->copy_on_read) return true;
+    if (!container.is_struct()) return false;
+    const TypeView tv = x.view(container.type());
+    return !tv.writes_through();
+}
+
+/// The value read through a copy-on-read member, as a private writable copy (lists / maps; structs are
+/// copies already), so writes into it can be assigned back through the member's setter.
+Value read_through(const Slot& slot, const Value& next) {
+    if (slot.kind != Slot::Member || !slot.member->copy_on_read) return next;
+    if (next.is_list()) {
+        std::vector<Value> items;
+        elements(next, items);
+        return Value::list(std::make_shared<OwnedList>(std::move(items), true));
+    }
+    if (next.is_map()) {
+        std::vector<std::pair<Value, Value>> entries;
+        next.map().for_each([&](const Value& k, const Value& v) {
+            entries.emplace_back(k, v);
+            return true;
+        });
+        return Value::map(std::make_shared<OwnedMap>(next.map().type(), std::move(entries), false, true));
+    }
+    return next;
+}
+
+/// Resolve a set target; `owner` is the object whose state changes: the last reference object on the
+/// path (walking up through containers that are written back into their parents).
+Slot resolve(Exec& x, const Value& root, const std::vector<Segment>& segs, Value& container, Value& owner) {
     std::string label = raw_label(segs);
     Value cur = root;
     std::vector<std::pair<Slot, Value>> chain;
     for (size_t i = 0; i < segs.size(); ++i) {
         Slot slot = slot_of(x, cur, segs[i], label);
         if (i + 1 == segs.size()) {
-            // Every value-type copy on the way is written back into its parent: those parent slots
-            // must be writable and allowed too.
+            // Every copy on the way (value type or copy-on-read member) is written back into its parent:
+            // those parent slots must be writable and allowed too.
             for (size_t j = chain.size(); j-- > 0;) {
-                if (!chain[j].second.is_struct()) break;
-                check_writable(x, chain[j].first, label, root, ": '" + segs[j].to_string() + "' is a value type held by a non-writable member");
+                if (!needs_write_back(x, chain[j].first, chain[j].second)) break;
+                check_writable(x, chain[j].first, label, root,
+                               ": '" + segs[j].to_string() + "' is a copy (value type or copy-on-read member) written back through a non-writable member");
             }
             container = cur;
+            owner = cur;
+            for (size_t j = chain.size(); j-- > 0 && needs_write_back(x, chain[j].first, chain[j].second);)
+                owner = j == 0 ? root : chain[j - 1].second;
             return slot;
         }
-        Value next = safe_get(slot, cur, label);
+        Value next = read_through(slot, safe_get(slot, cur, label));
         if (next.is_null() || next.is_missing())
             throw RqlException("coercion-failed", "cannot set '" + label + "': '" + segs[i].to_string() + "' is null on " + x.ref_of(root));
         chain.emplace_back(slot, next);
@@ -221,12 +264,12 @@ void assign(Exec& x, const Value& root, const std::vector<Segment>& segs, const 
         Slot slot = slot_of(x, cur, segs[i], label);
         slots.push_back(slot);
         if (i + 1 == segs.size()) break;
-        cur = slot.get(cur);
+        cur = read_through(slot, slot.get(cur));
         containers.push_back(cur);
     }
     slots.back().set(containers.back(), value);
     for (size_t j = containers.size() - 1; j >= 1; --j) {
-        if (!containers[j].is_struct()) break;
+        if (!needs_write_back(x, slots[j - 1], containers[j])) break;
         slots[j - 1].set(containers[j - 1], containers[j]);
     }
 }
@@ -237,7 +280,108 @@ struct PlannedWrite {
     std::string label;
     Value old_value;
     Value new_value;
+    Value owner;
 };
+
+/// Host veto point after planning, before any write (not on dry-run): any exception → permission-denied.
+void before_write(Exec& x, const std::function<std::vector<MutationRecord>()>& records) {
+    const MutationHook& hook = x.engine.mutations().before_write;
+    if (!hook || x.options.dry_run) return;
+    std::string why;
+    try {
+        hook(records());
+        return;
+    } catch (const std::exception& ex) {
+        why = ex.what();
+    } catch (...) {
+        why = "non-standard exception";
+    }
+    throw RqlException("permission-denied", "the host rejected the change before anything was written: " + why);
+}
+
+/// Host notification after the writes succeeded (not on dry-run): any exception → getter-threw warning.
+void committed(Exec& x, const std::function<std::vector<MutationRecord>()>& records) {
+    const MutationHook& hook = x.engine.mutations().committed;
+    if (!hook || x.options.dry_run) return;
+    std::string why;
+    try {
+        hook(records());
+        return;
+    } catch (const std::exception& ex) {
+        why = ex.what();
+    } catch (...) {
+        why = "non-standard exception";
+    }
+    x.diagnostics.push_back(Diagnostic::warning("getter-threw", "host commit hook threw: " + why + "; the writes were applied"));
+}
+
+/// Build `target` (object or struct) from an object literal (spec §4.5): concrete type (`"$type"`),
+/// construction, assignment of the named members (coerced recursively and validated).
+std::optional<Value> construct(Exec& x, const Value& literal, const TypeDescriptor* target, std::string& why) {
+    const TypeDescriptor* concrete = target;
+    Value type_name;
+    if (literal.map().find(Value::string("$type"), type_name) == MapLookup::Found) {
+        if (!type_name.is_string()) {
+            why = "\"$type\" must be a type name string";
+            return std::nullopt;
+        }
+        std::vector<const TypeDescriptor*> hits;
+        for (const TypeDescriptor* t : x.types.registered())
+            if (t->kind == target->kind && t->derives_from(target) && t->name == type_name.as_string()) hits.push_back(t);
+        if (hits.empty()) {
+            why = "no concrete type named '" + type_name.as_string() + "' derives from " + target->friendly_name();
+            return std::nullopt;
+        }
+        if (hits.size() > 1) {
+            why = "'" + type_name.as_string() + "' is ambiguous";
+            return std::nullopt;
+        }
+        concrete = hits[0];
+    }
+    if (!concrete->create) {
+        why = "cannot construct " + concrete->friendly_name() + " (register it constructible(), or add an adapter that coerces object literals)";
+        return std::nullopt;
+    }
+    std::shared_ptr<void> data = concrete->create();
+    Value instance = concrete->kind == TypeKind::Struct ? Value::structure(concrete, data) : Value::object(concrete, data.get(), data);
+    const TypeView view = x.view(concrete);
+    bool ok = true;
+    literal.map().for_each([&](const Value& k, const Value& v) {
+        if (k.is_string() && k.as_string() == "$type") return true;
+        const std::string name = to_text(k);
+        const MemberDescriptor* m = view.find(name);
+        if (!m) {
+            why = "no member '" + name + "' on " + concrete->name;
+        } else if (!view.member_writable(*m)) {
+            why = "member '" + m->name + "' of " + concrete->name + " is read-only";
+        } else {
+            std::string w;
+            auto mv = coerce(x, v, m->type, m->nullable, w);
+            if (!mv) {
+                why = "'" + m->name + "': " + w;
+            } else {
+                std::string rejected = m->validate ? m->validate(instance.ptr(), *mv) : std::string();
+                if (!rejected.empty()) {
+                    why = "'" + m->name + "': " + rejected;
+                } else {
+                    try {
+                        m->setter(instance.ptr(), *mv);
+                        return true;
+                    } catch (const std::exception& ex) {
+                        why = "'" + m->name + "': " + ex.what();
+                    } catch (...) {
+                        why = "'" + m->name + "': setter threw";
+                    }
+                }
+            }
+        }
+        ok = false;
+        return false;
+    });
+    if (!ok) return std::nullopt;
+    if (instance.is_object()) x.constructed.push_back(data);  // kept alive for raw-pointer links (adopted on commit)
+    return instance;
+}
 
 }  // namespace
 
@@ -267,6 +411,14 @@ std::optional<Value> coerce(Exec& x, const Value& v, const TypeDescriptor* targe
                 why = reason.empty() ? "rejected by " + ad->name : reason;
                 return std::nullopt;
             case AdapterOutcome::NotHandled: break;
+        }
+    }
+    if (v.is_map() && v.map().object_literal()) {
+        // Object literals (spec §4.5): maps are built entry by entry below; objects / structs are constructed.
+        if (target->kind == TypeKind::Object || target->kind == TypeKind::Struct) return construct(x, v, target, why);
+        if (target->kind != TypeKind::Map) {
+            why = "an object literal cannot become " + target->friendly_name();
+            return std::nullopt;
         }
     }
     switch (target->kind) {
@@ -384,8 +536,8 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
                 throw RqlException(nv.error_code() == "stale-ref" ? "stale-ref" : "coercion-failed",
                                    "value for '" + a.label + "' on " + x.ref_of(item) + " failed: " +
                                        (nv.error_detail().empty() ? nv.error_code() : nv.error_detail()));
-            Value container;
-            Slot slot = resolve(x, item, a.target->segments, container);
+            Value container, owner;
+            Slot slot = resolve(x, item, a.target->segments, container, owner);
             check_writable(x, slot, a.label, item, "");
             std::string why;
             auto coerced = coerce(x, nv, slot.type, slot.nullable, why);
@@ -401,10 +553,16 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
                     throw RqlException("coercion-failed", "cannot assign " + describe_value(nv) + " to '" + a.label + "' on " +
                                                               x.ref_of(item) + ": " + rejected);
             }
-            writes.push_back({item, &a.target->segments, a.label, snapshot(safe_get(slot, container, a.label)), *coerced});
+            writes.push_back({item, &a.target->segments, a.label, snapshot(safe_get(slot, container, a.label)), *coerced, owner});
         }
     }
 
+    auto records = [&writes]() {
+        std::vector<MutationRecord> out;
+        for (auto& w : writes) out.push_back({w.item, w.owner, w.label, w.old_value, w.new_value, nullptr});
+        return out;
+    };
+    before_write(x, records);
     if (!x.options.dry_run) {
         size_t applied = 0;
         std::string failure;
@@ -441,7 +599,9 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
             if (!self_restored) rolled += "; restoring '" + writes[applied].label + "' itself also failed, so it may be partially modified";
             throw RqlException("coercion-failed", "write '" + writes[applied].label + "' failed (" + failure + "); " + rolled);
         }
+        x.adopt_constructed();  // objects built from object literals now live in the graph
     }
+    committed(x, records);
 
     std::vector<std::vector<Value>> rows;
     for (auto& w : writes) rows.push_back({Value::string(x.ref_of(w.item)), Value::string(w.label), w.old_value, w.new_value});
@@ -532,21 +692,42 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
         planned.push_back({item, chosen, std::move(coerced)});
     }
 
+    auto call_records = [&planned](size_t count) {
+        std::vector<MutationRecord> out;
+        for (size_t k = 0; k < count && k < planned.size(); ++k)
+            out.push_back({planned[k].item, planned[k].item, planned[k].item.type()->signature(*planned[k].method), Value(), Value(),
+                           planned[k].method});
+        return out;
+    };
+    before_write(x, [&] { return call_records(planned.size()); });
     std::vector<std::vector<Value>> rows;
     size_t done = 0;
     for (auto& p : planned) {
         Value result = Value::string("(dry-run)");
         if (!x.options.dry_run) {
+            std::string failure;
+            bool failed = false;
             try {
                 result = p.method->invoke(p.item.ptr(), p.args);
             } catch (const std::exception& ex) {
-                throw RqlException("getter-threw", p.method->name + " on " + x.ref_of(p.item) + " threw: " + ex.what() + "; " +
+                failed = true;
+                failure = ex.what();
+            } catch (...) {
+                failed = true;
+                failure = "non-standard exception";
+            }
+            if (failed) {
+                // Completed calls are not rolled back, so the host still learns about them.
+                committed(x, [&] { return call_records(done); });
+                throw RqlException("getter-threw", p.method->name + " on " + x.ref_of(p.item) + " threw: " + failure + "; " +
                                                        std::to_string(done) + " earlier call(s) completed and are NOT rolled back");
             }
         }
         ++done;
         rows.push_back({Value::string(x.ref_of(p.item)), Value::string(p.item.type()->signature(*p.method)), result});
     }
+    if (!x.options.dry_run) x.adopt_constructed();
+    committed(x, [&] { return call_records(planned.size()); });
     QueryResult r = enc.rows({"$ref", "method", "result"}, rows);
     r.dry_run = x.options.dry_run;
     return r;

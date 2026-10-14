@@ -52,7 +52,7 @@ Exec::Exec(Engine& e, const Budgets& b, const QueryOptions& o, const QueryPlan& 
     max_output_bytes = b.max_output_bytes.value_or(d.max_output_bytes);
     // Requests may change the per-request limit, but never beyond the host's hard ceiling.
     max_mutation_targets = std::min(b.max_mutation_targets.value_or(e.mutations().max_targets), e.mutations().hard_max_targets);
-    has_adapters_ = e.has_adapters();
+    has_adapters_ = e.adapts();
     caps_ = e.caps_;
 }
 
@@ -98,6 +98,7 @@ bool uses_meta(const Expr& e, const std::string& meta) {
             [[fallthrough]];
         case ExprKind::Op:
         case ExprKind::List:
+        case ExprKind::Object:
             for (auto& a : e.args)
                 if (uses_meta(*a, meta)) return true;
             return false;

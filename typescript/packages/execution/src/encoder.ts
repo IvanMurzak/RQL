@@ -75,6 +75,7 @@ export class Encoder {
 
   encode(v: unknown, depth = 0): JsonValue {
     if (v === null || v === undefined || v === MISSING || v === UNKNOWN) return null;
+    if (this.x.types.isDead(v)) return null; // destroyed objects read as null (spec §13)
     if (typeof v === 'object' && this.x.types.hasCapability('encode')) {
       const adapters = this.x.types.infoOf(v).adapterSet.encode;
       if (adapters.length > 0) {

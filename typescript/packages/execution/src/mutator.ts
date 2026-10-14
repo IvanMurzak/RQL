@@ -4,6 +4,7 @@ import { findMapKey, isMapLike, mapGet, type MapLike } from './collections.js';
 import { describeValue, type Compiler, type Eval } from './compiler.js';
 import type { Encoder } from './encoder.js';
 import { errorMessage, type Exec } from './exec.js';
+import type { MutationRecord } from './engine.js';
 import type { Item } from './pipeline.js';
 import { adapterName } from './adapters.js';
 import { closest } from './suggest.js';
@@ -11,6 +12,7 @@ import {
   EnumType,
   EnumValue,
   StringMap,
+  VirtualMap,
   friendlyName,
   isNullable,
   unwrapNullable,
@@ -21,10 +23,12 @@ import {
   type TypeModel,
   type TypeRef,
 } from './types.js';
-import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, isAbsent, toNumber } from './values.js';
+import { ErrorValue, MISSING, MapEntry, ObjectValue, RowValue, UNKNOWN, isAbsent, toNumber } from './values.js';
 
 interface PlannedWrite {
   item: object;
+  /** The last reference object on the written path (host hooks mark it dirty). */
+  owner: object;
   segments: readonly Segment[];
   label: string;
   old: unknown;
@@ -163,11 +167,13 @@ export class Mutator {
     for (const it of stream) {
       if (it.value === null || it.value === undefined) continue;
       if (it.value instanceof RowValue) throw new RqlError('invalid-plan', `'${op}' needs objects, not projected rows; remove 'select' before '${op}'`);
+      if (this.x.types.isDead(it.value)) throw new RqlError('stale-ref', `'${op}' target ${this.refOf(it.value)} is a destroyed object; nothing was changed`);
       if (it.value instanceof MapEntry) {
         throw new RqlError('invalid-plan', `'${op}' cannot target map entries; set the map member with a key path instead (Stats["key"] = ...)`);
       }
       const v = it.value;
-      if (typeof v !== 'object' || v instanceof EnumValue || v instanceof Date || this.x.types.infoOf(v).kind === 'struct') {
+      const vi = typeof v === 'object' ? this.x.types.infoOf(v) : undefined;
+      if (vi === undefined || v instanceof EnumValue || v instanceof Date || (vi.kind === 'struct' && !vi.writesThrough)) {
         throw new RqlError(
           'invalid-plan',
           `'${op}' needs objects with identity; '${this.x.types.infoOf(v).shortName}' items are value copies, so the change would be lost`,
@@ -186,6 +192,39 @@ export class Mutator {
       }
     }
     return list;
+  }
+
+  /** Host veto point after planning, before any write; a throwing hook aborts with nothing changed. */
+  private before(records: () => readonly MutationRecord[]): void {
+    const hook = this.x.engine.mutations.beforeWrite;
+    if (hook === undefined || this.x.options.dryRun) return;
+    try {
+      hook(records());
+    } catch (e) {
+      throw new RqlError('permission-denied', `the host rejected the change before anything was written: ${errorMessage(e)}`);
+    }
+  }
+
+  /** Host notification after the writes; a throwing hook becomes a getter-threw warning (the writes stay). */
+  private committed(records: () => readonly MutationRecord[]): void {
+    const hook = this.x.engine.mutations.committed;
+    if (hook === undefined || this.x.options.dryRun) return;
+    try {
+      hook(records());
+    } catch (e) {
+      const name = e instanceof Error ? e.name : typeof e;
+      this.x.warn('getter-threw', `host commit hook threw ${name}: ${errorMessage(e)}; the writes were applied`);
+    }
+  }
+
+  /**
+   * Whether a container read through `slot` is a copy that must be assigned back after writing into it:
+   * structs (unless handles that write through) and copy-on-read members (spec §13).
+   */
+  private needsWriteBack(slot: Slot, container: object): boolean {
+    if (slot instanceof MemberSlot && slot.m.copyOnRead) return true;
+    const info = this.x.types.infoOf(container);
+    return info.kind === 'struct' && !info.writesThrough;
   }
 
   private refOf(v: unknown): string {
@@ -211,17 +250,19 @@ export class Mutator {
           throw new RqlError(nv.code === 'stale-ref' ? 'stale-ref' : 'coercion-failed', `value for '${lbl}' on ${this.refOf(it.value)} failed: ${nv.detail ?? nv.code}`);
         }
         const item = it.value as object;
-        const { slot, container } = this.resolve(item, target.segments);
+        const { slot, container, owner } = this.resolve(item, target.segments);
         if (!slot.writable(x)) throw new RqlError(slot.denyCode, `'${lbl}' on ${this.refOf(item)} is not writable${slot.denyReason}`);
         const co = coerce(x.types, nv, slot.type);
         if (!co.ok) throw new RqlError('coercion-failed', `cannot assign ${describeValue(nv)} to '${lbl}' (${friendlyName(slot.type, x.types)}): ${co.why}`);
         // Validation runs while the mutation is planned, before any write (spec §13).
         const rejected = slot.validate(container, co.value);
         if (rejected !== undefined) throw new RqlError('coercion-failed', `cannot assign ${describeValue(nv)} to '${lbl}' on ${this.refOf(item)}: ${rejected}`);
-        writes.push({ item, segments: target.segments, label: lbl, old: safeGet(slot, container, lbl), new: co.value });
+        writes.push({ item, owner, segments: target.segments, label: lbl, old: safeGet(slot, container, lbl), new: co.value });
       }
     }
 
+    const records = (): MutationRecord[] => writes.map((w) => ({ item: w.item, owner: w.owner, member: w.label, old: w.old, new: w.new }));
+    this.before(records);
     if (!x.options.dryRun) {
       let applied = 0;
       try {
@@ -252,6 +293,7 @@ export class Mutator {
       }
     }
 
+    this.committed(records);
     const rows = writes.map((w) => [x.engine.refOf(w.item), w.label, w.old, w.new]);
     const r = this.enc.rows(['$ref', 'member', 'old', 'new'], rows);
     if (x.options.dryRun) r.dryRun = true;
@@ -271,7 +313,8 @@ export class Mutator {
       // Member syntax addresses an existing key case-insensitively, like reads (spec §3); new keys keep the given spelling.
       const k = key === undefined ? undefined : coerceKey(container as MapLike, key, args?.key ?? 'any', seg.kind === 'member');
       if (k === undefined) throw new RqlError('coercion-failed', `invalid map key in '${lbl}'`);
-      return new MapSlot(k, args?.of ?? 'any');
+      const entryType = container instanceof VirtualMap ? container.entryType(String(k)) : undefined;
+      return new MapSlot(k, entryType ?? args?.of ?? 'any');
     }
     if (info.isList) {
       if (seg.kind !== 'index') throw new RqlError('invalid-plan', `'${lbl}': lists can only be indexed ([i]) in set targets`);
@@ -291,7 +334,7 @@ export class Mutator {
     return new MemberSlot(info, m);
   }
 
-  private resolve(root: object, segs: readonly Segment[]): { slot: Slot; container: object } {
+  private resolve(root: object, segs: readonly Segment[]): { slot: Slot; container: object; owner: object } {
     const lbl = segs.map(segmentToString).join('');
     let cur: object = root;
     let declared: TypeRef = 'any';
@@ -299,16 +342,21 @@ export class Mutator {
     for (let i = 0; i < segs.length; i++) {
       const slot = this.slotOf(cur, declared, segs[i]!, lbl);
       if (i === segs.length - 1) {
-        // Every value-type (struct) container on the way is written back into its parent: those
+        // Every copy on the way (struct or copy-on-read member) is written back into its parent: those
         // parent slots must be writable and allowed too.
-        for (let j = chain.length - 1; j >= 0; j--) {
+        let j = chain.length - 1;
+        for (; j >= 0 && this.needsWriteBack(chain[j]!.slot, chain[j]!.value); j--) {
           const c = chain[j]!;
-          if (this.x.types.infoOf(c.value).kind !== 'struct') break;
           if (!c.slot.writable(this.x)) {
-            throw new RqlError(c.slot.denyCode, `'${lbl}' on ${this.refOf(root)} is not writable: '${segmentToString(segs[j]!)}' is a value type held by a non-writable member${c.slot.denyReason}`);
+            throw new RqlError(
+              c.slot.denyCode,
+              `'${lbl}' on ${this.refOf(root)} is not writable: '${segmentToString(segs[j]!)}' is a copy (value type or copy-on-read member) that must be written back through a non-writable member${c.slot.denyReason}`,
+            );
           }
         }
-        return { slot, container: cur };
+        // The owner whose state changes: the first container above the copies that are written back.
+        const owner = j < 0 ? root : chain[j]!.value;
+        return { slot, container: cur, owner };
       }
       const next = safeGet(slot, cur, lbl);
       if (next === null || next === MISSING || typeof next !== 'object') {
@@ -338,9 +386,8 @@ export class Mutator {
     }
     slots[slots.length - 1]!.set(containers[containers.length - 1]!, value);
     for (let j = containers.length - 1; j >= 1; j--) {
-      if (this.x.types.infoOf(containers[j]).kind !== 'struct') break;
-      // JS structs are references (already updated in place); writing back also covers hosts whose
-      // getters return copies. Writability was checked in resolve().
+      if (!this.needsWriteBack(slots[j - 1]!, containers[j]!)) break;
+      // Writability was checked in resolve().
       slots[j - 1]!.set(containers[j - 1]!, containers[j]);
     }
   }
@@ -405,6 +452,9 @@ export class Mutator {
       planned.push({ item, ...chosen });
     }
 
+    const callRecords = (n = planned.length): MutationRecord[] =>
+      planned.slice(0, n).map((p) => ({ item: p.item, owner: p.item, member: p.method.signature(x.types), old: undefined, new: undefined, method: p.method }));
+    this.before(callRecords);
     const rows: unknown[][] = [];
     let done = 0;
     for (const p of planned) {
@@ -415,12 +465,16 @@ export class Mutator {
           if (result === undefined) result = null;
         } catch (e) {
           const name = e instanceof Error ? e.name : typeof e;
+          // Completed calls are not rolled back, so the host still learns about them.
+          const completed = done;
+          this.committed(() => callRecords(completed));
           throw new RqlError('getter-threw', `${p.method.name} on ${x.engine.refOf(p.item)} threw ${name}: ${errorMessage(e)}; ${done} earlier call(s) completed and are NOT rolled back`);
         }
       }
       done++;
       rows.push([x.engine.refOf(p.item), p.method.signature(x.types), result]);
     }
+    this.committed(callRecords);
     const r = this.enc.rows(['$ref', 'method', 'result'], rows);
     if (x.options.dryRun) r.dryRun = true;
     return r;
@@ -494,6 +548,9 @@ export function coerce(model: TypeModel, v: unknown, target: TypeRef): Coerced {
     return { ok: false, why: 'null is not allowed for ' + friendlyName(target, model) };
   }
   if (t === 'any') return { ok: true, value: v };
+  if (v instanceof ObjectValue && (typeof t !== 'object' || t instanceof EnumType || t.kind === 'list')) {
+    return { ok: false, why: `an object literal cannot become ${friendlyName(target, model)}` };
+  }
   if (t instanceof EnumType) {
     const fail: Coerced = { ok: false, why: 'expected one of ' + t.values.map((e) => e.name).join(', ') };
     if (v instanceof EnumValue) return v.type === t ? { ok: true, value: v } : fail;
@@ -543,6 +600,7 @@ export function coerce(model: TypeModel, v: unknown, target: TypeRef): Coerced {
       return { ok: true, value: same ? v : items };
     }
     case 'map': {
+      if (v instanceof ObjectValue) return buildMap(model, v, t.key, t.of, target);
       if (!isMapLike(v)) return { ok: false, why: `expected ${friendlyName(target, model)}` };
       const out = new Map<unknown, unknown>();
       for (const [k, el] of v.entries()) {
@@ -566,6 +624,7 @@ export function coerce(model: TypeModel, v: unknown, target: TypeRef): Coerced {
           }
           return { ok: true, value: r.value };
         }
+        if (v instanceof ObjectValue) return construct(model, v, t.ctor, ti);
         return { ok: false, why: `expected ${friendlyName(target, model)}` };
       }
       // Structs have value semantics: assign a copy.
@@ -575,4 +634,66 @@ export function coerce(model: TypeModel, v: unknown, target: TypeRef): Coerced {
     default:
       return { ok: false, why: `expected ${friendlyName(target, model)}` };
   }
+}
+
+/** Builds a map from an object literal entry by entry (keys coerced to the key type, values to the value type). */
+function buildMap(model: TypeModel, literal: ObjectValue, keyType: TypeRef, valueType: TypeRef, target: TypeRef): Coerced {
+  const out = new Map<unknown, unknown>();
+  const kt = unwrapNullable(keyType);
+  for (const [k, el] of literal) {
+    let key: unknown = k;
+    if (kt === 'int' || kt === 'number') {
+      const n = Number(k);
+      if (k.trim() === '' || Number.isNaN(n) || (kt === 'int' && !Number.isInteger(n))) return { ok: false, why: `invalid key '${k}' for ${friendlyName(target, model)}` };
+      key = n;
+    } else if (kt instanceof EnumType) {
+      const ev = kt.parse(k);
+      if (ev === undefined || !kt.isDefined(ev)) return { ok: false, why: `invalid key '${k}' for ${friendlyName(target, model)}` };
+      key = ev.value;
+    }
+    const co = coerce(model, el === undefined ? null : el, valueType);
+    if (!co.ok) return { ok: false, why: `'${k}': ${co.why}` };
+    out.set(key, rawValue(co.value, valueType));
+  }
+  return { ok: true, value: out };
+}
+
+/**
+ * Constructs the target class from an object literal (spec §4.5): the concrete type is the target or the
+ * registered subclass named by "$type"; every other key must name a writable member, whose value is coerced
+ * recursively and validated. Members not named keep the constructor's defaults.
+ */
+function construct(model: TypeModel, literal: ObjectValue, ctor: Ctor, ti: TypeInfo | undefined): Coerced {
+  let concrete = ctor;
+  if (literal.has('$type')) {
+    const tn = literal.get('$type');
+    if (typeof tn !== 'string') return { ok: false, why: '"$type" must be a type name string' };
+    const hits = model.registeredTypes.filter((c) => (c === ctor || c.prototype instanceof ctor) && (c.name === tn || model.infoForCtor(c)?.shortName === tn));
+    if (hits.length === 0) return { ok: false, why: `no registered type named '${tn}' derives from ${ti?.shortName ?? ctor.name}` };
+    if (hits.length > 1) return { ok: false, why: `'${tn}' is ambiguous: ${hits.map((c) => c.name).join(', ')}` };
+    concrete = hits[0]!;
+  }
+  let instance: object;
+  try {
+    instance = new (concrete as unknown as new () => object)();
+  } catch (e) {
+    return { ok: false, why: `cannot construct ${concrete.name} (needs a constructor without required arguments, or an adapter that coerces object literals): ${errorMessage(e)}` };
+  }
+  const ci = model.infoOf(instance);
+  for (const [key, value] of literal) {
+    if (key === '$type') continue;
+    const m = ci.find(key, instance);
+    if (m === undefined) return { ok: false, why: `no member '${key}' on ${ci.shortName}` };
+    if (!m.canWrite || m.set === undefined) return { ok: false, why: `member '${m.name}' of ${ci.shortName} is read-only` };
+    const co = coerce(model, value === undefined ? null : value, m.type);
+    if (!co.ok) return { ok: false, why: `'${m.name}': ${co.why}` };
+    const rejected = m.validate?.(instance, co.value);
+    if (rejected !== undefined) return { ok: false, why: `'${m.name}': ${rejected}` };
+    try {
+      m.set(instance, co.value);
+    } catch (e) {
+      return { ok: false, why: `'${m.name}': ${errorMessage(e)}` };
+    }
+  }
+  return { ok: true, value: instance };
 }

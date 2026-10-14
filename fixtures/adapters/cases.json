@@ -5,18 +5,20 @@
     "description": "Test adapters every runtime registers (in its conformance harness) on a fresh engine over fixtures/cross-runtime/graph.json. Behaviour, not code, is specified here.",
     "Vec2": {
       "encode": "string \"(x, y)\" using shortest round-trip numbers, e.g. {x:2.25,y:3} -> \"(2.25, 3)\"",
-      "coerce": "from a string \"(x, y)\" (optional spaces) or a list [x, y] of two numbers; anything else fails with reason \"expected (x, y) or [x, y]\"",
+      "coerce": "from a string \"(x, y)\" (optional spaces) or a list [x, y] of two numbers; anything else fails with reason \"expected (x, y) or [x, y]\"; an object literal is NOT handled (NotHandled: defers to default construction, so {x: 3, y: 4} works)",
       "compare": "equality: both values coerced to Vec2, equal when |dx| <= 1e-9 and |dy| <= 1e-9; ordering: by length sqrt(x*x+y*y)",
       "members": "virtual read-only member `len` (number) = sqrt(x*x+y*y)",
-      "describe": "Vec2: write as \"(x, y)\" or [x, y]"
+      "describe": "Vec2: write as \"(x, y)\" or [x, y]",
+      "literal": "LiteralSchema = {\"oneOf\":[{\"type\":\"string\"},{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":2,\"maxItems\":2},{\"type\":\"object\",\"properties\":{\"x\":{\"type\":\"number\"},\"y\":{\"type\":\"number\"}}}]}"
     },
     "Node": {
-      "members": "virtual member `childCount` (int, read-only) = Children count; virtual writable member `title` (string): get = Name upper-cased (ASCII), set = Name := value lower-cased (ASCII); validation rejects an empty string with reason \"title must not be empty\" (before any write); the setter itself THROWS \"node 3 is locked\" when the node's Id is 3 (exercises rollback); member `Note` is HIDDEN; member `Children` is EXPLICIT-ONLY (generic recurse does not follow it); virtual map `stats` (map<string, number>): keys = Props keys in order, get = Props[key], set = Props[key] := value, validation rejects a key not in Props with reason \"unknown stat '<key>'\" and a negative value with \"stats must be non-negative\"; read-only virtual map `labels` (map<string, string>): keys \"name\", \"kind\" -> Name, Kind (enum name)",
+      "members": "virtual member `childCount` (int, read-only) = Children count; virtual writable member `title` (string): get = Name upper-cased (ASCII), set = Name := value lower-cased (ASCII); validation rejects an empty string with reason \"title must not be empty\" (before any write); the setter itself THROWS \"node 3 is locked\" when the node's Id is 3 (exercises rollback); member `Note` is HIDDEN; member `Children` is EXPLICIT-ONLY (generic recurse does not follow it); virtual map `stats` (map<string, number>): keys = Props keys in order, get = Props[key], set = Props[key] := value, validation rejects a key not in Props with reason \"unknown stat '<key>'\" and a negative value with \"stats must be non-negative\"; read-only virtual map `labels` (map<string, string>): keys \"name\", \"kind\" -> Name, Kind (enum name); virtual member `tagsCopy` (list<string>): get = a NEW copy of Tags, set = Tags := value, marked COPY-ON-READ; mixed-type virtual map `fields`: keys \"Name\", \"Value\", \"Enabled\" with entry types string / double / bool, get/set the corresponding member",
       "describe": "Node: a conformance graph node",
-      "methods": "callable `bump(number by = 1)`: Value += by, returns the new Value; callable `greet(string who)`: returns \"hi <who>, I am <Name>\", no state change"
+      "methods": "callable `bump(number by = 1)`: Value += by, returns the new Value; callable `greet(string who)`: returns \"hi <who>, I am <Name>\", no state change",
+      "liveness": "IsAlive = Tags does not contain \"destroyed\" (destroyed nodes read as null)"
     },
     "Special": {
-      "members": "virtual read-only member `powerLevel` (number) = Power / 1000 (applies IN ADDITION to the Node adapter: composition)"
+      "members": "virtual read-only member `powerLevel` (number) = Power / 1000 (applies IN ADDITION to the Node adapter: composition); display member is `title` (summaries show it as name)"
     }
   },
   "cases": [
@@ -1855,6 +1857,17 @@
                 "name": "labels",
                 "type": "Dictionary<string, string>",
                 "description": "read-only labels"
+              },
+              {
+                "name": "tagsCopy",
+                "type": "List<string>",
+                "writable": true,
+                "description": "a copy of Tags (copy-on-read)"
+              },
+              {
+                "name": "fields",
+                "type": "Dictionary<string, object>",
+                "description": "Name / Value / Enabled with per-key types"
               }
             ],
             "methods": [
@@ -2969,6 +2982,849 @@
           ]
         ],
         "total": 1
+      }
+    },
+    {
+      "name": "adapt-object-literal-defers",
+      "rql": "ref(\"Node#8\") | set Pos = {x: 3, y: 4}",
+      "then": "ref(\"Node#8\") | select Pos Pos.len",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Pos"
+                  ]
+                },
+                "value": {
+                  "object": [
+                    {
+                      "key": "x",
+                      "value": {
+                        "lit": 3
+                      }
+                    },
+                    {
+                      "key": "y",
+                      "value": {
+                        "lit": 4
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "Pos",
+            "(-1, -1)",
+            "(3, 4)"
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Pos",
+                "expr": {
+                  "path": [
+                    "Pos"
+                  ]
+                }
+              },
+              {
+                "name": "Pos.len",
+                "expr": {
+                  "path": [
+                    "Pos",
+                    "len"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Pos",
+          "Pos.len"
+        ],
+        "rows": [
+          [
+            "(3, 4)",
+            5
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-dead-reads-null",
+      "rql": "ref(\"Node#8\") | set Tags = append(Tags, \"destroyed\")",
+      "then": "g.Nodes | select n=Name dead=($ == null) t=title",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Tags"
+                  ]
+                },
+                "value": {
+                  "call": "append",
+                  "args": [
+                    {
+                      "path": [
+                        "Tags"
+                      ]
+                    },
+                    {
+                      "lit": "destroyed"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "Tags",
+            [],
+            [
+              "destroyed"
+            ]
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "n",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "dead",
+                "expr": {
+                  "op": "==",
+                  "args": [
+                    {
+                      "path": []
+                    },
+                    {
+                      "lit": null
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "t",
+                "expr": {
+                  "path": [
+                    "title"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "n",
+          "dead",
+          "t"
+        ],
+        "rows": [
+          [
+            "root-a",
+            false,
+            "ROOT-A"
+          ],
+          [
+            "root-b",
+            false,
+            "ROOT-B"
+          ],
+          [
+            null,
+            true,
+            null
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "adapt-dead-ref-is-stale",
+      "rql": "ref(\"Node#8\") | set Tags = append(Tags, \"destroyed\")",
+      "then": "ref(\"Node#8\") | select Name",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Tags"
+                  ]
+                },
+                "value": {
+                  "call": "append",
+                  "args": [
+                    {
+                      "path": [
+                        "Tags"
+                      ]
+                    },
+                    {
+                      "lit": "destroyed"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "Tags",
+            [],
+            [
+              "destroyed"
+            ]
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "stale-ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-copy-on-read-write-back",
+      "rql": "ref(\"Node#1\") | set tagsCopy[0] = \"z\"",
+      "then": "ref(\"Node#1\") | select Tags",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "tagsCopy",
+                    {
+                      "index": 0
+                    }
+                  ]
+                },
+                "value": {
+                  "lit": "z"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "tagsCopy[0]",
+            "root",
+            "z"
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Tags",
+                "expr": {
+                  "path": [
+                    "Tags"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Tags"
+        ],
+        "rows": [
+          [
+            [
+              "z",
+              "red"
+            ]
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-mixed-map",
+      "rql": "ref(\"Node#8\") | set fields[\"Value\"] = 4, fields[\"Enabled\"] = false",
+      "then": "ref(\"Node#8\") | select Value Enabled fields",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "fields",
+                    {
+                      "key": "Value"
+                    }
+                  ]
+                },
+                "value": {
+                  "lit": 4
+                }
+              },
+              {
+                "target": {
+                  "path": [
+                    "fields",
+                    {
+                      "key": "Enabled"
+                    }
+                  ]
+                },
+                "value": {
+                  "lit": false
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "fields[\"Value\"]",
+            3,
+            4
+          ],
+          [
+            "Node#8",
+            "fields[\"Enabled\"]",
+            true,
+            false
+          ]
+        ],
+        "total": 2
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              },
+              {
+                "name": "Enabled",
+                "expr": {
+                  "path": [
+                    "Enabled"
+                  ]
+                }
+              },
+              {
+                "name": "fields",
+                "expr": {
+                  "path": [
+                    "fields"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Value",
+          "Enabled",
+          "fields"
+        ],
+        "rows": [
+          [
+            4,
+            false,
+            {
+              "Name": "lonely",
+              "Value": 4,
+              "Enabled": false
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-mixed-map-type-error",
+      "rql": "ref(\"Node#8\") | set fields[\"Value\"] = \"x\"",
+      "then": "ref(\"Node#8\") | select Value",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "fields",
+                    {
+                      "key": "Value"
+                    }
+                  ]
+                },
+                "value": {
+                  "lit": "x"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Value"
+        ],
+        "rows": [
+          [
+            3
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-display-member",
+      "rql": "g.Nodes | recurse Children | where $ is Special | select $",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "is",
+              "args": [
+                {
+                  "path": []
+                },
+                {
+                  "lit": "Special"
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "$",
+                "expr": {
+                  "path": []
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$"
+        ],
+        "rows": [
+          [
+            {
+              "$ref": "Special#3",
+              "name": "A-2"
+            }
+          ],
+          [
+            {
+              "$ref": "Special#6",
+              "name": "B-1"
+            }
+          ]
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "adapt-literal-schema",
+      "rql": "g.Nodes | first 1 | get Pos | describe",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "first",
+            "n": 1
+          },
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Pos"
+              ]
+            }
+          },
+          {
+            "op": "describe"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "schema",
+        "types": [
+          {
+            "name": "Vec2",
+            "kind": "struct",
+            "description": "Vec2: write as \"(x, y)\" or [x, y]",
+            "literal": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  }
+                }
+              ]
+            },
+            "members": [
+              {
+                "name": "x",
+                "type": "double",
+                "writable": true
+              },
+              {
+                "name": "y",
+                "type": "double",
+                "writable": true
+              },
+              {
+                "name": "len",
+                "type": "double",
+                "description": "vector length sqrt(x*x+y*y)"
+              }
+            ]
+          }
+        ]
       }
     }
   ]

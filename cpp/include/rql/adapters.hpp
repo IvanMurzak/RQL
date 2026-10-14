@@ -64,10 +64,14 @@ public:
     using Get = std::function<Value(void* owner, const std::string& key)>;
     using Set = std::function<void(void* owner, const std::string& key, const Value& value)>;
     using Validate = std::function<std::string(void* owner, const std::string& key, const Value& value)>;
+    /// Mixed-type maps: the declared type of one entry (values are coerced to it before validation).
+    using EntryType = std::function<const TypeDescriptor*(void* owner, const std::string& key)>;
 
     VirtualMapAdapter(void* owner, const TypeDescriptor* type, std::shared_ptr<const Keys> keys, std::shared_ptr<const Get> get,
-                      std::shared_ptr<const Set> set, std::shared_ptr<const Validate> validate)
-        : owner_(owner), type_(type), keys_(std::move(keys)), get_(std::move(get)), set_(std::move(set)), validate_(std::move(validate)) {}
+                      std::shared_ptr<const Set> set, std::shared_ptr<const Validate> validate,
+                      std::shared_ptr<const EntryType> entry_type = nullptr)
+        : owner_(owner), type_(type), keys_(std::move(keys)), get_(std::move(get)), set_(std::move(set)), validate_(std::move(validate)),
+          entry_type_(std::move(entry_type)) {}
 
     size_t size() const override { return (*keys_)(owner_).size(); }
     void for_each(const std::function<bool(const Value&, const Value&)>& fn) const override;
@@ -79,6 +83,9 @@ public:
     void set(const Value& key, const Value& value) override;
     void erase(const Value& key) override;
     std::string validate_entry(const Value& key, const Value& value) const override;
+    const TypeDescriptor* entry_type(const Value& key) const override {
+        return entry_type_ ? (*entry_type_)(owner_, key_text(key)) : nullptr;
+    }
 
 private:
     void* owner_;
@@ -87,6 +94,7 @@ private:
     std::shared_ptr<const Get> get_;
     std::shared_ptr<const Set> set_;
     std::shared_ptr<const Validate> validate_;
+    std::shared_ptr<const EntryType> entry_type_;
     static std::string key_text(const Value& key) { return key.is_string() ? key.as_string() : to_text(key); }
 };
 
@@ -159,6 +167,20 @@ public:
     MemberTable& explicit_only(const std::vector<std::string>& names);
     MemberTable& describe(const std::string& name, std::string description);
 
+    /// Hide every member matching the predicate (e.g. deprecated members).
+    MemberTable& hide_where(const std::function<bool(const MemberDescriptor&)>& hide);
+    /// Getters returning a copy: writes into the value are assigned back through the setter (spec §13 Write-back).
+    MemberTable& copy_on_read(const std::vector<std::string>& names);
+    /// The (struct) type is a handle to shared state: writes to copies are live — no write-back, get-only
+    /// owners are fine, virtual setters are allowed, values may be mutation targets. Call before add().
+    MemberTable& writes_through();
+    /// Member used for stable refs "Type#id" / shown as `name` in summaries (instead of "Id" / "Name").
+    MemberTable& identity(const std::string& name);
+    MemberTable& display(const std::string& name);
+    bool is_writes_through() const { return writes_through_; }
+    const std::string& identity_name() const { return identity_name_; }
+    const std::string& display_name() const { return display_name_; }
+
     // ---- methods (spec §13 "Methods"): invoked by `call` like host-allowlisted methods
 
     /// Add (or replace, same name and arity) a callable method. `self` is a pointer to the adapter's
@@ -183,6 +205,11 @@ public:
     /// "Dictionary<string, T>". Callbacks receive a pointer to the adapter's target type.
     MemberTable& map(std::string name, const TypeDescriptor* value_type, VirtualMapAdapter::Keys keys, VirtualMapAdapter::Get get,
                      VirtualMapAdapter::Set set = {}, VirtualMapAdapter::Validate validate = {}, std::string description = {});
+    /// Mixed-type virtual map (schemas: Dictionary<string, object>): entry_type(self, key) declares each
+    /// entry's type; written values are coerced to it before validation.
+    MemberTable& mixed_map(std::string name, VirtualMapAdapter::Keys keys, VirtualMapAdapter::EntryType entry_type,
+                           VirtualMapAdapter::Get get, VirtualMapAdapter::Set set = {}, VirtualMapAdapter::Validate validate = {},
+                           std::string description = {});
     /// Typed: keys(T&) -> std::vector<std::string>, get(T&, key) -> V, set(T&, key, V) (nullptr = read-only),
     /// validate(T&, key, const V&) -> std::string reason (nullptr = none).
     template <class T, class K, class G, class S = std::nullptr_t, class V = std::nullptr_t>
@@ -223,6 +250,11 @@ private:
     std::vector<MemberDescriptor>& members_;
     std::vector<MethodDescriptor>& methods_;
     const TypeDescriptor* current_target_ = nullptr;
+    bool writes_through_ = false;
+    std::string identity_name_, display_name_;
+    MemberTable& map_impl(std::string name, const TypeDescriptor* value_type, VirtualMapAdapter::Keys keys, VirtualMapAdapter::Get get,
+                          VirtualMapAdapter::Set set, VirtualMapAdapter::Validate validate, VirtualMapAdapter::EntryType entry_type,
+                          std::string description);
     /// self → adapter-target pointer conversion (identity when no upcast is needed).
     std::function<void*(void*)> upcaster() const;
     MemberDescriptor& member(const std::string& name);
@@ -239,6 +271,8 @@ struct TypeAdapter {
     std::string interface_name;          // alternatively: any type whose also_is contains this name
     int priority = 0;                    // tie-break among equal specificity (higher first)
     std::string description;             // one line for schemas / describe (first non-empty wins)
+    std::optional<Json> literal_schema;  // JSON Schema of accepted literals, shown by describe as "literal"
+
 
     /// Shape the member table (applied least → most specific).
     std::function<void(MemberTable&)> configure_members;
@@ -257,6 +291,10 @@ struct TypeAdapter {
     /// weak handle / object registry, as Unreal's IsValid on a UObject* tracked by the GC).
     std::function<std::optional<bool>(const Value& value)> is_alive;
 };
+
+/// Engine-wide member type exclusion (spec §13): a member is dropped when its type, element type or key
+/// type matches (e.g. native handles or modules that must never be touched).
+using TypeExclusion = std::function<bool(const TypeDescriptor& type)>;
 
 /// Typed view of an object/struct value as T (upcast through registered bases); nullptr if not a T.
 template <class T>

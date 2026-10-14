@@ -15,6 +15,12 @@ bool IMapAdapter::accepts_key(const Value& key) const {
 void IMapAdapter::set(const Value&, const Value&) { throw std::runtime_error("map is not writable"); }
 void IMapAdapter::erase(const Value&) { throw std::runtime_error("map is not writable"); }
 std::string IMapAdapter::validate_entry(const Value&, const Value&) const { return {}; }
+const TypeDescriptor* IMapAdapter::entry_type(const Value&) const { return nullptr; }
+
+void OwnedList::set(size_t i, const Value& v) {
+    if (!mutable_) throw std::runtime_error("list is not writable");
+    items_.at(i) = v;
+}
 
 // ------------------------------------------------------------------ Value
 
@@ -132,21 +138,38 @@ void OwnedMap::for_each(const std::function<bool(const Value&, const Value&)>& f
         if (!fn(kv.first, kv.second)) return;
 }
 
-MapLookup OwnedMap::find(const Value& key, Value& out) const {
-    for (auto& kv : entries_) {
-        const Value& k = kv.first;
+size_t OwnedMap::index_of(const Value& key) const {
+    for (size_t i = 0; i < entries_.size(); ++i) {
+        const Value& k = entries_[i].first;
         bool eq = false;
         if (k.is_string() && key.is_string()) eq = k.as_string() == key.as_string();
         else if (k.is_number() && key.is_number()) eq = k.as_number() == key.as_number();
         else if (k.is_string() && key.is_number()) eq = k.as_string() == to_text(key);
         else if (k.is_enum() && key.is_enum()) eq = k.type() == key.type() && k.enum_value() == key.enum_value();
         else if (k.is_object() && key.is_object()) eq = k.ptr() == key.ptr();
-        if (eq) {
-            out = kv.second;
-            return MapLookup::Found;
-        }
+        if (eq) return i;
     }
-    return MapLookup::NotFound;
+    return entries_.size();
+}
+
+MapLookup OwnedMap::find(const Value& key, Value& out) const {
+    size_t i = index_of(key);
+    if (i == entries_.size()) return MapLookup::NotFound;
+    out = entries_[i].second;
+    return MapLookup::Found;
+}
+
+void OwnedMap::set(const Value& key, const Value& value) {
+    if (!mutable_) throw std::runtime_error("map is not writable");
+    size_t i = index_of(key);
+    if (i == entries_.size()) entries_.emplace_back(key, value);
+    else entries_[i].second = value;
+}
+
+void OwnedMap::erase(const Value& key) {
+    if (!mutable_) throw std::runtime_error("map is not writable");
+    size_t i = index_of(key);
+    if (i < entries_.size()) entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(i));
 }
 
 // ------------------------------------------------------------------ helpers

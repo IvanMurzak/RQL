@@ -176,4 +176,13 @@ namespace Rql.Execution
         public new bool Equals(object? x, object? y) => ReferenceEquals(x, y);
         public int GetHashCode(object obj) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj);
     }
+
+    /// <summary>
+    /// Value of an object literal <c>{ key: expr, … }</c> (spec §4.5): an ordered string-keyed map. Writes coerce it into the
+    /// target type: adapters first, then construction of the concrete type (<c>"$type"</c> selects a subtype) and member assignment.
+    /// </summary>
+    public sealed class ObjectValue : Dictionary<string, object?>
+    {
+        public ObjectValue() : base(StringComparer.Ordinal) { }
+    }
 }

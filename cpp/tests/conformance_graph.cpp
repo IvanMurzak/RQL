@@ -1,5 +1,6 @@
 #include "conformance_graph.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <regex>
@@ -26,8 +27,9 @@ void register_types(rql::TypeRegistry& reg) {
         .member("Parent", &Node::Parent).reference()
         .member("Peer", &Node::Peer).reference()
         .id("Id")
-        .display("Name");
-    reg.object<Special>("Special").base<Node>().member("Power", &Special::Power);
+        .display("Name")
+        .constructible();  // object literals (spec §4.5)
+    reg.object<Special>("Special").base<Node>().member("Power", &Special::Power).constructible();
     reg.object<Graph>("Graph")
         .member("Name", &Graph::Name)
         .member("Version", &Graph::Version)
@@ -90,7 +92,12 @@ void register_test_adapters(rql::Engine& engine, rql::TypeRegistry& reg) {
         if (!p) return std::nullopt;
         return rql::Json("(" + rql::format_number_text(p->x) + ", " + rql::format_number_text(p->y) + ")");
     };
+    vec.literal_schema = rql::Json::parse(
+        R"({"oneOf":[{"type":"string"},{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2},)"
+        R"({"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"}}}]})");
     vec.coerce = [r](const rql::Value& v, const rql::TypeDescriptor&, rql::Value& result, std::string& reason) {
+        // Object literals {x, y} are left to the default construction (spec §4.5).
+        if (v.is_map() && v.map().object_literal()) return rql::AdapterOutcome::NotHandled;
         Vec2 out;
         if (try_vec(*r, v, out)) {
             result = rql::Traits<Vec2>::get(*r, out);
@@ -118,6 +125,12 @@ void register_test_adapters(rql::Engine& engine, rql::TypeRegistry& reg) {
     node.name = "NodeAdapter";
     node.target = reg.descriptor<Node>();
     node.description = "Node: a conformance graph node";
+    // Destroyed nodes (Tags contain "destroyed") read as null (spec §13 liveness).
+    node.is_alive = [r](const rql::Value& v) -> std::optional<bool> {
+        const Node* n = rql::value_as<Node>(*r, v);
+        if (!n) return std::nullopt;
+        return std::find(n->Tags.begin(), n->Tags.end(), "destroyed") == n->Tags.end();
+    };
     node.configure_members = [](rql::MemberTable& t) {
         t.computed<Node>("childCount", [](Node& n) { return static_cast<int>(n.Children.size()); }, "number of direct children")
             .property<Node>(
@@ -163,7 +176,27 @@ void register_test_adapters(rql::Engine& engine, rql::TypeRegistry& reg) {
                 "greet", {rql::ParamDescriptor{"who", rql::builtin::string_type(), false, false, rql::Value()}},
                 rql::builtin::string_type(),
                 [](Node& n, const std::vector<rql::Value>& args) { return rql::Value::string("hi " + args[0].as_string() + ", I am " + n.Name); },
-                "a greeting (no state change)");
+                "a greeting (no state change)")
+            .property<Node>(
+                "tagsCopy", [](Node& n) { return std::vector<std::string>(n.Tags); }, [](Node& n, std::vector<std::string> v) { n.Tags = std::move(v); },
+                nullptr, "a copy of Tags (copy-on-read)")
+            .copy_on_read({"tagsCopy"})
+            .mixed_map(
+                "fields", [](void*) { return std::vector<std::string>{"Name", "Value", "Enabled"}; },
+                [](void*, const std::string& k) -> const rql::TypeDescriptor* {
+                    return k == "Name" ? rql::builtin::string_type() : k == "Value" ? rql::builtin::double_type() : rql::builtin::bool_type();
+                },
+                [](void* self, const std::string& k) {
+                    Node& n = *static_cast<Node*>(self);
+                    return k == "Name" ? rql::Value::string(n.Name) : k == "Value" ? rql::Value::number(n.Value) : rql::Value::boolean(n.Enabled);
+                },
+                [](void* self, const std::string& k, const rql::Value& v) {
+                    Node& n = *static_cast<Node*>(self);
+                    if (k == "Name") n.Name = v.as_string();
+                    else if (k == "Value") n.Value = v.as_number();
+                    else n.Enabled = v.as_bool();
+                },
+                {}, "Name / Value / Enabled with per-key types");
     };
     engine.add_adapter(std::move(node));
 
@@ -171,7 +204,7 @@ void register_test_adapters(rql::Engine& engine, rql::TypeRegistry& reg) {
     special.name = "SpecialAdapter";
     special.target = reg.descriptor<Special>();
     special.configure_members = [](rql::MemberTable& t) {
-        t.computed<Special>("powerLevel", [](Special& s) { return s.Power / 1000.0; }, "Power / 1000");
+        t.computed<Special>("powerLevel", [](Special& s) { return s.Power / 1000.0; }, "Power / 1000").display("title");
     };
     engine.add_adapter(std::move(special));
 }

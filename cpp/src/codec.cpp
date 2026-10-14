@@ -87,6 +87,15 @@ ExprPtr list(std::vector<ExprPtr> items) {
     e->args = std::move(items);
     return e;
 }
+ExprPtr object(std::vector<std::pair<std::string, ExprPtr>> entries) {
+    auto e = std::make_shared<Expr>();
+    e->kind = ExprKind::Object;
+    for (auto& kv : entries) {
+        e->keys.push_back(std::move(kv.first));
+        e->args.push_back(std::move(kv.second));
+    }
+    return e;
+}
 ExprPtr path(std::vector<Segment> segs, ExprPtr on) {
     auto e = std::make_shared<Expr>();
     e->kind = ExprKind::Path;
@@ -242,6 +251,17 @@ Json encode_expr(const Expr& e) {
     switch (e.kind) {
         case ExprKind::Lit: o.set("lit", literal_json(e.lit)); break;
         case ExprKind::List: o.set("list", expr_array(e.args)); break;
+        case ExprKind::Object: {
+            Json entries = Json::array();
+            for (size_t i = 0; i < e.keys.size(); ++i) {
+                Json entry = Json::object();
+                entry.set("key", e.keys[i]);
+                entry.set("value", encode_expr(*e.args[i]));
+                entries.push(std::move(entry));
+            }
+            o.set("object", std::move(entries));
+            break;
+        }
         case ExprKind::Path: {
             Json a = Json::array();
             for (auto& s : e.segments) a.push(segment_json(s));
@@ -304,7 +324,7 @@ Literal read_literal(const Json& v, const std::string& ctx) {
         case Json::Type::Null: return Literal::null();
         case Json::Type::Bool: return Literal::boolean(v.as_bool());
         case Json::Type::Number:
-            if (!std::isfinite(v.as_number())) invalid(ctx + " number is out of range");
+            if (!std::isfinite(v.as_number())) invalid(ctx + " number is out of range");  // NaN / Infinity / overflow
             return Literal::number(v.as_number());
         case Json::Type::String: return Literal::string(v.as_string());
         default: invalid(ctx + " must be a scalar literal");
@@ -520,6 +540,21 @@ ExprPtr decode_expr(const Json& e) {
     if (const Json* list = e.find("list")) {
         allow_only(e, "list expression", {"list"});
         return plan::list(read_expr_array(*list, "list"));
+    }
+    if (const Json* obj = e.find("object")) {
+        allow_only(e, "object expression", {"object"});
+        if (!obj->is_array()) invalid("object must be an array of {key, value}");
+        std::vector<std::pair<std::string, ExprPtr>> entries;
+        for (auto& entry : obj->items()) {
+            if (!entry.is_object()) invalid("object entries must be {key, value}");
+            allow_only(entry, "object entry", {"key", "value"});
+            const Json& key = required(entry, "key", "object entry");
+            if (!key.is_string() || key.as_string().empty()) invalid("object entry key must be a non-empty string");
+            for (auto& kv : entries)
+                if (kv.first == key.as_string()) invalid("duplicate object key '" + key.as_string() + "'");
+            entries.emplace_back(key.as_string(), decode_expr(required(entry, "value", "object entry")));
+        }
+        return plan::object(std::move(entries));
     }
     if (const Json* path = e.find("path")) {
         allow_only(e, "path expression", {"path", "on"});

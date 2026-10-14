@@ -44,6 +44,13 @@ namespace Rql
         public IReadOnlyList<Expr> Items { get; }
     }
 
+    /// <summary>Object literal <c>{ key: expr, … }</c>: an ordered string-keyed map; keys are unique (spec §4.5).</summary>
+    public sealed class ObjectExpr : Expr
+    {
+        public ObjectExpr(IReadOnlyList<KeyValuePair<string, Expr>> entries) { Entries = entries; }
+        public IReadOnlyList<KeyValuePair<string, Expr>> Entries { get; }
+    }
+
     /// <summary>Navigation from the current item, or from <see cref="On"/>. Empty path = the item itself.</summary>
     public sealed class PathExpr : Expr
     {

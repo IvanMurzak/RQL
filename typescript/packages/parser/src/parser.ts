@@ -9,6 +9,7 @@ import {
   type Diagnostic,
   type Expr,
   type ExprOp,
+  type ObjectEntry,
   type PathExpr,
   type QueryPlan,
   type Segment,
@@ -594,6 +595,28 @@ class Parser {
             this.expect(']', 'to close list');
           }
           return at({ kind: 'list', items }, start, this.prevEnd);
+        }
+        if (isPunct(t, '{')) {
+          this.next();
+          const entries: ObjectEntry[] = [];
+          const keys = new Set<string>();
+          if (!this.accept('}')) {
+            do {
+              const k = this.peek();
+              if (k.kind !== 'ident' && k.kind !== 'quoted' && k.kind !== 'string') {
+                throw this.error(`expected an object key (name or string), found ${describeToken(k)}`, k);
+              }
+              this.next();
+              const key = k.kind === 'string' ? (k.value as string) : k.text;
+              if (key.length === 0) throw this.error('object keys must not be empty', k);
+              if (keys.has(key)) throw this.error(`duplicate object key '${key}'`, k);
+              keys.add(key);
+              this.expect(':', 'after an object key');
+              entries.push({ key, value: this.parseExpr() });
+            } while (this.accept(','));
+            this.expect('}', 'to close the object');
+          }
+          return at({ kind: 'object', entries }, start, this.prevEnd);
         }
         break;
       default:

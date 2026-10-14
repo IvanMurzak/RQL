@@ -39,6 +39,17 @@ using StageHandler = std::function<std::vector<Value>(const std::vector<Value>& 
                                                       const std::map<std::string, ArgEvaluator>& named)>;
 using FunctionHandler = std::function<Value(const std::vector<Value>& args)>;
 
+/// One change made (or about to be made) by `set` or `call`, as seen by host write hooks (spec §13).
+struct MutationRecord {
+    Value item;    // the mutation target (a stream item)
+    Value owner;   // the object whose state changes: the last reference object on the written path
+    std::string member;  // the written path (set) or the method signature (call)
+    Value old_value;     // set only
+    Value new_value;     // set only
+    const MethodDescriptor* method = nullptr;  // call only
+};
+using MutationHook = std::function<void(const std::vector<MutationRecord>& records)>;
+
 struct MutationPolicy {
     /// Host-level switch. Requests must additionally set QueryOptions::allow_mutation.
     bool enabled = false;
@@ -47,6 +58,12 @@ struct MutationPolicy {
     int max_targets = 20;
     /// Host ceiling no request's maxMutationTargets can exceed.
     int hard_max_targets = 1000;
+    /// After planning, before any write (not on dry-run): e.g. record undo for the owners. Throwing (any
+    /// exception) vetoes the whole mutation → permission-denied, nothing changed.
+    MutationHook before_write;
+    /// After every write succeeded (not on dry-run or rollback; for a failing call, the calls that completed):
+    /// e.g. mark the owners dirty. Throwing → getter-threw warning; the writes stay applied.
+    MutationHook committed;
 };
 
 struct EngineDefaults {
@@ -105,6 +122,9 @@ public:
     /// Ordered adapters applying to a type, most specific first: "name (target T, rank r, priority p)".
     std::vector<std::string> explain(const TypeDescriptor& type) const noexcept;
     bool has_adapters() const noexcept { return !adapters_.empty(); }
+    /// Never expose members whose type (or element / key type) matches (spec §13 Exclusion). Configure
+    /// before queries run; several predicates combine with "or".
+    Engine& exclude_types(TypeExclusion excluded) noexcept;
 
     /// Last registration error (empty when the last registration succeeded).
     const std::string& last_error() const noexcept { return last_error_; }
@@ -163,6 +183,12 @@ private:
     std::string last_error_;
     std::vector<std::unique_ptr<TypeAdapter>> adapters_;
     std::array<bool, 6> caps_{};  // some adapter implements the capability (detail::Capability order)
+    TypeExclusion excluded_;
+    std::mutex adopted_mutex_;
+    std::vector<std::shared_ptr<void>> adopted_;  // objects constructed from object literals by committed writes
+    /// Adapters or type exclusion configured: types may differ from their descriptors.
+    bool adapts() const { return !adapters_.empty() || static_cast<bool>(excluded_); }
+    void adopt(std::vector<std::shared_ptr<void>>& constructed);
     mutable std::mutex adapted_mutex_;
     mutable std::unordered_map<const TypeDescriptor*, std::unique_ptr<detail::AdaptedType>> adapted_;
 
@@ -177,6 +203,7 @@ private:
     /// "#id" part of a stable reference: adapter stable_id first, then the id member; nullopt = none.
     std::optional<std::string> stable_id_of(const Value& object, detail::Exec* x);
     Value resolve_ref(const std::string& reference, std::string& error, detail::Exec* x);
+    Value resolve_ref_core(const std::string& reference, std::string& error, detail::Exec* x);
 
     int64_t handle_of(const Value& v);
     Value search_sources(const std::string& type, const std::string& id, const Value* identity, detail::Exec* x);

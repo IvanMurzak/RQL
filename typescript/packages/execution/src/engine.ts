@@ -8,7 +8,7 @@ import { reachableTypes, typeDescriptor } from './describe.js';
 import { firstAnswer, type ClassAdapter, type InterfaceAdapter, type TypeAdapter } from './adapters.js';
 import { Exec, now } from './exec.js';
 import { Pipeline } from './pipeline.js';
-import { EnumValue, TypeModel, type Ctor, type MemberAccessor, type TypeInfo } from './types.js';
+import { EnumValue, TypeModel, type Ctor, type MemberAccessor, type MethodAccessor, type TypeInfo, type TypeRef } from './types.js';
 import { MapEntry } from './values.js';
 import { elements } from './collections.js';
 
@@ -40,6 +40,30 @@ export interface MutationPolicy {
   maxTargets: number;
   /** Host ceiling no request can exceed. */
   hardMaxTargets: number;
+  /**
+   * Runs after planning and before anything is written (not on dry-run), e.g. to record undo state of the
+   * owners. Throwing vetoes the whole mutation (→ permission-denied, nothing changed).
+   */
+  beforeWrite?: (records: readonly MutationRecord[]) => void;
+  /**
+   * Runs after every write succeeded (not on dry-run or rollback), e.g. to mark the owners dirty. A throw
+   * becomes a getter-threw warning; the writes stay applied. Completed calls are reported even when a later call fails.
+   */
+  committed?: (records: readonly MutationRecord[]) => void;
+}
+
+/** One change made (or about to be made) by `set` or `call`, as seen by host hooks. */
+export interface MutationRecord {
+  /** The mutation target (a stream item). */
+  readonly item: object;
+  /** The object whose state changes: the last reference object on the written path (e.g. the material, not the mesh). */
+  readonly owner: object;
+  /** The written path (`set`) or the method signature (`call`). */
+  readonly member: string;
+  readonly old: unknown;
+  readonly new: unknown;
+  /** The invoked method for `call`. */
+  readonly method?: MethodAccessor;
 }
 
 export interface EngineDefaults {
@@ -115,13 +139,27 @@ export class RqlEngine {
   addAdapter(adapter: InterfaceAdapter): this;
   addAdapter<T extends object>(adapter: TypeAdapter<T>): this;
   addAdapter(adapter: TypeAdapter): this {
+    this.ownModel().addAdapter(adapter);
+    this.knownMembers = undefined;
+    return this;
+  }
+
+  /**
+   * Never expose members whose declared type (or element / key / value type) matches, e.g. delegates or
+   * native handles (spec §13). Configure before queries run; a shared model is forked first.
+   */
+  excludeTypes(excluded: (type: TypeRef) => boolean): this {
+    this.ownModel().excludeTypes(excluded);
+    this.knownMembers = undefined;
+    return this;
+  }
+
+  private ownModel(): TypeModel {
     if (!this.ownsModel) {
       this.model = this.model.fork();
       this.ownsModel = true;
     }
-    this.model.addAdapter(adapter);
-    this.knownMembers = undefined;
-    return this;
+    return this.model;
   }
 
   /** The ordered adapters applying to a class, most specific first (rank, priority). */
@@ -277,9 +315,19 @@ export class RqlEngine {
 
   /** Resolves a reference; tolerates copied display forms such as "Enemy#12(Goblin_0012)". */
   resolveRef(reference: string, x?: Exec): RefResolution {
-    let ref = reference.trim();
+    // Ids may contain spaces / parentheses (asset paths): resolve the exact text first, then tolerate copied
+    // display forms such as "Enemy#12(Goblin_0012)" or "Enemy#12 Goblin".
+    const ref = reference.trim();
     const cut = ref.search(/[ (\t]/);
-    if (cut > 0) ref = ref.slice(0, cut);
+    if (cut > 0) {
+      const exact = this.resolveRefCore(ref, x);
+      if (exact.ok) return exact;
+      return this.resolveRefCore(ref.slice(0, cut), x);
+    }
+    return this.resolveRefCore(ref, x);
+  }
+
+  private resolveRefCore(ref: string, x: Exec | undefined): RefResolution {
     const i = ref.search(/[#@]/);
     if (i <= 0 || i === ref.length - 1) return { ok: false, error: `malformed reference '${ref}' (expected Type#id or Type@handle)` };
     const type = ref.slice(0, i);

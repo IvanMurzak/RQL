@@ -121,6 +121,30 @@
     {
       "rql": "g | select `$ref`=Version",
       "code": "syntax-error"
+    },
+    {
+      "rql": "g | select o={a 1}",
+      "code": "syntax-error"
+    },
+    {
+      "rql": "g | select o={a: 1, a: 2}",
+      "code": "syntax-error"
+    },
+    {
+      "rql": "g | select o={1: 2}",
+      "code": "syntax-error"
+    },
+    {
+      "rql": "g | select o={a: 1,}",
+      "code": "syntax-error"
+    },
+    {
+      "rql": "g | select o={\"\": 1}",
+      "code": "syntax-error"
+    },
+    {
+      "rql": "g | select o={a: 1",
+      "code": "syntax-error"
     }
   ]
 }

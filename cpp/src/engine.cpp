@@ -142,16 +142,44 @@ std::vector<std::string> Engine::explain(const TypeDescriptor& type) const noexc
     return out;
 }
 
+Engine& Engine::exclude_types(TypeExclusion excluded) noexcept {
+    try {
+        if (!excluded) {
+            last_error_ = "exclude_types needs a predicate";
+            return *this;
+        }
+        last_error_.clear();
+        if (excluded_) {
+            TypeExclusion prev = std::move(excluded_);
+            excluded_ = [prev, excluded](const TypeDescriptor& t) { return prev(t) || excluded(t); };
+        } else {
+            excluded_ = std::move(excluded);
+        }
+        std::lock_guard<std::mutex> lock(adapted_mutex_);
+        adapted_.clear();
+    } catch (...) {
+        last_error_ = "exclude_types failed";
+    }
+    return *this;
+}
+
+void Engine::adopt(std::vector<std::shared_ptr<void>>& constructed) {
+    if (constructed.empty()) return;
+    std::lock_guard<std::mutex> lock(adopted_mutex_);
+    for (auto& c : constructed) adopted_.push_back(std::move(c));
+    constructed.clear();
+}
+
 const detail::AdaptedType* Engine::adapted(const TypeDescriptor* type) const {
     std::lock_guard<std::mutex> lock(adapted_mutex_);
     auto it = adapted_.find(type);
     if (it != adapted_.end()) return it->second.get();
-    auto a = detail::build_adapted(*types_, *type, adapters_);  // throws on adapter configuration bugs (not cached)
+    auto a = detail::build_adapted(*types_, *type, adapters_, excluded_);  // throws on adapter configuration bugs (not cached)
     return adapted_.emplace(type, std::move(a)).first->second.get();
 }
 
 detail::TypeView Engine::view_of(const TypeDescriptor* type, detail::Exec* x) const {
-    if (adapters_.empty()) return detail::TypeView(type, nullptr);
+    if (!adapts()) return detail::TypeView(type, nullptr);
     if (x) return x->view(type);
     return detail::TypeView(type, adapted(type));
 }
@@ -186,6 +214,7 @@ std::optional<std::string> Engine::stable_id_of(const Value& object, detail::Exe
 namespace detail {
 std::string Exec::ref_of(const Value& v) { return engine.ref_of_impl(v, this); }
 Value Exec::resolve_ref(const std::string& reference, std::string& error) { return engine.resolve_ref(reference, error, this); }
+void Exec::adopt_constructed() { engine.adopt(constructed); }
 }  // namespace detail
 
 // ------------------------------------------------------------------ execution
@@ -411,9 +440,19 @@ Value Engine::resolve_ref(const std::string& reference_in, std::string& error, d
     std::string reference = reference_in;
     while (!reference.empty() && (reference.front() == ' ' || reference.front() == '\t')) reference.erase(reference.begin());
     while (!reference.empty() && (reference.back() == ' ' || reference.back() == '\t')) reference.pop_back();
-    // Tolerate copied display forms such as "Enemy#12(Goblin_0012)" or "Enemy#12 Goblin".
+    // Ids may contain spaces / parentheses (asset paths): resolve the exact text first, then tolerate copied
+    // display forms such as "Enemy#12(Goblin_0012)" or "Enemy#12 Goblin" (spec §7).
     size_t cut = reference.find_first_of(" (\t");
-    if (cut != std::string::npos && cut > 0) reference = reference.substr(0, cut);
+    if (cut != std::string::npos && cut > 0) {
+        std::string exact_error;
+        Value exact = resolve_ref_core(reference, exact_error, x);
+        if (!exact.is_missing()) return exact;
+        reference = reference.substr(0, cut);
+    }
+    return resolve_ref_core(reference, error, x);
+}
+
+Value Engine::resolve_ref_core(const std::string& reference, std::string& error, detail::Exec* x) {
     size_t i = reference.find_first_of("#@");
     if (i == std::string::npos || i == 0 || i == reference.size() - 1) {
         error = "malformed reference '" + reference + "' (expected Type#id or Type@handle)";
@@ -502,6 +541,7 @@ Json Engine::describe_type_impl(const TypeDescriptor& t) const {
     if (t.base) o.set("base", t.base->name);
     o.set("kind", t.kind == TypeKind::Enum ? "enum" : t.kind == TypeKind::Struct ? "struct" : "object");
     if (!tv.description().empty()) o.set("description", tv.description());
+    if (const Json* literal = tv.literal_schema()) o.set("literal", *literal);
     if (t.kind == TypeKind::Enum) {
         Json values = Json::array();
         for (auto& e : t.enum_values) values.push(Json(e.first));

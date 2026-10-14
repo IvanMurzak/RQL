@@ -6146,6 +6146,282 @@
           }
         ]
       }
+    },
+    {
+      "rql": "g | select o={a: 1, \"b c\": [1, 2], n: {x: -1}}",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "o",
+                "expr": {
+                  "object": [
+                    {
+                      "key": "a",
+                      "value": {
+                        "lit": 1
+                      }
+                    },
+                    {
+                      "key": "b c",
+                      "value": {
+                        "list": [
+                          {
+                            "lit": 1
+                          },
+                          {
+                            "lit": 2
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "key": "n",
+                      "value": {
+                        "object": [
+                          {
+                            "key": "x",
+                            "value": {
+                              "lit": -1
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "rql": "g | select o={}",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "o",
+                "expr": {
+                  "object": []
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "rql": "g | select v=({a: 1, b: 2}.b)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "v",
+                "expr": {
+                  "path": [
+                    "b"
+                  ],
+                  "on": {
+                    "object": [
+                      {
+                        "key": "a",
+                        "value": {
+                          "lit": 1
+                        }
+                      },
+                      {
+                        "key": "b",
+                        "value": {
+                          "lit": 2
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "rql": "g.Nodes | select append(Tags, \"x\") insert(Tags, 0, \"y\") remove-at(Tags, -1) without(Tags, \"root\")",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "append(Tags, \"x\")",
+                "expr": {
+                  "call": "append",
+                  "args": [
+                    {
+                      "path": [
+                        "Tags"
+                      ]
+                    },
+                    {
+                      "lit": "x"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "insert(Tags, 0, \"y\")",
+                "expr": {
+                  "call": "insert",
+                  "args": [
+                    {
+                      "path": [
+                        "Tags"
+                      ]
+                    },
+                    {
+                      "lit": 0
+                    },
+                    {
+                      "lit": "y"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "remove-at(Tags, -1)",
+                "expr": {
+                  "call": "remove-at",
+                  "args": [
+                    {
+                      "path": [
+                        "Tags"
+                      ]
+                    },
+                    {
+                      "lit": -1
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "without(Tags, \"root\")",
+                "expr": {
+                  "call": "without",
+                  "args": [
+                    {
+                      "path": [
+                        "Tags"
+                      ]
+                    },
+                    {
+                      "lit": "root"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "rql": "ref(\"Node#1\") | set Pos = {x: 1, y: 2}, Peer = {\"$type\": \"Special\", Name: \"made\"}",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Pos"
+                  ]
+                },
+                "value": {
+                  "object": [
+                    {
+                      "key": "x",
+                      "value": {
+                        "lit": 1
+                      }
+                    },
+                    {
+                      "key": "y",
+                      "value": {
+                        "lit": 2
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "target": {
+                  "path": [
+                    "Peer"
+                  ]
+                },
+                "value": {
+                  "object": [
+                    {
+                      "key": "$type",
+                      "value": {
+                        "lit": "Special"
+                      }
+                    },
+                    {
+                      "key": "Name",
+                      "value": {
+                        "lit": "made"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }

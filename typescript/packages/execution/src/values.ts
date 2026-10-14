@@ -70,3 +70,9 @@ export function toNumber(v: unknown): number | undefined {
   if (typeof v === 'bigint') return Number(v);
   return undefined;
 }
+
+/**
+ * Value of an object literal `{ key: expr, … }` (spec §4.5): an ordered string-keyed map that behaves like
+ * any map. Writes coerce it into the target type (adapters first, then map building or construction).
+ */
+export class ObjectValue extends Map<string, unknown> {}

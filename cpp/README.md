@@ -108,6 +108,14 @@ defaults, overloads by arity, dry-run), and **virtual maps** (`MemberTable::map(
 validate)`) read and written through the ordinary map paths, e.g. a `UMaterialInstanceDynamic`'s
 scalar parameters as `ScalarParams["Roughness"]` with validation before any write.
 
+Parity with ReflectorNet-style converters (spec §13): `copy_on_read` members (getter returns a
+copy; writes are assigned back), `writes_through()` handle structs (e.g. `FParticle…Module`-style
+handles), `hide_where`, `Engine::exclude_types`, `identity` / `display` by name, `mixed_map`, a
+`literal_schema` shown by `describe`, liveness verdicts that make destroyed (pending-kill) objects
+read as null, and `MutationPolicy::before_write` / `committed` hooks whose records carry the
+**owner** (the last reference object on the written path, e.g. the material when setting through a
+mesh component) for undo / dirty marking.
+
 Adapters are per `Engine`: the engine derives an adaptation of each descriptor an adapter applies to
 (members after adapters, id/display recomputed, per-capability adapter lists), so one `TypeRegistry`
 can serve engines with different adapter sets. An engine without adapters reads descriptors

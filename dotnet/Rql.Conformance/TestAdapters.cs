@@ -36,6 +36,10 @@ namespace Rql.Conformance
 
             public override string Description => "Vec2: write as \"(x, y)\" or [x, y]";
 
+            public override JsonNode? LiteralSchema => JsonNode.Parse(
+                "{\"oneOf\":[{\"type\":\"string\"},{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":2,\"maxItems\":2},"
+                + "{\"type\":\"object\",\"properties\":{\"x\":{\"type\":\"number\"},\"y\":{\"type\":\"number\"}}}]}");
+
             protected override void Members(MemberTable<Vec2> members) =>
                 members.Add("len", v => Length(v), description: "vector length sqrt(x*x+y*y)");
 
@@ -44,6 +48,9 @@ namespace Rql.Conformance
             public override AdapterOutcome TryCoerce(object? value, Type target, out object? result, out string? reason)
             {
                 reason = null;
+                result = null;
+                // Object literals {x, y} are left to the default construction (spec §4.5).
+                if (value is ObjectValue) return AdapterOutcome.NotHandled;
                 if (TryVec(value, out var v)) { result = v; return AdapterOutcome.Ok; }
                 result = null;
                 reason = "expected (x, y) or [x, y]";
@@ -105,16 +112,27 @@ namespace Rql.Conformance
                         description: "Props as a validated map")
                     .Map("labels", n => Labels, (n, k) => k == "name" ? n.Name : n.Kind.ToString(), description: "read-only labels")
                     .Function<string, string>("greet", (n, who) => "hi " + who + ", I am " + n.Name, "who", "a greeting (no state change)")
-                    .Untyped.AddMethod("bump", new[] { new CallableParameter("by", typeof(double), true, 1.0) }, typeof(double),
+                    .Add("tagsCopy", n => new List<string>(n.Tags), (n, v) => n.Tags = v, description: "a copy of Tags (copy-on-read)")
+                    .CopyOnRead("tagsCopy")
+                    .Untyped.AddMixedMap("fields", n => FieldNames, (n, k) => FieldType(k),
+                        (n, k) => k == "Name" ? ((Node)n).Name : k == "Value" ? ((Node)n).Value : (object)((Node)n).Enabled,
+                        (n, k, v) => { var node = (Node)n; if (k == "Name") node.Name = (string)v!; else if (k == "Value") node.Value = (double)v!; else node.Enabled = (bool)v!; },
+                        description: "Name / Value / Enabled with per-key types")
+                    .AddMethod("bump", new[] { new CallableParameter("by", typeof(double), true, 1.0) }, typeof(double),
                         (o, args) => { var n = (Node)o; n.Value += (double)args[0]!; return n.Value; }, "Value += by; returns the new Value");
 
             private static readonly string[] Labels = { "name", "kind" };
+            private static readonly string[] FieldNames = { "Name", "Value", "Enabled" };
+            private static Type FieldType(string k) => k == "Name" ? typeof(string) : k == "Value" ? typeof(double) : typeof(bool);
+
+            // Destroyed nodes (Tags contain "destroyed") read as null (spec §13 liveness).
+            protected override bool? Alive(Node n) => !n.Tags.Contains("destroyed");
         }
 
         public sealed class SpecialAdapter : RqlTypeAdapter<Special>
         {
             protected override void Members(MemberTable<Special> members) =>
-                members.Add("powerLevel", s => s.Power / 1000.0, description: "Power / 1000");
+                members.Add("powerLevel", s => s.Power / 1000.0, description: "Power / 1000").Display("title");
         }
     }
 }

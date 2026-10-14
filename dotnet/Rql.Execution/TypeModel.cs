@@ -31,6 +31,7 @@ namespace Rql.Execution
         {
             Member = m.Member; Name = m.Name; Type = m.Type; Getter = m.Getter; CanWrite = m.CanWrite; Owning = m.Owning; Order = m.Order;
             DeclaringType = m.DeclaringType; Description = m.Description; ExplicitOnly = m.ExplicitOnly; Setter = m.Setter; Validate = m.Validate;
+            CopyOnRead = m.CopyOnRead;
         }
 
         internal static MemberAccessor Virtual(string name, Type type, Type declaring, Func<object, object?> get, Action<object, object?>? set,
@@ -48,7 +49,7 @@ namespace Rql.Execution
             Name = name; Type = type; DeclaringType = declaring; Getter = get; Order = order;
         }
 
-        internal MemberAccessor With(bool? canWrite = null, bool? owning = null, bool? explicitOnly = null, string? description = null)
+        internal MemberAccessor With(bool? canWrite = null, bool? owning = null, bool? explicitOnly = null, string? description = null, bool? copyOnRead = null)
         {
             return new MemberAccessor(this)
             {
@@ -56,6 +57,7 @@ namespace Rql.Execution
                 Owning = owning ?? Owning,
                 ExplicitOnly = explicitOnly ?? ExplicitOnly,
                 Description = description ?? Description,
+                CopyOnRead = copyOnRead ?? CopyOnRead,
             };
         }
 
@@ -70,6 +72,11 @@ namespace Rql.Execution
         public bool Owning { get; private set; }
         /// <summary>Read only when a path names it: skipped by generic recurse, inline encoding and snapshots (spec §13).</summary>
         public bool ExplicitOnly { get; private set; }
+        /// <summary>
+        /// The getter returns a copy (e.g. Unity's Renderer.sharedMaterials): writes into the value are assigned back through
+        /// the setter, like value types (spec §13).
+        /// </summary>
+        public bool CopyOnRead { get; private set; }
         public int Order { get; }
         public string? Description { get; private set; }
         internal Action<object, object?>? Setter { get; private set; }
@@ -105,6 +112,8 @@ namespace Rql.Execution
         public string ShortName { get; internal set; } = "";
         public string FriendlyName { get; internal set; } = "";
         public string? Description { get; internal set; }
+        /// <summary>JSON Schema of accepted literals, from the most specific adapter that provides one.</summary>
+        public System.Text.Json.Nodes.JsonNode? LiteralSchema { get; internal set; }
         public IReadOnlyList<MemberAccessor> Members { get; internal set; } = Array.Empty<MemberAccessor>();
         /// <summary>Members read implicitly (inline encoding, generic recurse, ref search, snapshots): all but explicit-only ones.</summary>
         public IReadOnlyList<MemberAccessor> ImplicitMembers { get; internal set; } = Array.Empty<MemberAccessor>();
@@ -131,6 +140,8 @@ namespace Rql.Execution
 
         public bool IsList => Kind == TypeKind.List;
         public bool IsMap => Kind == TypeKind.Map;
+        /// <summary>A value type whose copies write through to shared state (handles, e.g. Unity's ParticleSystem.MainModule): no write-back.</summary>
+        public bool WritesThrough { get; internal set; }
         public bool IsStruct => Kind == TypeKind.Struct;
         public bool IsObject => Kind == TypeKind.Object;
 
@@ -157,12 +168,56 @@ namespace Rql.Execution
 
         public TypeModel(AccessorMode mode) { Mode = mode; _build = Build; }
 
+        private Func<Type, bool>? _excluded;
+
+        /// <summary>
+        /// Exclude member types (spec §13): members whose type, element type or generic argument matches are dropped from
+        /// every type (e.g. delegates, native handles, assemblies that must never be touched).
+        /// </summary>
+        internal void ExcludeTypes(Func<Type, bool> excluded)
+        {
+            if (ReferenceEquals(this, Shared)) throw new InvalidOperationException("the shared type model cannot be configured");
+            var prev = _excluded;
+            _excluded = prev == null ? excluded : t => prev(t) || excluded(t);
+            _cache.Clear();
+        }
+
+        private bool IsExcluded(Type t)
+        {
+            if (_excluded == null) return false;
+            var seen = new HashSet<Type>();
+            return Excluded(t, seen);
+        }
+
+        private bool Excluded(Type t, HashSet<Type> seen)
+        {
+            if (!seen.Add(t)) return false;
+            if (_excluded!(t)) return true;
+            if (t.IsArray && Excluded(t.GetElementType()!, seen)) return true;
+            if (t.IsGenericType && t.GetGenericArguments().Any(a => Excluded(a, seen))) return true;
+            return false;
+        }
+
         public AccessorMode Mode { get; }
 
         internal bool HasAdapters => _adapters.Any;
 
         /// <summary>Union of the registered adapters' capabilities: adapter-free (or capability-free) paths are one check.</summary>
         internal AdapterCaps Caps => _adapters.Caps;
+
+        /// <summary>
+        /// A destroyed object (an adapter's IsAlive says false, e.g. Unity's fake-null) reads as null everywhere (spec §13).
+        /// </summary>
+        internal bool IsDead(object o)
+        {
+            if ((Caps & AdapterCaps.Liveness) == 0 || o is string) return false;
+            foreach (var a in Info(o.GetType()).LivenessAdapters)
+            {
+                var alive = a.IsAlive(o);
+                if (alive.HasValue) return !alive.Value;
+            }
+            return false;
+        }
 
         /// <summary>
         /// Register a type adapter (spec §13). Must not be called on <see cref="Shared"/>; engines own a model per adapter set.
@@ -205,6 +260,7 @@ namespace Rql.Execution
                 FriendlyName = FriendlyName(t),
                 Description = adapters.Select(a => a.Description).FirstOrDefault(d => d != null) ?? t.GetCustomAttribute<RqlDescriptionAttribute>()?.Text,
                 AdapterArray = adapters,
+                LiteralSchema = adapters.Select(a => a.LiteralSchema).FirstOrDefault(s => s != null),
                 EncodeAdapters = With(adapters, AdapterCaps.Encode),
                 CoerceAdapters = With(adapters, AdapterCaps.Coerce),
                 EqualityAdapters = With(adapters, AdapterCaps.Equality),
@@ -309,14 +365,19 @@ namespace Rql.Execution
                 }
             }
 
+            string? identityName = null, displayName = null;
             var methods = t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
                 .Where(m => m.IsDefined(typeof(RqlCallableAttribute)) && !m.IsGenericMethodDefinition)
                 .Select(m => CallableMethod.FromReflection(m, m.GetCustomAttribute<RqlCallableAttribute>()?.Description))
                 .ToList();
+            if (_excluded != null) members.RemoveAll(m => IsExcluded(m.Type));
             if (adapters.Length > 0)
             {
                 var table = new MemberTable(t, members, methods, IncludeNonPublicFields);
                 for (int i = adapters.Length - 1; i >= 0; i--) adapters[i].ConfigureMembers(table);
+                info.WritesThrough = table.IsWritesThrough;
+                if (table.IdentityName != null) identityName = table.IdentityName;
+                if (table.DisplayName != null) displayName = table.DisplayName;
             }
 
             info.Members = members;
@@ -327,8 +388,10 @@ namespace Rql.Execution
             info.ByNameCI = ci;
 
             // Identity and display are read implicitly (every $ref and summary), so never explicit-only members (spec §13).
-            info.IdMember = members.FirstOrDefault(m => !m.ExplicitOnly && m.IsDefined(typeof(RqlIdAttribute)))
-                            ?? members.FirstOrDefault(m => !m.ExplicitOnly && m.Name == "Id" && IsIdType(m.Type));
+            info.IdMember = identityName != null
+                ? members.FirstOrDefault(m => !m.ExplicitOnly && m.Name == identityName)
+                : members.FirstOrDefault(m => !m.ExplicitOnly && m.IsDefined(typeof(RqlIdAttribute)))
+                  ?? members.FirstOrDefault(m => !m.ExplicitOnly && m.Name == "Id" && IsIdType(m.Type));
             // Stable identities never change through RQL (refs would silently break).
             if (info.IdMember != null && info.IdMember.CanWrite)
             {
@@ -341,8 +404,10 @@ namespace Rql.Execution
                 info.ByNameCI[ro.Name] = info.ByNameCI.TryGetValue(ro.Name, out var prev) && prev == null ? null : ro;
                 info.IdMember = ro;
             }
-            info.DisplayMember = members.FirstOrDefault(m => !m.ExplicitOnly && m.IsDefined(typeof(RqlDisplayAttribute)))
-                                 ?? members.FirstOrDefault(m => !m.ExplicitOnly && m.Name == "Name" && m.Type == typeof(string));
+            info.DisplayMember = displayName != null
+                ? members.FirstOrDefault(m => !m.ExplicitOnly && m.Name == displayName)
+                : members.FirstOrDefault(m => !m.ExplicitOnly && m.IsDefined(typeof(RqlDisplayAttribute)))
+                  ?? members.FirstOrDefault(m => !m.ExplicitOnly && m.Name == "Name" && m.Type == typeof(string));
             info.Callable = methods.OrderBy(m => m.Name, StringComparer.Ordinal).ThenBy(m => m.Parameters.Count).ToArray();
         }
 

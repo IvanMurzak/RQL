@@ -61,6 +61,7 @@ Json Encoder::inline_object(const Value& obj, int depth) {
 }
 
 Json Encoder::encode(const Value& v, int depth) {
+    if (x_.is_dead(v)) return Json();  // destroyed objects encode as null (spec §13 liveness)
     // Adapter encoding first (spec §13): the first adapter that encodes wins.
     if (x_.has_capability(Capability::Encode)) {
         const auto& encoders = x_.adapters_for(v, Capability::Encode);

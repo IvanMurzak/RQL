@@ -27,6 +27,19 @@ export interface ListExpr {
   span?: TextSpan;
 }
 
+/** One `key: value` entry of an object literal. */
+export interface ObjectEntry {
+  readonly key: string;
+  readonly value: Expr;
+}
+
+/** Object literal `{ key: expr, … }`: an ordered string-keyed map; keys are unique and non-empty (spec §4.5). */
+export interface ObjectExpr {
+  readonly kind: 'object';
+  readonly entries: readonly ObjectEntry[];
+  span?: TextSpan;
+}
+
 /** Navigation from the current item, or from `on`. Empty path = the item itself. */
 export interface PathExpr {
   readonly kind: 'path';
@@ -64,7 +77,7 @@ export interface CallExpr {
   span?: TextSpan;
 }
 
-export type Expr = LitExpr | ListExpr | PathExpr | OpExpr | CallExpr;
+export type Expr = LitExpr | ListExpr | ObjectExpr | PathExpr | OpExpr | CallExpr;
 
 export type Segment =
   | { readonly kind: 'member'; readonly name: string }
@@ -216,6 +229,7 @@ export const plan = (source: Expr, stages: readonly Stage[], version: string = R
 
 export const lit = (value: LiteralValue): LitExpr => ({ kind: 'lit', value });
 export const list = (items: readonly Expr[]): ListExpr => ({ kind: 'list', items });
+export const object = (entries: readonly ObjectEntry[]): ObjectExpr => ({ kind: 'object', entries });
 export const path = (segments: readonly Segment[], on?: Expr): PathExpr =>
   on === undefined ? { kind: 'path', segments } : { kind: 'path', segments, on };
 export const op = (o: ExprOp, args: readonly Expr[]): OpExpr => ({ kind: 'op', op: o, args });

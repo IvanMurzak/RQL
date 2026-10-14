@@ -70,6 +70,18 @@ export interface MemberTable<T extends object = object> {
    * writes through `set` after coercion to `valueType` and `validate`. Without `set` the map is read-only.
    */
   map<V>(name: string, spec: VirtualMapSpec<T, V>, valueType?: TypeRef, description?: string): this;
+  /** A virtual map whose entries have different types: values are coerced to `entryType(owner, key)` before validation. */
+  mixedMap(name: string, spec: VirtualMapSpec<T> & { entryType(owner: T, key: string): TypeRef }, description?: string): this;
+  /** Hide every member matching the predicate. */
+  hideWhere(hide: (member: MemberAccessor) => boolean): this;
+  /** Getters returning a copy: writes into the value are assigned back through the setter, like value types. */
+  copyOnRead(...names: string[]): this;
+  /** For struct handles to shared state: writes to copies are live (no write-back), virtual setters allowed, may be targets. */
+  writesThrough(): this;
+  /** The member used for stable refs `Type#id`. */
+  identity(name: string): this;
+  /** The member shown as `name` in summaries. */
+  display(name: string): this;
 }
 
 interface AdapterCapabilities<T extends object> {
@@ -79,6 +91,8 @@ interface AdapterCapabilities<T extends object> {
   name?: string;
   /** One line for schemas and `describe`, e.g. how to write literals of the type. */
   description?: string;
+  /** JSON Schema of the literals `coerce` accepts (shown by `describe` as `literal`). */
+  literal?: JsonValue;
   members?(table: MemberTable<T>): void;
   /** Replace the output encoding; `undefined` defers. */
   encode?(value: T, ctx: EncodeContext): JsonValue | undefined;

@@ -131,6 +131,13 @@ modulo by zero → `error(div-by-zero)`. Other operand kinds → `error(type-mis
 | `lower(s)`, `upper(s)` | invariant case conversion. |
 | `abs(n)`, `round(n[, digits])`, `floor(n)`, `ceil(n)` | numeric. |
 | `ref(s, ...)` | root scope only: resolve object references. |
+| `append(list, v, ...)` | a new list: the elements of `list` followed by the values. |
+| `insert(list, i, v)` | a new list with `v` inserted before index `i` (negative `i` counts from the end, `-1` appends). |
+| `remove-at(list, i)` | a new list without the element at `i` (negative from the end). |
+| `without(list, v)` | a new list without the elements equal to `v` (§4.1). |
+
+List functions never modify their argument; assign the result (`set Tags = append(Tags, "x")`). A first argument that is
+not a list, a non-integral index or an index out of range yields a `type-mismatch` error value.
 
 Collection **methods** (`list.method(args)`), args evaluated per element with `$` = element:
 
@@ -152,6 +159,24 @@ and `value` (member lookup is case-insensitive, so `Key` works too), in the map'
 order (runtimes with unordered maps MUST use insertion order or sort entries by key for
 determinism). Any other member accessed on an entry is looked up on its value, so
 `world.Assets | where Type == "Material"` filters assets directly. Entries encode as `{"key": ..., "value": ...}`. `m[1]` on a map is a key lookup.
+
+### 4.5 Object literals
+
+`{ key: expr, … }` builds a value: an ordered map from string keys to values. Keys are names or strings, non-empty and
+unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as a map everywhere (`{a: 1}.a`,
+`len({…})`, encoding as a JSON object, equality is unknown). Its purpose is writes: when coerced to a member type
+(§8),
+
+* type adapters' coercion (§13) runs first;
+* a **map** type is built entry by entry (keys coerced to the key type, values to the value type);
+* an **object or struct** type is constructed and its members assigned: the concrete type is the target type, or the
+  type named by the key `"$type"` (short or full name) among concrete types assignable to the target (no match or an
+  ambiguous name → `coercion-failed`); the type must be constructible (a default/parameterless constructor or an adapter
+  that coerces object literals); every other key must name a writable member of that type (unknown or read-only →
+  `coercion-failed`), and its value is coerced recursively to the member type and validated like a `set`. Members not
+  named keep the type's defaults (numbers `0`, strings `""`, booleans `false`, empty lists/maps, null references) —
+  an object literal builds a new value, it does not patch the old one (use member paths for that);
+* any other target type → `coercion-failed`.
 
 ## 5. Stages
 
@@ -207,8 +232,9 @@ conformance form.
 
 ## 7. References and identity
 
-* `ref()` tolerates copied display forms: anything from the first whitespace or `(` on is ignored
-  (`"Enemy#12(Goblin_0012)"` resolves `Enemy#12`).
+* `ref()` resolves the exact text first, so ids may contain spaces and parentheses (asset paths such as
+  `"Material#Assets/My Mats/Red (1).mat"`). Only when that fails does it tolerate copied display forms: anything from the
+  first whitespace or `(` on is then ignored (`"Enemy#12(Goblin_0012)"` resolves `Enemy#12`).
 * `$ref` = `"<Type>#<id>"` where `<id>` is a stable id from the runtime's identity provider
   (e.g. a declared `Id` member). Objects without a stable id get a session handle id
   `"<Type>@<n>"`, valid for the lifetime of the runtime session.
@@ -229,7 +255,7 @@ Mutations are disabled unless the caller's policy enables them (`permission-deni
 * A request's `maxMutationTargets` may not exceed the host's hard ceiling.
 * `set p = e`: for each item, evaluate `e` against the item, coerce to the member type of `p`
   (number→integral only if integral and in range; string→enum by name; null only for nullable /
-  reference types; list literal → list/array type), then write. Writing through value types
+  reference types; list literal → list/array type; object literal → map / constructed object, §4.5), then write. Writing through value types
   (`Transform.Position.x = 1`) MUST write back the modified copy to every enclosing value-type
   member up to the first reference object. Target member must be writable and allowed by
   policy (`readonly-member`, `permission-denied`).
@@ -336,7 +362,10 @@ templates in the reflection layer) only implement the exact / base / interface t
 | Encode | Replace the output encoding of values of the type (first adapter that encodes wins). |
 | Coerce | Convert a value supplied by a query (literal, list, other type) to the type on writes (`set`, `call` arguments). Values already of the target type bypass it. A failure carries a reason → `coercion-failed`, reason in the message. |
 | Compare | Equality and/or ordering of a value of the type with any other value (first adapter of the left operand that answers wins, then of the right operand with the result mirrored). Ordering applies everywhere values are ordered: comparison operators, `sort`, `min` / `max` (which also accept values whose type has an ordering adapter). An adapter typically coerces the other operand, so `Pos == "(1, -1)"` works. |
-| Identity / liveness | Stable id for `$ref`, resolution of `Type#id`, and an `IsAlive` verdict (destroyed objects → `stale-ref`). |
+| Identity / liveness | Stable id for `$ref`, resolution of `Type#id`, and an `IsAlive` verdict. A destroyed object (an adapter says not alive, e.g. Unity's fake-null) **reads as null everywhere**: `== null` / `is null` are true, members of it read as members of null (no getter runs), it encodes as `null`, `ref()` to it is `stale-ref`, and it is never a mutation target (`stale-ref`, nothing changed). Adapters may choose the **identity** and **display** members by name (e.g. Unity's lowercase `name`). |
+| Write-back | A member can be marked **copy-on-read** (its getter returns a copy, e.g. Unity's `Renderer.sharedMaterials`, `Gradient.colorKeys`): writes into its value are assigned back through the member's setter exactly like value types (§8), with the same writability rules and rollback. A value type can be marked **writes-through** (a handle to shared state, e.g. Unity's `ParticleSystem.MainModule`): writes to its copies are live, so no write-back to the owner happens, get-only owners are fine, virtual setters on it are allowed, and its values may be mutation targets. |
+| Exclusion | Hide members by predicate (e.g. every `[Obsolete]` member), and engine-wide exclude member **types** (a member is dropped when its type, element type or a generic argument matches), e.g. delegates, native pointers or assemblies that must never be touched. |
+| Literals | Coercion receives object literals (§4.5) and may build values itself; an adapter may publish a JSON Schema of the literals it accepts, shown by `describe` as `literal`. |
 | Describe | A one-line description of the type for schemas and `describe`, e.g. how to write literals. |
 
 Writes through adapter members keep the all-or-nothing guarantee: old values are read through the member getter before
@@ -346,6 +375,18 @@ a lossy member (`set(get())` changes state, e.g. the fixture's case-folding `tit
 exposes. Validation runs while the mutation is planned, before any write, and rejects with a reason
 (→ `coercion-failed`); a setter that throws at write time triggers the rollback. Virtual setters on value types are
 rejected at configuration (they would write to a copy).
+
+**Host write hooks.** Hosts may observe mutations: a *before-write* hook receives every planned change (item, owner,
+member, old, new; for `call` the method) after planning and before any write, and may veto by failing
+(`permission-denied`, nothing changed); a *committed* hook receives the changes after every write succeeded (not on
+dry-run or after a rollback; completed calls are reported even when a later call fails). The **owner** is the object
+whose state changes: the last reference object on the written path (for `set Renderer.sharedMaterial.color` the
+Material, not the Renderer), which is what hosts mark dirty or record for undo. A failing committed hook is a
+`getter-threw` warning; the writes stay applied.
+
+**Discovery and optional types (non-normative, runtime convenience).** Runtimes with assembly/module reflection MAY
+register every public adapter found in given modules (failures isolated and reported) and MAY let an adapter target a
+type by name, being inert when no loaded module defines it.
 
 **Scope.** Adapters belong to an engine (a host may run engines with different adapter sets over one type registry);
 engines without adapters behave exactly as without this section. An explicit-only member is also not searched by

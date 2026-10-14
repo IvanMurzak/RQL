@@ -1,0 +1,265 @@
+// Unity-MCP / ReflectorNet parity features (spec §4.3, §4.5, §7, §13): host write hooks, writes-through
+// handles, copy-on-read members, predicate hiding and type exclusion, destroyed objects, object literals.
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { RqlEngine, TypeModel, t, type MutationRecord } from '@rql/execution';
+
+class Color {
+  constructor(
+    public r = 0,
+    public g = 0,
+    public b = 0,
+  ) {}
+}
+class Material {
+  constructor(
+    public Id: string,
+    public color = new Color(),
+  ) {}
+}
+class Renderer {
+  constructor(
+    public Id: number,
+    public Name: string,
+    public material: Material,
+  ) {}
+}
+/** A handle to shared state (like Unity's ParticleSystem.MainModule). */
+class MainModule {
+  constructor(private readonly ps: ParticleSystem) {}
+  get duration(): number {
+    return this.ps.state.duration;
+  }
+  set duration(v: number) {
+    this.ps.state.duration = v;
+  }
+}
+class ParticleSystem {
+  state = { duration: 1, loop: false };
+  constructor(public Id: number) {}
+  get main(): MainModule {
+    return new MainModule(this); // a fresh copy on every read, writing through to `state`
+  }
+}
+
+function graphics(): { e: RqlEngine; renderers: Renderer[]; systems: ParticleSystem[] } {
+  const renderers = [new Renderer(1, 'r1', new Material('m1')), new Renderer(2, 'r2', new Material('m2'))];
+  const systems = [new ParticleSystem(10)];
+  const types = new TypeModel()
+    .register(Color, { kind: 'struct', members: [{ name: 'r', type: t.number }, { name: 'g', type: t.number }, { name: 'b', type: t.number }] })
+    .register(Material, { members: [{ name: 'Id', type: t.string }, { name: 'color', type: t.of(Color) }] })
+    .register(Renderer, { members: [{ name: 'Id', type: t.int }, { name: 'Name', type: t.string }, { name: 'material', type: t.of(Material) }] })
+    .register(MainModule, { kind: 'struct', members: [{ name: 'duration', type: t.number }] })
+    .register(ParticleSystem, { members: [{ name: 'Id', type: t.int }, { name: 'main', type: t.of(MainModule) }] });
+  const e = new RqlEngine({ types })
+    .addSource('renderers', () => renderers)
+    .addSource('systems', () => systems)
+    .addAdapter({
+      target: MainModule,
+      members: (m) => m.writesThrough().add<boolean>('loop', { type: t.bool, get: (mm) => (mm as unknown as { ps: ParticleSystem }).ps.state.loop, set: (mm, v) => void ((mm as unknown as { ps: ParticleSystem }).ps.state.loop = v) }),
+    });
+  e.mutations.enabled = true;
+  return { e, renderers, systems };
+}
+
+const mut = { allowMutation: true };
+
+test('host hooks: owner is the last reference object on the path; veto; dry-run; committed failure is a warning', () => {
+  const { e, renderers } = graphics();
+  const seen: { phase: string; records: readonly MutationRecord[] }[] = [];
+  e.mutations.beforeWrite = (records) => void seen.push({ phase: 'before', records });
+  e.mutations.committed = (records) => void seen.push({ phase: 'committed', records });
+
+  const r = e.execute('renderers | set material.color.r = 1', {}, mut);
+  assert.equal(r.ok, true);
+  assert.deepEqual(seen.map((s) => s.phase), ['before', 'committed']);
+  const rec = seen[1]!.records;
+  assert.equal(rec.length, 2);
+  assert.equal(rec[0]!.item, renderers[0]); // the target ...
+  assert.equal(rec[0]!.owner, renderers[0]!.material); // ... but the Material owns the changed Color
+  assert.deepEqual([rec[0]!.member, rec[0]!.old, rec[0]!.new], ['material.color.r', 0, 1]);
+
+  seen.length = 0;
+  e.execute('renderers | set material.color.g = 1', {}, { allowMutation: true, dryRun: true });
+  assert.equal(seen.length, 0);
+
+  e.mutations.beforeWrite = () => {
+    throw new Error('locked by version control');
+  };
+  const vetoed = e.execute('renderers | set material.color.b = 1', {}, mut);
+  assert.equal(vetoed.diagnostics[0]?.code, 'permission-denied');
+  assert.deepEqual(renderers.map((x) => x.material.color.b), [0, 0]);
+
+  e.mutations.beforeWrite = undefined;
+  e.mutations.committed = () => {
+    throw new Error('undo stack full');
+  };
+  const warned = e.execute('renderers | set Name = "x"', {}, mut);
+  assert.equal(warned.ok, true);
+  assert.equal(warned.diagnostics[0]?.code, 'getter-threw');
+  assert.deepEqual(renderers.map((x) => x.Name), ['x', 'x']);
+});
+
+test('host hooks on call: completed calls are reported even when a later call fails', () => {
+  class Counter {
+    n = 0;
+    constructor(public Id: number) {}
+  }
+  const cs = [new Counter(1), new Counter(2)];
+  const types = new TypeModel().register(Counter, { members: [{ name: 'Id', type: t.int }, { name: 'n', type: t.int }] });
+  const e = new RqlEngine({ types })
+    .addSource('cs', () => cs)
+    .addAdapter({
+      target: Counter,
+      members: (m) =>
+        m.method('inc', [], t.int, (c) => {
+          if (c.Id === 2) throw new Error('boom');
+          return ++c.n;
+        }),
+    });
+  e.mutations.enabled = true;
+  const committed: string[] = [];
+  e.mutations.committed = (records) => void committed.push(...records.map((r) => `${(r.item as Counter).Id}:${r.member}:${r.method?.name}`));
+  const r = e.execute('cs | call inc()', {}, mut);
+  assert.equal(r.diagnostics[0]?.code, 'getter-threw');
+  assert.deepEqual(committed, ['1:inc():inc']);
+});
+
+test('writes-through handles: no write-back, get-only owner, virtual setters, and they can be targets', () => {
+  const { e, systems } = graphics();
+  assert.equal(e.execute('systems | set main.duration = 5', {}, mut).ok, true);
+  assert.equal(systems[0]!.state.duration, 5);
+  assert.equal(e.execute('systems | get main | set duration = 7, loop = true', {}, mut).ok, true);
+  assert.deepEqual(systems[0]!.state, { duration: 7, loop: true });
+});
+
+test('copy-on-read members write back through the setter; a get-only copy is read-only', () => {
+  class Grad {
+    private keys = [1, 2, 3];
+    constructor(public Id: number) {}
+    get colorKeys(): number[] {
+      return [...this.keys];
+    }
+    set colorKeys(v: number[]) {
+      this.keys = [...v];
+    }
+    get frozenKeys(): number[] {
+      return [...this.keys];
+    }
+  }
+  const g = new Grad(1);
+  const types = new TypeModel().register(Grad, {
+    members: [{ name: 'Id', type: t.int }, { name: 'colorKeys', type: t.list(t.number) }, { name: 'frozenKeys', type: t.list(t.number) }],
+  });
+  const e = new RqlEngine({ types }).addSource('gs', () => [g]).addAdapter({ target: Grad, members: (m) => m.copyOnRead('colorKeys', 'frozenKeys') });
+  e.mutations.enabled = true;
+  assert.equal(e.execute('gs | set colorKeys[1] = 9', {}, mut).ok, true);
+  assert.deepEqual(g.colorKeys, [1, 9, 3]);
+  assert.equal(e.execute('gs | set frozenKeys[0] = 0', {}, mut).diagnostics[0]?.code, 'readonly-member');
+  assert.deepEqual(g.colorKeys, [1, 9, 3]);
+});
+
+test('hideWhere and engine-level type exclusion drop members (also through element and value types)', () => {
+  class Native {
+    ptr = 1;
+  }
+  class Obj {
+    Id = 1;
+    Name = 'o';
+    _internal = 2;
+    handle = new Native();
+    handles = [new Native()];
+    byName = new Map([['a', new Native()]]);
+  }
+  const types = new TypeModel()
+    .register(Native, { members: ['ptr'] })
+    .register(Obj, {
+      members: [
+        { name: 'Id', type: t.int },
+        { name: 'Name', type: t.string },
+        { name: '_internal', type: t.int },
+        { name: 'handle', type: t.of(Native) },
+        { name: 'handles', type: t.list(t.of(Native)) },
+        { name: 'byName', type: t.map(t.string, t.of(Native)) },
+      ],
+    });
+  const e = new RqlEngine({ types })
+    .addSource('os', () => [new Obj()])
+    .excludeTypes((r) => typeof r === 'object' && 'kind' in r && r.kind === 'class' && r.ctor === Native)
+    .addAdapter({ target: Obj, members: (m) => m.hideWhere((mm) => mm.name.startsWith('_')) });
+  const d = e.execute('os | describe').types?.[0] as { members: { name: string }[] };
+  assert.deepEqual(d.members.map((m) => m.name), ['Id', 'Name']);
+  assert.equal(e.execute('os | select handle').diagnostics[0]?.code, 'unknown-member');
+});
+
+test('destroyed objects read as null: equality, members (no getter runs), encoding, refs, mutation targets', () => {
+  let getterRuns = 0;
+  class Go {
+    destroyed = false;
+    private hp = 10;
+    constructor(public Id: number) {}
+    get Hp(): number {
+      getterRuns++;
+      return this.hp;
+    }
+    set Hp(v: number) {
+      this.hp = v;
+    }
+  }
+  const gos = [new Go(1), new Go(2)];
+  const types = new TypeModel().register(Go, { members: [{ name: 'Id', type: t.int }, { name: 'Hp', type: t.int }] });
+  const e = new RqlEngine({ types }).addSource('gos', () => gos).addAdapter({ target: Go, isAlive: (g) => !g.destroyed });
+  e.mutations.enabled = true;
+  gos[1]!.destroyed = true;
+  getterRuns = 0;
+  assert.deepEqual(e.execute('gos | select Id dead=($ == null) gone=($ is null) Hp').rows, [[1, false, false, 10], [null, true, true, null]]);
+  assert.equal(getterRuns, 1);
+  assert.deepEqual(e.execute('gos').items?.[1], null);
+  assert.equal(e.execute('ref("Go#2") | count').diagnostics[0]?.code, 'stale-ref');
+  const r = e.execute('gos | set Hp = 0', {}, mut);
+  assert.equal(r.diagnostics[0]?.code, 'stale-ref');
+  assert.equal(gos[0]!.Hp, 10); // nothing changed, not even the live one
+});
+
+test('object literals: maps, construction with defaults, "$type" ambiguity, adapter coercion first', () => {
+  class Shape {
+    Id = 0;
+    Name = '';
+    sides = 0;
+  }
+  class Square extends Shape {
+    size = 1;
+  }
+  class Holder {
+    Id = 1;
+    shape: Shape | null = null;
+    weights = new Map<string, number>();
+  }
+  const h = new Holder();
+  const types = new TypeModel()
+    .register(Shape, { members: [{ name: 'Id', type: t.int }, { name: 'Name', type: t.string }, { name: 'sides', type: t.int }] })
+    .register(Square, { members: [{ name: 'size', type: t.number }] })
+    .register(Holder, { members: [{ name: 'Id', type: t.int }, { name: 'shape', type: t.nullable(t.of(Shape)) }, { name: 'weights', type: t.map(t.string, t.number) }] });
+  const e = new RqlEngine({ types }).addSource('hs', () => [h]);
+  e.mutations.enabled = true;
+  assert.equal(e.execute('hs | set shape = {"$type": "Square", Name: "sq", size: 2.5}, weights = {a: 1, b: 2}', {}, mut).ok, true);
+  assert.ok(h.shape instanceof Square);
+  assert.deepEqual([h.shape.Name, h.shape.sides, (h.shape as Square).size], ['sq', 0, 2.5]);
+  assert.deepEqual([...h.weights], [['a', 1], ['b', 2]]);
+  for (const bad of ['{sides: 1.5}', '{"$type": "Circle"}', '{"$type": 3}', '{nope: 1}']) {
+    assert.equal(e.execute(`hs | set shape = ${bad}`, {}, mut).diagnostics[0]?.code, 'coercion-failed', bad);
+  }
+  assert.equal(e.execute('hs | set weights = {a: "x"}', {}, mut).diagnostics[0]?.code, 'coercion-failed');
+});
+
+test('list functions are pure and validate their arguments', () => {
+  const tags = ['a', 'b'];
+  const e = new RqlEngine().addSource('xs', () => [{ Id: 1, tags }]);
+  assert.deepEqual(e.execute('xs | select append(tags, "c") insert(tags, -1, "z") remove-at(tags, 0) without(tags, "a")').rows, [
+    [['a', 'b', 'c'], ['a', 'b', 'z'], ['b'], ['b']],
+  ]);
+  assert.deepEqual(tags, ['a', 'b']);
+  assert.deepEqual(e.execute('xs | select insert(tags, 1.5, "q") insert(tags, 3, "q") remove-at(5, 0)').rows, [
+    [{ $error: 'type-mismatch' }, { $error: 'type-mismatch' }, { $error: 'type-mismatch' }],
+  ]);
+});

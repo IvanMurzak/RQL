@@ -72,6 +72,8 @@ namespace Rql.Execution
     internal interface IVirtualMap
     {
         bool IsReadOnly { get; }
+        /// <summary>Declared value type of one entry (mixed-type maps), or null for the map's value type.</summary>
+        Type? EntryType(string key);
         /// <summary>Rejection reason for assigning <paramref name="value"/> to <paramref name="key"/>, or null.</summary>
         string? ValidateEntry(string key, object? value);
     }
@@ -83,11 +85,15 @@ namespace Rql.Execution
         private readonly Func<object, string, TValue> _get;
         private readonly Action<object, string, TValue>? _set;
 
+        private readonly Func<object, string, Type>? _entryType;
+
         internal VirtualMap(object owner, Func<object, IEnumerable<string>> keys, Func<object, string, TValue> get,
-            Action<object, string, TValue>? set, Func<object, string, TValue, string?>? validate)
+            Action<object, string, TValue>? set, Func<object, string, TValue, string?>? validate, Func<object, string, Type>? entryType = null)
         {
-            _owner = owner; _keys = keys; _get = get; _set = set; Validate = validate;
+            _owner = owner; _keys = keys; _get = get; _set = set; Validate = validate; _entryType = entryType;
         }
+
+        Type? IVirtualMap.EntryType(string key) => _entryType?.Invoke(_owner, key);
 
         /// <summary>Per-entry validation (rejection reason or null), run while a mutation is planned.</summary>
         internal Func<object, string, TValue, string?>? Validate { get; }
