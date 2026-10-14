@@ -6,7 +6,6 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text.Json.Nodes;
 using Rql.Execution;
 using UnityEngine;
@@ -70,7 +69,9 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Adapters
             var a = value.colorKeys;
             var b = o.colorKeys;
             if (a.Length != b.Length) return false;
-            return a.Zip(b, (x, y) => Math.Abs(x.time - y.time) < 1e-4f && kernel.Equal(x.color, y.color) == true).All(eq => eq);
+            for (int i = 0; i < a.Length; i++)
+                if (Math.Abs(a[i].time - b[i].time) >= 1e-4f || kernel.Equal(a[i].color, b[i].color) != true) return false;
+            return true;
         }
     }
 }

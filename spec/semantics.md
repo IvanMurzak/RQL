@@ -405,7 +405,8 @@ behaviour; a nesting limit (32) bounds the rest; (2) the host's **write policy**
 building nested values; (3) **error paths** — a nested failure's reason is prefixed with its location (`[1].color: …`).
 
 **Modules (non-normative, host convenience).** Adapters, type exclusions, sources and functions are contributed by
-*modules* (order + configure). Runtimes with module/assembly reflection discover modules by scan, configure them in
+*modules* (order + configure). Runtimes with module/assembly reflection discover modules by scan (or take them from a
+host's type index), configure them in
 order (then by name), isolate failures (a failing module is reported, the others still configure) and report the result.
 A module that lives in an optional package exists exactly when that package is installed, so enabling or disabling an
 engine feature (e.g. Unity's Particle System) enables or disables its adapters.

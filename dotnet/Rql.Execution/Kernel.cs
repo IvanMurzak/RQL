@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 
 namespace Rql.Execution
 {
@@ -15,8 +14,19 @@ namespace Rql.Execution
         /// <summary>Deepest nesting of kernel operations (adapters calling the kernel calling adapters …).</summary>
         public const int MaxDepth = 32;
 
-        private readonly HashSet<(RqlTypeAdapter adapter, Type type, int op)> _active = new HashSet<(RqlTypeAdapter, Type, int)>();
-        private int _depth;
+        // Guard state is per thread, not per kernel: nested work may go through different kernels (the read kernel of a type
+        // model, the write kernel of an execution) and must still see one recursion stack and one depth. Kernels themselves are
+        // immutable, so one can be reused for a whole type model or execution.
+        [ThreadStatic] private static Frame[]? _frames;
+        [ThreadStatic] private static int _active;
+        [ThreadStatic] private static int _depth;
+
+        private struct Frame
+        {
+            public RqlTypeAdapter Adapter;
+            public Type Type;
+            public int Op;
+        }
 
         internal RqlKernel(TypeModel types, Func<Type, MemberAccessor, bool>? writePolicy)
         {
@@ -54,25 +64,38 @@ namespace Rql.Execution
         }
 
         /// <summary>Equality as in queries (§4.1 and adapters); null = unknown.</summary>
-        public bool? Equal(object? a, object? b) => Nested(() => Compiler.Equal(this, a, b), null);
+        public bool? Equal(object? a, object? b)
+        {
+            if (_depth >= MaxDepth) return null;
+            _depth++;
+            try { return Compiler.Equal(this, a, b); }
+            finally { _depth--; }
+        }
 
         /// <summary>Ordering as in queries (adapters, numbers, strings, enums); null = incomparable.</summary>
-        public int? Compare(object? a, object? b) => Nested(() => Compiler.Compare(this, a, b), null);
-
-        private T Nested<T>(Func<T> op, T tooDeep)
+        public int? Compare(object? a, object? b)
         {
-            if (_depth >= MaxDepth) return tooDeep;
+            if (_depth >= MaxDepth) return null;
             _depth++;
-            try { return op(); }
+            try { return Compiler.Compare(this, a, b); }
             finally { _depth--; }
         }
 
         internal const int OpCoerce = 0, OpEqual = 1, OpCompare = 2;
 
         /// <summary>Recursion guard: false when this adapter is already running this operation for this type.</summary>
-        internal bool Enter(RqlTypeAdapter adapter, Type type, int op) => _active.Add((adapter, type, op));
+        internal static bool Enter(RqlTypeAdapter adapter, Type type, int op)
+        {
+            var frames = _frames ??= new Frame[8];
+            for (int i = 0; i < _active; i++)
+                if (ReferenceEquals(frames[i].Adapter, adapter) && frames[i].Type == type && frames[i].Op == op) return false;
+            if (_active == frames.Length) Array.Resize(ref _frames, frames.Length * 2);
+            _frames![_active++] = new Frame { Adapter = adapter, Type = type, Op = op };
+            return true;
+        }
 
-        internal void Exit(RqlTypeAdapter adapter, Type type, int op) => _active.Remove((adapter, type, op));
+        /// <summary>Leaves the innermost frame (Enter / Exit pair up in try / finally, so frames are strictly nested).</summary>
+        internal static void Exit() => _frames![--_active] = default;
 
         private static string Prefix(string? path, string why) => string.IsNullOrEmpty(path) ? why : path + ": " + why;
     }

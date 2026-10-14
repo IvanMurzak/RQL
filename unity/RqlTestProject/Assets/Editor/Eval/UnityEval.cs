@@ -331,22 +331,29 @@ namespace RqlTest.Eval
         {
             static double D(JsonObject o, string k) => double.Parse(o[k]!.ToJsonString(), CultureInfo.InvariantCulture);
             static double U(JsonObject o, string k) => D(o["usage"]!.AsObject(), k);
+            static bool Ok(JsonObject r) => r["success"]!.GetValue<bool>();
+            var byCondition = conditions.ToDictionary(c => c, c => results.Where(r => r["condition"]!.GetValue<string>() == c).ToList());
             var sb = new StringBuilder();
-            sb.AppendLine($"# Unity in-Editor comparison — {runId}").AppendLine();
-            sb.AppendLine($"model `{Model}`, reasoning `none`, temperature 0, maxSteps {config["maxSteps"]}, repeats {config["repeats"]}, Unity {config["unity"]}, Unity-MCP {config["unityMcp"]}; total cost ${spent:0.0000}.").AppendLine();
-            sb.Append("| Metric |");
-            foreach (var c in conditions) sb.Append($" {c} |");
-            sb.AppendLine().Append("|---|");
-            foreach (var _ in conditions) sb.Append("---|");
-            sb.AppendLine();
+            void Header(string leading)
+            {
+                sb.Append(leading);
+                foreach (var c in conditions) sb.Append($" {c} |");
+                sb.AppendLine().Append(string.Concat(Enumerable.Repeat("|---", leading.Count(ch => ch == '|') - 1))).Append('|');
+                foreach (var _ in conditions) sb.Append("---|");
+                sb.AppendLine();
+            }
             void Row(string label, Func<List<JsonObject>, string> f)
             {
                 sb.Append($"| {label} |");
-                foreach (var c in conditions) { var rs = results.Where(r => r["condition"]!.GetValue<string>() == c).ToList(); sb.Append($" {(rs.Count == 0 ? "–" : f(rs))} |"); }
+                foreach (var c in conditions) sb.Append($" {(byCondition[c].Count == 0 ? "–" : f(byCondition[c]))} |");
                 sb.AppendLine();
             }
+
+            sb.AppendLine($"# Unity in-Editor comparison — {runId}").AppendLine();
+            sb.AppendLine($"model `{Model}`, reasoning `none`, temperature 0, maxSteps {config["maxSteps"]}, repeats {config["repeats"]}, Unity {config["unity"]}, Unity-MCP {config["unityMcp"]}; total cost ${spent:0.0000}.").AppendLine();
+            Header("| Metric |");
             Row("Runs", rs => rs.Count.ToString(CultureInfo.InvariantCulture));
-            Row("Success", rs => $"{rs.Count(r => r["success"]!.GetValue<bool>())}/{rs.Count} ({100.0 * rs.Count(r => r["success"]!.GetValue<bool>()) / rs.Count:0}%)");
+            Row("Success", rs => $"{rs.Count(Ok)}/{rs.Count} ({100.0 * rs.Count(Ok) / rs.Count:0}%)");
             Row("Task check passed (ignoring side effects)", rs => $"{rs.Count(r => r["taskCheck"]!.GetValue<bool>())}/{rs.Count}");
             Row("Runs with unintended changes", rs => rs.Count(r => D(r, "unintendedChanges") > 0).ToString(CultureInfo.InvariantCulture));
             Row("Mean model turns", rs => rs.Average(r => D(r, "modelTurns")).ToString("0.0", CultureInfo.InvariantCulture));
@@ -359,24 +366,21 @@ namespace RqlTest.Eval
             Row("Mean model time (s)", rs => (rs.Average(r => D(r, "modelMs")) / 1000).ToString("0.0", CultureInfo.InvariantCulture));
             Row("Mean tool time (ms)", rs => rs.Average(r => D(r, "toolMs")).ToString("0.0", CultureInfo.InvariantCulture));
             Row("Tool definitions (chars)", rs => ((JsonObject)config["conditions"]!)[rs[0]["condition"]!.GetValue<string>()]!["toolDefinitionChars"]!.ToString());
+
             sb.AppendLine().AppendLine("## Per task (passes / runs, mean tool calls, mean cost)").AppendLine();
-            sb.Append("| Task | Category |");
-            foreach (var c in conditions) sb.Append($" {c} |");
-            sb.AppendLine().Append("|---|---|");
-            foreach (var _ in conditions) sb.Append("---|");
-            sb.AppendLine();
+            Header("| Task | Category |");
             foreach (var t in tasks)
             {
                 sb.Append($"| {t.Id} | {t.Category} |");
                 foreach (var c in conditions)
                 {
-                    var rs = results.Where(r => r["condition"]!.GetValue<string>() == c && r["task"]!.GetValue<string>() == t.Id).ToList();
-                    sb.Append(rs.Count == 0 ? " – |" : $" {rs.Count(r => r["success"]!.GetValue<bool>())}/{rs.Count}, {rs.Average(r => D(r, "toolCalls")):0.0} calls, ${rs.Average(r => U(r, "costUsd")):0.0000} |");
+                    var rs = byCondition[c].Where(r => r["task"]!.GetValue<string>() == t.Id).ToList();
+                    sb.Append(rs.Count == 0 ? " – |" : $" {rs.Count(Ok)}/{rs.Count}, {rs.Average(r => D(r, "toolCalls")):0.0} calls, ${rs.Average(r => U(r, "costUsd")):0.0000} |");
                 }
                 sb.AppendLine();
             }
             sb.AppendLine().AppendLine("## Failures").AppendLine();
-            foreach (var r in results.Where(r => !r["success"]!.GetValue<bool>()))
+            foreach (var r in results.Where(r => !Ok(r)))
                 sb.AppendLine($"- `{r["condition"]}` {r["task"]} r{r["repeat"]}: {r["outcome"]} — {r["gradeDetail"]}");
             return sb.ToString();
         }

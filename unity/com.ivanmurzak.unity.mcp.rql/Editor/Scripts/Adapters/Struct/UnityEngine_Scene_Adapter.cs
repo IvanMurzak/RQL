@@ -15,7 +15,7 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Adapters
     {
         protected override void Members(MemberTable<Scene> m)
         {
-            m.Untyped.OnlyExisting("name", "path", "buildIndex", "isLoaded", "isDirty", "rootCount");
+            m.Untyped.Only("name", "path", "buildIndex", "isLoaded", "isDirty", "rootCount");
             m.Add("roots", s => s.GetRootGameObjects().ToList(), description: "root GameObjects", owning: true);
         }
     }

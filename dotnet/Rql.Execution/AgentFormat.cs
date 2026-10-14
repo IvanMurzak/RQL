@@ -103,15 +103,13 @@ namespace Rql.Execution
                     if (s.Description != null) sb.Append(" — ").Append(s.Description);
                     sb.Append('\n');
                 }
+                foreach (var f in engine.Functions.Keys.OrderBy(k => k, StringComparer.Ordinal))
+                    sb.Append("  ").Append(f).Append("(…)").Append(engine.FunctionDescriptions.TryGetValue(f, out var fd) ? " — " + fd : "").Append('\n');
                 sb.Append("types (members: name type; ").Append(engine.Mutations.Enabled ? "ro = read-only; " : "").Append("derived types list only added members):\n");
             }
             var byName = types.ToDictionary(t => t["name"]!.GetValue<string>(), t => t);
             var shown = types.Where(t => typeFilter == null || string.Equals(t["name"]!.GetValue<string>(), typeFilter, StringComparison.OrdinalIgnoreCase)).ToList();
-            if (typeFilter != null && shown.Count == 0)
-            {
-                var close = Suggest.Closest(typeFilter, byName.Keys.ToList(), 3);
-                return $"error unknown-type: no type '{typeFilter}'" + (close.Count > 0 ? " — did you mean " + string.Join(" / ", close) + "?" : "");
-            }
+            if (typeFilter != null && shown.Count == 0) return UnknownTypeError(typeFilter, byName.Keys.ToList());
             foreach (var t in shown)
             {
                 JsonObject? baseType = null;
@@ -121,6 +119,26 @@ namespace Rql.Execution
             return sb.ToString().TrimEnd();
         }
 
+        /// <summary>
+        /// One type in the compact schema form: <c>Name : Base {member type ro, …} methods: … — description</c>. Members that
+        /// <paramref name="inheritedFrom"/> also has are left out (hosts summarise shared base members once).
+        /// </summary>
+        public static string TypeSchema(RqlEngine engine, Type type, Type? inheritedFrom = null, bool markExplicitOnly = false)
+        {
+            var sb = new StringBuilder();
+            var t = Describe.TypeDescriptor(engine.Types, type, engine.Mutations.Enabled);
+            var baseType = inheritedFrom == null ? null : Describe.TypeDescriptor(engine.Types, inheritedFrom, engine.Mutations.Enabled);
+            AppendType(sb, t, baseType, engine.Mutations.Enabled, markExplicitOnly);
+            return sb.ToString().TrimEnd();
+        }
+
+        /// <summary>The <c>unknown-type</c> error line with the closest <paramref name="candidates"/> as suggestions.</summary>
+        public static string UnknownTypeError(string typeName, IReadOnlyCollection<string> candidates)
+        {
+            var close = Suggest.Closest(typeName, candidates, 3);
+            return $"error unknown-type: no type '{typeName}'" + (close.Count > 0 ? " — did you mean " + string.Join(" / ", close) + "?" : "");
+        }
+
         private static string SourceTypeName(RqlEngine engine, Type t)
         {
             var info = engine.Types.Info(t);
@@ -128,7 +146,7 @@ namespace Rql.Execution
             return TypeModel.FriendlyName(t);
         }
 
-        private static void AppendType(StringBuilder sb, JsonObject t, JsonObject? baseType, bool markReadOnly = false)
+        private static void AppendType(StringBuilder sb, JsonObject t, JsonObject? baseType, bool markReadOnly = false, bool markExplicitOnly = false)
         {
             var name = t["name"]!.GetValue<string>();
             var kind = t["kind"]!.GetValue<string>();
@@ -149,6 +167,7 @@ namespace Rql.Execution
                 if (baseType != null && inherited.Contains(mn)) continue;
                 var part = mn + " " + mo["type"]!.GetValue<string>();
                 if (markReadOnly && !(mo.TryGetPropertyValue("writable", out var w) && w != null && w.GetValue<bool>())) part += " ro";
+                if (markExplicitOnly && mo.ContainsKey("explicitOnly")) part += " explicit-only";
                 if (mo.TryGetPropertyValue("description", out var md) && md != null) part += " (" + md.GetValue<string>() + ")";
                 parts.Add(part);
             }

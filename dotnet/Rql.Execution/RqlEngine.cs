@@ -94,6 +94,7 @@ namespace Rql.Execution
     {
         private readonly Dictionary<string, SourceRegistration> _sources = new Dictionary<string, SourceRegistration>(StringComparer.Ordinal);
         private readonly Dictionary<string, Func<object?[], object?>> _functions = new Dictionary<string, Func<object?[], object?>>(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _functionDescriptions = new Dictionary<string, string>(StringComparer.Ordinal);
         private readonly Dictionary<string, StageHandler> _stages = new Dictionary<string, StageHandler>(StringComparer.Ordinal);
         private readonly ConditionalWeakTable<object, object> _handles = new ConditionalWeakTable<object, object>();
         private readonly Dictionary<long, WeakReference> _handleTargets = new Dictionary<long, WeakReference>();
@@ -127,12 +128,25 @@ namespace Rql.Execution
         public IReadOnlyList<RqlModuleReport> AddModulesFrom(IEnumerable<System.Reflection.Assembly> assemblies, Func<System.Reflection.Assembly, bool>? skipAssembly = null)
         {
             var reports = ModuleDiscovery.Configure(this, assemblies, skipAssembly);
-            Modules = Modules.Concat(reports).ToList();
+            _modules.AddRange(reports);
             return reports;
         }
 
+        /// <summary>
+        /// Configure the given <see cref="IRqlModule"/> types (same rules as <see cref="AddModulesFrom"/>) — for hosts that
+        /// already index types (e.g. Unity's TypeCache) and need no assembly scan.
+        /// </summary>
+        public IReadOnlyList<RqlModuleReport> AddModules(IEnumerable<Type> moduleTypes)
+        {
+            var reports = ModuleDiscovery.Configure(this, moduleTypes, new List<RqlModuleReport>());
+            _modules.AddRange(reports);
+            return reports;
+        }
+
+        private readonly List<RqlModuleReport> _modules = new List<RqlModuleReport>();
+
         /// <summary>Every module configured on this engine so far, with failures.</summary>
-        public IReadOnlyList<RqlModuleReport> Modules { get; private set; } = Array.Empty<RqlModuleReport>();
+        public IReadOnlyList<RqlModuleReport> Modules => _modules;
 
         /// <summary>
         /// Register a type adapter (spec §13): virtual/hidden members, methods, maps, encoding, coercion, comparison, identity,
@@ -201,13 +215,19 @@ namespace Rql.Execution
             return _knownMembers = known;
         }
 
-        public RqlEngine AddFunction(string name, Func<object?[], object?> fn)
+        /// <summary>Register a namespaced host function (<c>ns.fn(args)</c>); it may also start a query (spec §2).</summary>
+        public RqlEngine AddFunction(string name, Func<object?[], object?> fn, string? description = null)
         {
             ValidateName(name, allowDots: true);
             if (name.IndexOf('.') < 0) throw new ArgumentException("extension functions must be namespaced (ns.name)", nameof(name));
             _functions[name] = fn;
+            if (description != null) _functionDescriptions[name] = description;
+            else _functionDescriptions.Remove(name);
             return this;
         }
+
+        /// <summary>Descriptions of the host functions that have one (for schema / help output).</summary>
+        public IReadOnlyDictionary<string, string> FunctionDescriptions => _functionDescriptions;
 
         public RqlEngine AddStage(string name, StageHandler handler)
         {
@@ -473,6 +493,12 @@ namespace Rql.Execution
 
         public RqlEngine Engine { get; }
         public TypeModel Types { get; }
+
+        private RqlKernel? _kernel;
+
+        /// <summary>The kernel for this execution's writes: the engine's types and the host's write policy.</summary>
+        public RqlKernel Kernel => _kernel ??= new RqlKernel(Types, Engine.Mutations.CanWrite);
+
         public QueryOptions Options { get; }
         public QueryPlan Plan { get; }
         public int MaxVisited { get; }

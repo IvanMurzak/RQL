@@ -27,7 +27,7 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Adapters
             members
                 .HideWhere(m => m.Member != null && (m.Member.IsDefined(typeof(ObsoleteAttribute), true) || m.Member.IsDefined(typeof(NonSerializedAttribute), true)))
                 .IncludeFields(f => f.IsPrivate && f.IsDefined(typeof(UnityEngine.SerializeField), false))
-                .HideExisting("hideFlags")
+                .Hide("hideFlags")
                 .Display("name");
     }
 }

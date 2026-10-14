@@ -163,6 +163,10 @@ namespace Rql.Execution
 
 
         private readonly ConcurrentDictionary<Type, TypeInfo> _cache = new ConcurrentDictionary<Type, TypeInfo>();
+        private RqlKernel? _readKernel;
+
+        /// <summary>The kernel for read-only work (comparisons): no write policy. Kernels are immutable, so one is shared.</summary>
+        internal RqlKernel ReadKernel => _readKernel ??= new RqlKernel(this, null);
 
         private readonly Func<Type, TypeInfo> _build;
         private readonly AdapterRegistry _adapters = new AdapterRegistry();
@@ -313,7 +317,7 @@ namespace Rql.Execution
             if (IsScalarType(t)) { info.Kind = TypeKind.Scalar; return info; }
 
             // Hosts may declare an enumerable type to be an object (Unity's Transform enumerates its children).
-            bool asObject = IsTreatedAsObject(t);
+            bool asObject = !typeof(IEnumerable).IsAssignableFrom(t) || IsTreatedAsObject(t);
             var dict = asObject ? null : FindGeneric(t, typeof(IDictionary<,>)) ?? FindGeneric(t, typeof(IReadOnlyDictionary<,>));
             if (asObject)
             {
@@ -325,14 +329,10 @@ namespace Rql.Execution
                 info.KeyType = dict?.GetGenericArguments()[0];
                 info.ElementType = dict?.GetGenericArguments()[1];
             }
-            else if (typeof(IEnumerable).IsAssignableFrom(t))
+            else
             {
                 info.Kind = TypeKind.List;
                 info.ElementType = t.IsArray ? t.GetElementType() : FindGeneric(t, typeof(IEnumerable<>))?.GetGenericArguments()[0];
-            }
-            else
-            {
-                info.Kind = t.IsValueType ? TypeKind.Struct : TypeKind.Object;
             }
 
             if (info.Kind == TypeKind.List || info.Kind == TypeKind.Map)
@@ -473,7 +473,8 @@ namespace Rql.Execution
         }
 
         /// <summary>The loadable types of an assembly (partial on load failures, which <paramref name="onError"/> reports).</summary>
-        internal static Type[] LoadableTypes(Assembly asm, Action<string>? onError = null)
+        /// <summary>The types of an assembly that load (a broken type does not hide the rest of the assembly).</summary>
+        public static Type[] LoadableTypes(Assembly asm, Action<string>? onError = null)
         {
             try { return asm.GetTypes(); }
             catch (ReflectionTypeLoadException ex)

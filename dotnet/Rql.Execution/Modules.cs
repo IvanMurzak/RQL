@@ -22,13 +22,10 @@ namespace Rql.Execution
     /// <summary>What a module may contribute while it is configured.</summary>
     public sealed class RqlModuleContext
     {
-        internal RqlModuleContext(RqlEngine engine, string module) { Engine = engine; Module = module; }
+        internal RqlModuleContext(RqlEngine engine) { Engine = engine; }
 
         /// <summary>The engine being configured (for anything not covered by the helpers below).</summary>
         public RqlEngine Engine { get; }
-
-        /// <summary>Full name of the module being configured.</summary>
-        public string Module { get; }
 
         public RqlModuleContext AddAdapter(RqlTypeAdapter adapter) { Engine.AddAdapter(adapter); return this; }
 
@@ -38,7 +35,7 @@ namespace Rql.Execution
 
         public RqlModuleContext AddSource(string name, Func<object?> getter, string? description = null) { Engine.AddSource(name, getter, description); return this; }
 
-        public RqlModuleContext AddFunction(string name, Func<object?[], object?> fn) { Engine.AddFunction(name, fn); return this; }
+        public RqlModuleContext AddFunction(string name, Func<object?[], object?> fn, string? description = null) { Engine.AddFunction(name, fn, description); return this; }
     }
 
     /// <summary>Outcome of configuring one discovered module.</summary>
@@ -64,24 +61,36 @@ namespace Rql.Execution
         public static IReadOnlyList<RqlModuleReport> Configure(RqlEngine engine, IEnumerable<Assembly> assemblies, Func<Assembly, bool>? skipAssembly)
         {
             var reports = new List<RqlModuleReport>();
-            var modules = new List<(IRqlModule module, string name)>();
+            var types = new List<Type>();
             foreach (var asm in assemblies.Distinct())
             {
                 if (skipAssembly != null && skipAssembly(asm)) continue;
-                foreach (var t in TypeModel.LoadableTypes(asm, err => reports.Add(new RqlModuleReport(asm.GetName().Name ?? "?", 0, err))))
-                {
-                    if (!t.IsClass || t.IsAbstract || !t.IsVisible || t.ContainsGenericParameters || !typeof(IRqlModule).IsAssignableFrom(t)) continue;
-                    if (t.GetConstructor(Type.EmptyTypes) == null) continue;
-                    try { modules.Add(((IRqlModule)Activator.CreateInstance(t)!, t.FullName ?? t.Name)); }
-                    catch (Exception ex) { reports.Add(new RqlModuleReport(t.FullName ?? t.Name, 0, (ex.InnerException ?? ex).Message)); }
-                }
+                types.AddRange(TypeModel.LoadableTypes(asm, err => reports.Add(new RqlModuleReport(asm.GetName().Name ?? "?", 0, err))));
             }
-            foreach (var (module, name) in modules.OrderBy(m => SafeOrder(m.module)).ThenBy(m => m.name, StringComparer.Ordinal))
+            return Configure(engine, types, reports);
+        }
+
+        /// <summary>Configure the module types among <paramref name="candidates"/>; non-module types are ignored.</summary>
+        public static IReadOnlyList<RqlModuleReport> Configure(RqlEngine engine, IEnumerable<Type> candidates, List<RqlModuleReport> reports)
+        {
+            var modules = new List<(IRqlModule module, string name, int order)>();
+            foreach (var t in candidates.Distinct())
             {
-                var order = SafeOrder(module);
+                if (!t.IsClass || t.IsAbstract || !t.IsVisible || t.ContainsGenericParameters || !typeof(IRqlModule).IsAssignableFrom(t)) continue;
+                if (t.GetConstructor(Type.EmptyTypes) == null) continue;
+                var name = t.FullName ?? t.Name;
                 try
                 {
-                    module.Configure(new RqlModuleContext(engine, name));
+                    var module = (IRqlModule)Activator.CreateInstance(t)!;
+                    modules.Add((module, name, SafeOrder(module)));
+                }
+                catch (Exception ex) { reports.Add(new RqlModuleReport(name, 0, (ex.InnerException ?? ex).Message)); }
+            }
+            foreach (var (module, name, order) in modules.OrderBy(m => m.order).ThenBy(m => m.name, StringComparer.Ordinal))
+            {
+                try
+                {
+                    module.Configure(new RqlModuleContext(engine));
                     reports.Add(new RqlModuleReport(name, order, null));
                 }
                 catch (Exception ex) { reports.Add(new RqlModuleReport(name, order, (ex.InnerException ?? ex).Message)); }

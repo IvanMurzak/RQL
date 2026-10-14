@@ -4,11 +4,8 @@
  */
 
 #nullable enable
-// UAC0005 (Unity 6.6 analyzer) suggests CurrentAssemblies APIs that older supported Unity versions lack.
-#pragma warning disable UAC0005
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using Rql.Execution;
 using UnityEditor;
@@ -20,9 +17,10 @@ using Object = UnityEngine.Object;
 namespace com.IvanMurzak.Unity.MCP.Rql.Editor
 {
     /// <summary>
-    /// The RQL engine over the live Editor state: sources, asset functions, stable references by instance id, Unity type
-    /// adapters and Editor integration for writes (Undo before, SetDirty after). One engine per domain (static fields reset
-    /// on domain reload). Every call must run on the main thread.
+    /// The RQL engine over the live Editor state: engine factory, stable references, and the Editor integration for writes
+    /// (one Undo group per mutation, SetDirty / scene dirty after). Sources, functions and adapters come from modules
+    /// (<see cref="UnityCoreModule"/> plus any installed module). One engine per domain (static fields reset on domain
+    /// reload). Every call must run on the main thread.
     /// </summary>
     public static partial class RqlUnity
     {
@@ -30,22 +28,11 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
         public const int MaxAssets = 200;
 
         private static RqlEngine? _engine;
-        private static int _undoGroup = -1;
 
         public static RqlEngine Engine => _engine ??= Create();
 
-        /// <summary>Target of <c>editor | call …</c> (see <see cref="RqlEditorApi"/>).</summary>
-        public static RqlEditorApi EditorApi => RqlEditorApi.Instance;
-
         /// <summary>Drop the engine (tests, or after changing adapters).</summary>
         public static void Reset() => _engine = null;
-
-        /// <summary>Assemblies never scanned for RQL modules (engine, BCL and tool assemblies; same idea as Unity-MCP's scan ignore list).</summary>
-        private static readonly string[] SkippedAssemblyPrefixes =
-        {
-            "mscorlib", "netstandard", "System", "Microsoft", "Mono.", "nunit.", "UnityEngine", "UnityEditor", "Unity.",
-            "R3", "McpPlugin", "ReflectorNet", "Rql.", "Bee.", "ExCSS", "JetBrains",
-        };
 
         public static RqlEngine Create()
         {
@@ -54,35 +41,43 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
 
             engine.Mutations.Enabled = true;
             // One Undo group per mutation: recorded owners, created / destroyed objects and added components undo together.
+            int undoGroup = -1;
             engine.Mutations.BeforeWrite = records =>
             {
                 Undo.IncrementCurrentGroup();
                 Undo.SetCurrentGroupName("RQL mutation");
-                _undoGroup = Undo.GetCurrentGroup();
+                undoGroup = Undo.GetCurrentGroup();
                 var owners = Owners(records);
-                if (owners.Length > 0) Undo.RecordObjects(owners, "RQL mutation");
+                if (owners.Count > 0) Undo.RecordObjects(owners.ToArray(), "RQL mutation");
             };
             engine.Mutations.Committed = records =>
             {
-                if (_undoGroup >= 0) { Undo.CollapseUndoOperations(_undoGroup); _undoGroup = -1; }
+                if (undoGroup >= 0) { Undo.CollapseUndoOperations(undoGroup); undoGroup = -1; }
+                var scenes = new HashSet<Scene>();
                 foreach (var o in Owners(records))
                 {
                     EditorUtility.SetDirty(o);
                     var scene = o is GameObject go ? go.scene : o is Component c ? c.gameObject.scene : default;
-                    if (scene.IsValid() && !EditorApplication.isPlaying) EditorSceneManager.MarkSceneDirty(scene);
+                    if (scene.IsValid() && scenes.Add(scene) && !EditorApplication.isPlaying) EditorSceneManager.MarkSceneDirty(scene);
                 }
             };
 
             // Everything else — sources, adapters, exclusions — comes from modules: the core module in this package plus any
-            // module in an installed extension package or an optional-package assembly (e.g. Particle System).
-            var reports = engine.AddModulesFrom(AppDomain.CurrentDomain.GetAssemblies(),
-                asm => SkippedAssemblyPrefixes.Any(p => (asm.GetName().Name ?? "").StartsWith(p, StringComparison.Ordinal)));
+            // module in an installed extension package or an optional-package assembly (e.g. Particle System). TypeCache
+            // already indexes them, so there is no assembly scan.
+            var reports = engine.AddModules(TypeCache.GetTypesDerivedFrom<IRqlModule>());
             foreach (var failed in reports.Where(r => !r.Ok)) Debug.LogWarning($"[RQL] module skipped: {failed}");
             return engine;
         }
 
-        private static Object[] Owners(IReadOnlyList<MutationRecord> records) =>
-            records.Select(r => r.Owner as Object).Where(o => o != null).Distinct().ToArray()!;
+        private static List<Object> Owners(IReadOnlyList<MutationRecord> records)
+        {
+            var owners = new List<Object>();
+            var seen = new HashSet<Object>();
+            foreach (var r in records)
+                if (r.Owner is Object o && o != null && seen.Add(o)) owners.Add(o);
+            return owners;
+        }
 
         // ------------------------------------------------------------ sources
 
@@ -106,17 +101,17 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
             return roots;
         }
 
+        /// <summary>Every GameObject of the loaded scenes, depth-first, inactive ones included (one native call per root).</summary>
         public static List<GameObject> AllGameObjects()
         {
             var all = new List<GameObject>();
-            foreach (var root in RootGameObjects()) Collect(root.transform, all);
+            var transforms = new List<Transform>();
+            foreach (var root in RootGameObjects())
+            {
+                root.GetComponentsInChildren(true, transforms);
+                foreach (var t in transforms) all.Add(t.gameObject);
+            }
             return all;
-        }
-
-        private static void Collect(Transform t, List<GameObject> into)
-        {
-            into.Add(t.gameObject);
-            for (int i = 0; i < t.childCount; i++) Collect(t.GetChild(i), into);
         }
 
         // ------------------------------------------------------------ functions
@@ -127,13 +122,17 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
             if (args.Length < 1 || !(args[0] is string filter)) return new RqlError("type-mismatch", "unity.assets(filter, folder?) expects a filter string such as \"t:Material\"");
             var folders = args.Length > 1 && args[1] is string folder ? new[] { folder } : null;
             var guids = folders == null ? AssetDatabase.FindAssets(filter) : AssetDatabase.FindAssets(filter, folders);
-            var result = new List<Object>();
+            return Load(guids);
+        }
+
+        // Lazy: a query that needs only a few assets (… | first 3) loads only those.
+        private static IEnumerable<Object> Load(string[] guids)
+        {
             foreach (var guid in guids.Take(MaxAssets))
             {
                 var asset = AssetDatabase.LoadMainAssetAtPath(AssetDatabase.GUIDToAssetPath(guid));
-                if (asset != null) result.Add(asset);
+                if (asset != null) yield return asset;
             }
-            return result;
         }
 
         /// <summary><c>unity.asset("Assets/…/Red.mat")</c>: the main asset at a path, or null.</summary>

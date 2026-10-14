@@ -276,20 +276,6 @@ namespace Rql.Tests
         private sealed class AssetIds : RqlTypeAdapter<Asset> { protected override string? Id(Asset a) => a.Path; }
 
         [Fact]
-        public void AdaptersTargetedByNameAreInertWhenTheTypeIsMissing()
-        {
-            var bound = new ByName("Rql.Tests.ParityTests+Mat");
-            var missing = new ByName("UnityEngine.Collider");
-            Assert.True(bound.IsBound);
-            Assert.False(missing.IsBound);
-            var e = new RqlEngine();
-            e.AddAdapter(bound).AddAdapter(missing);
-            Assert.Single(e.Types.Explain(typeof(Mat)));
-        }
-
-        private sealed class ByName : RqlTypeAdapter { public ByName(string name) : base(name) { } }
-
-        [Fact]
         public void ModulesAreDiscoveredOrderedAndIsolated()
         {
             var e = new RqlEngine();
@@ -301,6 +287,25 @@ namespace Rql.Tests
             Assert.Equal(new[] { nameof(SecondDiscovered), nameof(FirstDiscovered) },
                 e.Types.Explain(typeof(Discovered)).Select(x => x.Split(' ')[0]).ToArray());
             Assert.Equal(reports.Count, e.Modules.Count);
+        }
+
+        [Fact]
+        public void ModulesCanBeGivenAsTypes()
+        {
+            var e = new RqlEngine();
+            var reports = e.AddModules(new[] { typeof(SecondModule), typeof(string), typeof(FirstModule), typeof(SecondModule) });
+            Assert.Equal(new[] { nameof(FirstModule), nameof(SecondModule) }, reports.Select(r => r.Module.Split('+').Last()).ToArray());
+            Assert.All(reports, r => Assert.True(r.Ok));
+            Assert.Equal(2, e.Types.Explain(typeof(Discovered)).Count);
+        }
+
+        [Fact]
+        public void FunctionsCarryDescriptionsIntoTheSchema()
+        {
+            var e = new RqlEngine().AddSource("items", () => new[] { 1, 2 }).AddFunction("host.find", _ => new[] { 3 }, "find host things");
+            var schema = AgentFormat.Schema(e);
+            Assert.Contains("host.find(…) — find host things", schema);
+            Assert.Equal("find host things", e.FunctionDescriptions["host.find"]);
         }
 
         public sealed class Discovered { }

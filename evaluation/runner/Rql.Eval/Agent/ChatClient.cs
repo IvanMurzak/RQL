@@ -75,6 +75,8 @@ namespace Rql.Eval.Agent
         }
     }
 
+    // A copy of the request / pricing / redaction logic lives in unity/RqlTestProject/Assets/Editor/Eval/DeepSeekClient.cs
+    // (Unity cannot reference this net10.0 project): keep both in sync.
     public sealed class ChatClient : IDisposable
     {
         private readonly HttpClient _http;

@@ -299,7 +299,7 @@ namespace Rql.Execution
                 return RefItems(ev);
             }
             // A host extension function may produce the input too, e.g. unity.assets("t:Material") (spec §2).
-            if (src is CallExpr fn && ExtensionFunctionName(fn) is string fnName)
+            if (src is CallExpr fn && Compiler.ExtensionName(fn, _x.Engine.Functions) is string fnName)
                 return FunctionItems(_c.Compile(src), fnName);
             throw new RqlException("unknown-source", "query must start with a source name (e.g. world), ref(\"Type#id\") or a host function", src.Span,
                 "sources: " + string.Join(" ", _x.Engine.Sources.Keys)
@@ -327,16 +327,6 @@ namespace Rql.Execution
             if (value is Missing) yield break;
             var basePath = _x.TrackPaths ? new PathNode(null, pathText) : null;
             foreach (var it in Expand(value, basePath, true)) yield return it;
-        }
-
-        /// <summary>The registered extension function a call names (<c>ns.fn(...)</c> parses as method fn on path ns), or null.</summary>
-        private string? ExtensionFunctionName(CallExpr c)
-        {
-            string? name = c.On == null ? c.Name
-                : c.On is PathExpr p && p.On == null && p.Segments.Count > 0 && p.Segments.All(s => s.Kind == SegmentKind.Member)
-                    ? string.Join(".", p.Segments.Select(s => s.Name)) + "." + c.Name
-                    : null;
-            return name != null && _x.Engine.Functions.ContainsKey(name) ? name : null;
         }
 
         private IEnumerable<Item> FunctionItems(Eval ev, string name)

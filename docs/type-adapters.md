@@ -51,8 +51,9 @@ sealed class RendererAdapter : RqlTypeAdapter<Renderer>
 | Identity / display | `Identity(name)`, `Display(name)` | `$ref` ids, summary names |
 | Literals | `LiteralSchema` (JSON Schema), object literals reach `TryCoerce` | `describe` → `literal` |
 | Host hooks | `engine.Mutations.BeforeWrite` / `Committed` (records with `Owner`) | undo, dirty marking, vetoes |
-| Kernel | `RqlKernel` passed to `TryCoerce` / `AreEqual` / `Compare` (and `EncodeContext.Kernel`): `TryCoerce(value, type, path)`, `Equal`, `Compare` | composite values reuse whatever adapter handles a nested type |
-| Modules | `IRqlModule { Order; Configure(ctx) }`, `engine.AddModulesFrom(assemblies)`, `RqlTypeAdapter(string typeName)` | optional packages contribute adapters by being installed |
+| Kernel | `RqlKernel` passed to `TryCoerce` / `AreEqual` / `Compare`: `TryCoerce(value, type, path)`, `Equal`, `Compare`; one kernel per type model / execution, recursion guard and depth per thread | composite values reuse whatever adapter handles a nested type |
+| Modules | `IRqlModule { Order; Configure(ctx) }`, `engine.AddModulesFrom(assemblies)` or `engine.AddModules(types)` (hosts with a type index, e.g. Unity's TypeCache); `AddFunction(name, fn, description)` | optional packages contribute adapters, sources and functions by being installed |
+| Numeric structs | `NumericTupleAdapter<T>` (`Width`, `Part`, `Make`, `Expected`, optional `ParseExtra`) | vectors / quaternions / colors: `"(x, y)"` / `[x, y]` / `{x, y}` in, compact `"(x, y)"` out, approximate equality |
 | Identity | `StableId(value)`, `IsAlive(value)` | `$ref` / `ref("Type#id")`, `stale-ref` |
 | Describe | `Description` | schema / `describe` |
 
@@ -86,7 +87,7 @@ they rely on the generic ones plus `SetDirty` after modifications (covered by th
 | `GameObject`: ignores `gameObject`, `transform`, `scene`, `transformHandle`; `activeSelf` written through `SetActive` | `Reference(…)` / `Hide(…)`; virtual `active` member with setter `SetActive`, or `Expose("SetActive")` → `call SetActive(false)`; a virtual `Components` member (what `GameObjectData` builds) |
 | Components: back-pointers `gameObject` / `transform` ignored | `Reference("gameObject", "transform")` |
 | `Transform`: non-public `parentInternal` ignored | non-public properties are never members |
-| `Renderer` / `MeshFilter` / `Collider`: `material(s)` / `mesh` ignored (getters instantiate copies) | `ExplicitOnly(…)`; `CopyOnRead("sharedMaterials")` so `set sharedMaterials[1] = ref(…)` is assigned back instead of lost; the Collider adapter targets `"UnityEngine.Collider"` by name and is inert without the physics module |
+| `Renderer` / `MeshFilter` / `Collider`: `material(s)` / `mesh` ignored (getters instantiate copies) | `ExplicitOnly(…)`; `CopyOnRead("sharedMaterials")` so `set sharedMaterials[1] = ref(…)` is assigned back instead of lost; the Collider adapter lives in an optional Physics module (own asmdef, compiled only with `com.unity.modules.physics`) |
 | `Material`: shader properties (int / float / range / color / vector / texture) via `Has*` / `Get*` / `Set*`; `shader` set from a name via `Shader.Find`; `SetDirty` after writes | `AddMixedMap("properties", keys, entryType: per property type, get, set, validate)` → `set Materials.properties["_Color"] = "(1, 0, 0, 1)"`; `TryCoerce` string → `Shader`; the committed hook receives the Material as owner |
 | Assets: resolve by instanceID, asset path or GUID; Texture / Sprite reference-only with Sprite ↔ Texture conversion; `TextAsset.bytes` ignored | `ResolveStableRef` (`ref()` resolves exact ids first, so `ref("Material#Assets/My Mats/Red (1).mat")` works); summaries for reference-only types; `TryCoerce` Sprite ↔ Texture; `Hide("bytes")` |
 | Structs (Vector*, Color*, Quaternion, Matrix4x4, Bounds*, Rect*, gradient keys): fields only, whole-value writes | `Encode` / `TryCoerce` / `AreEqual` / `Compare`, `Only(…)`, `LiteralSchema`; object literals `{x: 1, y: 2, z: 3}` construct them |

@@ -30,8 +30,9 @@ namespace RqlTest.Eval
     }
 
     /// <summary>
-    /// Same request shape, price table and redaction as the RQL evaluation runner (evaluation/runner/Rql.Eval): the key comes
-    /// from RQL_EVAL_API_KEY_FILE and is never logged.
+    /// Same request shape, price table and redaction as the RQL evaluation runner — keep in sync with
+    /// evaluation/runner/Rql.Eval/Agent/ChatClient.cs (that project targets net10.0, which Unity cannot reference). The key
+    /// comes from RQL_EVAL_API_KEY_FILE and is never logged.
     /// </summary>
     public sealed class DeepSeekClient : IDisposable
     {

@@ -9,22 +9,13 @@ using Rql.Execution;
 
 namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Adapters
 {
-    /// <summary>Member configuration that tolerates members missing in some Unity versions.</summary>
+    /// <summary>
+    /// For members that exist only in some Unity versions (e.g. MonoBehaviour.didStart). Members present in every supported
+    /// version use the strict MemberTable calls, which reject unknown names so typos fail loudly.
+    /// </summary>
     public static class MemberTableExtensions
     {
-        public static MemberTable OnlyExisting(this MemberTable table, params string[] names)
-        {
-            var present = names.Where(table.Contains).ToArray();
-            return present.Length == 0 ? table : table.Only(present);
-        }
-
         public static MemberTable HideExisting(this MemberTable table, params string[] names) =>
             table.Hide(names.Where(table.Contains).ToArray());
-
-        public static MemberTable ExplicitOnlyExisting(this MemberTable table, params string[] names) =>
-            table.ExplicitOnly(names.Where(table.Contains).ToArray());
-
-        public static MemberTable ReferenceExisting(this MemberTable table, params string[] names) =>
-            table.Reference(names.Where(table.Contains).ToArray());
     }
 }

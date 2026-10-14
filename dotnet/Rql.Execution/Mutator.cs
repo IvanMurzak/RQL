@@ -101,7 +101,7 @@ namespace Rql.Execution
                     var slot = Resolve(item, target.Segments, out var container, out var owner);
                     if (!slot.Writable(_x))
                         throw new RqlException(slot.DenyCode, $"'{label}' on {_x.Engine.RefOf(item)} is not writable{slot.DenyReason}");
-                    if (!Coerce.TryTo(_x.Types, _x.Engine.Mutations.CanWrite, nv, slot.Type, out var coerced, out var why))
+                    if (!Coerce.TryTo(_x.Kernel, nv, slot.Type, out var coerced, out var why))
                         throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' ({TypeModel.FriendlyName(slot.Type)}): {why}");
                     if (slot.Validate(container, coerced) is string rejected)
                         throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' on {_x.Engine.RefOf(item)}: {rejected}");
@@ -368,7 +368,7 @@ namespace Rql.Execution
                     for (int i = 0; i < ps.Count; i++)
                     {
                         if (i >= vals.Length) { cv[i] = ps[i].Default; continue; }
-                        if (!Coerce.TryTo(_x.Types, _x.Engine.Mutations.CanWrite, vals[i], ps[i].Type, out cv[i], out var w)) { ok = false; why = $"argument '{ps[i].Name}': {w}"; break; }
+                        if (!Coerce.TryTo(_x.Kernel, vals[i], ps[i].Type, out cv[i], out var w)) { ok = false; why = $"argument '{ps[i].Name}': {w}"; break; }
                     }
                     if (ok) { chosen = m; coerced = cv; break; }
                 }
@@ -520,13 +520,6 @@ namespace Rql.Execution
             return byName.ToDictionary(kv => kv.Key, kv => kv.Value.ToArray(), StringComparer.Ordinal);
         }
 
-        public static bool TryTo(TypeModel model, object? v, Type target, out object? result, out string why) =>
-            TryTo(new RqlKernel(model, null), v, target, out result, out why);
-
-        /// <summary>Coercion for writes; <paramref name="policy"/> (the host's per-member write policy) also governs construction.</summary>
-        public static bool TryTo(TypeModel model, Func<Type, MemberAccessor, bool>? policy, object? v, Type target, out object? result, out string why) =>
-            TryTo(new RqlKernel(model, policy), v, target, out result, out why);
-
         /// <summary>The one coercion pipeline (spec §8, §13): adapters, object literals, lists, scalars. Nested coercions reuse the kernel.</summary>
         internal static bool TryTo(RqlKernel kernel, object? v, Type target, out object? result, out string why)
         {
@@ -549,12 +542,12 @@ namespace Rql.Execution
                 foreach (var ad in model.Info(target).CoerceAdapters)
                 {
                     // An adapter that asks the kernel for its own target type (to reuse the default behaviour) is skipped.
-                    if (!kernel.Enter(ad, target, RqlKernel.OpCoerce)) continue;
+                    if (!RqlKernel.Enter(ad, target, RqlKernel.OpCoerce)) continue;
                     AdapterOutcome outcome;
                     object? adapted;
                     string? reason;
                     try { outcome = ad.TryCoerce(v, target, kernel, out adapted, out reason); }
-                    finally { kernel.Exit(ad, target, RqlKernel.OpCoerce); }
+                    finally { RqlKernel.Exit(); }
                     switch (outcome)
                     {
                         case AdapterOutcome.Ok:

@@ -27,36 +27,8 @@ namespace Rql.Execution
             Priority = priority;
         }
 
-        /// <summary>
-        /// Target a type by full name (e.g. "UnityEngine.Collider" from an optional module). When no loaded assembly defines it,
-        /// the adapter is inert: it applies to nothing and registering it is not an error.
-        /// </summary>
-        protected RqlTypeAdapter(string targetTypeName, int priority = 0)
-        {
-            if (string.IsNullOrEmpty(targetTypeName)) throw new ArgumentException("type name required", nameof(targetTypeName));
-            Target = FindType(targetTypeName) ?? typeof(Inert);
-            Priority = priority;
-        }
-
-        private sealed class Inert { }
-
-        private static Type? FindType(string name)
-        {
-            var t = Type.GetType(name, throwOnError: false);
-            if (t != null) return t;
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try { t = asm.GetType(name, throwOnError: false); } catch { t = null; }
-                if (t != null) return t;
-            }
-            return null;
-        }
-
         /// <summary>The type (family) this adapter applies to.</summary>
         public Type Target { get; }
-
-        /// <summary>False when the adapter was targeted by a type name that no loaded assembly defines.</summary>
-        public bool IsBound => Target != typeof(Inert);
 
         /// <summary>Tie-break only: among adapters of equal specificity, higher priority runs first.</summary>
         public int Priority { get; }
@@ -162,19 +134,12 @@ namespace Rql.Execution
         private readonly Func<object?, int, JsonNode?> _encode;
         private readonly Func<object, JsonObject> _summary;
 
-        private readonly TypeModel _types;
-        private RqlKernel? _kernel;
-
-        internal EncodeContext(Func<object?, int, JsonNode?> encode, Func<object, JsonObject> summary, int depth, TypeModel types)
+        internal EncodeContext(Func<object?, int, JsonNode?> encode, Func<object, JsonObject> summary, int depth)
         {
             _encode = encode;
             _summary = summary;
             Depth = depth;
-            _types = types;
         }
-
-        /// <summary>The engine's value operations (coerce / compare) for adapters that need them while encoding.</summary>
-        public RqlKernel Kernel => _kernel ??= new RqlKernel(_types, null);
 
         /// <summary>Nesting depth of the value being encoded (0 = a top-level cell).</summary>
         public int Depth { get; }

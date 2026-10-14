@@ -12,6 +12,6 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Adapters
     /// <summary>MonoBehaviour: hide engine bookkeeping members so scripts show their own fields.</summary>
     public sealed class UnityEngine_MonoBehaviour_Adapter : RqlTypeAdapter<MonoBehaviour>
     {
-        protected override void Members(MemberTable<MonoBehaviour> m) => m.Untyped.HideExisting("destroyCancellationToken", "useGUILayout", "runInEditMode", "didStart", "didAwake");
+        protected override void Members(MemberTable<MonoBehaviour> m) => m.Untyped.Hide("useGUILayout", "runInEditMode").HideExisting("didStart", "didAwake");
     }
 }

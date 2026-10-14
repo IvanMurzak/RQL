@@ -1,0 +1,33 @@
+{
+    "name": "com.IvanMurzak.Unity.MCP.Rql.Editor.Physics",
+    "rootNamespace": "com.IvanMurzak.Unity.MCP.Rql.Editor.Physics3D",
+    "references": [
+        "com.IvanMurzak.Unity.MCP.Rql.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "System.Text.Json.dll",
+        "Rql.Contracts.dll",
+        "Rql.Parser.dll",
+        "Rql.Execution.dll"
+    ],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "UNITY_MCP_READY",
+        "UNITY_MCP_DEPS_8",
+        "RQL_UNITY_PHYSICS"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.modules.physics",
+            "expression": "1.0.0",
+            "define": "RQL_UNITY_PHYSICS"
+        }
+    ],
+    "noEngineReferences": false
+}

@@ -26,15 +26,18 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Modules
                .AddSource("roots", RqlUnity.RootGameObjects, "root GameObjects of the loaded scenes")
                .AddSource("scenes", RqlUnity.Scenes, "loaded scenes")
                .AddSource("selection", RqlUnity.SelectedObjects, "objects selected in the Editor")
-               .AddSource("editor", () => RqlUnity.EditorApi, "Editor operations: call CreateGameObject(name, parent?, primitive?)")
-               .AddFunction("unity.assets", RqlUnity.FindAssets)
-               .AddFunction("unity.asset", RqlUnity.LoadAsset);
+               .AddSource("editor", () => RqlEditorApi.Instance, "Editor operations: call CreateGameObject(name, parent?, primitive?)")
+               .AddFunction("unity.assets", RqlUnity.FindAssets,
+                   $"unity.assets(filter, folder?): AssetDatabase search, e.g. \"t:Material\", \"t:Prefab Enemy\" (at most {RqlUnity.MaxAssets}, loaded as needed)")
+               .AddFunction("unity.asset", RqlUnity.LoadAsset, "unity.asset(path): the main asset at a path, e.g. \"Assets/Mats/Red.mat\"");
 
             // Transform enumerates its children, but RQL must treat it as an object with members.
             ctx.TreatAsObject(typeof(Transform));
 
-            // Never expose native pointers / unmanaged views (crash or garbage when read).
-            ctx.ExcludeTypes(t => t == typeof(IntPtr) || t == typeof(UIntPtr) || t.IsPointer
+            // Never expose native pointers / unmanaged views (crash or garbage when read), nor engine plumbing members by type:
+            // cancellation tokens (MonoBehaviour.destroyCancellationToken) and TransformHandle (Unity 6.x, every component).
+            ctx.ExcludeTypes(t => t == typeof(IntPtr) || t == typeof(UIntPtr) || t.IsPointer || t == typeof(System.Threading.CancellationToken)
+                                  || t.FullName == "UnityEngine.TransformHandle"
                                   || (t.IsGenericType && (t.GetGenericTypeDefinition().FullName ?? "").StartsWith("Unity.Collections.Native", StringComparison.Ordinal)));
 
             // UnityEngine.Object family
@@ -44,8 +47,7 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Modules
                .AddAdapter(new UnityEngine_MonoBehaviour_Adapter())
                .AddAdapter(new UnityEngine_Transform_Adapter())
                .AddAdapter(new UnityEngine_Renderer_Adapter())
-               .AddAdapter(new UnityEngine_MeshFilter_Adapter())
-               .AddAdapter(new UnityEngine_Collider_Adapter());
+               .AddAdapter(new UnityEngine_MeshFilter_Adapter());
 
             // Assets
             ctx.AddAdapter(new UnityEngine_Material_Adapter());

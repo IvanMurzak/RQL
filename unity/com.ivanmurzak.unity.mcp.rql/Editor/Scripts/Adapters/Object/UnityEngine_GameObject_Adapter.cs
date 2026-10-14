@@ -6,7 +6,6 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Rql.Execution;
 using UnityEditor;
 using UnityEngine;
@@ -20,21 +19,29 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Adapters
 
         protected override void Members(MemberTable<GameObject> m)
         {
-            m.Add("components", g => g.GetComponents<Component>().Where(c => c != null).ToList(),
+            m.Add("components", g => Components(g),
                     description: "attached components (filter with $ is Light etc.)", owning: true)
              .Add("children", g => Children(g), description: "direct child GameObjects", owning: true)
              .Add<bool>("active", g => g.activeSelf, (g, v) => g.SetActive(v), description: "activeSelf; assigning calls SetActive")
              .Function<string, Component>("AddComponent", (g, type) => AddComponent(g, type), "type",
                  "add a component by type name (e.g. \"Rigidbody\", \"Light\", \"BoxCollider\", a script class) and return it")
              .Method("Destroy", g => Undo.DestroyObjectImmediate(g), "destroy this GameObject (undoable)");
-            m.Untyped.ReferenceExisting("transform").HideExisting("gameObject", "transformHandle");
+            m.Untyped.Reference("transform").Hide("gameObject");
         }
 
         private static Component AddComponent(GameObject g, string typeName)
         {
-            var type = ComponentTypes.Find(typeName)
+            var type = UnityTypes.Find(typeName, typeof(Component))
                        ?? throw new ArgumentException($"no component type named '{typeName}'");
             return Undo.AddComponent(g, type);
+        }
+
+        private static List<Component> Components(GameObject g)
+        {
+            var list = new List<Component>();
+            g.GetComponents(list);
+            list.RemoveAll(c => c == null); // missing scripts
+            return list;
         }
 
         private static List<GameObject> Children(GameObject g)
