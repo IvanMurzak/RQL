@@ -27,9 +27,9 @@ namespace Rql.Execution
             Description = member.GetCustomAttribute<RqlDescriptionAttribute>()?.Text;
         }
 
-        private MemberAccessor(MemberAccessor m)
+        private MemberAccessor(MemberAccessor m, Func<object, object?>? getter = null)
         {
-            Member = m.Member; Name = m.Name; Type = m.Type; Getter = m.Getter; CanWrite = m.CanWrite; Owning = m.Owning; Order = m.Order;
+            Member = m.Member; Name = m.Name; Type = m.Type; Getter = getter ?? m.Getter; CanWrite = m.CanWrite; Owning = m.Owning; Order = m.Order;
             DeclaringType = m.DeclaringType; Description = m.Description; ExplicitOnly = m.ExplicitOnly; Setter = m.Setter; Validate = m.Validate;
             CopyOnRead = m.CopyOnRead;
         }
@@ -49,9 +49,10 @@ namespace Rql.Execution
             Name = name; Type = type; DeclaringType = declaring; Getter = get; Order = order;
         }
 
-        internal MemberAccessor With(bool? canWrite = null, bool? owning = null, bool? explicitOnly = null, string? description = null, bool? copyOnRead = null)
+        internal MemberAccessor With(bool? canWrite = null, bool? owning = null, bool? explicitOnly = null, string? description = null,
+            bool? copyOnRead = null, Func<object, object?>? getter = null)
         {
-            return new MemberAccessor(this)
+            return new MemberAccessor(this, getter)
             {
                 CanWrite = canWrite ?? CanWrite,
                 Owning = owning ?? Owning,
@@ -182,21 +183,11 @@ namespace Rql.Execution
             _cache.Clear();
         }
 
-        private bool IsExcluded(Type t)
-        {
-            if (_excluded == null) return false;
-            var seen = new HashSet<Type>();
-            return Excluded(t, seen);
-        }
-
-        private bool Excluded(Type t, HashSet<Type> seen)
-        {
-            if (!seen.Add(t)) return false;
-            if (_excluded!(t)) return true;
-            if (t.IsArray && Excluded(t.GetElementType()!, seen)) return true;
-            if (t.IsGenericType && t.GetGenericArguments().Any(a => Excluded(a, seen))) return true;
-            return false;
-        }
+        // Element and generic-argument types form a finite tree (no cycles), so plain recursion suffices.
+        private bool IsExcluded(Type t) =>
+            _excluded!(t)
+            || (t.IsArray && IsExcluded(t.GetElementType()!))
+            || (t.IsGenericType && t.GetGenericArguments().Any(IsExcluded));
 
         public AccessorMode Mode { get; }
 
@@ -205,19 +196,37 @@ namespace Rql.Execution
         /// <summary>Union of the registered adapters' capabilities: adapter-free (or capability-free) paths are one check.</summary>
         internal AdapterCaps Caps => _adapters.Caps;
 
-        /// <summary>
-        /// A destroyed object (an adapter's IsAlive says false, e.g. Unity's fake-null) reads as null everywhere (spec §13).
-        /// </summary>
-        internal bool IsDead(object o)
+        private Func<object, bool>? _hostAlive;
+
+        /// <summary>The engine's IsAlive hook; part of the one liveness definition (adapters first, then the hook).</summary>
+        internal Func<object, bool>? HostAlive
         {
-            if ((Caps & AdapterCaps.Liveness) == 0 || o is string) return false;
-            foreach (var a in Info(o.GetType()).LivenessAdapters)
-            {
-                var alive = a.IsAlive(o);
-                if (alive.HasValue) return !alive.Value;
-            }
-            return false;
+            get => _hostAlive;
+            set { _hostAlive = value; _cache.Clear(); }
         }
+
+        /// <summary>Any liveness source configured: the adapter-free, hook-free path is this one check.</summary>
+        internal bool LivenessOn => (Caps & AdapterCaps.Liveness) != 0 || _hostAlive != null;
+
+        /// <summary>The one liveness verdict: first adapter that answers, then the host hook, else alive.</summary>
+        internal bool IsAlive(object o)
+        {
+            if ((Caps & AdapterCaps.Liveness) != 0)
+            {
+                foreach (var a in Info(o.GetType()).LivenessAdapters)
+                {
+                    var alive = a.IsAlive(o);
+                    if (alive.HasValue) return alive.Value;
+                }
+            }
+            return _hostAlive == null || _hostAlive(o);
+        }
+
+        /// <summary>A destroyed object (e.g. Unity's fake-null) reads as null everywhere (spec §13).</summary>
+        internal bool IsDead(object o) => LivenessOn && !(o is string) && !o.GetType().IsPrimitive && !IsAlive(o);
+
+        /// <summary>Applied where values enter expressions (member reads, elements, sources): destroyed objects become null.</summary>
+        internal object? Live(object? v) => v != null && LivenessOn && IsDead(v) ? null : v;
 
         /// <summary>
         /// Register a type adapter (spec §13). Must not be called on <see cref="Shared"/>; engines own a model per adapter set.
@@ -380,6 +389,18 @@ namespace Rql.Execution
                 if (table.DisplayName != null) displayName = table.DisplayName;
             }
 
+            // Liveness is applied once, at member reads: a destroyed value reads as null for every consumer (spec §13).
+            if (LivenessOn)
+            {
+                for (int i = 0; i < members.Count; i++)
+                {
+                    var m = members[i];
+                    if (TypeModel.IsScalarType(m.Type) || (m.Type.IsValueType && Nullable.GetUnderlyingType(m.Type) == null)) continue;
+                    var get = m.Getter;
+                    members[i] = m.With(getter: o => Live(get(o)));
+                }
+            }
+
             info.Members = members;
             info.ImplicitMembers = members.Any(m => m.ExplicitOnly) ? members.Where(m => !m.ExplicitOnly).ToArray() : (IReadOnlyList<MemberAccessor>)members;
             info.ByName = members.ToDictionary(m => m.Name, StringComparer.Ordinal);
@@ -417,6 +438,22 @@ namespace Rql.Execution
             var seen = new HashSet<string>(members.Select(m => m.Name), StringComparer.Ordinal);
             int order = members.Count == 0 ? 0 : members.Max(m => m.Order) + 1;
             foreach (var decl in Chain(t)) AddFields(decl, members, seen, include, ref order);
+        }
+
+        /// <summary>The loadable types of an assembly (partial on load failures, which <paramref name="onError"/> reports).</summary>
+        internal static Type[] LoadableTypes(Assembly asm, Action<string>? onError = null)
+        {
+            try { return asm.GetTypes(); }
+            catch (ReflectionTypeLoadException ex)
+            {
+                onError?.Invoke($"{asm.GetName().Name}: some types failed to load ({ex.LoaderExceptions.FirstOrDefault()?.Message})");
+                return ex.Types.Where(t => t != null).ToArray()!;
+            }
+            catch (Exception ex)
+            {
+                onError?.Invoke($"{asm.GetName().Name}: {ex.Message}");
+                return Type.EmptyTypes;
+            }
         }
 
         private static bool IsIdType(Type t)

@@ -87,10 +87,7 @@ namespace Rql.Execution
                 foreach (var m in info.Members) queue.Enqueue(m.Type);
                 if (info.Kind == TypeKind.Object)
                 {
-                    Type[] defined;
-                    try { defined = t.Assembly.GetTypes(); }
-                    catch (ReflectionTypeLoadException ex) { defined = ex.Types.Where(x => x != null).ToArray()!; }
-                    foreach (var sub in defined)
+                    foreach (var sub in TypeModel.LoadableTypes(t.Assembly))
                     {
                         if (sub != t && t.IsAssignableFrom(sub) && sub.IsPublic && !sub.IsGenericTypeDefinition) queue.Enqueue(sub);
                     }

@@ -3105,7 +3105,7 @@
     {
       "name": "adapt-dead-reads-null",
       "rql": "ref(\"Node#8\") | set Tags = append(Tags, \"destroyed\")",
-      "then": "g.Nodes | select n=Name dead=($ == null) t=title",
+      "then": "g | select missing=Nodes.any($ == null) names=Nodes.count() live=len(without(Nodes, null)) first=Nodes[2] t=Nodes[2].title",
       "options": {
         "allowMutation": true
       },
@@ -3172,8 +3172,7 @@
         "rql": "0.1",
         "source": {
           "path": [
-            "g",
-            "Nodes"
+            "g"
           ]
         },
         "stages": [
@@ -3181,23 +3180,69 @@
             "op": "select",
             "fields": [
               {
-                "name": "n",
+                "name": "missing",
                 "expr": {
-                  "path": [
-                    "Name"
+                  "call": "any",
+                  "on": {
+                    "path": [
+                      "Nodes"
+                    ]
+                  },
+                  "args": [
+                    {
+                      "op": "==",
+                      "args": [
+                        {
+                          "path": []
+                        },
+                        {
+                          "lit": null
+                        }
+                      ]
+                    }
                   ]
                 }
               },
               {
-                "name": "dead",
+                "name": "names",
                 "expr": {
-                  "op": "==",
+                  "call": "count",
+                  "on": {
+                    "path": [
+                      "Nodes"
+                    ]
+                  },
+                  "args": []
+                }
+              },
+              {
+                "name": "live",
+                "expr": {
+                  "call": "len",
                   "args": [
                     {
-                      "path": []
-                    },
+                      "call": "without",
+                      "args": [
+                        {
+                          "path": [
+                            "Nodes"
+                          ]
+                        },
+                        {
+                          "lit": null
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "first",
+                "expr": {
+                  "path": [
+                    "Nodes",
                     {
-                      "lit": null
+                      "index": 2
                     }
                   ]
                 }
@@ -3206,6 +3251,10 @@
                 "name": "t",
                 "expr": {
                   "path": [
+                    "Nodes",
+                    {
+                      "index": 2
+                    },
                     "title"
                   ]
                 }
@@ -3218,28 +3267,22 @@
         "ok": true,
         "kind": "rows",
         "columns": [
-          "n",
-          "dead",
+          "missing",
+          "names",
+          "live",
+          "first",
           "t"
         ],
         "rows": [
           [
-            "root-a",
-            false,
-            "ROOT-A"
-          ],
-          [
-            "root-b",
-            false,
-            "ROOT-B"
-          ],
-          [
-            null,
             true,
+            3,
+            2,
+            null,
             null
           ]
         ],
-        "total": 3
+        "total": 1
       }
     },
     {
@@ -3825,6 +3868,113 @@
             ]
           }
         ]
+      }
+    },
+    {
+      "name": "adapt-dead-skipped-in-streams",
+      "rql": "ref(\"Node#8\") | set Tags = append(Tags, \"destroyed\")",
+      "then": "g.Nodes | select Name",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Tags"
+                  ]
+                },
+                "value": {
+                  "call": "append",
+                  "args": [
+                    {
+                      "path": [
+                        "Tags"
+                      ]
+                    },
+                    {
+                      "lit": "destroyed"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "Tags",
+            [],
+            [
+              "destroyed"
+            ]
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "root-a"
+          ],
+          [
+            "root-b"
+          ]
+        ],
+        "total": 2
       }
     }
   ]

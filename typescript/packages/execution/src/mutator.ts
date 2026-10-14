@@ -1,5 +1,5 @@
 /** Permissioned, all-or-nothing `set` / `call` (spec §8). Port of dotnet/Rql.Execution/Mutator.cs. */
-import { RqlError, segmentToString, type CallStage, type PathExpr, type QueryResult, type Segment, type SetStage } from '@rql/contracts';
+import { RqlError, formatNumber, segmentToString, type CallStage, type PathExpr, type QueryResult, type Segment, type SetStage } from '@rql/contracts';
 import { findMapKey, isMapLike, mapGet, type MapLike } from './collections.js';
 import { describeValue, type Compiler, type Eval } from './compiler.js';
 import type { Encoder } from './encoder.js';
@@ -165,9 +165,9 @@ export class Mutator {
   private targets(stream: Iterable<Item>, op: string): Item[] {
     const list: Item[] = [];
     for (const it of stream) {
-      if (it.value === null || it.value === undefined) continue;
+      // Null and destroyed items are skipped (a destroyed object reads as null, spec §13).
+      if (it.value === null || it.value === undefined || this.x.dead(it.value)) continue;
       if (it.value instanceof RowValue) throw new RqlError('invalid-plan', `'${op}' needs objects, not projected rows; remove 'select' before '${op}'`);
-      if (this.x.types.isDead(it.value)) throw new RqlError('stale-ref', `'${op}' target ${this.refOf(it.value)} is a destroyed object; nothing was changed`);
       if (it.value instanceof MapEntry) {
         throw new RqlError('invalid-plan', `'${op}' cannot target map entries; set the map member with a key path instead (Stats["key"] = ...)`);
       }
@@ -194,24 +194,18 @@ export class Mutator {
     return list;
   }
 
-  /** Host veto point after planning, before any write; a throwing hook aborts with nothing changed. */
-  private before(records: () => readonly MutationRecord[]): void {
-    const hook = this.x.engine.mutations.beforeWrite;
+  /**
+   * Runs a host hook (not on dry-run). `records` is built once per set/call and shared by both hooks.
+   * beforeWrite: a throw vetoes the mutation (permission-denied, nothing written). committed: a throw is a
+   * getter-threw warning, the writes stay.
+   */
+  private runHook(kind: 'beforeWrite' | 'committed', records: () => readonly MutationRecord[]): void {
+    const hook = this.x.engine.mutations[kind];
     if (hook === undefined || this.x.options.dryRun) return;
     try {
       hook(records());
     } catch (e) {
-      throw new RqlError('permission-denied', `the host rejected the change before anything was written: ${errorMessage(e)}`);
-    }
-  }
-
-  /** Host notification after the writes; a throwing hook becomes a getter-threw warning (the writes stay). */
-  private committed(records: () => readonly MutationRecord[]): void {
-    const hook = this.x.engine.mutations.committed;
-    if (hook === undefined || this.x.options.dryRun) return;
-    try {
-      hook(records());
-    } catch (e) {
+      if (kind === 'beforeWrite') throw new RqlError('permission-denied', `the host rejected the change before anything was written: ${errorMessage(e)}`);
       const name = e instanceof Error ? e.name : typeof e;
       this.x.warn('getter-threw', `host commit hook threw ${name}: ${errorMessage(e)}; the writes were applied`);
     }
@@ -261,8 +255,8 @@ export class Mutator {
       }
     }
 
-    const records = (): MutationRecord[] => writes.map((w) => ({ item: w.item, owner: w.owner, member: w.label, old: w.old, new: w.new }));
-    this.before(records);
+    const records = once(() => writes.map((w): MutationRecord => ({ item: w.item, owner: w.owner, member: w.label, old: w.old, new: w.new })));
+    this.runHook('beforeWrite', records);
     if (!x.options.dryRun) {
       let applied = 0;
       try {
@@ -293,7 +287,7 @@ export class Mutator {
       }
     }
 
-    this.committed(records);
+    this.runHook('committed', records);
     const rows = writes.map((w) => [x.engine.refOf(w.item), w.label, w.old, w.new]);
     const r = this.enc.rows(['$ref', 'member', 'old', 'new'], rows);
     if (x.options.dryRun) r.dryRun = true;
@@ -452,9 +446,10 @@ export class Mutator {
       planned.push({ item, ...chosen });
     }
 
-    const callRecords = (n = planned.length): MutationRecord[] =>
-      planned.slice(0, n).map((p) => ({ item: p.item, owner: p.item, member: p.method.signature(x.types), old: undefined, new: undefined, method: p.method }));
-    this.before(callRecords);
+    const callRecords = once(() =>
+      planned.map((p): MutationRecord => ({ item: p.item, owner: p.item, member: p.method.signature(x.types), old: undefined, new: undefined, method: p.method })),
+    );
+    this.runHook('beforeWrite', callRecords);
     const rows: unknown[][] = [];
     let done = 0;
     for (const p of planned) {
@@ -467,18 +462,24 @@ export class Mutator {
           const name = e instanceof Error ? e.name : typeof e;
           // Completed calls are not rolled back, so the host still learns about them.
           const completed = done;
-          this.committed(() => callRecords(completed));
+          this.runHook('committed', () => callRecords().slice(0, completed));
           throw new RqlError('getter-threw', `${p.method.name} on ${x.engine.refOf(p.item)} threw ${name}: ${errorMessage(e)}; ${done} earlier call(s) completed and are NOT rolled back`);
         }
       }
       done++;
       rows.push([x.engine.refOf(p.item), p.method.signature(x.types), result]);
     }
-    this.committed(callRecords);
+    this.runHook('committed', callRecords);
     const r = this.enc.rows(['$ref', 'method', 'result'], rows);
     if (x.options.dryRun) r.dryRun = true;
     return r;
   }
+}
+
+/** A lazily computed value, built at most once. */
+function once<T>(build: () => T): () => T {
+  let value: { v: T } | undefined;
+  return () => (value ??= { v: build() }).v;
 }
 
 function safeGet(slot: Slot, container: object, lbl: string): unknown {
@@ -509,16 +510,21 @@ function hasMethod(o: object, upperName: string): boolean {
 function coerceKey(m: MapLike, key: string | number, keyType: TypeRef, caseInsensitive: boolean): unknown {
   const existing = findMapKey(m, key);
   if (existing.found && (caseInsensitive || typeof existing.key !== 'string' || typeof key !== 'string' || existing.key === key)) return existing.key;
+  return parseKey(key, m instanceof StringMap ? 'string' : keyType);
+}
+
+/** A map key converted to the declared key type (raw host form), or undefined when it does not fit. */
+function parseKey(key: unknown, keyType: TypeRef): unknown {
   const kt = unwrapNullable(keyType);
-  if (m instanceof StringMap || kt === 'string') return typeof key === 'number' ? String(key) : key;
+  if (kt === 'string') return typeof key === 'number' ? formatNumber(key) : key instanceof EnumValue ? key.name : key;
   if (kt === 'int' || kt === 'number') {
-    const n = typeof key === 'number' ? key : Number(key);
-    if (Number.isNaN(n) || (typeof key === 'string' && key.trim() === '') || (kt === 'int' && !Number.isInteger(n))) return undefined;
+    const n = typeof key === 'number' ? key : typeof key === 'string' && key.trim() !== '' ? Number(key) : NaN;
+    if (Number.isNaN(n) || (kt === 'int' && !Number.isInteger(n))) return undefined;
     return n;
   }
   if (kt instanceof EnumType) {
-    const ev = typeof key === 'number' ? kt.wrap(key) : kt.parse(key);
-    return ev?.value;
+    const ev = key instanceof EnumValue ? key : typeof key === 'number' ? kt.wrap(key) : typeof key === 'string' ? kt.parse(key) : undefined;
+    return ev !== undefined && ev.type === kt ? ev.value : undefined;
   }
   return key;
 }
@@ -548,9 +554,25 @@ export function coerce(model: TypeModel, v: unknown, target: TypeRef): Coerced {
     return { ok: false, why: 'null is not allowed for ' + friendlyName(target, model) };
   }
   if (t === 'any') return { ok: true, value: v };
-  if (v instanceof ObjectValue && (typeof t !== 'object' || t instanceof EnumType || t.kind === 'list')) {
-    return { ok: false, why: `an object literal cannot become ${friendlyName(target, model)}` };
+  if (typeof t === 'object' && !(t instanceof EnumType) && t.kind === 'class') {
+    const ti = model.infoForCtor(t.ctor);
+    if (isInstance(model, v, t.ctor, ti)) {
+      // Structs have value semantics: assign a copy.
+      if (ti?.kind === 'struct') return { ok: true, value: Object.assign(Object.create(Object.getPrototypeOf(v) as object | null) as object, v) };
+      return { ok: true, value: v };
+    }
+    // Values already of the target type bypass adapters; others may be converted (spec §13).
+    for (const ad of model.hasCapability('coerce') ? model.adapterSetFor(t.ctor).coerce : []) {
+      const r = ad.coerce!(v, t.ctor);
+      if (r === undefined) continue;
+      if (!r.ok) return { ok: false, why: r.reason };
+      if (r.value !== null && !isInstance(model, r.value, t.ctor, ti)) {
+        throw new Error(`adapter ${adapterName(ad)} coerced to ${describeValue(r.value)}, not ${t.ctor.name}`);
+      }
+      return { ok: true, value: r.value };
+    }
   }
+  if (v instanceof ObjectValue) return fromLiteral(model, v, t, target);
   if (t instanceof EnumType) {
     const fail: Coerced = { ok: false, why: 'expected one of ' + t.values.map((e) => e.name).join(', ') };
     if (v instanceof EnumValue) return v.type === t ? { ok: true, value: v } : fail;
@@ -599,63 +621,33 @@ export function coerce(model: TypeModel, v: unknown, target: TypeRef): Coerced {
       // Natural JS semantics (spec §12): an array that needs no coercion is assigned as is (alias).
       return { ok: true, value: same ? v : items };
     }
-    case 'map': {
-      if (v instanceof ObjectValue) return buildMap(model, v, t.key, t.of, target);
-      if (!isMapLike(v)) return { ok: false, why: `expected ${friendlyName(target, model)}` };
-      const out = new Map<unknown, unknown>();
-      for (const [k, el] of v.entries()) {
-        const co = coerce(model, el === undefined ? null : el, t.of);
-        if (!co.ok) return { ok: false, why: 'value: ' + co.why };
-        out.set(k, rawValue(co.value, t.of));
-      }
-      return { ok: true, value: out };
-    }
-    case 'class': {
-      const ti = model.infoForCtor(t.ctor);
-      if (!isInstance(model, v, t.ctor, ti)) {
-        // Values already of the target type bypass adapters; others may be converted (spec §13).
-        const coercers = model.hasCapability('coerce') ? model.adapterSetFor(t.ctor).coerce : [];
-        for (const ad of coercers) {
-          const r = ad.coerce!(v, t.ctor);
-          if (r === undefined) continue;
-          if (!r.ok) return { ok: false, why: r.reason };
-          if (r.value !== null && !isInstance(model, r.value, t.ctor, ti)) {
-            throw new Error(`adapter ${adapterName(ad)} coerced to ${describeValue(r.value)}, not ${t.ctor.name}`);
-          }
-          return { ok: true, value: r.value };
-        }
-        if (v instanceof ObjectValue) return construct(model, v, t.ctor, ti);
-        return { ok: false, why: `expected ${friendlyName(target, model)}` };
-      }
-      // Structs have value semantics: assign a copy.
-      if (ti?.kind === 'struct') return { ok: true, value: Object.assign(Object.create(Object.getPrototypeOf(v) as object | null) as object, v) };
-      return { ok: true, value: v };
-    }
+    case 'map':
+      return isMapLike(v) ? coerceMap(model, v, t.key, t.of, target) : { ok: false, why: `expected ${friendlyName(target, model)}` };
     default:
       return { ok: false, why: `expected ${friendlyName(target, model)}` };
   }
 }
 
-/** Builds a map from an object literal entry by entry (keys coerced to the key type, values to the value type). */
-function buildMap(model: TypeModel, literal: ObjectValue, keyType: TypeRef, valueType: TypeRef, target: TypeRef): Coerced {
+/** A map value (or object literal) built entry by entry: keys parsed to the key type, values coerced. */
+function coerceMap(model: TypeModel, v: MapLike, keyType: TypeRef, valueType: TypeRef, target: TypeRef): Coerced {
   const out = new Map<unknown, unknown>();
-  const kt = unwrapNullable(keyType);
-  for (const [k, el] of literal) {
-    let key: unknown = k;
-    if (kt === 'int' || kt === 'number') {
-      const n = Number(k);
-      if (k.trim() === '' || Number.isNaN(n) || (kt === 'int' && !Number.isInteger(n))) return { ok: false, why: `invalid key '${k}' for ${friendlyName(target, model)}` };
-      key = n;
-    } else if (kt instanceof EnumType) {
-      const ev = kt.parse(k);
-      if (ev === undefined || !kt.isDefined(ev)) return { ok: false, why: `invalid key '${k}' for ${friendlyName(target, model)}` };
-      key = ev.value;
-    }
+  for (const [k, el] of v.entries()) {
+    const key = parseKey(k, keyType);
+    if (key === undefined) return { ok: false, why: `invalid key '${String(k)}' for ${friendlyName(target, model)}` };
     const co = coerce(model, el === undefined ? null : el, valueType);
-    if (!co.ok) return { ok: false, why: `'${k}': ${co.why}` };
+    if (!co.ok) return { ok: false, why: `'${String(k)}': ${co.why}` };
     out.set(key, rawValue(co.value, valueType));
   }
   return { ok: true, value: out };
+}
+
+/** Object literal → map or constructed object (spec §4.5); anything else cannot be built from one. */
+function fromLiteral(model: TypeModel, literal: ObjectValue, t: TypeRef, target: TypeRef): Coerced {
+  if (typeof t === 'object' && !(t instanceof EnumType)) {
+    if (t.kind === 'map') return coerceMap(model, literal, t.key, t.of, target);
+    if (t.kind === 'class') return construct(model, literal, t.ctor, model.infoForCtor(t.ctor));
+  }
+  return { ok: false, why: `an object literal cannot become ${friendlyName(target, model)}` };
 }
 
 /**
@@ -668,7 +660,7 @@ function construct(model: TypeModel, literal: ObjectValue, ctor: Ctor, ti: TypeI
   if (literal.has('$type')) {
     const tn = literal.get('$type');
     if (typeof tn !== 'string') return { ok: false, why: '"$type" must be a type name string' };
-    const hits = model.registeredTypes.filter((c) => (c === ctor || c.prototype instanceof ctor) && (c.name === tn || model.infoForCtor(c)?.shortName === tn));
+    const hits = model.subtypesNamed(ctor, tn);
     if (hits.length === 0) return { ok: false, why: `no registered type named '${tn}' derives from ${ti?.shortName ?? ctor.name}` };
     if (hits.length > 1) return { ok: false, why: `'${tn}' is ambiguous: ${hits.map((c) => c.name).join(', ')}` };
     concrete = hits[0]!;

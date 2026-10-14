@@ -150,11 +150,9 @@ bool same_identity(const Value& a, const Value& b) {
 
 }  // namespace
 
-std::optional<bool> rql_equal(Exec& x, const Value& a_in, const Value& b_in) {
-    if (a_in.is_absent() || b_in.is_absent()) return std::nullopt;
-    // Destroyed objects read as null (spec §13 liveness).
-    const Value a = x.is_dead(a_in) ? Value::null() : a_in;
-    const Value b = x.is_dead(b_in) ? Value::null() : b_in;
+std::optional<bool> rql_equal(Exec& x, const Value& a, const Value& b) {
+    // Destroyed objects arrive here as null already: values are normalized where they enter expressions.
+    if (a.is_absent() || b.is_absent()) return std::nullopt;
     if (a.is_null() || b.is_null()) return a.is_null() && b.is_null();
     if (x.has_capability(Capability::Equals)) {
         // Adapters of the left operand first, then of the right operand (spec §13).
@@ -308,7 +306,11 @@ void note_miss(MemberSite& site, const TypeDescriptor* t) {
         site.miss_types.push_back(t);
 }
 
-Value map_lookup(Exec& x, const Value& map, const Value& key, MemberSite* site) {
+Value map_lookup_raw(Exec& x, const Value& map, const Value& key, MemberSite* site);
+/// Map value read (destroyed objects read as null).
+Value map_lookup(Exec& x, const Value& map, const Value& key, MemberSite* site) { return x.live(map_lookup_raw(x, map, key, site)); }
+
+Value map_lookup_raw(Exec& x, const Value& map, const Value& key, MemberSite* site) {
     Value out;
     MapLookup r = map.map().find(key, out);
     if (r == MapLookup::BadKey) {
@@ -357,7 +359,7 @@ Value key_at(Exec& x, const Value& v, const Value& key) {
         return member_of(x, v, tmp);
     }
     if (key.is_number() && std::floor(key.as_number()) == key.as_number())
-        return index_at(v, static_cast<int64_t>(key.as_number()));
+        return x.live(index_at(v, static_cast<int64_t>(key.as_number())));
     return Value::missing();
 }
 
@@ -375,7 +377,6 @@ const TypeDescriptor* scalar_type_of(const Value& v) {
 Value member_of(Exec& x, const Value& v, MemberSite& site) {
     if (v.is_null()) return Value::missing();
     if (v.is_absent()) return v;
-    if (x.is_dead(v)) return Value::missing();  // members of a destroyed object read like members of null (no getter runs)
     switch (v.kind()) {
         case Value::Kind::List: {
             if (iequals(site.name, "Count") || iequals(site.name, "Length")) {
@@ -388,7 +389,7 @@ Value member_of(Exec& x, const Value& v, MemberSite& site) {
             size_t n = l.size();
             for (size_t i = 0; i < n; ++i) {
                 x.visit();
-                Value r = member_of(x, l.at(i), site);
+                Value r = member_of(x, x.live(l.at(i)), site);
                 if (r.is_missing()) continue;
                 if (r.is_list()) {
                     auto& inner = r.list();
@@ -439,7 +440,7 @@ Value member_of(Exec& x, const Value& v, MemberSite& site) {
             ++site.hits;
             ++x.members_read;
             try {
-                return m->getter(v.ptr());
+                return x.live(m->getter(v.ptr()));  // destroyed objects read as null (spec §13)
             } catch (const std::exception& ex) {
                 x.getter_threw(m->name, ex.what());
                 return Value::error("getter-threw", ex.what());
@@ -495,7 +496,8 @@ Eval Compiler::compile(const Expr& e) {
 }
 
 Eval Compiler::compile_path(const Expr& p) {
-    Eval cur = p.on ? compile(*p.on) : Eval([](Exec& x) { return x.current; });
+    // The current item enters the expression here: a destroyed object reads as null (no getter runs on it).
+    Eval cur = p.on ? compile(*p.on) : Eval([](Exec& x) { return x.live(x.current); });
     bool relative = !p.on;
     for (size_t i = 0; i < p.segments.size(); ++i) {
         const Segment& seg = p.segments[i];
@@ -510,10 +512,10 @@ Eval Compiler::compile_path(const Expr& p) {
                     // Lexical scope chain: inside collection-method arguments a bare name missing on the
                     // element resolves against the enclosing item(s), innermost first (spec §3).
                     cur = [site](Exec& x) {
-                        Value r = member_of(x, x.current, *site);
+                        Value r = member_of(x, x.live(x.current), *site);
                         if (!r.is_missing() || x.outer.empty()) return r;
                         for (size_t k = x.outer.size(); k-- > 0;) {
-                            Value o = member_of(x, x.outer[k], *site);
+                            Value o = member_of(x, x.live(x.outer[k]), *site);
                             if (!o.is_missing()) return o;
                         }
                         return r;
@@ -529,7 +531,7 @@ Eval Compiler::compile_path(const Expr& p) {
                 cur = [prev, idx, key](Exec& x) {
                     Value v = prev(x);
                     if (v.is_map()) return map_lookup(x, v, key, nullptr);
-                    return index_at(v, idx);
+                    return x.live(index_at(v, idx));
                 };
                 break;
             }
@@ -629,7 +631,7 @@ std::optional<bool> contains_op(Exec& x, const Value& a, const Value& b) {
         auto& l = a.list();
         size_t n = l.size();
         for (size_t i = 0; i < n; ++i)
-            if (rql_equal(x, l.at(i), b) == std::optional<bool>(true)) return true;
+            if (rql_equal(x, x.live(l.at(i)), b) == std::optional<bool>(true)) return true;
         return false;
     }
     if (a.is_map()) {
@@ -679,7 +681,7 @@ std::optional<bool> in_op(Exec& x, const Value& a, const Value& b) {
     auto& l = b.list();
     size_t n = l.size();
     for (size_t i = 0; i < n; ++i)
-        if (rql_equal(x, a, l.at(i)) == std::optional<bool>(true)) return true;
+        if (rql_equal(x, a, x.live(l.at(i))) == std::optional<bool>(true)) return true;
     return false;
 }
 
@@ -802,7 +804,7 @@ Eval Compiler::compile_op_args(const std::string& op, const ExprPtr& ae, const E
             if (v.is_absent()) return v;
             if (v.is_map()) return map_lookup(x, v, (k.is_number() || k.is_string()) ? k : Value::string(to_text(k)), nullptr);
             double d;
-            if (try_number(k, d) && std::floor(d) == d) return index_at(v, static_cast<int64_t>(d));
+            if (try_number(k, d) && std::floor(d) == d) return x.live(index_at(v, static_cast<int64_t>(d)));
             if (k.is_string()) {
                 MemberSite tmp(k.as_string());
                 return member_of(x, v, tmp);
@@ -849,6 +851,12 @@ double round_away(double v, int digits) {
     return std::round(v * p) / p;
 }
 
+/// Collection elements enter expressions here: destroyed objects read as null.
+void live_all(Exec& x, std::vector<Value>& els) {
+    if (!x.liveness_enabled()) return;
+    for (auto& el : els) el = x.live(std::move(el));
+}
+
 Value quantify(Exec& x, const Value& v, const Eval* pred, const std::string& kind) {
     if (v.is_missing() || v.is_error()) return (kind == "count" || kind == "first") ? Value::missing() : Value::unknown();
     std::vector<Value> els;
@@ -860,6 +868,7 @@ Value quantify(Exec& x, const Value& v, const Eval* pred, const std::string& kin
         }
         els = {v};  // a single object behaves as a one-element collection
     }
+    live_all(x, els);
     ScopeGuard guard(x);
     double count = 0;
     bool saw_unknown = false;
@@ -896,6 +905,7 @@ Value aggregate(Exec& x, const Value& v, const Eval* sel, const std::string& kin
     if (v.is_missing() || v.is_error()) return v;
     std::vector<Value> els;
     if (!elements(v, els)) return v.is_null() ? Value::null() : Value::missing();
+    live_all(x, els);
     ScopeGuard guard(x);
     std::vector<Value> values;
     values.reserve(els.size());
@@ -1006,16 +1016,19 @@ Eval Compiler::compile_function(const Expr& c) {
     }
     // List editing (spec §4.3): pure functions returning a new list; assign the result with `set`.
     if (name == "append" || name == "insert" || name == "remove-at" || name == "without") {
-        if (name == "append") arity(c, 2, 64);
-        else if (name == "insert") arity(c, 3, 3);
+        enum class ListFn { Append, Insert, RemoveAt, Without };
+        const ListFn fn = name == "append" ? ListFn::Append : name == "insert" ? ListFn::Insert : name == "remove-at" ? ListFn::RemoveAt : ListFn::Without;
+        if (fn == ListFn::Append) arity(c, 2, 64);
+        else if (fn == ListFn::Insert) arity(c, 3, 3);
         else arity(c, 2, 2);
         std::vector<Eval> args;
         for (auto& e : c.args) args.push_back(compile(*e));
-        return [args, name](Exec& x) -> Value {
+        return [args, name, fn](Exec& x) -> Value {
             Value first = args[0](x);
             if (!first.is_list()) return Value::error("type-mismatch", name + "() expects a list first");
             std::vector<Value> list;
             elements(first, list);  // a fresh copy: the argument is never modified
+            live_all(x, list);
             auto index = [&](const Value& iv, bool inserting, int64_t& out) {
                 double d;
                 if (!try_number(iv, d) || std::floor(d) != d) return false;
@@ -1026,13 +1039,13 @@ Eval Compiler::compile_function(const Expr& c) {
                 out = i;
                 return true;
             };
-            if (name == "append") {
+            if (fn == ListFn::Append) {
                 for (size_t i = 1; i < args.size(); ++i) list.push_back(args[i](x));
-            } else if (name == "insert") {
+            } else if (fn == ListFn::Insert) {
                 int64_t i = 0;
                 if (!index(args[1](x), true, i)) return Value::error("type-mismatch", "insert() index must be an integer in range");
                 list.insert(list.begin() + i, args[2](x));
-            } else if (name == "remove-at") {
+            } else if (fn == ListFn::RemoveAt) {
                 int64_t i = 0;
                 if (!index(args[1](x), false, i)) return Value::error("type-mismatch", "remove-at() index must be an integer in range");
                 list.erase(list.begin() + i);
@@ -1114,7 +1127,7 @@ Eval Compiler::compile_method(const Expr& c) {
             if (!v.is_map()) return Value::missing();
             std::vector<Value> out;
             v.map().for_each([&](const Value& k, const Value& val) {
-                out.push_back(keys ? k : val);
+                out.push_back(keys ? k : x.live(val));
                 return true;
             });
             return Value::list_of(std::move(out));

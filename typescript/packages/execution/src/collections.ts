@@ -55,7 +55,7 @@ export function findMapKey(m: MapLike, key: unknown): { found: true; key: unknow
     if (typeof k !== 'string') return { found: false };
     if (m.has(k)) return { found: true, key: k };
     const up = k.toUpperCase();
-    for (const [rk] of m.entries()) if (rk.toUpperCase() === up) return { found: true, key: rk };
+    for (const rk of m.keys()) if (rk.toUpperCase() === up) return { found: true, key: rk };
     return { found: false };
   }
   if (m.has(key)) return { found: true, key };

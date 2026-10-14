@@ -26,6 +26,17 @@ void validate_name(const std::string& name, bool require_namespace) {
         throw std::invalid_argument("extension names must be namespaced (ns.name): '" + name + "'");
 }
 
+/// Runs f; true when it threw anything (host callbacks never escape).
+template <class F>
+bool capture_any(F&& f) {
+    try {
+        f();
+        return false;
+    } catch (...) {
+        return true;
+    }
+}
+
 const char* kCoreStageNames[] = {"where", "select", "sort", "first", "skip", "count", "describe", "get", "sum",
                                  "min", "max", "avg", "group-by", "distinct", "recurse", "set", "call"};
 const char* kFunctionNames[] = {"has", "is-null", "len", "lower", "upper", "abs", "round", "floor", "ceil", "coalesce", "ref",
@@ -155,6 +166,10 @@ Engine& Engine::exclude_types(TypeExclusion excluded) noexcept {
         } else {
             excluded_ = std::move(excluded);
         }
+        {
+            std::lock_guard<std::mutex> lock(exclusion_mutex_);
+            exclusion_scanned_ = 0;  // force a rescan
+        }
         std::lock_guard<std::mutex> lock(adapted_mutex_);
         adapted_.clear();
     } catch (...) {
@@ -163,11 +178,120 @@ Engine& Engine::exclude_types(TypeExclusion excluded) noexcept {
     return *this;
 }
 
-void Engine::adopt(std::vector<std::shared_ptr<void>>& constructed) {
-    if (constructed.empty()) return;
+bool Engine::adapts() const {
+    if (!adapters_.empty()) return true;
+    if (!excluded_) return false;
+    std::lock_guard<std::mutex> lock(exclusion_mutex_);
+    const std::vector<const TypeDescriptor*> registered = types_->registered();
+    if (registered.size() != exclusion_scanned_) {  // rescan when types were registered since
+        exclusion_scanned_ = registered.size();
+        exclusion_hits_ = std::any_of(registered.begin(), registered.end(),
+                                      [&](const TypeDescriptor* t) { return detail::excludes_members(*t, excluded_); });
+    }
+    return exclusion_hits_;
+}
+
+std::vector<const TypeDescriptor*> Engine::subtypes_named(const TypeDescriptor* target, const std::string& name) const {
+    std::lock_guard<std::mutex> lock(subtypes_mutex_);
+    const std::vector<const TypeDescriptor*> registered = types_->registered();
+    if (registered.size() != subtypes_registered_) {  // types were registered since: rebuild lazily
+        subtypes_.clear();
+        subtypes_registered_ = registered.size();
+    }
+    auto it = subtypes_.find(target);
+    if (it == subtypes_.end()) {
+        std::unordered_map<std::string, std::vector<const TypeDescriptor*>> by_name;
+        for (const TypeDescriptor* t : registered)
+            if (t->kind == target->kind && t->derives_from(target)) by_name[t->name].push_back(t);
+        it = subtypes_.emplace(target, std::move(by_name)).first;
+    }
+    auto hit = it->second.find(name);
+    return hit == it->second.end() ? std::vector<const TypeDescriptor*>{} : hit->second;
+}
+
+size_t Engine::retained_literal_objects() noexcept {
     std::lock_guard<std::mutex> lock(adopted_mutex_);
-    for (auto& c : constructed) adopted_.push_back(std::move(c));
-    constructed.clear();
+    size_t n = pinned_.size();
+    for (auto& kv : adopted_) n += kv.second.size();
+    return n;
+}
+
+void Engine::pin(std::vector<std::shared_ptr<void>>& holders) {
+    if (holders.empty()) return;
+    std::lock_guard<std::mutex> lock(adopted_mutex_);
+    for (auto& h : holders) pinned_.push_back(std::move(h));
+    holders.clear();
+}
+
+void Engine::adopt_slot(const Value& item, const std::string& path, std::vector<std::shared_ptr<void>>& holders, detail::Exec* x) {
+    const void *a = nullptr, *b = nullptr;
+    item.identity(a, b);
+    std::vector<std::shared_ptr<void>> previous;
+    {
+        std::lock_guard<std::mutex> lock(adopted_mutex_);
+        auto key = std::make_pair(a, path);
+        auto it = adopted_.find(key);
+        if (it != adopted_.end()) {
+            previous = std::move(it->second);
+            adopted_.erase(it);
+        }
+        if (!holders.empty()) adopted_.emplace(key, std::move(holders));
+        holders.clear();
+    }
+    // What an earlier literal committed into this slot was just overwritten. Our reference is the last
+    // one only when no shared_ptr holds it; raw links are invisible, so search for them before freeing.
+    std::vector<std::shared_ptr<void>> keep;
+    for (auto& h : previous) {
+        if (h.use_count() == 1 && linked_anywhere(h.get(), x)) keep.push_back(std::move(h));
+        // The receipt / hook records of this query still show the replaced object as `old`: release it
+        // only when the query is done (the Exec drops `released` after the result is encoded).
+        else if (x) x->released.push_back(std::move(h));
+    }
+    pin(keep);
+}
+
+bool Engine::linked_anywhere(const void* p, detail::Exec* x) {
+    struct IdKey {
+        const void* a;
+        const void* b;
+        bool operator==(const IdKey& o) const { return a == o.a && b == o.b; }
+    };
+    struct IdHash {
+        size_t operator()(const IdKey& k) const { return std::hash<const void*>()(k.a) * 31u ^ std::hash<const void*>()(k.b); }
+    };
+    std::unordered_set<IdKey, IdHash> visited;
+    std::vector<Value> stack;
+    for (auto& s : sources_) {
+        Value v;
+        if (capture_any([&] { v = s.getter(); })) continue;
+        if (v.is_object() || v.is_list() || v.is_map()) stack.push_back(v);
+    }
+    int budget = defaults_.max_visited;
+    while (!stack.empty() && budget-- > 0) {
+        Value o = std::move(stack.back());
+        stack.pop_back();
+        if (o.is_object() && o.ptr() == p) return true;
+        const void *a, *b;
+        if (o.identity(a, b) && !visited.insert(IdKey{a, b}).second) continue;  // structs have no identity: always descend
+        if (o.is_list() || o.is_map()) {
+            std::vector<Value> els;
+            detail::elements(o, els);
+            for (auto& e : els) {
+                Value ev = e.is_entry() ? e.entry().value : e;
+                if (ev.is_object() || ev.is_struct() || ev.is_list() || ev.is_map()) stack.push_back(std::move(ev));
+            }
+            continue;
+        }
+        if (!o.is_object() && !o.is_struct()) continue;
+        const detail::TypeView tv = view_of(o.type(), x);
+        for (auto& m : tv.implicit_members()) {  // owning members AND references (links)
+            if (!m.type || m.type->kind == TypeKind::Enum || (m.type->kind == TypeKind::Scalar && m.type->scalar != ScalarKind::Any)) continue;
+            Value v;
+            if (capture_any([&] { v = m.getter(o.ptr()); })) continue;
+            if (v.is_object() || v.is_struct() || v.is_list() || v.is_map()) stack.push_back(std::move(v));
+        }
+    }
+    return budget <= 0;  // undecided within the budget: treat as linked (never free on doubt)
 }
 
 const detail::AdaptedType* Engine::adapted(const TypeDescriptor* type) const {
@@ -184,13 +308,14 @@ detail::TypeView Engine::view_of(const TypeDescriptor* type, detail::Exec* x) co
     return detail::TypeView(type, adapted(type));
 }
 
-bool Engine::alive(const Value& object, detail::Exec* x) {
+std::optional<bool> Engine::liveness(const Value& object, detail::Exec* x) {
     if (caps_[static_cast<size_t>(detail::Capability::IsAlive)] && object.type()) {
-        auto verdict = detail::first_answer(view_of(object.type(), x).with(detail::Capability::IsAlive),
-                                            [&](const TypeAdapter& a) { return a.is_alive(object); });
-        if (verdict) return *verdict;
+        const detail::TypeView tv = view_of(object.type(), x);
+        auto verdict = detail::first_answer(tv.with(detail::Capability::IsAlive), [&](const TypeAdapter& a) { return a.is_alive(object); });
+        if (verdict) return verdict;
     }
-    return !is_alive || is_alive(object);
+    if (is_alive) return is_alive(object);
+    return std::nullopt;
 }
 
 std::optional<std::string> Engine::stable_id_of(const Value& object, detail::Exec* x) {
@@ -214,7 +339,13 @@ std::optional<std::string> Engine::stable_id_of(const Value& object, detail::Exe
 namespace detail {
 std::string Exec::ref_of(const Value& v) { return engine.ref_of_impl(v, this); }
 Value Exec::resolve_ref(const std::string& reference, std::string& error) { return engine.resolve_ref(reference, error, this); }
-void Exec::adopt_constructed() { engine.adopt(constructed); }
+void Exec::adopt_for_slot(const Value& item, const std::string& path, std::vector<std::shared_ptr<void>>& holders) {
+    engine.adopt_slot(item, path, holders, this);
+}
+std::vector<const TypeDescriptor*> Exec::subtypes_named(const TypeDescriptor* target, const std::string& name) {
+    return engine.subtypes_named(target, name);
+}
+void Exec::pin_constructed(std::vector<std::shared_ptr<void>>& holders) { engine.pin(holders); }
 }  // namespace detail
 
 // ------------------------------------------------------------------ execution
@@ -358,7 +489,9 @@ std::string Engine::ref_of_impl(const Value& v, detail::Exec* x) {
     return type_name_of(v) + "@" + std::to_string(handle_of(v));
 }
 
-Value Engine::search_sources(const std::string& type, const std::string& id, const Value* identity, detail::Exec* x) {
+Value Engine::search_sources(const std::string& type, const std::string& id, const std::string* alt_id, const Value* identity,
+                             detail::Exec* x) {
+    Value alt_hit;  // first object matching alt_id (returned only when no object matches id)
     struct IdKey {
         const void* a;
         const void* b;
@@ -403,6 +536,7 @@ Value Engine::search_sources(const std::string& type, const std::string& id, con
         } else if (t->is_a(type)) {
             auto sid = stable_id_of(o, x);
             if (sid && *sid == id) return o;
+            if (sid && alt_id && alt_hit.is_missing() && *sid == *alt_id) alt_hit = o;
         }
         if (depth >= 32) continue;
         const detail::TypeView tv = view_of(t, x);
@@ -419,7 +553,7 @@ Value Engine::search_sources(const std::string& type, const std::string& id, con
             if (v.is_object() || v.is_list() || v.is_map()) stack.emplace_back(v, depth + 1);
         }
     }
-    return Value::missing();
+    return alt_hit;
 }
 
 Value Engine::resolve_ref(const std::string& reference, std::string& error) noexcept {
@@ -440,28 +574,59 @@ Value Engine::resolve_ref(const std::string& reference_in, std::string& error, d
     std::string reference = reference_in;
     while (!reference.empty() && (reference.front() == ' ' || reference.front() == '\t')) reference.erase(reference.begin());
     while (!reference.empty() && (reference.back() == ' ' || reference.back() == '\t')) reference.pop_back();
-    // Ids may contain spaces / parentheses (asset paths): resolve the exact text first, then tolerate copied
-    // display forms such as "Enemy#12(Goblin_0012)" or "Enemy#12 Goblin" (spec §7).
+    // Ids may contain spaces / parentheses (asset paths): the exact text is preferred, then copied display
+    // forms such as "Enemy#12(Goblin_0012)" or "Enemy#12 Goblin" are tolerated (spec §7).
     size_t cut = reference.find_first_of(" (\t");
-    if (cut != std::string::npos && cut > 0) {
-        std::string exact_error;
-        Value exact = resolve_ref_core(reference, exact_error, x);
-        if (!exact.is_missing()) return exact;
-        reference = reference.substr(0, cut);
-    }
-    return resolve_ref_core(reference, error, x);
+    if (cut == std::string::npos || cut == 0) return resolve_ref_core(reference, error, x, nullptr);
+    const std::string trimmed = reference.substr(0, cut);
+    return resolve_ref_core(reference, error, x, &trimmed);
 }
 
-Value Engine::resolve_ref_core(const std::string& reference, std::string& error, detail::Exec* x) {
+namespace {
+bool split_ref(const std::string& reference, std::string& type, std::string& id, char& kind) {
     size_t i = reference.find_first_of("#@");
-    if (i == std::string::npos || i == 0 || i == reference.size() - 1) {
+    if (i == std::string::npos || i == 0 || i == reference.size() - 1) return false;
+    type = reference.substr(0, i);
+    id = reference.substr(i + 1);
+    kind = reference[i];
+    return true;
+}
+}  // namespace
+
+Value Engine::find_stable(const std::string& type, const std::string& id, const std::string* alt_id, detail::Exec* x) {
+    if (!x) return search_sources(type, id, alt_id, nullptr, nullptr);
+    std::string key = type + "#" + id;
+    if (alt_id) key += std::string(1, '\0') + *alt_id;
+    auto cached = x->ref_cache.find(key);
+    if (cached != x->ref_cache.end()) return cached->second;
+    Value found = search_sources(type, id, alt_id, nullptr, x);
+    x->ref_cache.emplace(key, found);
+    return found;
+}
+
+Value Engine::check_resolved(const Value& found, const std::string& reference, const std::string& type, std::string& error,
+                             detail::Exec* x) {
+    if (!found.is_object() || !found.type()->is_a(type)) {
+        error = "reference '" + reference + "' does not resolve to a live object";
+        return Value::missing();
+    }
+    if (!alive(found, x)) {
+        error = "reference '" + reference + "' points to a destroyed object";
+        return Value::missing();
+    }
+    return found;
+}
+
+Value Engine::resolve_ref_core(const std::string& reference, std::string& error, detail::Exec* x, const std::string* fallback) {
+    std::string type, id;
+    char kind = 0;
+    if (!split_ref(reference, type, id, kind)) {
+        if (fallback) return resolve_ref_core(*fallback, error, x, nullptr);
         error = "malformed reference '" + reference + "' (expected Type#id or Type@handle)";
         return Value::missing();
     }
-    std::string type = reference.substr(0, i);
-    std::string id = reference.substr(i + 1);
     Value found;
-    if (reference[i] == '@') {
+    if (kind == '@') {
         double h = 0;
         Value candidate;
         if (parse_double(id, h) && std::floor(h) == h) {
@@ -474,54 +639,33 @@ Value Engine::resolve_ref_core(const std::string& reference, std::string& error,
             // type (the type stored with the handle; deciding this never dereferences the object): the host
             // hook, or a liveness adapter of that type that answers. Otherwise re-validate by reachability
             // (identity comparison only).
-            std::optional<bool> verdict;
-            if (is_alive) {
-                verdict = is_alive(candidate);
-            } else if (caps_[static_cast<size_t>(detail::Capability::IsAlive)]) {
-                const detail::TypeView tv = view_of(candidate.type(), x);
-                verdict = detail::first_answer(tv.with(detail::Capability::IsAlive),
-                                               [&](const TypeAdapter& a) { return a.is_alive(candidate); });
-            }
+            const std::optional<bool> verdict = liveness(candidate, x);
             if (!verdict) {
-                found = search_sources(type, id, &candidate, x);
+                found = search_sources(type, id, nullptr, &candidate, x);
+            } else if (*verdict && candidate.type()->is_a(type)) {
+                return candidate;  // liveness already decided above
             } else if (!*verdict) {
                 error = "reference '" + reference + "' points to a destroyed object";
-                return Value::missing();
-            } else {
-                if (!candidate.type()->is_a(type)) {
-                    error = "reference '" + reference + "' does not resolve to a live object";
-                    return Value::missing();
-                }
-                return candidate;  // liveness already decided above
+                return fallback ? resolve_ref_core(*fallback, error, x, nullptr) : Value::missing();
             }
         }
+    } else if (resolve_stable_ref) {
+        found = resolve_stable_ref(type, id);
     } else {
-        if (resolve_stable_ref) {
-            found = resolve_stable_ref(type, id);
-        } else {
-            if (!x) {
-                found = search_sources(type, id, nullptr, nullptr);
-            } else {
-                std::string key = type + "#" + id;
-                auto cached = x->ref_cache.find(key);
-                if (cached != x->ref_cache.end()) {
-                    found = cached->second;
-                } else {
-                    found = search_sources(type, id, nullptr, x);
-                    x->ref_cache.emplace(key, found);
-                }
-            }
+        // One pass over the sources accepts the trimmed id too (when it names the same type); exact wins.
+        std::string alt_type, alt_id;
+        char alt_kind = 0;
+        const bool one_pass = fallback && split_ref(*fallback, alt_type, alt_id, alt_kind) && alt_kind == '#' && alt_type == type;
+        found = find_stable(type, id, one_pass ? &alt_id : nullptr, x);
+        if (one_pass) {
+            const auto sid = found.is_object() ? stable_id_of(found, x) : std::nullopt;
+            if (found.is_object() && sid && *sid == alt_id && alt_id != id) return check_resolved(found, *fallback, type, error, x);
+            fallback = nullptr;  // the trimmed form was searched in the same pass
         }
     }
-    if (!found.is_object() || !found.type()->is_a(type)) {
-        error = "reference '" + reference + "' does not resolve to a live object";
-        return Value::missing();
-    }
-    if (!alive(found, x)) {
-        error = "reference '" + reference + "' points to a destroyed object";
-        return Value::missing();
-    }
-    return found;
+    Value resolved = check_resolved(found, reference, type, error, x);
+    if (resolved.is_missing() && fallback) return resolve_ref_core(*fallback, error, x, nullptr);
+    return resolved;
 }
 
 // ------------------------------------------------------------------ schema

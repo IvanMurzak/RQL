@@ -21,11 +21,10 @@ std::vector<Value> targets(Exec& x, Stream& stream, const std::string& op) {
     std::vector<Value> list;
     Item it;
     while (stream.next(it)) {
-        if (it.value.is_null()) continue;
+        // Null and destroyed items are skipped (spec §13: a destroyed object reads as null).
+        if (it.value.is_null() || x.is_dead(it.value)) continue;
         if (it.value.is_row())
             throw RqlException("invalid-plan", "'" + op + "' needs objects, not projected rows; remove 'select' before '" + op + "'");
-        if (x.is_dead(it.value))
-            throw RqlException("stale-ref", "'" + op + "' target " + x.ref_of(it.value) + " is a destroyed object; nothing was changed");
         if (it.value.is_entry())
             throw RqlException("invalid-plan", "'" + op + "' cannot target map entries; set the map member with a key path instead (Stats[\"key\"] = ...)");
         const Value& v = it.value;
@@ -89,6 +88,13 @@ struct Slot {
         return Value::missing();
     }
 
+    /// Adapter validation of a coerced value before any write (members, virtual-map entries): reason or "".
+    std::string validate(const Value& c, const Value& v) const {
+        if (kind == Member && member->validate) return member->validate(c.ptr(), v);
+        if (kind == MapKey) return c.map().validate_entry(key, v);
+        return {};
+    }
+
     void set(const Value& c, const Value& v) const {
         switch (kind) {
             case Member: member->setter(c.ptr(), v); break;
@@ -104,9 +110,7 @@ struct Slot {
 Slot slot_of(Exec& x, const Value& container, const Segment& seg, const std::string& label) {
     Slot s;
     if (container.is_map()) {
-        if (container.map().read_only()) throw RqlException("readonly-member", "'" + label + "': map is read-only");
-        if (!container.map().writable())
-            throw RqlException("unsupported", "map type " + friendly_type_of(container) + " does not support writes");
+        if (!container.map().writable()) throw RqlException("readonly-member", "'" + label + "': map " + friendly_type_of(container) + " is read-only");
         if (seg.kind == SegmentKind::Member && iequals(seg.name, "Count"))
             throw RqlException("readonly-member", "'" + label + "': Count of a map is read-only (use [\"Count\"] to address a key literally named Count)");
         Value key;
@@ -207,20 +211,7 @@ bool needs_write_back(Exec& x, const Slot& slot, const Value& container) {
 /// copies already), so writes into it can be assigned back through the member's setter.
 Value read_through(const Slot& slot, const Value& next) {
     if (slot.kind != Slot::Member || !slot.member->copy_on_read) return next;
-    if (next.is_list()) {
-        std::vector<Value> items;
-        elements(next, items);
-        return Value::list(std::make_shared<OwnedList>(std::move(items), true));
-    }
-    if (next.is_map()) {
-        std::vector<std::pair<Value, Value>> entries;
-        next.map().for_each([&](const Value& k, const Value& v) {
-            entries.emplace_back(k, v);
-            return true;
-        });
-        return Value::map(std::make_shared<OwnedMap>(next.map().type(), std::move(entries), false, true));
-    }
-    return next;
+    return owned_copy(next, true);
 }
 
 /// Resolve a set target; `owner` is the object whose state changes: the last reference object on the
@@ -233,16 +224,14 @@ Slot resolve(Exec& x, const Value& root, const std::vector<Segment>& segs, Value
         Slot slot = slot_of(x, cur, segs[i], label);
         if (i + 1 == segs.size()) {
             // Every copy on the way (value type or copy-on-read member) is written back into its parent:
-            // those parent slots must be writable and allowed too.
-            for (size_t j = chain.size(); j-- > 0;) {
-                if (!needs_write_back(x, chain[j].first, chain[j].second)) break;
-                check_writable(x, chain[j].first, label, root,
-                               ": '" + segs[j].to_string() + "' is a copy (value type or copy-on-read member) written back through a non-writable member");
-            }
+            // those parent slots must be writable and allowed too. The owner (the object whose state
+            // changes) is the parent of the topmost such copy.
+            size_t j = chain.size();
+            for (; j > 0 && needs_write_back(x, chain[j - 1].first, chain[j - 1].second); --j)
+                check_writable(x, chain[j - 1].first, label, root,
+                               ": '" + segs[j - 1].to_string() + "' is a copy (value type or copy-on-read member) written back through a non-writable member");
             container = cur;
-            owner = cur;
-            for (size_t j = chain.size(); j-- > 0 && needs_write_back(x, chain[j].first, chain[j].second);)
-                owner = j == 0 ? root : chain[j - 1].second;
+            owner = j == 0 ? root : chain[j - 1].second;
             return slot;
         }
         Value next = read_through(slot, safe_get(slot, cur, label));
@@ -281,38 +270,44 @@ struct PlannedWrite {
     Value old_value;
     Value new_value;
     Value owner;
+    std::vector<std::shared_ptr<void>> constructed;  // objects built from object literals for this write
 };
 
-/// Host veto point after planning, before any write (not on dry-run): any exception → permission-denied.
-void before_write(Exec& x, const std::function<std::vector<MutationRecord>()>& records) {
-    const MutationHook& hook = x.engine.mutations().before_write;
-    if (!hook || x.options.dry_run) return;
-    std::string why;
+/// Runs f; the failure message of any exception (std or not), nullopt on success. Host callbacks
+/// (setters, methods, hooks) must never leak an exception past the engine.
+template <class F>
+std::optional<std::string> capture_failure(F&& f) {
     try {
-        hook(records());
-        return;
+        f();
+        return std::nullopt;
     } catch (const std::exception& ex) {
-        why = ex.what();
+        return std::string(ex.what());
     } catch (...) {
-        why = "non-standard exception";
+        return std::string("non-standard exception");
     }
-    throw RqlException("permission-denied", "the host rejected the change before anything was written: " + why);
 }
 
-/// Host notification after the writes succeeded (not on dry-run): any exception → getter-threw warning.
-void committed(Exec& x, const std::function<std::vector<MutationRecord>()>& records) {
-    const MutationHook& hook = x.engine.mutations().committed;
-    if (!hook || x.options.dry_run) return;
-    std::string why;
-    try {
-        hook(records());
-        return;
-    } catch (const std::exception& ex) {
-        why = ex.what();
-    } catch (...) {
-        why = "non-standard exception";
-    }
-    x.diagnostics.push_back(Diagnostic::warning("getter-threw", "host commit hook threw: " + why + "; the writes were applied"));
+/// A host write hook (never on dry-run); nullopt = success or no hook, else the failure message.
+std::optional<std::string> run_hook(Exec& x, const MutationHook& hook, const std::vector<MutationRecord>& records) {
+    if (!hook || x.options.dry_run) return std::nullopt;
+    return capture_failure([&] { hook(records); });
+}
+
+bool has_hooks(Exec& x) {
+    const MutationPolicy& p = x.engine.mutations();
+    return !x.options.dry_run && (p.before_write || p.committed);
+}
+
+/// Veto point after planning, before any write: a failing hook → permission-denied, nothing changed.
+void before_write(Exec& x, const std::vector<MutationRecord>& records) {
+    if (auto failure = run_hook(x, x.engine.mutations().before_write, records))
+        throw RqlException("permission-denied", "the host rejected the change before anything was written: " + *failure);
+}
+
+/// Notification after the writes succeeded: a failing hook → getter-threw warning, writes stay applied.
+void committed(Exec& x, const std::vector<MutationRecord>& records) {
+    if (auto failure = run_hook(x, x.engine.mutations().committed, records))
+        x.diagnostics.push_back(Diagnostic::warning("getter-threw", "host commit hook threw: " + *failure + "; the writes were applied"));
 }
 
 /// Build `target` (object or struct) from an object literal (spec §4.5): concrete type (`"$type"`),
@@ -325,9 +320,7 @@ std::optional<Value> construct(Exec& x, const Value& literal, const TypeDescript
             why = "\"$type\" must be a type name string";
             return std::nullopt;
         }
-        std::vector<const TypeDescriptor*> hits;
-        for (const TypeDescriptor* t : x.types.registered())
-            if (t->kind == target->kind && t->derives_from(target) && t->name == type_name.as_string()) hits.push_back(t);
+        const std::vector<const TypeDescriptor*> hits = x.subtypes_named(target, type_name.as_string());
         if (hits.empty()) {
             why = "no concrete type named '" + type_name.as_string() + "' derives from " + target->friendly_name();
             return std::nullopt;
@@ -540,66 +533,54 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
             Slot slot = resolve(x, item, a.target->segments, container, owner);
             check_writable(x, slot, a.label, item, "");
             std::string why;
+            const size_t built_before = x.constructed.size();
             auto coerced = coerce(x, nv, slot.type, slot.nullable, why);
             if (!coerced)
                 throw RqlException("coercion-failed", "cannot assign " + describe_value(nv) + " to '" + a.label + "' (" +
                                                           (slot.type ? slot.type->friendly_name() : std::string("object")) + "): " + why);
             // Adapter validation runs before any write (spec §13): members and virtual-map entries.
-            std::string rejected;
-            if (slot.kind == Slot::Member && slot.member->validate) rejected = slot.member->validate(container.ptr(), *coerced);
-            else if (slot.kind == Slot::MapKey) rejected = container.map().validate_entry(slot.key, *coerced);
-            {
-                if (!rejected.empty())
-                    throw RqlException("coercion-failed", "cannot assign " + describe_value(nv) + " to '" + a.label + "' on " +
-                                                              x.ref_of(item) + ": " + rejected);
-            }
-            writes.push_back({item, &a.target->segments, a.label, snapshot(safe_get(slot, container, a.label)), *coerced, owner});
+            const std::string rejected = slot.validate(container, *coerced);
+            if (!rejected.empty())
+                throw RqlException("coercion-failed",
+                                   "cannot assign " + describe_value(nv) + " to '" + a.label + "' on " + x.ref_of(item) + ": " + rejected);
+            PlannedWrite w{item, &a.target->segments, a.label, snapshot(safe_get(slot, container, a.label)), *coerced, owner, {}};
+            // Objects this write's literal constructed: owned by the slot they are committed into.
+            for (size_t k = built_before; k < x.constructed.size(); ++k) w.constructed.push_back(std::move(x.constructed[k]));
+            x.constructed.resize(built_before);
+            writes.push_back(std::move(w));
         }
     }
 
-    auto records = [&writes]() {
-        std::vector<MutationRecord> out;
-        for (auto& w : writes) out.push_back({w.item, w.owner, w.label, w.old_value, w.new_value, nullptr});
-        return out;
-    };
+    std::vector<MutationRecord> records;  // built once, shared by both hooks
+    if (has_hooks(x))
+        for (auto& w : writes) records.push_back({w.item, w.owner, w.label, w.old_value, w.new_value, nullptr});
     before_write(x, records);
     if (!x.options.dry_run) {
         size_t applied = 0;
-        std::string failure;
-        bool failed = false;
-        try {
+        std::optional<std::string> failure = capture_failure([&] {
             for (; applied < writes.size(); ++applied) assign(x, writes[applied].item, *writes[applied].segments, writes[applied].new_value);
-        } catch (const std::exception& ex) {
-            failed = true;
-            failure = ex.what();
-        } catch (...) {  // non-std exceptions from host setters must roll back too
-            failed = true;
-            failure = "non-standard exception";
-        }
-        if (failed) {
+        });
+        if (failure) {
             // The failed write itself is restored too: adapter setters may change state before throwing.
-            bool self_restored = true;
-            try {
-                assign(x, writes[applied].item, *writes[applied].segments, writes[applied].old_value);
-            } catch (...) {
-                self_restored = false;
-            }
+            const bool self_restored =
+                !capture_failure([&] { assign(x, writes[applied].item, *writes[applied].segments, writes[applied].old_value); });
             size_t rollback_failures = 0;
-            for (size_t k = applied; k-- > 0;) {
-                try {
-                    assign(x, writes[k].item, *writes[k].segments, writes[k].old_value);
-                } catch (...) {
-                    ++rollback_failures;
-                }
+            for (size_t k = applied; k-- > 0;)
+                if (capture_failure([&] { assign(x, writes[k].item, *writes[k].segments, writes[k].old_value); })) ++rollback_failures;
+            if (rollback_failures > 0 || !self_restored) {
+                // A link may still point at an object this mutation constructed: never free those.
+                for (auto& w : writes) x.pin_constructed(w.constructed);
             }
             std::string rolled = rollback_failures == 0
                                      ? std::to_string(applied) + " earlier write(s) were rolled back"
                                      : "rolling back " + std::to_string(applied) + " earlier write(s) FAILED for " +
                                            std::to_string(rollback_failures) + " of them - state may be partially modified";
             if (!self_restored) rolled += "; restoring '" + writes[applied].label + "' itself also failed, so it may be partially modified";
-            throw RqlException("coercion-failed", "write '" + writes[applied].label + "' failed (" + failure + "); " + rolled);
+            throw RqlException("coercion-failed", "write '" + writes[applied].label + "' failed (" + *failure + "); " + rolled);
         }
-        x.adopt_constructed();  // objects built from object literals now live in the graph
+        // Objects built from object literals now live in the graph: the engine owns them per slot, and
+        // releases what an earlier literal committed into the same slot once nothing links to it anymore.
+        for (auto& w : writes) x.adopt_for_slot(w.item, w.label, w.constructed);
     }
     committed(x, records);
 
@@ -692,42 +673,29 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
         planned.push_back({item, chosen, std::move(coerced)});
     }
 
-    auto call_records = [&planned](size_t count) {
-        std::vector<MutationRecord> out;
-        for (size_t k = 0; k < count && k < planned.size(); ++k)
-            out.push_back({planned[k].item, planned[k].item, planned[k].item.type()->signature(*planned[k].method), Value(), Value(),
-                           planned[k].method});
-        return out;
-    };
-    before_write(x, [&] { return call_records(planned.size()); });
+    std::vector<MutationRecord> records;  // built once, shared by both hooks
+    if (has_hooks(x))
+        for (auto& p : planned) records.push_back({p.item, p.item, p.item.type()->signature(*p.method), Value(), Value(), p.method});
+    before_write(x, records);
     std::vector<std::vector<Value>> rows;
     size_t done = 0;
     for (auto& p : planned) {
         Value result = Value::string("(dry-run)");
         if (!x.options.dry_run) {
-            std::string failure;
-            bool failed = false;
-            try {
-                result = p.method->invoke(p.item.ptr(), p.args);
-            } catch (const std::exception& ex) {
-                failed = true;
-                failure = ex.what();
-            } catch (...) {
-                failed = true;
-                failure = "non-standard exception";
-            }
-            if (failed) {
+            if (auto failure = capture_failure([&] { result = p.method->invoke(p.item.ptr(), p.args); })) {
                 // Completed calls are not rolled back, so the host still learns about them.
-                committed(x, [&] { return call_records(done); });
-                throw RqlException("getter-threw", p.method->name + " on " + x.ref_of(p.item) + " threw: " + failure + "; " +
+                if (!records.empty()) committed(x, std::vector<MutationRecord>(records.begin(), records.begin() + static_cast<std::ptrdiff_t>(done)));
+                x.pin_constructed(x.constructed);
+                throw RqlException("getter-threw", p.method->name + " on " + x.ref_of(p.item) + " threw: " + *failure + "; " +
                                                        std::to_string(done) + " earlier call(s) completed and are NOT rolled back");
             }
         }
         ++done;
         rows.push_back({Value::string(x.ref_of(p.item)), Value::string(p.item.type()->signature(*p.method)), result});
     }
-    if (!x.options.dry_run) x.adopt_constructed();
-    committed(x, [&] { return call_records(planned.size()); });
+    // Literal-built call arguments may now be linked from host state: keep them (no slot to tie them to).
+    if (!x.options.dry_run) x.pin_constructed(x.constructed);
+    committed(x, records);
     QueryResult r = enc.rows({"$ref", "method", "result"}, rows);
     r.dry_run = x.options.dry_run;
     return r;

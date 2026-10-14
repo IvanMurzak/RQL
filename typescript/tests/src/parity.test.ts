@@ -192,7 +192,7 @@ test('hideWhere and engine-level type exclusion drop members (also through eleme
   assert.equal(e.execute('os | select handle').diagnostics[0]?.code, 'unknown-member');
 });
 
-test('destroyed objects read as null: equality, members (no getter runs), encoding, refs, mutation targets', () => {
+test('destroyed objects read as null: skipped in streams and mutations, null inside collections, stale refs', () => {
   let getterRuns = 0;
   class Go {
     destroyed = false;
@@ -208,17 +208,30 @@ test('destroyed objects read as null: equality, members (no getter runs), encodi
   }
   const gos = [new Go(1), new Go(2)];
   const types = new TypeModel().register(Go, { members: [{ name: 'Id', type: t.int }, { name: 'Hp', type: t.int }] });
-  const e = new RqlEngine({ types }).addSource('gos', () => gos).addAdapter({ target: Go, isAlive: (g) => !g.destroyed });
+  const e = new RqlEngine({ types })
+    .addSource('gos', () => gos)
+    .addSource('world', () => ({ gos }))
+    .addAdapter({ target: Go, isAlive: (g) => !g.destroyed });
   e.mutations.enabled = true;
   gos[1]!.destroyed = true;
   getterRuns = 0;
-  assert.deepEqual(e.execute('gos | select Id dead=($ == null) gone=($ is null) Hp').rows, [[1, false, false, 10], [null, true, true, null]]);
-  assert.equal(getterRuns, 1);
-  assert.deepEqual(e.execute('gos').items?.[1], null);
+  assert.deepEqual(e.execute('gos | select Id Hp').rows, [[1, 10]]); // the destroyed item is skipped like a null one
+  assert.deepEqual(e.execute('world | select dead=gos.any($ == null) n=gos.count() hp=gos.Hp second=gos[1] c=coalesce(gos[1], "gone")').rows, [
+    [true, 2, [10], null, 'gone'],
+  ]);
+  assert.equal(getterRuns, 2); // never on the destroyed object
   assert.equal(e.execute('ref("Go#2") | count').diagnostics[0]?.code, 'stale-ref');
   const r = e.execute('gos | set Hp = 0', {}, mut);
-  assert.equal(r.diagnostics[0]?.code, 'stale-ref');
-  assert.equal(gos[0]!.Hp, 10); // nothing changed, not even the live one
+  assert.deepEqual(r.rows?.map((row) => row[0]), ['Go#1']);
+  gos[1]!.destroyed = false;
+  assert.deepEqual(gos.map((g) => g.Hp), [0, 10]); // only the live one changed
+});
+
+test('the host isAlive hook is the fallback liveness source', () => {
+  const xs = [{ Id: 1, gone: false }, { Id: 2, gone: true }];
+  const e = new RqlEngine().addSource('xs', () => xs);
+  e.isAlive = (o) => !(o as { gone?: boolean }).gone;
+  assert.deepEqual(e.execute('xs | select Id').rows, [[1]]);
 });
 
 test('object literals: maps, construction with defaults, "$type" ambiguity, adapter coercion first', () => {
@@ -262,4 +275,42 @@ test('list functions are pure and validate their arguments', () => {
   assert.deepEqual(e.execute('xs | select insert(tags, 1.5, "q") insert(tags, 3, "q") remove-at(5, 0)').rows, [
     [{ $error: 'type-mismatch' }, { $error: 'type-mismatch' }, { $error: 'type-mismatch' }],
   ]);
+});
+
+test('virtual maps with has(): lookups do not scan keys; case-insensitive misses read keys only', () => {
+  let keyScans = 0;
+  let gets = 0;
+  class Mat {
+    Id = 1;
+    props: Record<string, number> = { _Gloss: 0.5, _Metal: 1 };
+  }
+  const types = new TypeModel().register(Mat, { members: [{ name: 'Id', type: t.int }] });
+  const e = new RqlEngine({ types })
+    .addSource('mats', () => [new Mat()])
+    .addAdapter({
+      target: Mat,
+      members: (m) =>
+        m.map<number>('p', {
+          keys: (o) => {
+            keyScans++;
+            return Object.keys(o.props);
+          },
+          has: (o, k) => k in o.props,
+          get: (o, k) => {
+            gets++;
+            return o.props[k]!;
+          },
+        }, t.number),
+    });
+  assert.deepEqual(e.execute('mats | select p["_Gloss"]').rows, [[0.5]]);
+  assert.equal(keyScans, 0);
+  assert.deepEqual(e.execute('mats | select p["_gloss"]').rows, [[0.5]]); // case-insensitive fallback
+  assert.equal(gets, 2); // one read per lookup: the fallback scans keys, not values
+});
+
+test('ref(): an exact id containing spaces wins over its trimmed display form, in one search', () => {
+  const assets = [{ Id: 'Red', Name: 'short' }, { Id: 'Red (1)', Name: 'exact' }];
+  const e = new RqlEngine().addSource('assets', () => assets);
+  assert.deepEqual(e.execute('ref("Object#Red (1)") | select Name').rows, [['exact']]);
+  assert.deepEqual(e.execute('ref("Object#Red (copy)") | select Name').rows, [['short']]);
 });

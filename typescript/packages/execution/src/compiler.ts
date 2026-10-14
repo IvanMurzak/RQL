@@ -60,7 +60,7 @@ export class Compiler {
 
   private compilePath(p: PathExpr): Eval {
     const relativeToItem = p.on === undefined;
-    let cur: Eval = p.on !== undefined ? this.compile(p.on) : (x) => x.current;
+    let cur: Eval = p.on !== undefined ? this.compile(p.on) : (x) => x.live(x.current);
     p.segments.forEach((s, i) => {
       const prev = cur;
       const first = i === 0 && relativeToItem;
@@ -72,7 +72,7 @@ export class Compiler {
             // Lexical scope chain: inside method arguments a bare name missing on the element
             // resolves against the enclosing item(s), innermost first (spec §3).
             cur = (x) => {
-              const r = member(x, x.current, site);
+              const r = member(x, x.live(x.current), site);
               if (r !== MISSING || x.outer.length === 0) return r;
               for (let k = x.outer.length - 1; k >= 0; k--) {
                 const o = member(x, x.outer[k], site);
@@ -346,32 +346,17 @@ export class Compiler {
           return list;
         };
       }
-      case 'insert': {
-        this.arity(c, 3, 3);
-        const [la, ia, va] = c.args.map((e) => this.compile(e)) as [Eval, Eval, Eval];
-        return (x) => {
-          const list = listArg(x, la(x));
-          if (list === undefined) return new ErrorValue('type-mismatch', 'insert() expects a list first');
-          const d = ia(x);
-          if (typeof d !== 'number' || Math.floor(d) !== d) return new ErrorValue('type-mismatch', 'insert() index must be an integer');
-          const i = d < 0 ? list.length + 1 + d : d;
-          if (i < 0 || i > list.length) return new ErrorValue('type-mismatch', `insert() index ${formatNumber(d)} out of range (count ${list.length})`);
-          list.splice(i, 0, va(x));
-          return list;
-        };
-      }
+      case 'insert':
       case 'remove-at': {
-        this.arity(c, 2, 2);
-        const [la, ia] = c.args.map((e) => this.compile(e)) as [Eval, Eval];
+        const inserting = name === 'insert';
+        this.arity(c, inserting ? 3 : 2, inserting ? 3 : 2);
+        const [la, ia, va] = c.args.map((e) => this.compile(e)) as [Eval, Eval, Eval | undefined];
         return (x) => {
-          const list = listArg(x, la(x));
-          if (list === undefined) return new ErrorValue('type-mismatch', 'remove-at() expects a list first');
-          const d = ia(x);
-          if (typeof d !== 'number' || Math.floor(d) !== d) return new ErrorValue('type-mismatch', 'remove-at() index must be an integer');
-          const i = d < 0 ? list.length + d : d;
-          if (i < 0 || i >= list.length) return new ErrorValue('type-mismatch', `remove-at() index ${formatNumber(d)} out of range (count ${list.length})`);
-          list.splice(i, 1);
-          return list;
+          const at = listAndIndex(x, name, la(x), ia(x), inserting);
+          if (at instanceof ErrorValue) return at;
+          if (inserting) at.list.splice(at.index, 0, va!(x));
+          else at.list.splice(at.index, 1);
+          return at.list;
         };
       }
       case 'without': {
@@ -456,7 +441,7 @@ export class Compiler {
         return (x) => {
           const v = on(x);
           if (!isMapLike(v)) return MISSING;
-          return [...mapEntries(v)].map((e) => (keys ? e.Key : e.Value));
+          return [...mapEntries(v)].map((e) => x.live(keys ? e.Key : e.Value));
         };
       }
       case 'contains':
@@ -484,7 +469,7 @@ export class Compiler {
 
 function mapList(x: Exec, list: object, f: (el: unknown) => unknown): unknown[] {
   const out: unknown[] = [];
-  for (const el of elements(list, x.types.infoOf(list))) {
+  for (const el of liveElements(x, list)) {
     const r = f(el === undefined ? null : el);
     if (r !== MISSING) out.push(r);
   }
@@ -494,7 +479,6 @@ function mapList(x: Exec, list: object, f: (el: unknown) => unknown): unknown[] 
 export function member(x: Exec, v: unknown, site: MemberSite): unknown {
   if (v === null || v === undefined) return MISSING;
   if (isAbsent(v)) return v;
-  if (x.types.isDead(v)) return MISSING; // members of a destroyed object read like members of null
   const info = x.types.infoOf(v);
   let m = site.cachedInfo === info ? site.cachedMember : undefined;
   if (m === undefined) {
@@ -506,12 +490,12 @@ export function member(x: Exec, v: unknown, site: MemberSite): unknown {
       }
       // Implicit map over elements, flattening one level (spec §3).
       const out: unknown[] = [];
-      for (const el of elements(v as object, info)) {
+      for (const el of liveElements(x, v as object, info)) {
         x.visit();
         const r = member(x, el === undefined ? null : el, site);
         if (r === MISSING) continue;
         if (typeof r === 'object' && r !== null && x.types.infoOf(r).isList) {
-          for (const inner of elements(r, x.types.infoOf(r))) out.push(inner === undefined ? null : inner);
+          for (const inner of liveElements(x, r)) out.push(inner);
         } else out.push(r);
       }
       return out;
@@ -553,7 +537,7 @@ export function member(x: Exec, v: unknown, site: MemberSite): unknown {
   site.hits++;
   x.membersRead++;
   try {
-    return m.get(v as object);
+    return x.live(m.get(v as object)); // a destroyed object read from a member is null
   } catch (e) {
     x.getterThrew(m.name, e);
     return new ErrorValue('getter-threw', errorMessage(e));
@@ -566,7 +550,7 @@ export function mapLookup(x: Exec, map: MapLike, key: unknown, site?: MemberSite
   if (!k.found) return MISSING;
   if (site !== undefined) site.hits++;
   const v = mapGet(map, k.key);
-  return v === undefined ? null : v;
+  return v === undefined ? null : x.live(v);
 }
 
 function indexOf(x: Exec, v: unknown, idx: number): unknown {
@@ -575,7 +559,7 @@ function indexOf(x: Exec, v: unknown, idx: number): unknown {
   if (typeof v !== 'object') return MISSING;
   const info = x.types.infoOf(v);
   if (!info.isList) return MISSING;
-  return indexAt(v, idx);
+  return x.live(indexAt(v, idx));
 }
 
 function keyAt(x: Exec, v: unknown, key: string | number, p: PathExpr): unknown {
@@ -606,11 +590,6 @@ function isStructOrCollection(x: Exec, v: object): boolean {
 /** Equality per spec §4.1; undefined = unknown. */
 export function equal(x: Exec, a: unknown, b: unknown): Truth {
   if (isAbsent(a) || isAbsent(b)) return undefined;
-  if (x.types.hasCapability('isAlive')) {
-    // A destroyed object reads as null everywhere (spec §13).
-    if (x.types.isDead(a)) a = null;
-    if (x.types.isDead(b)) b = null;
-  }
   if (a === null || b === null) return a === null && b === null;
   if (x.types.hasCapability('equals')) {
     const r = adapterEqual(x.types, a, b);
@@ -707,11 +686,11 @@ function contains(x: Exec, a: unknown, b: unknown): Truth {
   if (typeof a !== 'object') return undefined;
   const info = x.types.infoOf(a);
   if (info.isList) {
-    for (const el of elements(a, info)) if (equal(x, el === undefined ? null : el, b) === true) return true;
+    for (const el of liveElements(x, a, info)) if (equal(x, el, b) === true) return true;
     return false;
   }
   if (info.isMap) {
-    for (const e of mapEntries(a as MapLike)) if (equal(x, e.Key, b) === true) return true;
+    for (const e of mapEntries(a as MapLike)) if (equal(x, x.live(e.Key), b) === true) return true;
     return false;
   }
   return undefined;
@@ -741,7 +720,7 @@ function matches(a: unknown, b: unknown): Truth {
 function isIn(x: Exec, a: unknown, b: unknown): Truth {
   if (isAbsent(a) || isAbsent(b) || b === null) return undefined;
   if (!isList(x, b)) return equal(x, a, b);
-  for (const el of elements(b, x.types.infoOf(b))) if (equal(x, a, el === undefined ? null : el) === true) return true;
+  for (const el of liveElements(x, b)) if (equal(x, a, el) === true) return true;
   return false;
 }
 
@@ -841,16 +820,35 @@ export function roundAwayFromZero(v: number, digits: number): number {
 
 // ------------------------------------------------------------------ collection methods
 
+/** List elements / map entries as they enter expressions: holes and destroyed objects read as null. */
+function* liveElements(x: Exec, v: object, info: TypeInfo = x.types.infoOf(v)): Generator<unknown> {
+  for (const el of elements(v, info)) yield el === undefined ? null : x.live(el);
+}
+
+/**
+ * The list argument (a fresh copy) and a resolved index for insert / remove-at: negative indexes count from
+ * the end (for insert, -1 appends); a non-list, non-integral or out-of-range index is a type-mismatch.
+ */
+function listAndIndex(x: Exec, fn: string, listValue: unknown, indexValue: unknown, inserting: boolean): { list: unknown[]; index: number } | ErrorValue {
+  const list = listArg(x, listValue);
+  if (list === undefined) return new ErrorValue('type-mismatch', `${fn}() expects a list first`);
+  if (typeof indexValue !== 'number' || Math.floor(indexValue) !== indexValue) return new ErrorValue('type-mismatch', `${fn}() index must be an integer`);
+  const size = inserting ? list.length + 1 : list.length;
+  const index = indexValue < 0 ? size + indexValue : indexValue;
+  if (index < 0 || index >= size) return new ErrorValue('type-mismatch', `${fn}() index ${formatNumber(indexValue)} out of range (count ${list.length})`);
+  return { list, index };
+}
+
 /** A fresh copy of a list value (never the live collection), or undefined when the value is not a list. */
 function listArg(x: Exec, v: unknown): unknown[] | undefined {
   if (!isList(x, v)) return undefined;
-  return [...elements(v, x.types.infoOf(v))].map((e) => (e === undefined ? null : e));
+  return [...liveElements(x, v)];
 }
 
 function elementsOf(x: Exec, v: unknown): Iterable<unknown> | undefined {
   if (v === null || isAbsent(v) || typeof v !== 'object') return undefined;
   const info: TypeInfo = x.types.infoOf(v);
-  return info.isList || info.isMap ? elements(v, info) : undefined;
+  return info.isList || info.isMap ? liveElements(x, v, info) : undefined;
 }
 
 function quantify(x: Exec, v: unknown, pred: Eval | undefined, kind: string): unknown {

@@ -78,57 +78,58 @@ namespace Rql.Execution
         string? ValidateEntry(string key, object? value);
     }
 
+    /// <summary>The callbacks of one virtual map member, shared by every owner's view.</summary>
+    internal sealed class VirtualMapSpec<TValue>
+    {
+        public Func<object, IEnumerable<string>> Keys = null!;
+        public Func<object, string, TValue> Get = null!;
+        public Action<object, string, TValue>? Set;
+        public Func<object, string, TValue, string?>? Validate;
+        public Func<object, string, Type>? EntryType;
+        /// <summary>Optional O(1) key test; without it lookups scan <see cref="Keys"/>.</summary>
+        public Func<object, string, bool>? Has;
+    }
+
     public sealed class VirtualMap<TValue> : IDictionary<string, TValue>, IDictionary, IReadOnlyDictionary<string, TValue>, IVirtualMap
     {
         private readonly object _owner;
-        private readonly Func<object, IEnumerable<string>> _keys;
-        private readonly Func<object, string, TValue> _get;
-        private readonly Action<object, string, TValue>? _set;
+        private readonly VirtualMapSpec<TValue> _spec;
 
-        private readonly Func<object, string, Type>? _entryType;
+        internal VirtualMap(object owner, VirtualMapSpec<TValue> spec) { _owner = owner; _spec = spec; }
 
-        internal VirtualMap(object owner, Func<object, IEnumerable<string>> keys, Func<object, string, TValue> get,
-            Action<object, string, TValue>? set, Func<object, string, TValue, string?>? validate, Func<object, string, Type>? entryType = null)
-        {
-            _owner = owner; _keys = keys; _get = get; _set = set; Validate = validate; _entryType = entryType;
-        }
+        private IEnumerable<string> KeyList => _spec.Keys(_owner);
 
-        Type? IVirtualMap.EntryType(string key) => _entryType?.Invoke(_owner, key);
-
-        /// <summary>Per-entry validation (rejection reason or null), run while a mutation is planned.</summary>
-        internal Func<object, string, TValue, string?>? Validate { get; }
-        internal object Owner => _owner;
-        public bool IsReadOnly => _set == null;
-
-        string? IVirtualMap.ValidateEntry(string key, object? value) => Validate?.Invoke(_owner, key, (TValue)value!);
+        Type? IVirtualMap.EntryType(string key) => _spec.EntryType?.Invoke(_owner, key);
+        string? IVirtualMap.ValidateEntry(string key, object? value) => _spec.Validate?.Invoke(_owner, key, (TValue)value!);
+        public bool IsReadOnly => _spec.Set == null;
 
         public TValue this[string key]
         {
-            get => ContainsKey(key) ? _get(_owner, key) : throw new KeyNotFoundException(key);
+            get => ContainsKey(key) ? _spec.Get(_owner, key) : throw new KeyNotFoundException(key);
             set
             {
-                if (_set == null) throw new NotSupportedException("read-only map");
-                _set(_owner, key, value);
+                if (_spec.Set == null) throw new NotSupportedException("read-only map");
+                _spec.Set(_owner, key, value);
             }
         }
 
-        public ICollection<string> Keys => _keys(_owner).ToList();
-        public ICollection<TValue> Values => _keys(_owner).Select(k => _get(_owner, k)).ToList();
-        IEnumerable<string> IReadOnlyDictionary<string, TValue>.Keys => _keys(_owner);
+        public ICollection<string> Keys => KeyList.ToList();
+        public ICollection<TValue> Values => KeyList.Select(k => _spec.Get(_owner, k)).ToList();
+        IEnumerable<string> IReadOnlyDictionary<string, TValue>.Keys => KeyList;
         IEnumerable<TValue> IReadOnlyDictionary<string, TValue>.Values => Values;
-        public int Count => _keys(_owner).Count();
-        public bool ContainsKey(string key) => _keys(_owner).Contains(key, StringComparer.Ordinal);
+        public int Count => KeyList.Count();
+        public bool ContainsKey(string key) => _spec.Has != null ? _spec.Has(_owner, key) : KeyList.Contains(key, StringComparer.Ordinal);
 
         public bool TryGetValue(string key, out TValue value)
         {
-            if (ContainsKey(key)) { value = _get(_owner, key); return true; }
+            if (ContainsKey(key)) { value = _spec.Get(_owner, key); return true; }
             value = default!;
             return false;
         }
 
         public IEnumerator<KeyValuePair<string, TValue>> GetEnumerator()
         {
-            foreach (var k in _keys(_owner).ToList()) yield return new KeyValuePair<string, TValue>(k, _get(_owner, k));
+            foreach (var k in KeyList.ToList()) yield return new KeyValuePair<string, TValue>(k, _spec.Get(_owner, k));
         }
 
         IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
@@ -149,7 +150,7 @@ namespace Rql.Execution
             set => this[(string)key] = (TValue)value!;
         }
         bool IDictionary.IsFixedSize => true;
-        ICollection IDictionary.Keys => _keys(_owner).ToList();
+        ICollection IDictionary.Keys => KeyList.ToList();
         ICollection IDictionary.Values => (ICollection)Values;
         bool ICollection.IsSynchronized => false;
         object ICollection.SyncRoot => this;

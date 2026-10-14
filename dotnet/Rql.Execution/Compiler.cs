@@ -116,7 +116,7 @@ namespace Rql.Execution
                                 var info = x.Types.Info(v.GetType());
                                 if (info.IsMap) return MapLookup(x, v, info, key, null);
                             }
-                            return IndexAt(v, idx);
+                            return IndexAt(x, v, idx);
                         };
                         break;
                     }
@@ -227,10 +227,10 @@ namespace Rql.Execution
                     }
                     // Implicit map over elements, flattening one level (spec §3).
                     var list = new List<object?>();
-                    foreach (var el in V.Iterate(v))
+                    foreach (var raw in V.Iterate(v))
                     {
                         x.Visit();
-                        var r = Member(x, el, site);
+                        var r = Member(x, x.Types.Live(raw), site);
                         if (r is Missing) continue;
                         if (r != null && !(r is string) && V.IsList(r))
                         {
@@ -287,7 +287,10 @@ namespace Rql.Execution
             }
         }
 
-        private static object? MapLookup(Exec x, object map, TypeInfo info, object? key, MemberSite? site)
+        private static object? MapLookup(Exec x, object map, TypeInfo info, object? key, MemberSite? site) =>
+            x.Types.Live(MapLookupRaw(x, map, info, key, site));
+
+        private static object? MapLookupRaw(Exec x, object map, TypeInfo info, object? key, MemberSite? site)
         {
             if (!TryCoerceKey(key, info.KeyType, out var k))
             {
@@ -344,7 +347,9 @@ namespace Rql.Execution
             return false;
         }
 
-        internal static object? IndexAt(object? v, long idx)
+        internal static object? IndexAt(Exec x, object? v, long idx) => x.Types.Live(IndexAtRaw(v, idx));
+
+        private static object? IndexAtRaw(object? v, long idx)
         {
             if (v == null) return Missing.Value;
             if (V.IsAbsent(v)) return v;
@@ -373,7 +378,7 @@ namespace Rql.Execution
                 var ms = new MemberSite(s, site.Span);
                 return Member(x, v, ms);
             }
-            if (key is double d && Math.Floor(d) == d) return IndexAt(v, (long)d);
+            if (key is double d && Math.Floor(d) == d) return IndexAt(x, v, (long)d);
             return Missing.Value;
         }
 
@@ -468,7 +473,7 @@ namespace Rql.Execution
                         if (V.IsAbsent(v)) return v;
                         var info = x.Types.Info(v.GetType());
                         if (info.IsMap) return MapLookup(x, v, info, k is double || k is string ? k : Convert.ToString(k, CultureInfo.InvariantCulture), null);
-                        if (V.TryNumber(k, out var d) && Math.Floor(d) == d) return IndexAt(v, (long)d);
+                        if (V.TryNumber(k, out var d) && Math.Floor(d) == d) return IndexAt(x, v, (long)d);
                         if (k is string s) return Member(x, v, new MemberSite(s, null));
                         return Missing.Value;
                     };
@@ -490,11 +495,6 @@ namespace Rql.Execution
         internal static bool? Equal(TypeModel? model, object? a, object? b)
         {
             if (V.IsAbsent(a) || V.IsAbsent(b)) return null;
-            if (model != null && (model.Caps & AdapterCaps.Liveness) != 0)
-            {
-                if (a != null && model.IsDead(a)) a = null;
-                if (b != null && model.IsDead(b)) b = null;
-            }
             if (a == null || b == null) return a == null && b == null;
             if (model != null && (model.Caps & AdapterCaps.Equality) != 0 && AdapterEqual(model, a, b) is bool adapted) return adapted;
             if (V.TryNumber(a, out var da, out var sa))
@@ -594,7 +594,7 @@ namespace Rql.Execution
             if (V.IsString(a)) return b != null && V.IsString(b) ? V.AsString(a).IndexOf(V.AsString(b), StringComparison.OrdinalIgnoreCase) >= 0 : (bool?)null;
             if (V.IsList(a))
             {
-                foreach (var el in (IEnumerable)a!) if (Equal(model, el, b) == true) return true;
+                foreach (var el in (IEnumerable)a!) if (Equal(model, model.Live(el), b) == true) return true;
                 return false;
             }
             var info = TypeModel.Get(a.GetType());
@@ -636,7 +636,7 @@ namespace Rql.Execution
         {
             if (V.IsAbsent(a) || V.IsAbsent(b) || b == null) return null;
             if (!V.IsList(b)) return Equal(model, a, b);
-            foreach (var el in (IEnumerable)b) if (Equal(model, a, el) == true) return true;
+            foreach (var el in (IEnumerable)b) if (Equal(model, a, model.Live(el)) == true) return true;
             return false;
         }
 
@@ -773,7 +773,7 @@ namespace Rql.Execution
                     var args = c.Args.Select(Compile).ToArray();
                     return x =>
                     {
-                        var list = ListArg(args[0](x));
+                        var list = ListArg(x, args[0](x));
                         if (list == null) return new RqlError("type-mismatch", "append() expects a list first");
                         for (int i = 1; i < args.Length; i++) list.Add(args[i](x));
                         return list;
@@ -785,12 +785,10 @@ namespace Rql.Execution
                     var args = c.Args.Select(Compile).ToArray();
                     return x =>
                     {
-                        var list = ListArg(args[0](x));
+                        var list = ListArg(x, args[0](x));
                         if (list == null) return new RqlError("type-mismatch", "insert() expects a list first");
-                        if (!(args[1](x) is double d) || Math.Floor(d) != d) return new RqlError("type-mismatch", "insert() index must be an integer");
-                        long i = d < 0 ? list.Count + 1 + (long)d : (long)d;
-                        if (i < 0 || i > list.Count) return new RqlError("type-mismatch", $"insert() index {d} out of range (count {list.Count})");
-                        list.Insert((int)i, args[2](x));
+                        if (ListIndex("insert", args[1](x), list.Count, inserting: true, out var i) is RqlError bad) return bad;
+                        list.Insert(i, args[2](x));
                         return list;
                     };
                 }
@@ -800,12 +798,10 @@ namespace Rql.Execution
                     var args = c.Args.Select(Compile).ToArray();
                     return x =>
                     {
-                        var list = ListArg(args[0](x));
+                        var list = ListArg(x, args[0](x));
                         if (list == null) return new RqlError("type-mismatch", "remove-at() expects a list first");
-                        if (!(args[1](x) is double d) || Math.Floor(d) != d) return new RqlError("type-mismatch", "remove-at() index must be an integer");
-                        long i = d < 0 ? list.Count + (long)d : (long)d;
-                        if (i < 0 || i >= list.Count) return new RqlError("type-mismatch", $"remove-at() index {d} out of range (count {list.Count})");
-                        list.RemoveAt((int)i);
+                        if (ListIndex("remove-at", args[1](x), list.Count, inserting: false, out var i) is RqlError bad) return bad;
+                        list.RemoveAt(i);
                         return list;
                     };
                 }
@@ -815,7 +811,7 @@ namespace Rql.Execution
                     var args = c.Args.Select(Compile).ToArray();
                     return x =>
                     {
-                        var list = ListArg(args[0](x));
+                        var list = ListArg(x, args[0](x));
                         if (list == null) return new RqlError("type-mismatch", "without() expects a list first");
                         var drop = args[1](x);
                         list.RemoveAll(e => Equal(x.Types, e, drop) == true);
@@ -932,7 +928,7 @@ namespace Rql.Execution
                         if (v == null || V.IsAbsent(v)) return Missing.Value;
                         var info = x.Types.Info(v.GetType());
                         if (!info.IsMap) return Missing.Value;
-                        return V.EnumerateMap(v, info).Select(e => keys ? ((MapEntry)e!).Key : ((MapEntry)e!).Value).ToList();
+                        return V.EnumerateMap(v, info).Select(e => keys ? ((MapEntry)e!).Key : x.Types.Live(((MapEntry)e!).Value)).ToList();
                     };
                 }
                 case "contains":
@@ -960,7 +956,7 @@ namespace Rql.Execution
             if (v == null || V.IsAbsent(v) || v is string) return null;
             var info = x.Types.Info(v.GetType());
             if (info.IsMap) return V.EnumerateMap(v, info);
-            if (info.IsList) return V.Iterate(v);
+            if (info.IsList) return x.Types.LivenessOn ? V.Iterate(v).Select(x.Types.Live) : V.Iterate(v);
             return null;
         }
 
@@ -1066,12 +1062,27 @@ namespace Rql.Execution
         private static bool AdapterOrdered(TypeModel model, object val) =>
             (model.Caps & AdapterCaps.Ordering) != 0 && model.Info(val.GetType()).OrderingAdapters.Length > 0;
 
+        /// <summary>
+        /// Resolves an integral, possibly negative index (from the end) for insert (0..count, -1 appends) or element access
+        /// (0..count-1); returns an error value when it is not an integer or out of range.
+        /// </summary>
+        private static RqlError? ListIndex(string fn, object? index, int count, bool inserting, out int i)
+        {
+            i = 0;
+            if (!(index is double d) || Math.Floor(d) != d) return new RqlError("type-mismatch", fn + "() index must be an integer");
+            int limit = inserting ? count + 1 : count;
+            long r = d < 0 ? limit + (long)d : (long)d;
+            if (r < 0 || r >= limit) return new RqlError("type-mismatch", $"{fn}() index {d} out of range (count {count})");
+            i = (int)r;
+            return null;
+        }
+
         /// <summary>A fresh list copy of a list value (never the live collection), or null when the value is not a list.</summary>
-        private static List<object?>? ListArg(object? v)
+        private static List<object?>? ListArg(Exec x, object? v)
         {
             if (v == null || V.IsAbsent(v) || !V.IsList(v)) return null;
             var copy = new List<object?>();
-            foreach (var e in (IEnumerable)v) copy.Add(e);
+            foreach (var e in (IEnumerable)v) copy.Add(x.Types.Live(e));
             return copy;
         }
 

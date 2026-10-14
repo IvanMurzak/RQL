@@ -80,6 +80,11 @@ private:
     const AdaptedType* a_;
 };
 
+/// A member type is excluded when it, its element type or its key type (recursively) matches.
+bool type_excluded(const TypeDescriptor* t, const TypeExclusion& excluded, int depth = 0);
+/// Some member of the type is excluded.
+bool excludes_members(const TypeDescriptor& type, const TypeExclusion& excluded);
+
 std::vector<const TypeAdapter*> applicable_adapters(const std::vector<std::unique_ptr<TypeAdapter>>& all, const TypeDescriptor& type);
 /// nullptr when no adapter applies (the descriptor is then used directly).
 std::unique_ptr<AdaptedType> build_adapted(TypeRegistry& registry, const TypeDescriptor& type,
@@ -167,15 +172,29 @@ public:
         return view_with(t, c);
     }
     bool has_capability(Capability c) const { return caps_[static_cast<size_t>(c)]; }
-    /// A destroyed object (a liveness adapter says not alive) reads as null everywhere (spec §13).
+    /// A destroyed object (Engine::liveness says not alive) reads as null everywhere (spec §13). The gate is
+    /// one flag: some liveness adapter, or the host is_alive hook.
     bool is_dead(const Value& v) {
-        if (!caps_[static_cast<size_t>(Capability::IsAlive)] || !(v.is_object() || v.is_struct())) return false;
-        auto alive = first_answer(adapters_for(v, Capability::IsAlive), [&](const TypeAdapter& a) { return a.is_alive(v); });
+        if (!liveness_ || !v.is_object()) return false;
+        auto alive = engine.liveness(v, this);
         return alive && !*alive;
     }
+    /// Normalize a value entering an expression: destroyed objects become null.
+    Value live(Value v) {
+        if (liveness_ && is_dead(v)) return Value::null();
+        return v;
+    }
+    bool liveness_enabled() const { return liveness_; }
     /// Objects constructed from object literals during this query (kept alive; adopted by the engine on commit).
     std::vector<std::shared_ptr<void>> constructed;
-    void adopt_constructed();
+    /// Literal-built objects replaced by this query's writes: freed when the query ends (after encoding).
+    std::vector<std::shared_ptr<void>> released;
+    /// Hand the objects one committed write constructed to the engine (owned per slot).
+    void adopt_for_slot(const Value& item, const std::string& path, std::vector<std::shared_ptr<void>>& holders);
+    /// Registered types named `name` deriving from `target` (cached per target).
+    std::vector<const TypeDescriptor*> subtypes_named(const TypeDescriptor* target, const std::string& name);
+    /// Keep constructed objects alive for the engine's lifetime (ownership cannot be tied to a slot).
+    void pin_constructed(std::vector<std::shared_ptr<void>>& holders);
     /// Stable reference string (adapter stable ids, id member, session handles).
     std::string ref_of(const Value& v);
     /// Resolve a reference; fallback-search nodes count as visits; results cached per query.
@@ -189,6 +208,7 @@ public:
 private:
     std::chrono::steady_clock::time_point start_;
     bool has_adapters_ = false;
+    bool liveness_ = false;
     std::array<bool, kCapabilities> caps_{};
     std::unordered_map<const TypeDescriptor*, const AdaptedType*> adapted_;
     const std::vector<const TypeAdapter*>& view_with(const TypeDescriptor* t, Capability c) {

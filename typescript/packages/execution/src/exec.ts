@@ -95,8 +95,8 @@ export class Exec {
   readonly diagnostics: Diagnostic[] = [];
   readonly sites: MemberSite[] = [];
   readonly isSites: IsSite[] = [];
-  /** Per-query cache of fallback ref searches ("Type#id" → object). */
-  readonly refCache = new Map<string, object | undefined>();
+  /** Per-query cache of fallback ref searches ("Type#ids" → objects, one per id form). */
+  readonly refCache = new Map<string, readonly (object | undefined)[]>();
   private readonly started = now();
 
   constructor(
@@ -106,6 +106,7 @@ export class Exec {
     readonly plan: QueryPlan,
   ) {
     this.types = engine.types;
+    this.liveness = this.types.hasCapability('isAlive') || engine.isAlive !== undefined;
     const d = engine.defaults;
     this.maxVisited = Math.min(budgets.maxVisited ?? d.maxVisited, d.hardMaxVisited);
     this.maxRows = Math.min(budgets.maxRows ?? d.maxRows, d.hardMaxRows);
@@ -115,6 +116,19 @@ export class Exec {
     this.maxOutputBytes = budgets.maxOutputBytes ?? d.maxOutputBytes;
     // Requests may change the per-request limit, but never beyond the host's hard ceiling.
     this.maxMutationTargets = Math.min(budgets.maxMutationTargets ?? engine.mutations.maxTargets, engine.mutations.hardMaxTargets);
+  }
+
+  /** Whether any liveness source exists (adapter capability or host hook): one flag gates every check. */
+  readonly liveness: boolean;
+
+  /** A destroyed host object (spec §13): it reads as null everywhere. */
+  dead(v: unknown): boolean {
+    return this.liveness && typeof v === 'object' && v !== null && !this.engine.alive(v);
+  }
+
+  /** `v`, or null when it is a destroyed object: applied where values enter expressions. */
+  live<T>(v: T): T | null {
+    return this.liveness && this.dead(v) ? null : v;
   }
 
   get elapsedMs(): number {

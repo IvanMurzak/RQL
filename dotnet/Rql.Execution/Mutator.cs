@@ -32,8 +32,7 @@ namespace Rql.Execution
                 if (it.Value == null) continue;
                 if (it.Value is RowValue)
                     throw new RqlException("invalid-plan", $"'{op}' needs objects, not projected rows; remove 'select' before '{op}'");
-                if (_x.Types.IsDead(it.Value))
-                    throw new RqlException("stale-ref", $"'{op}' target {_x.Engine.RefOf(it.Value)} is a destroyed object; nothing was changed");
+                if (_x.Types.IsDead(it.Value)) continue; // destroyed objects read as null: skipped like null items
                 if (it.Value is MapEntry)
                     throw new RqlException("invalid-plan", $"'{op}' cannot target map entries; set the map member with a key path instead (Stats[\"key\"] = ...)");
                 if ((it.Value.GetType().IsValueType && !_x.Types.Info(it.Value.GetType()).WritesThrough) || TypeModel.IsScalarType(it.Value.GetType()))
@@ -64,28 +63,22 @@ namespace Rql.Execution
         private IReadOnlyList<MutationRecord> Records(IEnumerable<PlannedWrite> writes) =>
             writes.Select(w => new MutationRecord(w.Item, w.Owner, w.Label, w.Old, w.New, null)).ToList();
 
-        /// <summary>Host veto point before any write; a throwing hook aborts with nothing changed.</summary>
-        private void Before(Func<IReadOnlyList<MutationRecord>> records)
+        /// <summary>
+        /// Runs a host hook (never on dry-run). Before-write failures veto the mutation (nothing written yet);
+        /// commit failures are warnings because the writes already happened.
+        /// </summary>
+        private void RunHook(Action<IReadOnlyList<MutationRecord>>? hook, IReadOnlyList<MutationRecord> records, bool veto)
         {
-            var hook = _x.Engine.Mutations.BeforeWrite;
-            if (hook == null || _x.Options.DryRun) return;
-            try { hook(records()); }
+            if (hook == null || _x.Options.DryRun || records.Count == 0) return;
+            try { hook(records); }
             catch (Exception ex) when (!(ex is OutOfMemoryException))
             {
-                throw new RqlException("permission-denied", $"the host rejected the change before anything was written: {ex.Message}");
-            }
-        }
-
-        private void Committed(Func<IReadOnlyList<MutationRecord>> records)
-        {
-            var hook = _x.Engine.Mutations.Committed;
-            if (hook == null || _x.Options.DryRun) return;
-            try { hook(records()); }
-            catch (Exception ex) when (!(ex is OutOfMemoryException))
-            {
+                if (veto) throw new RqlException("permission-denied", $"the host rejected the change before anything was written: {ex.Message}");
                 _x.Diagnostics.Add(Diagnostic.Warning("getter-threw", $"host commit hook threw {ex.GetType().Name}: {ex.Message}; the writes were applied"));
             }
         }
+
+        private bool HooksOn => !_x.Options.DryRun && (_x.Engine.Mutations.BeforeWrite != null || _x.Engine.Mutations.Committed != null);
 
         public QueryResult Set(IEnumerable<Item> stream, SetStage s)
         {
@@ -116,7 +109,8 @@ namespace Rql.Execution
                 }
             }
 
-            Before(() => Records(writes));
+            var records = HooksOn ? Records(writes) : Array.Empty<MutationRecord>();
+            RunHook(_x.Engine.Mutations.BeforeWrite, records, veto: true);
             if (!_x.Options.DryRun)
             {
                 int applied = 0;
@@ -143,7 +137,7 @@ namespace Rql.Execution
                 }
             }
 
-            Committed(() => Records(writes));
+            RunHook(_x.Engine.Mutations.Committed, records, veto: false);
             var rows = writes.Select(w => new object?[] { _x.Engine.RefOf(w.Item), w.Label, w.Old, w.New }).ToList();
             var r = _enc.Rows(new[] { "$ref", "member", "old", "new" }, rows);
             r.DryRun = _x.Options.DryRun;
@@ -268,19 +262,17 @@ namespace Rql.Execution
                 var slot = SlotOf(cur, segs[i], label);
                 if (i == segs.Count - 1)
                 {
-                    // Every value-type copy on the way is written back into its parent: those parent slots
-                    // must be writable and allowed too (readonly struct fields, get-only properties, policy).
-                    for (int j = chain.Count - 1; j >= 0; j--)
+                    // Every copy on the way (value type or copy-on-read member) is written back into its parent: those parent
+                    // slots must be writable and allowed too (readonly struct fields, get-only properties, policy). The owner
+                    // whose state changes is the first container above the copies.
+                    int j = chain.Count - 1;
+                    for (; j >= 0 && NeedsWriteBack(chain[j].slot, chain[j].value); j--)
                     {
-                        if (!NeedsWriteBack(chain[j].slot, chain[j].value)) break;
                         if (!chain[j].slot.Writable(_x))
                             throw new RqlException(chain[j].slot.DenyCode, $"'{label}' on {_x.Engine.RefOf(root)} is not writable: '{segs[j]}' is a copy (value type or copy-on-read member) that must be written back through a non-writable member{chain[j].slot.DenyReason}");
                     }
                     container = cur;
-                    // The owner whose state changes: walk up while the containers are copies written back into their parents.
-                    owner = cur;
-                    for (int j = chain.Count - 1; j >= 0 && NeedsWriteBack(chain[j].slot, chain[j].value); j--)
-                        owner = j == 0 ? root : chain[j - 1].value;
+                    owner = j < 0 ? root : chain[j].value;
                     return slot;
                 }
                 object? next = SafeGet(slot, cur, label);
@@ -381,9 +373,10 @@ namespace Rql.Execution
                 planned.Add((item, chosen, coerced!));
             }
 
-            IReadOnlyList<MutationRecord> CallRecords() =>
-                planned.Select(p => new MutationRecord(p.item, p.item, p.method.Signature, null, null, p.method)).ToList();
-            Before(CallRecords);
+            var callRecords = HooksOn
+                ? planned.Select(p => new MutationRecord(p.item, p.item, p.method.Signature, null, null, p.method)).ToList()
+                : new List<MutationRecord>();
+            RunHook(_x.Engine.Mutations.BeforeWrite, callRecords, veto: true);
             var rows = new List<object?[]>();
             int done = 0;
             foreach (var (item, method, cargs) in planned)
@@ -399,14 +392,14 @@ namespace Rql.Execution
                     {
                         // Completed calls are not rolled back, so the host still learns about them.
                         int completed = done;
-                        Committed(() => CallRecords().Take(completed).ToList());
+                        RunHook(_x.Engine.Mutations.Committed, callRecords.Take(completed).ToList(), veto: false);
                         throw new RqlException("getter-threw", $"{method.Name} on {_x.Engine.RefOf(item)} threw {ex.GetType().Name}: {ex.Message}; {done} earlier call(s) completed and are NOT rolled back");
                     }
                 }
                 done++;
                 rows.Add(new object?[] { _x.Engine.RefOf(item), method.Signature, result });
             }
-            Committed(CallRecords);
+            RunHook(_x.Engine.Mutations.Committed, callRecords, veto: false);
             var r = _enc.Rows(new[] { "$ref", "method", "result" }, rows);
             r.DryRun = _x.Options.DryRun;
             return r;
@@ -415,8 +408,22 @@ namespace Rql.Execution
 
     internal static class Coerce
     {
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Type, string), Type[]> Subtypes =
-            new System.Collections.Concurrent.ConcurrentDictionary<(Type, string), Type[]>();
+        // Per target type: concrete assignable types by full and short name (built once per target, spec §4.5 "$type").
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, Dictionary<string, Type[]>> SubtypeIndex =
+            new System.Collections.Concurrent.ConcurrentDictionary<Type, Dictionary<string, Type[]>>();
+
+        private static bool TryInstantiate(Type t, out object instance, out string why)
+        {
+            why = "";
+            try { instance = Activator.CreateInstance(t)!; return true; }
+            catch (Exception ex) when (ex is MissingMethodException || ex is MemberAccessException || ex is TargetInvocationException
+                                       || ex is NotSupportedException || ex is ArgumentException || ex is InvalidOperationException)
+            {
+                instance = null!;
+                why = $"cannot construct {TypeModel.FriendlyName(t)} (needs a public parameterless constructor, or an adapter that coerces literals)";
+                return false;
+            }
+        }
 
         /// <summary>Build <paramref name="target"/> from an object literal: concrete type, construction, member assignment (spec §4.5).</summary>
         private static bool TryConstruct(TypeModel model, ObjectValue literal, Type target, out object? result, out string why)
@@ -430,9 +437,8 @@ namespace Rql.Execution
                 var valueType = info.ElementType ?? typeof(object);
                 var concreteMap = target.IsInterface || target.IsAbstract ? typeof(Dictionary<,>).MakeGenericType(keyType, valueType) : target;
                 if (!target.IsAssignableFrom(concreteMap) || !typeof(IDictionary).IsAssignableFrom(concreteMap)) { why = "unsupported map type " + TypeModel.FriendlyName(target); return false; }
-                IDictionary map;
-                try { map = (IDictionary)Activator.CreateInstance(concreteMap)!; }
-                catch { why = "cannot construct " + TypeModel.FriendlyName(concreteMap); return false; }
+                if (!TryInstantiate(concreteMap, out var mapObj, out why)) return false;
+                var map = (IDictionary)mapObj;
                 foreach (var kv in literal)
                 {
                     if (!Compiler.TryCoerceKey(kv.Key, keyType, out var key) || key == null) { why = $"invalid key '{kv.Key}' for {TypeModel.FriendlyName(target)}"; return false; }
@@ -448,7 +454,8 @@ namespace Rql.Execution
             if (literal.TryGetValue("$type", out var typeName))
             {
                 if (!(typeName is string tn)) { why = "\"$type\" must be a type name string"; return false; }
-                var found = Subtypes.GetOrAdd((target, tn), k => FindSubtypes(k.Item1, k.Item2));
+                var index = SubtypeIndex.GetOrAdd(target, BuildSubtypeIndex);
+                var found = index.TryGetValue(tn, out var hits) ? hits : Array.Empty<Type>();
                 if (found.Length == 0) { why = $"no concrete type named '{tn}' derives from {TypeModel.FriendlyName(target)}"; return false; }
                 if (found.Length > 1) { why = $"'{tn}' is ambiguous: " + string.Join(", ", found.Select(t => t.FullName)); return false; }
                 concrete = found[0];
@@ -458,13 +465,7 @@ namespace Rql.Execution
                 why = $"{TypeModel.FriendlyName(concrete)} is abstract; add \"$type\" to choose a concrete type";
                 return false;
             }
-            object instance;
-            try { instance = Activator.CreateInstance(concrete)!; }
-            catch (Exception ex) when (ex is MissingMethodException || ex is MemberAccessException || ex is TargetInvocationException || ex is NotSupportedException || ex is ArgumentException)
-            {
-                why = $"cannot construct {TypeModel.FriendlyName(concrete)} (needs a public parameterless constructor, or an adapter that coerces object literals)";
-                return false;
-            }
+            if (!TryInstantiate(concrete, out var instance, out why)) return false;
             var ci = model.Info(concrete);
             foreach (var kv in literal)
             {
@@ -481,24 +482,26 @@ namespace Rql.Execution
             return true;
         }
 
-        private static Type[] FindSubtypes(Type target, string name)
+        private static Dictionary<string, Type[]> BuildSubtypeIndex(Type target)
         {
-            var hits = new List<Type>();
+            var byName = new Dictionary<string, List<Type>>(StringComparer.Ordinal);
+            void Add(string? key, Type t)
+            {
+                if (key == null) return;
+                if (!byName.TryGetValue(key, out var list)) byName[key] = list = new List<Type>();
+                if (!list.Contains(t)) list.Add(t);
+            }
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
-                Type[] types;
-                try { types = asm.GetTypes(); }
-                catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).ToArray()!; }
-                catch { continue; }
-                foreach (var t in types)
+                foreach (var t in TypeModel.LoadableTypes(asm))
                 {
                     if (t.IsAbstract || t.IsInterface || t.ContainsGenericParameters || !target.IsAssignableFrom(t)) continue;
-                    if (t.FullName == name || TypeModel.ShortName(t) == name) hits.Add(t);
+                    Add(t.FullName, t);
+                    Add(TypeModel.ShortName(t), t);
                 }
             }
-            // An exact full-name match wins over short-name matches.
-            var exact = hits.Where(t => t.FullName == name).ToArray();
-            return exact.Length == 1 ? exact : hits.Distinct().ToArray();
+            // A full name is unique by construction, so it always resolves to exactly one type.
+            return byName.ToDictionary(kv => kv.Key, kv => kv.Value.ToArray(), StringComparer.Ordinal);
         }
 
         public static bool TryTo(TypeModel model, object? v, Type target, out object? result, out string why)
@@ -600,9 +603,7 @@ namespace Rql.Execution
                 }
                 var concrete = target.IsInterface ? typeof(List<>).MakeGenericType(elem) : target;
                 if (!target.IsAssignableFrom(concrete)) { why = "unsupported collection type"; return false; }
-                object inst;
-                try { inst = Activator.CreateInstance(concrete)!; }
-                catch { why = "cannot construct " + TypeModel.FriendlyName(concrete); return false; }
+                if (!TryInstantiate(concrete, out var inst, out why)) return false;
                 var add = concrete.GetMethod("Add", new[] { elem });
                 if (add == null) { why = "collection has no Add"; return false; }
                 foreach (var it in items) add.Invoke(inst, new[] { it });

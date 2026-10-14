@@ -66,35 +66,38 @@ public:
     using Validate = std::function<std::string(void* owner, const std::string& key, const Value& value)>;
     /// Mixed-type maps: the declared type of one entry (values are coerced to it before validation).
     using EntryType = std::function<const TypeDescriptor*(void* owner, const std::string& key)>;
+    /// Optional fast membership test (otherwise lookups scan keys()).
+    using Has = std::function<bool(void* owner, const std::string& key)>;
 
-    VirtualMapAdapter(void* owner, const TypeDescriptor* type, std::shared_ptr<const Keys> keys, std::shared_ptr<const Get> get,
-                      std::shared_ptr<const Set> set, std::shared_ptr<const Validate> validate,
-                      std::shared_ptr<const EntryType> entry_type = nullptr)
-        : owner_(owner), type_(type), keys_(std::move(keys)), get_(std::move(get)), set_(std::move(set)), validate_(std::move(validate)),
-          entry_type_(std::move(entry_type)) {}
+    /// Everything that defines the map, shared (immutable) by every view of it.
+    struct Spec {
+        const TypeDescriptor* type = nullptr;  // Dictionary<string, T>
+        Keys keys;
+        Get get;
+        Set set;  // empty = read-only
+        Validate validate;
+        EntryType entry_type;
+        Has has;
+    };
 
-    size_t size() const override { return (*keys_)(owner_).size(); }
+    VirtualMapAdapter(void* owner, std::shared_ptr<const Spec> spec) : owner_(owner), spec_(std::move(spec)) {}
+
+    size_t size() const override { return spec_->keys(owner_).size(); }
     void for_each(const std::function<bool(const Value&, const Value&)>& fn) const override;
     MapLookup find(const Value& key, Value& out) const override;
-    const TypeDescriptor* type() const override { return type_; }
-    bool writable() const override { return set_ != nullptr; }
-    bool read_only() const override { return set_ == nullptr; }
+    const TypeDescriptor* type() const override { return spec_->type; }
+    bool writable() const override { return static_cast<bool>(spec_->set); }
     bool accepts_key(const Value& key) const override { return key.is_string() || key.is_number(); }
     void set(const Value& key, const Value& value) override;
     void erase(const Value& key) override;
     std::string validate_entry(const Value& key, const Value& value) const override;
     const TypeDescriptor* entry_type(const Value& key) const override {
-        return entry_type_ ? (*entry_type_)(owner_, key_text(key)) : nullptr;
+        return spec_->entry_type ? spec_->entry_type(owner_, key_text(key)) : nullptr;
     }
 
 private:
     void* owner_;
-    const TypeDescriptor* type_;
-    std::shared_ptr<const Keys> keys_;
-    std::shared_ptr<const Get> get_;
-    std::shared_ptr<const Set> set_;
-    std::shared_ptr<const Validate> validate_;
-    std::shared_ptr<const EntryType> entry_type_;
+    std::shared_ptr<const Spec> spec_;
     static std::string key_text(const Value& key) { return key.is_string() ? key.as_string() : to_text(key); }
 };
 
@@ -201,44 +204,46 @@ public:
 
     // ---- virtual maps (spec §13 "Virtual maps")
 
-    /// Add a read-only (set empty) or writable virtual map member of `value_type` values. Schemas show
-    /// "Dictionary<string, T>". Callbacks receive a pointer to the adapter's target type.
+    /// Add a virtual map member (the one implementation path): spec.type is filled in from
+    /// `value_type` (Dictionary<string, T>; builtin::any_type() for mixed maps with spec.entry_type).
+    /// Callbacks receive a pointer to the adapter's target type.
+    MemberTable& map(std::string name, const TypeDescriptor* value_type, VirtualMapAdapter::Spec spec, std::string description = {});
+    /// Add a read-only (set empty) or writable virtual map member of `value_type` values.
     MemberTable& map(std::string name, const TypeDescriptor* value_type, VirtualMapAdapter::Keys keys, VirtualMapAdapter::Get get,
-                     VirtualMapAdapter::Set set = {}, VirtualMapAdapter::Validate validate = {}, std::string description = {});
+                     VirtualMapAdapter::Set set = {}, VirtualMapAdapter::Validate validate = {}, std::string description = {},
+                     VirtualMapAdapter::Has has = {});
     /// Mixed-type virtual map (schemas: Dictionary<string, object>): entry_type(self, key) declares each
     /// entry's type; written values are coerced to it before validation.
     MemberTable& mixed_map(std::string name, VirtualMapAdapter::Keys keys, VirtualMapAdapter::EntryType entry_type,
                            VirtualMapAdapter::Get get, VirtualMapAdapter::Set set = {}, VirtualMapAdapter::Validate validate = {},
                            std::string description = {});
     /// Typed: keys(T&) -> std::vector<std::string>, get(T&, key) -> V, set(T&, key, V) (nullptr = read-only),
-    /// validate(T&, key, const V&) -> std::string reason (nullptr = none).
-    template <class T, class K, class G, class S = std::nullptr_t, class V = std::nullptr_t>
-    MemberTable& map(std::string name, K keys, G get, S set = nullptr, V validate = nullptr, std::string description = {}) {
+    /// validate(T&, key, const V&) -> std::string reason (nullptr = none), has(T&, key) -> bool (nullptr = scan keys).
+    template <class T, class K, class G, class S = std::nullptr_t, class V = std::nullptr_t, class H = std::nullptr_t>
+    MemberTable& map(std::string name, K keys, G get, S set = nullptr, V validate = nullptr, std::string description = {},
+                     H has = nullptr) {
         using R = std::decay_t<decltype(get(std::declval<T&>(), std::declval<const std::string&>()))>;
         TypeRegistry* r = &registry_;
-        VirtualMapAdapter::Set vs;
-        VirtualMapAdapter::Validate vv;
-        if constexpr (!std::is_same_v<S, std::nullptr_t>) {
-            vs = [r, set](void* self, const std::string& key, const Value& v) {
-                R tmp{};
-                Traits<R>::set(*r, tmp, v);
-                set(*static_cast<T*>(self), key, std::move(tmp));
+        auto to_r = [r](const Value& v) {
+            R tmp{};
+            Traits<R>::set(*r, tmp, v);
+            return tmp;
+        };
+        VirtualMapAdapter::Spec spec;
+        spec.keys = [keys](void* self) { return keys(*static_cast<T*>(self)); };
+        spec.get = [r, get](void* self, const std::string& key) -> Value {
+            R tmp = get(*static_cast<T*>(self), key);
+            return snapshot(Traits<R>::get(*r, tmp));
+        };
+        if constexpr (!std::is_same_v<S, std::nullptr_t>)
+            spec.set = [to_r, set](void* self, const std::string& key, const Value& v) { set(*static_cast<T*>(self), key, to_r(v)); };
+        if constexpr (!std::is_same_v<V, std::nullptr_t>)
+            spec.validate = [to_r, validate](void* self, const std::string& key, const Value& v) -> std::string {
+                return validate(*static_cast<T*>(self), key, to_r(v));
             };
-        }
-        if constexpr (!std::is_same_v<V, std::nullptr_t>) {
-            vv = [r, validate](void* self, const std::string& key, const Value& v) -> std::string {
-                R tmp{};
-                Traits<R>::set(*r, tmp, v);
-                return validate(*static_cast<T*>(self), key, tmp);
-            };
-        }
-        return map(
-            std::move(name), Traits<R>::type(*r), [keys](void* self) { return keys(*static_cast<T*>(self)); },
-            [r, get](void* self, const std::string& key) -> Value {
-                R tmp = get(*static_cast<T*>(self), key);
-                return snapshot(Traits<R>::get(*r, tmp));
-            },
-            std::move(vs), std::move(vv), std::move(description));
+        if constexpr (!std::is_same_v<H, std::nullptr_t>)
+            spec.has = [has](void* self, const std::string& key) { return has(*static_cast<T*>(self), key); };
+        return map(std::move(name), Traits<R>::type(*r), std::move(spec), std::move(description));
     }
 
     /// Internal: the adapter being applied (its target receives `self`).
@@ -252,9 +257,7 @@ private:
     const TypeDescriptor* current_target_ = nullptr;
     bool writes_through_ = false;
     std::string identity_name_, display_name_;
-    MemberTable& map_impl(std::string name, const TypeDescriptor* value_type, VirtualMapAdapter::Keys keys, VirtualMapAdapter::Get get,
-                          VirtualMapAdapter::Set set, VirtualMapAdapter::Validate validate, VirtualMapAdapter::EntryType entry_type,
-                          std::string description);
+
     /// self → adapter-target pointer conversion (identity when no upcast is needed).
     std::function<void*(void*)> upcaster() const;
     MemberDescriptor& member(const std::string& name);

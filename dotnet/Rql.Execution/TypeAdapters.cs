@@ -239,10 +239,9 @@ namespace Rql.Execution
         /// rejection reason or null. Example: a Material's shader floats as <c>Floats["_Glossiness"]</c>.
         /// </summary>
         public MemberTable AddMap<TValue>(string name, Func<object, IEnumerable<string>> keys, Func<object, string, TValue> get,
-            Action<object, string, TValue>? set = null, Func<object, string, TValue, string?>? validate = null, string? description = null)
-        {
-            return Add(name, typeof(VirtualMap<TValue>), o => new VirtualMap<TValue>(o, keys, get, set, validate), description: description);
-        }
+            Action<object, string, TValue>? set = null, Func<object, string, TValue, string?>? validate = null, string? description = null,
+            Func<object, string, bool>? has = null) =>
+            AddMapCore(name, new VirtualMapSpec<TValue> { Keys = keys, Get = get, Set = set, Validate = validate, Has = has }, description);
 
         /// <summary>
         /// A virtual map whose entries have different value types (e.g. a Material's properties: floats, Colors, Textures):
@@ -250,9 +249,14 @@ namespace Rql.Execution
         /// </summary>
         public MemberTable AddMixedMap(string name, Func<object, IEnumerable<string>> keys, Func<object, string, Type> entryType,
             Func<object, string, object?> get, Action<object, string, object?>? set = null,
-            Func<object, string, object?, string?>? validate = null, string? description = null)
+            Func<object, string, object?, string?>? validate = null, string? description = null, Func<object, string, bool>? has = null) =>
+            AddMapCore(name, new VirtualMapSpec<object?> { Keys = keys, Get = get, Set = set, Validate = validate, EntryType = entryType, Has = has }, description);
+
+        private MemberTable AddMapCore<TValue>(string name, VirtualMapSpec<TValue> spec, string? description)
         {
-            return Add(name, typeof(VirtualMap<object?>), o => new VirtualMap<object?>(o, keys, get, set, validate, entryType), description: description);
+            if (spec.Set != null && _type.IsValueType && !IsWritesThrough)
+                throw new ArgumentException($"virtual map setters on value type {_type.Name} would write to a copy (mark the type WritesThrough if it is a handle)");
+            return Add(name, typeof(VirtualMap<TValue>), o => new VirtualMap<TValue>(o, spec), description: description);
         }
 
         /// <summary>The runtime type whose members are being configured.</summary>
@@ -432,13 +436,13 @@ namespace Rql.Execution
 
         /// <summary>Typed <see cref="MemberTable.AddMap{TValue}"/>.</summary>
         public MemberTable<T> Map<TValue>(string name, Func<T, IEnumerable<string>> keys, Func<T, string, TValue> get,
-            Action<T, string, TValue>? set = null, Func<T, string, TValue, string?>? validate = null, string? description = null)
+            Action<T, string, TValue>? set = null, Func<T, string, TValue, string?>? validate = null, string? description = null,
+            Func<T, string, bool>? has = null)
         {
-            if (set != null && typeof(T).IsValueType && !Untyped.IsWritesThrough)
-                throw new ArgumentException($"virtual map setters on value type {typeof(T).Name} would write to a copy");
             Untyped.AddMap<TValue>(name, o => keys((T)o), (o, k) => get((T)o, k),
                 set == null ? null : (Action<object, string, TValue>)((o, k, v) => set((T)o, k, v)),
-                validate == null ? null : (Func<object, string, TValue, string?>)((o, k, v) => validate((T)o, k, v)), description);
+                validate == null ? null : (Func<object, string, TValue, string?>)((o, k, v) => validate((T)o, k, v)), description,
+                has == null ? null : (Func<object, string, bool>)((o, k) => has((T)o, k)));
             return this;
         }
         public MemberTable<T> Only(params string[] names) { Untyped.Only(names); return this; }

@@ -1024,14 +1024,17 @@ void adapter_tests() {
             }
         check(hidden, "parity: hide_where and type exclusion (member type and element type) drop members");
 
-        // pending-kill: reads as null, members missing (no getter), not a mutation target
+        // pending-kill: skipped in streams like null, reads as null in collections, never a mutation target
         world.Components[1]->bPendingKill = true;
-        r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Components"]},"stages":[{"op":"select","fields":[{"name":"n","expr":{"path":["Name"]}},{"name":"dead","expr":{"op":"==","args":[{"path":[]},{"lit":null}]}},{"name":"self","expr":{"path":[]}}]}]})J");
-        check(r.ok && (*r.rows)[1][0].is_null() && (*r.rows)[1][1].as_bool() && (*r.rows)[1][2].is_null() && !(*r.rows)[0][1].as_bool(),
-              "parity: pending-kill object reads as null");
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Components"]},"stages":[{"op":"select","fields":[{"name":"n","expr":{"path":["Name"]}}]}]})J");
+        check(r.ok && r.rows->size() == 1 && (*r.rows)[0][0].as_string() == "Mesh0", "parity: pending-kill object skipped in streams");
+        r = arun(ue, R"J({"rql":"0.1","source":{"path":["w"]},"stages":[{"op":"select","fields":[{"name":"dead","expr":{"call":"any","on":{"path":["Components"]},"args":[{"op":"==","args":[{"path":[]},{"lit":null}]}]}},{"name":"second","expr":{"path":["Components",{"index":1}]}},{"name":"n","expr":{"path":["Components",{"index":1},"Name"]}}]}]})J");
+        check(r.ok && (*r.rows)[0][0].as_bool() && (*r.rows)[0][1].is_null() && (*r.rows)[0][2].is_null(),
+              "parity: pending-kill object reads as null in collections and index access (no getter)");
         r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Components"]},"stages":[{"op":"set","assign":[{"target":{"path":["Name"]},"value":{"lit":"x"}}]}]})J", true);
-        check(!r.ok && first_code(r) == "stale-ref" && world.Components[0]->Name == "Mesh0" && world.Components[1]->Name == "Mesh1",
-              "parity: pending-kill mutation target → stale-ref, nothing changed");
+        check(r.ok && r.rows->size() == 1 && world.Components[0]->Name == "x" && world.Components[1]->Name == "Mesh1",
+              "parity: pending-kill mutation target is skipped like a null item");
+        world.Components[0]->Name = "Mesh0";
         world.Components[1]->bPendingKill = false;
 
         // object literals: struct construction with defaults, list of structs, unknown member
@@ -1061,6 +1064,25 @@ void adapter_tests() {
               "parity: constructed Node defaults + nested construction into shared_ptr children");
         r = arun(ce, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8"}]},"stages":[{"op":"select","fields":[{"name":"n","expr":{"path":["Peer","Children",{"index":0},"Name"]}}]}]})J");
         check(r.ok && (*r.rows)[0][0].as_string() == "kid", "parity: constructed objects stay alive after the query");
+    }
+
+    // ownership of literal-built objects: per slot (bounded), kept while raw-linked elsewhere
+    {
+        auto go = conformance::load_graph(graph_path);
+        rql::Engine oe(reg);
+        oe.add_object_source("g", go.get());
+        oe.mutations().enabled = true;
+        const char* set_peer = R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Peer"]},"value":{"object":[{"key":"Name","value":{"lit":"made"}}]}}]}]})J";
+        bool all_ok = true;
+        for (int i = 0; i < 5; ++i) all_ok = arun(oe, set_peer, true).ok && all_ok;
+        check(all_ok && oe.retained_literal_objects() == 1, "parity: repeated literal sets of one slot keep one object (bounded)");
+        // Node#5.Peer := Node#8.Peer (a raw copy of the link), then overwrite Node#8.Peer: the old object stays alive
+        auto r = arun(oe, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#5"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Peer"]},"value":{"path":["Peer"],"on":{"call":"ref","args":[{"lit":"Node#8"}]}}}]}]})J", true);
+        bool linked = r.ok && go->Nodes[1]->Peer == go->Nodes[2]->Peer;
+        r = arun(oe, set_peer, true);
+        r = arun(oe, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#5"}]},"stages":[{"op":"select","fields":[{"name":"n","expr":{"path":["Peer","Name"]}}]}]})J");
+        check(linked && r.ok && (*r.rows)[0][0].as_string() == "made" && oe.retained_literal_objects() == 2,
+              "parity: an object still linked from elsewhere is kept when its slot is overwritten");
     }
 
     // configuration bugs → internal-error

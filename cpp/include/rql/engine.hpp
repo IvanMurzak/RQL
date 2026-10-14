@@ -148,6 +148,9 @@ public:
     Value resolve_ref(const std::string& reference, std::string& error) noexcept;
     void clear_session_handles() noexcept;
 
+    /// Objects built from object literals that this engine keeps alive (owned per written slot, or pinned).
+    size_t retained_literal_objects() noexcept;
+
     /// Capability manifest (spec/capability-manifest.schema.json). Null Json on internal failure.
     Json capabilities() noexcept;
     /// Type descriptor JSON (capability-manifest typeDescriptor).
@@ -184,11 +187,28 @@ private:
     std::vector<std::unique_ptr<TypeAdapter>> adapters_;
     std::array<bool, 6> caps_{};  // some adapter implements the capability (detail::Capability order)
     TypeExclusion excluded_;
+    // Objects constructed from object literals (spec §4.5) that committed writes linked into the graph:
+    // owned per written slot (item identity + path), released when a later literal replaces them and no
+    // link to them remains; pinned forever when that cannot be proven (rollback failures, call arguments).
     std::mutex adopted_mutex_;
-    std::vector<std::shared_ptr<void>> adopted_;  // objects constructed from object literals by committed writes
-    /// Adapters or type exclusion configured: types may differ from their descriptors.
-    bool adapts() const { return !adapters_.empty() || static_cast<bool>(excluded_); }
-    void adopt(std::vector<std::shared_ptr<void>>& constructed);
+    std::map<std::pair<const void*, std::string>, std::vector<std::shared_ptr<void>>> adopted_;
+    std::vector<std::shared_ptr<void>> pinned_;
+    void adopt_slot(const Value& item, const std::string& path, std::vector<std::shared_ptr<void>>& holders, detail::Exec* x);
+    void pin(std::vector<std::shared_ptr<void>>& holders);
+    // Object-literal "$type" lookups (spec §4.5): per target type, name → registered subtypes of its kind.
+    mutable std::mutex subtypes_mutex_;
+    mutable std::unordered_map<const TypeDescriptor*, std::unordered_map<std::string, std::vector<const TypeDescriptor*>>> subtypes_;
+    mutable size_t subtypes_registered_ = 0;
+    std::vector<const TypeDescriptor*> subtypes_named(const TypeDescriptor* target, const std::string& name) const;
+    /// Whether any member (owning or reference) of anything reachable from the sources points at `p`.
+    bool linked_anywhere(const void* p, detail::Exec* x);
+    /// Some adapter, or a type exclusion that actually removes a member of a registered type: only then
+    /// may types differ from their descriptors (adapter-free engines read descriptors directly).
+    bool adapts() const;
+    mutable std::mutex exclusion_mutex_;
+    mutable size_t exclusion_scanned_ = 0;  // registered-type count of the last scan
+    mutable bool exclusion_hits_ = false;
+
     mutable std::mutex adapted_mutex_;
     mutable std::unordered_map<const TypeDescriptor*, std::unique_ptr<detail::AdaptedType>> adapted_;
 
@@ -198,15 +218,22 @@ private:
     /// for adapter configuration bugs (the running query then fails with internal-error).
     const detail::AdaptedType* adapted(const TypeDescriptor* type) const;
     detail::TypeView view_of(const TypeDescriptor* type, detail::Exec* x) const;
-    /// Liveness: first adapter verdict, else the is_alive hook, else alive.
-    bool alive(const Value& object, detail::Exec* x);
+    /// THE liveness definition (spec §13): the first adapter verdict, else the host is_alive hook;
+    /// nullopt = undecided (treated as alive).
+    std::optional<bool> liveness(const Value& object, detail::Exec* x);
+    bool alive(const Value& object, detail::Exec* x) { return liveness(object, x).value_or(true); }
     /// "#id" part of a stable reference: adapter stable_id first, then the id member; nullopt = none.
     std::optional<std::string> stable_id_of(const Value& object, detail::Exec* x);
     Value resolve_ref(const std::string& reference, std::string& error, detail::Exec* x);
-    Value resolve_ref_core(const std::string& reference, std::string& error, detail::Exec* x);
+    /// `fallback`: the trimmed display form, tried when the exact text does not resolve (stable refs of the
+    /// same type are matched in ONE source-search pass, exact id preferred).
+    Value resolve_ref_core(const std::string& reference, std::string& error, detail::Exec* x, const std::string* fallback);
+    Value check_resolved(const Value& found, const std::string& reference, const std::string& type, std::string& error, detail::Exec* x);
+    /// Source search for a stable id (`alt_id`: a second id accepted when the first is absent); cached per query.
+    Value find_stable(const std::string& type, const std::string& id, const std::string* alt_id, detail::Exec* x);
 
     int64_t handle_of(const Value& v);
-    Value search_sources(const std::string& type, const std::string& id, const Value* identity, detail::Exec* x);
+    Value search_sources(const std::string& type, const std::string& id, const std::string* alt_id, const Value* identity, detail::Exec* x);
     Json describe_type_impl(const TypeDescriptor& t) const;
     Json capabilities_impl();
     std::string ref_of_impl(const Value& v, detail::Exec* x);

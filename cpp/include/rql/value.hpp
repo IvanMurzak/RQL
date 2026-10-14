@@ -49,8 +49,6 @@ public:
     virtual void erase(const Value& key);
     /// True for runtime-owned maps (no live view into host data); used instead of RTTI.
     virtual bool owned() const { return false; }
-    /// Read-only map: `set m["k"] = v` → readonly-member (e.g. an adapter virtual map without setter).
-    virtual bool read_only() const { return false; }
     /// Rejection reason for assigning an (already coerced) value to a key, empty = accept. Runs while a
     /// mutation is planned, before any write (spec §13 virtual maps).
     virtual std::string validate_entry(const Value& key, const Value& value) const;
@@ -205,6 +203,8 @@ std::string to_text(const Value& v);
 std::string describe_value(const Value& v);
 /// Deep copy of list/map views into owned values (used for receipts and rollback).
 Value snapshot(const Value& v);
+/// Deep owned copy of a list / map (other values unchanged); mutable_copy: writable by index / key.
+Value owned_copy(const Value& v, bool mutable_copy);
 /// Runtime short type name ($type): descriptor name, String, Double, Boolean, List, Dictionary...
 std::string type_name_of(const Value& v);
 /// Friendly type name (describe / inline collection sizes): List<Node>, Dictionary<string, double>...

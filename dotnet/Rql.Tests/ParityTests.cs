@@ -161,14 +161,19 @@ namespace Rql.Tests
         }
 
         [Fact]
-        public void DestroyedObjectsAreNotMutationTargets()
+        public void DestroyedObjectsAreSkippedLikeNullAndNeverWritten()
         {
             var s = new Scene();
             var e = Engine(s);
             e.AddAdapter(new DeadRend());
             var r = e.Execute("s.Renderers | set Id = 11", options: Mutate);
-            Assert.Equal("stale-ref", r.Diagnostics[0].Code);
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Empty(r.Rows!);
             Assert.Equal(10, s.Renderers[0].Id);
+            // The host hook alone (no adapter) gives the same semantics: one liveness definition.
+            var hooked = Engine(new Scene());
+            hooked.IsAlive = o => !(o is Rend);
+            Assert.Equal("true", hooked.Execute("s | select dead=Renderers.any($ == null)").Rows![0][0]!.ToJsonString());
         }
 
         private sealed class DeadRend : RqlTypeAdapter<Rend> { protected override bool? Alive(Rend r) => false; }

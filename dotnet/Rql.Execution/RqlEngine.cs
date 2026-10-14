@@ -107,10 +107,6 @@ namespace Rql.Execution
         public TypeModel Types { get; private set; }
 
         /// <summary>
-        /// Register a type adapter (spec §13): virtual/hidden members, encoding, coercion, comparison, identity, liveness.
-        /// Register adapters before running queries; resolution order is deterministic (see <see cref="TypeModel.Explain"/>).
-        /// </summary>
-        /// <summary>
         /// Never expose members whose type (or element / generic argument type) matches <paramref name="excluded"/>,
         /// e.g. <c>t => t.Assembly.GetName().Name == "Unity.TextMeshPro"</c> (spec §13). Configure before queries run.
         /// </summary>
@@ -134,11 +130,7 @@ namespace Rql.Execution
             var found = new List<Type>();
             foreach (var asm in assemblies)
             {
-                Type[] types;
-                try { types = asm.GetTypes(); }
-                catch (System.Reflection.ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).ToArray()!; errors.Add($"{asm.GetName().Name}: some types failed to load ({ex.LoaderExceptions.FirstOrDefault()?.Message})"); }
-                catch (Exception ex) { errors.Add($"{asm.GetName().Name}: {ex.Message}"); continue; }
-                found.AddRange(types.Where(t => t.IsClass && t.IsVisible && !t.IsAbstract && !t.ContainsGenericParameters
+                found.AddRange(TypeModel.LoadableTypes(asm, errors.Add).Where(t => t.IsClass && t.IsVisible && !t.IsAbstract && !t.ContainsGenericParameters
                                                 && typeof(RqlTypeAdapter).IsAssignableFrom(t) && t.GetConstructor(Type.EmptyTypes) != null));
             }
             int Order(Type t) => (t.GetCustomAttributes(typeof(RqlAdapterOrderAttribute), false).FirstOrDefault() as RqlAdapterOrderAttribute)?.Order ?? 0;
@@ -154,6 +146,10 @@ namespace Rql.Execution
             return errors;
         }
 
+        /// <summary>
+        /// Register a type adapter (spec §13): virtual/hidden members, methods, maps, encoding, coercion, comparison, identity,
+        /// liveness. Register adapters before running queries; resolution order is deterministic (see <see cref="TypeModel.Explain"/>).
+        /// </summary>
         public RqlEngine AddAdapter(RqlTypeAdapter adapter)
         {
             if (adapter == null) throw new ArgumentNullException(nameof(adapter));
@@ -168,7 +164,15 @@ namespace Rql.Execution
         public string RuntimeName { get; set; } = "dotnet";
 
         /// <summary>Liveness check for explicitly destroyed objects (Unity/Unreal style). Null = always alive.</summary>
-        public Func<object, bool>? IsAlive { get; set; }
+        public Func<object, bool>? IsAlive
+        {
+            get => Types.HostAlive;
+            set
+            {
+                if (ReferenceEquals(Types, TypeModel.Shared)) Types = new TypeModel(Types.Mode);
+                Types.HostAlive = value;
+            }
+        }
 
         /// <summary>Resolve "Type#id" (type short name, id string). Null result = not found. When unset, sources are searched.</summary>
         public Func<string, string, object?>? ResolveStableRef { get; set; }
@@ -317,15 +321,7 @@ namespace Rql.Execution
         }
 
         /// <summary>Liveness: the first adapter verdict, else the host <see cref="IsAlive"/> hook, else alive.</summary>
-        internal bool Alive(object o)
-        {
-            foreach (var a in Types.Info(o.GetType()).LivenessAdapters)
-            {
-                var alive = a.IsAlive(o);
-                if (alive.HasValue) return alive.Value;
-            }
-            return IsAlive == null || IsAlive(o);
-        }
+        internal bool Alive(object o) => Types.IsAlive(o);
 
         private long HandleOf(object o)
         {
@@ -360,22 +356,7 @@ namespace Rql.Execution
         internal object? ResolveRef(string reference, out string? error, Exec? x = null)
         {
             error = null;
-            // Ids may contain spaces / parentheses (asset paths): resolve the exact text first, then tolerate copied
-            // display forms such as "Enemy#12(Goblin_0012)" or "Enemy#12 Goblin".
             reference = reference.Trim();
-            int cut = reference.IndexOfAny(new[] { ' ', '(', '\t' });
-            if (cut > 0)
-            {
-                var exact = ResolveRefCore(reference, out var exactError, x);
-                if (exact != null) return exact;
-                reference = reference.Substring(0, cut);
-            }
-            return ResolveRefCore(reference, out error, x);
-        }
-
-        private object? ResolveRefCore(string reference, out string? error, Exec? x)
-        {
-            error = null;
             int i = reference.IndexOfAny(new[] { '#', '@' });
             if (i <= 0 || i == reference.Length - 1)
             {
@@ -384,10 +365,14 @@ namespace Rql.Execution
             }
             var type = reference.Substring(0, i);
             var id = reference.Substring(i + 1);
+            // Ids may contain spaces / parentheses (asset paths), so the exact id is preferred; copied display forms such as
+            // "Enemy#12(Goblin_0012)" or "Enemy#12 Goblin" still resolve through the id up to the first space / "(".
+            int cut = id.IndexOfAny(new[] { ' ', '(', '\t' });
+            string? display = cut > 0 ? id.Substring(0, cut) : null;
             object? found = null;
             if (reference[i] == '@')
             {
-                if (long.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var h))
+                if (long.TryParse(display ?? id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var h))
                 {
                     lock (_handleTargets)
                     {
@@ -395,9 +380,13 @@ namespace Rql.Execution
                     }
                 }
             }
+            else if (ResolveStableRef != null)
+            {
+                found = ResolveStableRef(type, id) ?? (display != null ? ResolveStableRef(type, display) : null);
+            }
             else
             {
-                found = ResolveStableRef != null ? ResolveStableRef(type, id) : SearchSources(type, id, x);
+                found = SearchSources(type, id, display, x);
             }
 
             if (found == null || !Types.Info(found.GetType()).IsA(type))
@@ -413,19 +402,22 @@ namespace Rql.Execution
             return found;
         }
 
-        /// <summary>Fallback ref resolution: bounded walk over owning members of all sources.</summary>
-        /// <summary>Fallback resolution; nodes count toward the calling query's budgets and results are cached per query.</summary>
-        private object? SearchSources(string type, string id, Exec? x)
+        /// <summary>
+        /// Fallback resolution: one bounded walk over owning members of all sources, preferring an exact id match over a
+        /// display-form match. Nodes count toward the calling query's budgets; results are cached per query.
+        /// </summary>
+        private object? SearchSources(string type, string id, string? display, Exec? x)
         {
             var key = type + "#" + id;
             if (x != null && x.RefCache.TryGetValue(key, out var cached)) return cached;
-            var found = SearchSourcesCore(type, id, x);
+            var found = SearchSourcesCore(type, id, display, x);
             if (x != null) x.RefCache[key] = found;
             return found;
         }
 
-        private object? SearchSourcesCore(string type, string id, Exec? x)
+        private object? SearchSourcesCore(string type, string id, string? display, Exec? x)
         {
+            object? displayMatch = null;
             var visited = new HashSet<object>(RefEq.Instance);
             var stack = new Stack<(object, int)>();
             foreach (var s in _sources.Values)
@@ -450,7 +442,12 @@ namespace Rql.Execution
                     continue;
                 }
                 if (!info.IsObject) continue;
-                if (info.IsA(type) && StableIdOf(o, info) == id) return o;
+                if (info.IsA(type))
+                {
+                    var sid = StableIdOf(o, info);
+                    if (sid == id) return o;
+                    if (display != null && displayMatch == null && sid == display) displayMatch = o;
+                }
                 if (depth >= 32) continue;
                 foreach (var m in info.ImplicitMembers)
                 {
@@ -460,7 +457,7 @@ namespace Rql.Execution
                     if (v != null && !v.GetType().IsValueType) stack.Push((v, depth + 1));
                 }
             }
-            return null;
+            return displayMatch;
         }
     }
 

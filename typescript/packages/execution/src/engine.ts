@@ -236,11 +236,16 @@ export class RqlEngine {
     return id !== undefined ? info.shortName + '#' + id : info.shortName + '@' + String(this.handleOf(o));
   }
 
-  /** Liveness: the first adapter verdict, else the host `isAlive` hook, else alive. */
+  /**
+   * Liveness (the one definition, spec §13): the first adapter verdict, else the host `isAlive` hook
+   * (asked about host objects only, not about engine values such as rows or map entries), else alive.
+   */
   alive(o: object): boolean {
-    const verdict = firstAnswer(this.types.infoOf(o).adapterSet.isAlive, (a) => a.isAlive!(o));
+    const verdict = this.types.adapterAlive(o);
     if (verdict !== undefined) return verdict;
-    return this.isAlive === undefined || this.isAlive(o);
+    if (this.isAlive === undefined) return true;
+    const info = this.types.infoOf(o);
+    return info.ctor === undefined || (info.kind !== 'object' && info.kind !== 'struct') || this.isAlive(o);
   }
 
   private handleOf(o: object): number {
@@ -315,47 +320,57 @@ export class RqlEngine {
 
   /** Resolves a reference; tolerates copied display forms such as "Enemy#12(Goblin_0012)". */
   resolveRef(reference: string, x?: Exec): RefResolution {
-    // Ids may contain spaces / parentheses (asset paths): resolve the exact text first, then tolerate copied
-    // display forms such as "Enemy#12(Goblin_0012)" or "Enemy#12 Goblin".
-    const ref = reference.trim();
-    const cut = ref.search(/[ (\t]/);
-    if (cut > 0) {
-      const exact = this.resolveRefCore(ref, x);
-      if (exact.ok) return exact;
-      return this.resolveRefCore(ref.slice(0, cut), x);
+    // Ids may contain spaces / parentheses (asset paths): the exact text wins; copied display forms such as
+    // "Enemy#12(Goblin_0012)" or "Enemy#12 Goblin" resolve through their trimmed prefix.
+    const exact = reference.trim();
+    const cut = exact.search(/[ (\t]/);
+    const forms = cut > 0 ? [exact, exact.slice(0, cut)] : [exact];
+    const parsed = forms.map(parseRef);
+    const first = parsed[0];
+    if (first === undefined) {
+      const short = parsed[1];
+      return short !== undefined ? this.finishRef(short, this.lookup(short, x)) : { ok: false, error: `malformed reference '${exact}' (expected Type#id or Type@handle)` };
     }
-    return this.resolveRefCore(ref, x);
+    const short = parsed[1];
+    // One source walk for both forms when they are stable refs of one type; handles / host resolvers are cheap lookups.
+    if (short !== undefined && first.sep === '#' && short.sep === '#' && first.type === short.type && this.resolveStableRef === undefined) {
+      const hits = this.searchSources(first.type, [first.id, short.id], x);
+      const r = this.finishRef(first, hits[0]);
+      return r.ok ? r : this.finishRef(short, hits[1]);
+    }
+    const r = this.finishRef(first, this.lookup(first, x));
+    return r.ok || short === undefined ? r : this.finishRef(short, this.lookup(short, x));
   }
 
-  private resolveRefCore(ref: string, x: Exec | undefined): RefResolution {
-    const i = ref.search(/[#@]/);
-    if (i <= 0 || i === ref.length - 1) return { ok: false, error: `malformed reference '${ref}' (expected Type#id or Type@handle)` };
-    const type = ref.slice(0, i);
-    const id = ref.slice(i + 1);
-    let found: unknown;
-    if (ref[i] === '@') {
-      if (/^\s*[+-]?\d+\s*$/.test(id)) found = this.handleTargets.get(Number(id))?.deref();
-    } else {
-      found = this.resolveStableRef !== undefined ? this.resolveStableRef(type, id) : this.searchSources(type, id, x);
+  private lookup(ref: ParsedRef, x: Exec | undefined): unknown {
+    if (ref.sep === '@') return /^\s*[+-]?\d+\s*$/.test(ref.id) ? this.handleTargets.get(Number(ref.id))?.deref() : undefined;
+    return this.resolveStableRef !== undefined ? this.resolveStableRef(ref.type, ref.id) : this.searchSources(ref.type, [ref.id], x)[0];
+  }
+
+  private finishRef(ref: ParsedRef, found: unknown): RefResolution {
+    if (typeof found !== 'object' || found === null || !this.types.infoOf(found).isA(ref.type)) {
+      return { ok: false, error: `reference '${ref.text}' does not resolve to a live object` };
     }
-    if (typeof found !== 'object' || found === null || !this.types.infoOf(found).isA(type)) {
-      return { ok: false, error: `reference '${ref}' does not resolve to a live object` };
-    }
-    if (!this.alive(found)) return { ok: false, error: `reference '${ref}' points to a destroyed object` };
+    if (!this.alive(found)) return { ok: false, error: `reference '${ref.text}' points to a destroyed object` };
     return { ok: true, value: found };
   }
 
-  /** Fallback resolution; nodes count toward the calling query's budgets and results are cached per query. */
-  private searchSources(type: string, id: string, x: Exec | undefined): object | undefined {
-    const key = type + '#' + id;
-    if (x !== undefined && x.refCache.has(key)) return x.refCache.get(key);
-    const found = this.searchSourcesCore(type, id, x);
+  /**
+   * Fallback resolution: one walk finding the objects with each of `ids` (in order of preference); nodes
+   * count toward the calling query's budgets and results are cached per query.
+   */
+  private searchSources(type: string, ids: readonly string[], x: Exec | undefined): readonly (object | undefined)[] {
+    const key = type + '#' + ids.join('\u0000');
+    const cached = x?.refCache.get(key);
+    if (cached !== undefined) return cached;
+    const found = this.searchSourcesCore(type, ids, x);
     x?.refCache.set(key, found);
     return found;
   }
 
   /** Bounded walk over owning members of all sources. */
-  private searchSourcesCore(type: string, id: string, x: Exec | undefined): object | undefined {
+  private searchSourcesCore(type: string, ids: readonly string[], x: Exec | undefined): (object | undefined)[] {
+    const hits: (object | undefined)[] = ids.map(() => undefined);
     const visited = new Set<object>();
     const stack: { o: object; depth: number }[] = [];
     for (const s of this.sourceMap.values()) {
@@ -377,7 +392,11 @@ export class RqlEngine {
         continue;
       }
       if (!info.isObject) continue;
-      if (info.isA(type) && stableIdOf(o, info) === id) return o;
+      if (info.isA(type)) {
+        const k = ids.indexOf(stableIdOf(o, info) ?? '\u0000');
+        if (k === 0) return [o, ...hits.slice(1)]; // the most preferred form: done
+        if (k > 0 && hits[k] === undefined) hits[k] = o;
+      }
       if (depth >= 32) continue;
       for (const m of info.implicitMembersOf(o)) {
         if (!m.owning || m.declaredScalar) continue;
@@ -390,8 +409,21 @@ export class RqlEngine {
         if (typeof v === 'object' && v !== null && this.types.infoOf(v).kind !== 'struct') stack.push({ o: v, depth: depth + 1 });
       }
     }
-    return undefined;
+    return hits;
   }
+}
+
+interface ParsedRef {
+  readonly text: string;
+  readonly type: string;
+  readonly sep: '#' | '@';
+  readonly id: string;
+}
+
+function parseRef(text: string): ParsedRef | undefined {
+  const i = text.search(/[#@]/);
+  if (i <= 0 || i === text.length - 1) return undefined;
+  return { text, type: text.slice(0, i), sep: text[i] as '#' | '@', id: text.slice(i + 1) };
 }
 
 /** The "#id" part of a stable reference: adapter identity first, then the id member; undefined = none. */

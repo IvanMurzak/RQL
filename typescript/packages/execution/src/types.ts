@@ -195,6 +195,8 @@ export abstract class StringMap {
   abstract set(key: string, value: unknown): void;
   abstract delete(key: string): void;
   abstract entries(): IterableIterator<[string, unknown]>;
+  /** The keys only (no value reads). */
+  abstract keys(): Iterable<string>;
   /** Rejection reason for assigning `value` to `key` (validation before any write), or undefined. */
   validate(_key: string, _value: unknown): string | undefined {
     return undefined;
@@ -224,12 +226,17 @@ export class RecordMap extends StringMap {
   *entries(): IterableIterator<[string, unknown]> {
     for (const k of Object.keys(this.target)) yield [k, this.target[k]];
   }
+  keys(): Iterable<string> {
+    return Object.keys(this.target);
+  }
 }
 
 /** Adapter definition of a virtual map member (spec §13 "Virtual maps"). */
 export interface VirtualMapSpec<T extends object, V = unknown> {
   /** The owner's keys, in order. */
   keys(owner: T): Iterable<string>;
+  /** Optional direct key test (avoids scanning `keys` on every lookup). */
+  has?(owner: T, key: string): boolean;
   get(owner: T, key: string): V;
   /** Per-key assignment; absent = read-only map. May accept keys beyond `keys` (entries are never removed). */
   set?(owner: T, key: string, value: V): void;
@@ -259,8 +266,12 @@ export class VirtualMap extends StringMap {
     return n;
   }
   has(key: string): boolean {
+    if (this.spec.has !== undefined) return this.spec.has(this.owner, key);
     for (const k of this.spec.keys(this.owner)) if (k === key) return true;
     return false;
+  }
+  keys(): Iterable<string> {
+    return this.spec.keys(this.owner);
   }
   get(key: string): unknown {
     return this.has(key) ? this.spec.get(this.owner, key) : undefined;
@@ -639,6 +650,7 @@ export class TypeModel {
   /** Builtin infos (Map, Record, plain Object, Date), built lazily because they carry adapters. */
   private readonly builtins = new Map<string, TypeInfo>();
   private readonly adapterSets = new Map<Ctor, AdapterSet>();
+  private readonly subtypeCache = new Map<Ctor, Map<string, readonly Ctor[]>>();
   private excluded: ((type: TypeRef) => boolean) | undefined;
   private readonly entryInfo: TypeInfo;
   private readonly rowInfo = new TypeInfo('object', 'RowValue');
@@ -655,6 +667,7 @@ export class TypeModel {
     this.listInfos.clear();
     this.builtins.clear();
     this.adapterSets.clear();
+    this.subtypeCache.clear();
   }
 
   private builtin(key: 'map' | 'object-literal' | 'record' | 'virtual-map' | 'plain' | 'date'): TypeInfo {
@@ -940,9 +953,7 @@ export class TypeModel {
   ): { members: MemberAccessor[]; methods: MethodAccessor[]; idMember: MemberAccessor | undefined; displayMember: MemberAccessor | undefined; writesThrough: boolean } {
     const declared = new Set(members.map((m) => m.name));
     if (this.excluded !== undefined) {
-      const kept = members.filter((m) => !this.isExcludedType(m.type));
-      members.length = 0;
-      members.push(...kept);
+      retainInPlace(members, (m) => !this.isExcludedType(m.type));
     }
     const table = this.applyAdapters(adapters, name, kind, members, methods);
     // Adapters may choose the identity / display members by name (most specific adapter wins).
@@ -1006,10 +1017,25 @@ export class TypeModel {
     }
   }
 
-  /** A destroyed object (an adapter's isAlive says false) reads as null everywhere (spec §13). */
-  isDead(v: unknown): boolean {
-    if (typeof v !== 'object' || v === null || !this.adapterRegistry.has('isAlive')) return false;
-    return firstAnswer(this.infoOf(v).adapterSet.isAlive, (a) => a.isAlive!(v)) === false;
+  /** The first adapter liveness verdict for `v` (spec §13), or undefined when no adapter answers. */
+  adapterAlive(v: object): boolean | undefined {
+    if (!this.adapterRegistry.has('isAlive')) return undefined;
+    return firstAnswer(this.infoOf(v).adapterSet.isAlive, (a) => a.isAlive!(v));
+  }
+
+  /** Concrete registered classes assignable to `ctor` whose short or constructor name is `name` (cached). */
+  subtypesNamed(ctor: Ctor, name: string): readonly Ctor[] {
+    this.sync();
+    let byName = this.subtypeCache.get(ctor);
+    if (byName === undefined) {
+      byName = new Map();
+      for (const c of this.registeredTypes) {
+        if (c !== ctor && !(c.prototype instanceof ctor)) continue;
+        for (const n of new Set([c.name, this.infoForCtor(c)?.shortName ?? c.name])) byName.set(n, [...(byName.get(n) ?? []), c]);
+      }
+      this.subtypeCache.set(ctor, byName);
+    }
+    return byName.get(name) ?? [];
   }
 
   private makeMember(ctor: Ctor, spec: MemberSpec, order: number): MemberAccessor {
@@ -1187,6 +1213,13 @@ function isSetterSomewhere(proto: object, key: string): boolean {
   return false;
 }
 
+/** Keeps only the elements matching `keep`, in place (order preserved). */
+function retainInPlace<T>(arr: T[], keep: (item: T) => boolean): void {
+  let w = 0;
+  for (const item of arr) if (keep(item)) arr[w++] = item;
+  arr.length = w;
+}
+
 /** Adds a method, replacing one with the same name and arity. */
 function putMethod(list: MethodAccessor[], m: MethodAccessor): void {
   const i = list.findIndex((x) => x.name === m.name && x.params.length === m.params.length);
@@ -1277,9 +1310,7 @@ class MemberTableImpl implements MemberTable<object> {
 
   hideMethods(...names: string[]): this {
     for (const n of names) if (!this.methodList.some((m) => m.name === n)) throw new Error(`type ${this.typeName} has no callable method '${n}' to hide`);
-    const kept = this.methodList.filter((m) => !names.includes(m.name));
-    this.methodList.length = 0;
-    this.methodList.push(...kept);
+    retainInPlace(this.methodList, (m) => !names.includes(m.name));
     return this;
   }
 
@@ -1370,9 +1401,7 @@ class MemberTableImpl implements MemberTable<object> {
   }
 
   private retain(keep: (m: MemberAccessor) => boolean): void {
-    const kept = this.list.filter(keep);
-    this.list.length = 0;
-    this.list.push(...kept);
+    retainInPlace(this.list, keep);
   }
 
   private change(names: readonly string[], f: (m: MemberAccessor) => MemberAccessor): this {

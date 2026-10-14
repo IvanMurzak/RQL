@@ -233,28 +233,29 @@ std::string friendly_type_of(const Value& v) {
     }
 }
 
-Value snapshot(const Value& v) {
+Value owned_copy(const Value& v, bool mutable_copy) {
     if (v.is_list()) {
-        if (v.list().owned()) return v;
         std::vector<Value> items;
         auto& l = v.list();
         size_t n = l.size();
         items.reserve(n);
         for (size_t i = 0; i < n; ++i) items.push_back(snapshot(l.at(i)));
-        auto owned = std::make_shared<OwnedList>(std::move(items));
-        Value out = Value::list(owned);
-        return out;
+        return Value::list(std::make_shared<OwnedList>(std::move(items), mutable_copy));
     }
     if (v.is_map()) {
-        if (v.map().owned()) return v;
         std::vector<std::pair<Value, Value>> entries;
         v.map().for_each([&](const Value& k, const Value& val) {
             entries.emplace_back(k, snapshot(val));
             return true;
         });
-        return Value::map(std::make_shared<OwnedMap>(v.map().type(), std::move(entries)));
+        return Value::map(std::make_shared<OwnedMap>(v.map().type(), std::move(entries), false, mutable_copy));
     }
     return v;
+}
+
+Value snapshot(const Value& v) {
+    if ((v.is_list() && v.list().owned()) || (v.is_map() && v.map().owned())) return v;
+    return owned_copy(v, false);
 }
 
 namespace {

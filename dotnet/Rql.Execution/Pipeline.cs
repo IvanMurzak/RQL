@@ -311,7 +311,7 @@ namespace Rql.Execution
 
         private IEnumerable<Item> SourceItems(SourceRegistration reg, Eval? nav, string pathText)
         {
-            var root = reg.Getter();
+            var root = _x.Types.Live(reg.Getter());
             object? value = root;
             if (nav != null)
             {
@@ -352,18 +352,19 @@ namespace Rql.Execution
                     for (int i = 0; i < list.Count; i++)
                     {
                         if (countVisit) _x.Visit();
-                        var el = list[i];
+                        var el = _x.Types.Live(list[i]);
                         if (el == null) continue;
                         yield return new Item(el, path?.At(i));
                     }
                     yield break;
                 }
                 long j = 0;
-                foreach (var el in (IEnumerable)value)
+                foreach (var raw in (IEnumerable)value)
                 {
                     if (countVisit) _x.Visit();
                     var p = path != null ? path.At(j) : null;
                     j++;
+                    var el = _x.Types.Live(raw);
                     if (el == null) continue;
                     yield return new Item(el, p);
                 }
@@ -636,10 +637,11 @@ namespace Rql.Execution
             if (info.IsList)
             {
                 int i = 0;
-                foreach (var el in V.Iterate(value))
+                foreach (var raw in V.Iterate(value))
                 {
                     _x.Visit();
                     int idx = i++;
+                    var el = _x.Types.Live(raw);
                     if (el == null || (objectsOnly && !_x.Types.Info(el.GetType()).IsObject)) continue;
                     into.Add((el, _x.TrackPaths ? path?.At(idx) : null));
                 }

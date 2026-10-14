@@ -54,6 +54,7 @@ Exec::Exec(Engine& e, const Budgets& b, const QueryOptions& o, const QueryPlan& 
     max_mutation_targets = std::min(b.max_mutation_targets.value_or(e.mutations().max_targets), e.mutations().hard_max_targets);
     has_adapters_ = e.adapts();
     caps_ = e.caps_;
+    liveness_ = caps_[static_cast<size_t>(Capability::IsAlive)] || static_cast<bool>(e.is_alive);
 }
 
 void Exec::visit() {
@@ -144,6 +145,7 @@ public:
             Value inner = v.row().values[0];
             v = inner;
         }
+        v = x_.live(std::move(v));  // a destroyed value reads as null: skipped like a null item (spec §13)
         if (v.is_null() || v.is_absent()) mode_ = Done;
         else if (v.is_list()) mode_ = List;
         else if (v.is_map()) mode_ = Map;
@@ -164,7 +166,7 @@ public:
                 while (i_ < l.size()) {
                     if (count_) x_.visit();
                     PathPtr p = path_ ? path_at(path_, static_cast<int64_t>(i_)) : nullptr;
-                    Value el = l.at(i_++);
+                    Value el = x_.live(l.at(i_++));
                     if (el.is_null()) continue;
                     out = Item{std::move(el), std::move(p), -1};
                     return true;
@@ -438,7 +440,7 @@ public:
     bool next(Item& out) override {
         Item it;
         while (in_->next(it)) {
-            Value k = it.value;
+            Value k = x_.live(it.value);
             if (key_) {
                 set_scope(x_, it, i_);
                 k = key_(x_);
@@ -566,7 +568,7 @@ private:
         ExpandStream s(x_, v, path, true);
         Item c;
         while (s.next(c)) {
-            Value cv = c.value.is_entry() ? c.value.entry().value : c.value;
+            Value cv = x_.live(c.value.is_entry() ? c.value.entry().value : c.value);  // destroyed children are not followed
             if (cv.is_object()) into.emplace_back(cv, c.path);
         }
     }
@@ -585,7 +587,7 @@ private:
             Value cv;
             ++x_.members_read;
             try {
-                cv = m.getter(v.ptr());
+                cv = x_.live(m.getter(v.ptr()));
             } catch (const std::exception& ex) {
                 x_.getter_threw(m.name, ex.what());
                 continue;
@@ -603,6 +605,7 @@ private:
 
     void expand(const Frame& f) {
         if (f.depth >= limit_) return;
+        if (x_.is_dead(f.value)) return;  // no getters run on a destroyed object
         std::vector<std::pair<Value, PathPtr>> children;
         if (st_.has_via) {
             for (auto& v : via_) {

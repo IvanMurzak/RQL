@@ -283,10 +283,10 @@ export class Pipeline {
     yield* this.expand(v, null);
   }
 
-  /** Lists → elements, maps → entries, else the value itself; null/missing dropped. */
+  /** Lists → elements, maps → entries, else the value itself; null/missing and destroyed objects dropped. */
   private *expand(value: unknown, path: PathNode | null): Generator<Item> {
     const x = this.x;
-    if (value === null || value === undefined || value === MISSING || value === UNKNOWN || value instanceof ErrorValue) return;
+    if (value === null || value === undefined || value === MISSING || value === UNKNOWN || value instanceof ErrorValue || x.dead(value)) return;
     if (value instanceof RowValue && value.columns.length === 1) {
       yield* this.expand(value.values[0], path);
       return;
@@ -298,7 +298,7 @@ export class Pipeline {
         x.visit();
         const p = path !== null ? path.at(i) : null;
         i++;
-        if (el === null || el === undefined) continue;
+        if (el === null || el === undefined || x.dead(el)) continue;
         yield item(el, p);
       }
       return;
@@ -421,7 +421,7 @@ export class Pipeline {
     const seen = new Set<unknown>();
     let i = 0;
     for (const it of input) {
-      let k = it.value;
+      let k = this.x.live(it.value);
       if (key !== undefined) {
         this.enter(it, i);
         k = key(this.x);
@@ -469,7 +469,8 @@ export class Pipeline {
       const stack: Frame[] = [{ v: it.value, path: it.path, depth: 0, emit: r.includeSelf }];
       while (stack.length > 0) {
         const { v, path, depth, emit } = stack.pop()!;
-        if (v === null || v === undefined) continue;
+        // A destroyed object reads as null: not emitted, no getters run on it.
+        if (v === null || v === undefined || x.dead(v)) continue;
         // Identity-tracked: reference objects (not primitives or value-like structs).
         if (typeof v === 'object' && x.types.infoOf(v).kind !== 'struct') {
           if (visited.has(v)) continue;
@@ -517,7 +518,7 @@ export class Pipeline {
       let cv: unknown;
       x.membersRead++;
       try {
-        cv = m.get(v);
+        cv = x.live(m.get(v));
       } catch (e) {
         x.getterThrew(m.name, e);
         continue;
