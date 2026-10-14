@@ -36,6 +36,9 @@ namespace Rql.Execution
         public RqlModuleContext AddSource(string name, Func<object?> getter, string? description = null) { Engine.AddSource(name, getter, description); return this; }
 
         public RqlModuleContext AddFunction(string name, Func<object?[], object?> fn, string? description = null) { Engine.AddFunction(name, fn, description); return this; }
+
+        /// <summary>Agent-facing guidance for what this module adds (rendered into the host's help / skill files).</summary>
+        public RqlModuleContext AddGuide(string topic, string markdown) { Engine.AddGuide(topic, markdown); return this; }
     }
 
     /// <summary>Outcome of configuring one discovered module.</summary>

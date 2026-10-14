@@ -408,6 +408,7 @@ building nested values; (3) **error paths** — a nested failure's reason is pre
 *modules* (order + configure). Runtimes with module/assembly reflection discover modules by scan (or take them from a
 host's type index), configure them in
 order (then by name), isolate failures (a failing module is reported, the others still configure) and report the result.
+Modules may also contribute agent-facing *guides* (topic + markdown) that hosts render into their help or skill files.
 A module that lives in an optional package exists exactly when that package is installed, so enabling or disabling an
 engine feature (e.g. Unity's Particle System) enables or disables its adapters.
 

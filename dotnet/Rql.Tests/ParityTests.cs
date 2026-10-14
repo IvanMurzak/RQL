@@ -300,6 +300,13 @@ namespace Rql.Tests
         }
 
         [Fact]
+        public void GuidesAreOrderedAndReplacedByTopic()
+        {
+            var e = new RqlEngine().AddGuide("splines", "a").AddGuide("terrain", "b").AddGuide("splines", "c");
+            Assert.Equal(new[] { "terrain:b", "splines:c" }, e.Guides.Select(g => g.Key + ":" + g.Value).ToArray());
+        }
+
+        [Fact]
         public void FunctionsCarryDescriptionsIntoTheSchema()
         {
             var e = new RqlEngine().AddSource("items", () => new[] { 1, 2 }).AddFunction("host.find", _ => new[] { 3 }, "find host things");

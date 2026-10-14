@@ -229,6 +229,23 @@ namespace Rql.Execution
         /// <summary>Descriptions of the host functions that have one (for schema / help output).</summary>
         public IReadOnlyDictionary<string, string> FunctionDescriptions => _functionDescriptions;
 
+        private readonly List<KeyValuePair<string, string>> _guides = new List<KeyValuePair<string, string>>();
+
+        /// <summary>
+        /// Add agent-facing guidance (markdown) under a topic, e.g. how a module's sources and types are queried. Hosts render
+        /// the guides into their help / skill files; a later guide with the same topic replaces the earlier one.
+        /// </summary>
+        public RqlEngine AddGuide(string topic, string markdown)
+        {
+            if (string.IsNullOrWhiteSpace(topic)) throw new ArgumentException("topic required", nameof(topic));
+            _guides.RemoveAll(g => string.Equals(g.Key, topic, StringComparison.Ordinal));
+            _guides.Add(new KeyValuePair<string, string>(topic, markdown ?? ""));
+            return this;
+        }
+
+        /// <summary>Registered guides (topic → markdown) in registration order.</summary>
+        public IReadOnlyList<KeyValuePair<string, string>> Guides => _guides;
+
         public RqlEngine AddStage(string name, StageHandler handler)
         {
             ValidateName(name, allowDots: true);
