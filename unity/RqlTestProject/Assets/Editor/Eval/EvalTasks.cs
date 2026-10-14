@@ -296,6 +296,48 @@ namespace RqlTest.Eval
             },
         };
 
+        // ------------------------------------------------------------ tools beyond RQL (their schemas / results differ per data layer)
+
+        public static IEnumerable<EvalTask> BeyondRql() => new[]
+        {
+            new EvalTask
+            {
+                Id = "script-param-children", Category = "script",
+                Prompt = "Write a C# method, run it with the script-execute tool and pass the GameObject \"Enemies\" to it as a method " +
+                         "parameter (do not look it up by name inside the code). The method must return how many direct children that " +
+                         "GameObject has. Submit just the number.",
+                Check = a =>
+                {
+                    var n = Go("Enemies")!.transform.childCount;
+                    return NumberEquals(a, n) ? (true, n.ToString(CultureInfo.InvariantCulture)) : (false, $"expected {n}, got '{a}'");
+                },
+            },
+            new EvalTask
+            {
+                Id = "script-return-position", Category = "script",
+                Prompt = "Using the script-execute tool, return the world position (a Vector3) of the GameObject \"Player\" from a C# " +
+                         "method. Submit it as three numbers \"x, y, z\".",
+                Check = a =>
+                {
+                    var p = Go("Player")!.transform.position;
+                    var nums = System.Text.RegularExpressions.Regex.Matches(a ?? "", @"-?\d+(\.\d+)?").Cast<System.Text.RegularExpressions.Match>()
+                        .Select(m => float.Parse(m.Value, CultureInfo.InvariantCulture)).ToList();
+                    return nums.Count == 3 && Near(new Vector3(nums[0], nums[1], nums[2]), p) ? (true, "ok") : (false, $"expected {p}, got '{a}'");
+                },
+            },
+            new EvalTask
+            {
+                Id = "tool-count", Category = "tools",
+                Prompt = "How many MCP tools are registered in this Unity Editor in total (enabled and disabled)? Use the tool that lists " +
+                         "them. Submit just the number.",
+                Check = a =>
+                {
+                    var n = com.IvanMurzak.Unity.MCP.UnityMcpPluginEditor.Instance.Tools!.GetAllTools().Count();
+                    return NumberEquals(a, n) ? (true, n.ToString(CultureInfo.InvariantCulture)) : (false, $"expected {n}, got '{a}'");
+                },
+            },
+        };
+
         private const string TrickyName = "Crate #7 <A+B> — café \"x\"";
         private const string TrickyRename = "Box <1+1> naïve & 'ok' — ü";
     }

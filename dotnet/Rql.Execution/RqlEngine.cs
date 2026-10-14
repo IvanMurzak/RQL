@@ -329,6 +329,69 @@ namespace Rql.Execution
             return items;
         }
 
+        /// <summary>
+        /// Host API: evaluate ONE value expression outside a query — a literal (<c>{name: "Lamp", at: [1, 2, 3]}</c>,
+        /// <c>"(1, 2, 3)"</c>), <c>ref("GameObject#12")</c> or a host function such as <c>unity.find("Player")</c> — and
+        /// coerce it to <paramref name="target"/> with the same rules as <c>set</c> (adapters, <c>$type</c>, enums).
+        /// A bare word (<c>Directional</c>) reads as text, so enum values need no quotes. Used for tool arguments.
+        /// </summary>
+        public bool TryEvaluateValue(string text, Type target, out object? value, out string? error)
+        {
+            value = null;
+            error = null;
+            Expr e;
+            try { e = RqlParser.ParseValue(text); }
+            catch (RqlException ex) { error = ex.Message; return false; }
+            object? raw;
+            e = BareWordsAsText(e);
+            var x = new Exec(this, new Budgets(), new QueryOptions(), new QueryPlan(e, Array.Empty<Stage>()));
+            try { raw = new Compiler(x).Compile(e)(x); }
+            catch (RqlException ex) { error = ex.Message; return false; }
+            catch (Exception ex) when (!(ex is OutOfMemoryException)) { error = ex.GetType().Name + ": " + ex.Message; return false; }
+            if (raw is RqlError err) { error = err.Detail ?? err.Code; return false; }
+            if (raw is Missing || raw is Unknown) { error = "the value is missing"; return false; }
+            return Coerce.TryTo(x.Kernel, raw, target, out value, out error);
+        }
+
+        // A standalone value has no current item, so a bare word (an enum value such as Low) can only mean its text.
+        private static Expr BareWordsAsText(Expr e)
+        {
+            switch (e)
+            {
+                case PathExpr p when p.On == null && p.Segments.Count == 1 && p.Segments[0].Kind == SegmentKind.Member:
+                    return new LitExpr(p.Segments[0].Name);
+                case ObjectExpr o:
+                    return new ObjectExpr(o.Entries.Select(kv => new KeyValuePair<string, Expr>(kv.Key, BareWordsAsText(kv.Value))).ToList());
+                case ListExpr l:
+                    return new ListExpr(l.Items.Select(BareWordsAsText).ToList());
+                default:
+                    return e;
+            }
+        }
+
+        /// <summary>
+        /// Host API: <paramref name="value"/> encoded as a query result would be — one item per element of a list, one item
+        /// otherwise (scalars as a scalar result) — e.g. to show a tool's return value in the agent format. Nested lists and
+        /// plain objects are written out <paramref name="expand"/> levels deep (queries summarise them).
+        /// </summary>
+        public QueryResult Present(object? value, int expand = 3)
+        {
+            var x = new Exec(this, new Budgets(), new QueryOptions(), new QueryPlan(new LitExpr(null), Array.Empty<Stage>()));
+            var enc = new Encoder(x, expand);
+            var info = value == null ? null : Types.Info(value.GetType());
+            if (value == null || info!.Kind == TypeKind.Scalar || info.Kind == TypeKind.Enum)
+                return new QueryResult { Ok = true, Kind = ResultKind.Scalar, HasValue = true, Value = enc.Encode(value) };
+            if (info.Kind == TypeKind.List && value is System.Collections.IEnumerable list)
+            {
+                var items = new List<object?>();
+                foreach (var it in list) items.Add(it);
+                var r = enc.Items(items);
+                r.Total ??= items.Count;
+                return r;
+            }
+            return enc.Items(new List<object?> { value });
+        }
+
         // ------------------------------------------------------------ references
 
         /// <summary>Stable reference string for an object: "Type#id" or session handle "Type@n".</summary>

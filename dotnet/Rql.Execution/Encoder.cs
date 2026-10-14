@@ -15,9 +15,16 @@ namespace Rql.Execution
         private readonly Func<object?, int, JsonNode?> _encode;
         private readonly Func<object, JsonObject> _summary;
 
-        public Encoder(Exec x)
+        /// <summary>
+        /// Levels of nested lists / maps / plain objects written out in full instead of as summaries ("List&lt;T&gt;[3]").
+        /// 0 = query output (compact); <see cref="RqlEngine.Present"/> raises it for whole values such as tool results.
+        /// </summary>
+        private readonly int _expand;
+
+        public Encoder(Exec x, int expand = 0)
         {
             _x = x;
+            _expand = expand;
             _encode = Encode;
             _summary = o => Summary(o, _x.Types.Info(o.GetType()));
         }
@@ -167,7 +174,7 @@ namespace Rql.Execution
                     return obj;
                 }
                 case TypeKind.Object:
-                    if (info.IdMember == null && info.DisplayMember == null && depth <= 1) return Inline(v, info, depth);
+                    if (info.IdMember == null && info.DisplayMember == null && depth <= Math.Max(1, _expand)) return Inline(v, info, depth);
                     return Summary(v, info);
                 default:
                     return JsonValue.Create(Convert.ToString(v, CultureInfo.InvariantCulture));
@@ -188,12 +195,17 @@ namespace Rql.Execution
                 if (mv != null && !(mv is string) && !(mv is RqlError) && !(mv is Missing))
                 {
                     var mi = _x.Types.Info(mv.GetType());
+                    if ((mi.IsList || mi.IsMap) && depth < _expand)
+                    {
+                        obj[m.Name] = Encode(mv, depth + 1);
+                        continue;
+                    }
                     if (mi.IsList || mi.IsMap)
                     {
                         obj[m.Name] = JsonValue.Create(TypeModel.FriendlyName(mv.GetType()) + "[" + (V.Count(mv) ?? 0).ToString(CultureInfo.InvariantCulture) + "]");
                         continue;
                     }
-                    if (mi.IsObject) { obj[m.Name] = mi.IdMember == null && mi.DisplayMember == null && depth < 1 ? Inline(mv, mi, depth + 1) : Summary(mv, mi); continue; }
+                    if (mi.IsObject) { obj[m.Name] = mi.IdMember == null && mi.DisplayMember == null && depth < Math.Max(1, _expand) ? Inline(mv, mi, depth + 1) : Summary(mv, mi); continue; }
                 }
                 obj[m.Name] = Encode(mv, depth + 1);
             }

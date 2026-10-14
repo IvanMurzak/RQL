@@ -78,6 +78,16 @@ namespace RqlTest.Eval
                         if (asm.GetType(name) is Type t) instance = t.GetField(field!)?.GetValue(null);
             if (text && instance == null) throw new InvalidOperationException($"condition '{condition}' needs RqlToolPresentation, which is not installed");
             com.IvanMurzak.McpPlugin.ToolPresentation.Current = (com.IvanMurzak.McpPlugin.IToolPresentation?)instance;
+
+            // "+rql" = phase 2: RQL instead of ReflectorNet as the tools' data layer (RqlToolBinding).
+            object? binding = null;
+            if (condition.EndsWith("+rql", StringComparison.Ordinal))
+            {
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                    if (asm.GetType("com.IvanMurzak.Unity.MCP.Editor.Rql.ToolFormat.RqlToolBinding") is Type bt) binding = bt.GetField("Instance")?.GetValue(null);
+                if (binding == null) throw new InvalidOperationException($"condition '{condition}' needs RqlToolBinding, which is not installed");
+            }
+            com.IvanMurzak.McpPlugin.ToolBinding.Current = (com.IvanMurzak.McpPlugin.IToolBinding?)binding;
         }
 
         // The engine of whichever RQL integration is installed (standalone package or Unity-MCP's own), reset between runs.
@@ -157,7 +167,7 @@ namespace RqlTest.Eval
             int repeats = int.Parse(Arg("-evalRepeats", "2"), CultureInfo.InvariantCulture);
             int maxSteps = int.Parse(Arg("-evalMaxSteps", "15"), CultureInfo.InvariantCulture);
             double budget = double.Parse(Arg("-evalBudget", "4"), CultureInfo.InvariantCulture);
-            var tasks = EvalTasks.All().Where(t => taskFilter.Count == 0 || taskFilter.Contains(t.Id)).ToList();
+            var tasks = EvalTasks.All().Concat(EvalTasks.BeyondRql()).Where(t => taskFilter.Count == 0 || taskFilter.Contains(t.Id)).ToList();
 
             var evalRoot = FindEvaluationRoot();
             var prices = JsonNode.Parse(File.ReadAllText(Path.Combine(evalRoot, "configs/pricing.json")))!["models"]![Model]!.AsObject();
@@ -229,6 +239,7 @@ namespace RqlTest.Eval
             config["conditions"] = condInfo;
             File.WriteAllText(Path.Combine(outDir, "config.json"), config.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
             com.IvanMurzak.McpPlugin.ToolPresentation.Current = null;
+            com.IvanMurzak.McpPlugin.ToolBinding.Current = null;
             if (repeats == 0)
             {
                 var all = new JsonObject();
@@ -267,6 +278,7 @@ namespace RqlTest.Eval
             }
             done:
             com.IvanMurzak.McpPlugin.ToolPresentation.Current = null;
+            com.IvanMurzak.McpPlugin.ToolBinding.Current = null;
             RqlTestSceneBuilder.Build();
             File.WriteAllText(Path.Combine(outDir, "summary.md"), Summary(runId, config, conditions, tasks, results, spent));
             Debug.Log($"[EVAL] done: {results.Count} runs, ${spent:0.0000}; {outDir}");

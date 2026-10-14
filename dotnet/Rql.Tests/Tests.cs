@@ -276,6 +276,61 @@ namespace Rql.Tests
     }
 
     /// <summary>Regression tests for the independent review findings (security + robustness).</summary>
+    public class HostValueApiTests
+    {
+        private static SampleHost Host() => new SampleHost(7, WorldSize.Small);
+
+        [Fact]
+        public void TryEvaluateValueBuildsTypedObjectsFromLiterals()
+        {
+            var h = Host();
+            Assert.True(h.Engine.TryEvaluateValue("{Width: 800, Quality: Low, Fullscreen: false}", typeof(GraphicsSettings), out var v, out var err), err);
+            var g = Assert.IsType<GraphicsSettings>(v);
+            Assert.Equal(800, g.Width);
+            Assert.Equal(Quality.Low, g.Quality);
+            Assert.False(g.Fullscreen);
+        }
+
+        [Fact]
+        public void TryEvaluateValueResolvesRefsAndBareEnumWords()
+        {
+            var h = Host();
+            var player = h.Sandbox.World.LocalPlayer!;
+            Assert.True(h.Engine.TryEvaluateValue($"ref(\"Player#{player.Id}\")", typeof(Player), out var v, out var err), err);
+            Assert.Same(player, v);
+            Assert.True(h.Engine.TryEvaluateValue("Directional", typeof(LightType), out var e, out err), err);
+            Assert.Equal(LightType.Directional, e);
+            Assert.True(h.Engine.TryEvaluateValue("[1, 2, 3]", typeof(List<int>), out var list, out err), err);
+            Assert.Equal(new List<int> { 1, 2, 3 }, list);
+        }
+
+        [Fact]
+        public void TryEvaluateValueReportsWhatWentWrong()
+        {
+            var h = Host();
+            Assert.False(h.Engine.TryEvaluateValue("{Width: }", typeof(GraphicsSettings), out _, out var syntax));
+            Assert.False(string.IsNullOrEmpty(syntax));
+            Assert.False(h.Engine.TryEvaluateValue("{Width: \"wide\"}", typeof(GraphicsSettings), out _, out var type));
+            Assert.Contains("Width", type);
+        }
+
+        [Fact]
+        public void PresentEncodesObjectsListsAndScalars()
+        {
+            var h = Host();
+            var one = h.Engine.Present(new GraphicsSettings { Width = 640 });
+            Assert.True(one.Ok);
+            Assert.Contains("640", AgentFormat.Render(one, OutputFormat.Table));
+            var many = h.Engine.Present(new List<AudioSettings> { new AudioSettings(), new AudioSettings { Muted = true } });
+            Assert.Equal(2, many.Items!.Count);
+            Assert.Equal(2, many.Total);
+            var nested = AgentFormat.Render(h.Engine.Present(new Settings()), OutputFormat.Table);
+            Assert.Contains("1920", nested);                       // Graphics.Width: nested plain objects written out
+            var scalar = h.Engine.Present(42);
+            Assert.Equal(42, scalar.Value!.GetValue<long>());
+        }
+    }
+
     public class ReviewRegressionTests
     {
         private static RqlEngine Engine(GuardHost h, int maxTargets = 20)
