@@ -252,17 +252,18 @@ std::string TypeDescriptor::signature(const MethodDescriptor& m) const {
 
 // ------------------------------------------------------------------ TypeRegistry
 
-TypeDescriptor* TypeRegistry::descriptor_for(std::type_index t) {
+TypeDescriptor* TypeRegistry::descriptor_for(TypeKey t) {
     auto it = by_type_.find(t);
     if (it != by_type_.end()) return it->second;
     owned_.push_back(std::make_unique<TypeDescriptor>());
     TypeDescriptor* d = owned_.back().get();
     d->name = "?";
+    d->native_key = t;
     by_type_.emplace(t, d);
     return d;
 }
 
-const TypeDescriptor* TypeRegistry::find_native(std::type_index t) const {
+const TypeDescriptor* TypeRegistry::find_native(TypeKey t) const {
     auto it = by_type_.find(t);
     return it == by_type_.end() ? nullptr : it->second;
 }

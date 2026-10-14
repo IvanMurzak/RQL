@@ -129,6 +129,21 @@ struct Counter {
     void Secret() {}
 };
 
+// Polymorphic hierarchy WITHOUT rql_dynamic_type(): uses the provider dynamic_type hook (no RTTI).
+struct Shape {
+    virtual ~Shape() = default;
+    virtual int tag() const noexcept { return 0; }
+    int Id = 0;
+    double Area() const noexcept { return 0; }
+};
+struct Circle : Shape {
+    int tag() const noexcept override { return 1; }
+    double Radius = 2;
+};
+struct Canvas {
+    std::vector<std::unique_ptr<Shape>> Shapes;
+};
+
 struct Frame {
     conformance::Vec2 Origin;
 };
@@ -180,6 +195,44 @@ void engine_tests() {
         h.Counters.push_back(c);
     }
     h.Points = {{1, 2}, {3, 4}};
+
+    reg.object<Shape>("Shape")
+        .member("Id", &Shape::Id)
+        .property("Tag", [](Shape& sh) noexcept { return sh.tag(); })  // noexcept provider callback
+        .method("Area", &Shape::Area)                                   // const noexcept method
+        .dynamic_type([](const Shape& sh) noexcept { return sh.tag() == 1 ? rql::type_key<Circle>() : rql::type_key<Shape>(); });
+    reg.object<Circle>("Circle").base<Shape>().member("Radius", &Circle::Radius);
+    reg.object<Canvas>("Canvas").member("Shapes", &Canvas::Shapes);
+    {
+        Canvas canvas;
+        canvas.Shapes.push_back(std::make_unique<Shape>());
+        canvas.Shapes.push_back(std::make_unique<Circle>());
+        canvas.Shapes[0]->Id = 1;
+        canvas.Shapes[1]->Id = 2;
+        rql::Engine ce(reg);
+        ce.add_object_source("c", &canvas);
+        ce.mutations().enabled = true;
+        auto cr = run(ce, R"({"rql":"0.1","source":{"path":["c","Shapes"]},"stages":[{"op":"select","fields":[{"name":"t","expr":{"path":[{"meta":"type"}]}},{"name":"r","expr":{"path":["Radius"]}},{"name":"g","expr":{"path":["Tag"]}},{"name":"ref","expr":{"path":[{"meta":"ref"}]}}]}]})");
+        check(cr.ok && (*cr.rows)[0][0].as_string() == "Shape" && (*cr.rows)[1][0].as_string() == "Circle" &&
+                  (*cr.rows)[1][1].as_number() == 2 && (*cr.rows)[1][2].as_number() == 1 && (*cr.rows)[1][3].as_string() == "Circle#2",
+              "dynamic_type hook resolves most-derived type without RTTI");
+        cr = run(ce, R"({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Shape#2"}]},"stages":[{"op":"call","method":"Area","args":[]}]})", true);
+        check(cr.ok && (*cr.rows)[0][2].as_number() == 0, "noexcept const method callable (inherited)");
+    }
+    {
+        // Registration errors never throw out of the Engine API.
+        rql::Engine bad(reg);
+        bad.add_stage("nonamespace", {});
+        check(!bad.last_error().empty() && bad.stages().empty(), "invalid registration reported via last_error()");
+        auto br = bad.execute_request(std::string("{not json"));
+        check(!br.ok && first_code(br) == "invalid-plan", "execute_request(text) noexcept → invalid-plan");
+        rql::QueryPlan empty;
+        br = bad.execute(empty);
+        check(!br.ok && first_code(br) == "invalid-plan", "execute(empty plan) noexcept → invalid-plan");
+        static_assert(noexcept(bad.execute(empty)), "Engine::execute must be noexcept");
+        static_assert(noexcept(bad.execute_json(std::string())), "Engine::execute_json must be noexcept");
+        static_assert(noexcept(bad.capabilities()), "Engine::capabilities must be noexcept");
+    }
 
     reg.object<Frame>("Frame").member("Origin", &Frame::Origin).readonly();
     Frame frame;

@@ -9,6 +9,31 @@ cmake -S cpp -B cpp/build && cmake --build cpp/build && ctest --test-dir cpp/bui
 cpp/build/rql_conformance . -v     # golden vectors, verbose (run from the repo root)
 ```
 
+ctest runs every suite twice: against `rql` and against `rql_nortti` (same sources built with
+`-fno-rtti` / `/GR-`). Options: `-DRQL_NO_RTTI=ON` builds the main library and tests without RTTI;
+`-DRQL_TEST_NO_RTTI_VARIANT=OFF` skips the extra variant; `-DCMAKE_CXX_STANDARD=20` builds as C++20.
+
+## Unreal Engine (5.5+) integration
+
+- **No RTTI needed.** The library never uses `typeid`, `std::type_index` or `dynamic_cast`. Type
+  identity is a compile-time key (`rql::type_key<T>()`, the address of a per-type tag). For
+  polymorphic hierarchies the registry finds the most-derived descriptor through either a
+  `rql::TypeKey rql_dynamic_type() const` member (usually virtual; auto-detected) or a provider hook
+  `registry.object<Base>("Base").dynamic_type([](const Base& b) { return ...; })` — for UObjects the
+  hook maps `b.GetClass()` to a registered key.
+- **Exceptions.** In UE, the RQL module sets `bEnableExceptions = true` (and needs no RTTI);
+  exceptions never cross the public API: every `rql::Engine` member function is `noexcept` and turns
+  any failure (including a throwing host getter, setter, function or stage) into `ok=false` with a
+  diagnostic (`internal-error` for unexpected ones). The free codec helpers that throw
+  (`decode_plan`, `Json::parse`, `Budgets::from_json`, `QueryOptions::from_json`) have `noexcept`
+  `try_` counterparts (`try_decode_plan`, `Json::try_parse`, `*::try_from_json`) for host code; the
+  throwing builder/`Traits` helpers are only called from registration code and from inside the
+  engine. Engine registration with an invalid name is ignored and reported via `last_error()`.
+- **Provider callbacks may be `noexcept`**: getters/setters/properties/stage handlers are plain
+  `std::function`s, and `method()` accepts `noexcept` and `const noexcept` member functions.
+- Type keys are per program image: register and query types from the same module (or export the
+  registration function), as with any address-based key across DLL boundaries.
+
 ## Layout
 
 - `include/rql/` — public headers: `json.hpp` (JSON value/parser/writer), `plan.hpp` (plan model +
@@ -34,6 +59,8 @@ reg.object<Node>("Node")
     .method("Heal", &Node::Heal, {"amount"})        // allowlisted for `call`
     .id("Id").display("Name");                     // defaults: "Id" (int/string) and "Name" (string)
 reg.object<Special>("Special").base<Node>().member("Power", &Special::Power);
+// Polymorphism without RTTI: Node has `virtual rql::TypeKey rql_dynamic_type() const`
+// (Special overrides it to return rql::type_key<Special>()), or register .dynamic_type(fn).
 
 rql::Engine engine(reg);
 engine.add_object_source("world", &world);          // or add_source(name, [] { return rql::Value...; })

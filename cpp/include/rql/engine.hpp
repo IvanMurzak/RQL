@@ -80,41 +80,49 @@ public:
     /// When false, $path is tracked only for plans that reference $path.
     bool always_track_paths = false;
 
-    Engine& add_source(const std::string& name, std::function<Value()> getter, std::string description = {});
+    // Every Engine member function is noexcept: exceptions used internally never cross this API.
+    // Registration with an invalid name is ignored and reported through last_error().
+
+    Engine& add_source(const std::string& name, std::function<Value()> getter, std::string description = {}) noexcept;
     /// Convenience: a registered object exposed as a source.
     template <class T>
-    Engine& add_object_source(const std::string& name, T* object, std::string description = {}) {
+    Engine& add_object_source(const std::string& name, T* object, std::string description = {}) noexcept {
         TypeRegistry* r = types_;
         return add_source(name, [r, object]() { return r->wrap(object); }, std::move(description));
     }
     /// Namespaced extension function "ns.fn".
-    Engine& add_function(const std::string& name, FunctionHandler fn);
+    Engine& add_function(const std::string& name, FunctionHandler fn) noexcept;
     /// Namespaced extension stage "ns.stage".
-    Engine& add_stage(const std::string& name, StageHandler handler);
+    Engine& add_stage(const std::string& name, StageHandler handler) noexcept;
+    /// Last registration error (empty when the last registration succeeded).
+    const std::string& last_error() const noexcept { return last_error_; }
 
-    const std::vector<SourceRegistration>& sources() const { return sources_; }
-    const SourceRegistration* find_source(const std::string& name) const;  // exact, then unique case-insensitive
-    const std::map<std::string, FunctionHandler>& functions() const { return functions_; }
-    const std::map<std::string, StageHandler>& stages() const { return stages_; }
+    const std::vector<SourceRegistration>& sources() const noexcept { return sources_; }
+    const SourceRegistration* find_source(const std::string& name) const noexcept;  // exact, then unique case-insensitive
+    const std::map<std::string, FunctionHandler>& functions() const noexcept { return functions_; }
+    const std::map<std::string, StageHandler>& stages() const noexcept { return stages_; }
 
-    QueryResult execute(const QueryPlan& plan, const Budgets& budgets = {}, const QueryOptions& options = {});
+    /// Execute a plan. Any failure (including host callbacks throwing) → ok=false with a diagnostic.
+    QueryResult execute(const QueryPlan& plan, const Budgets& budgets = {}, const QueryOptions& options = {}) noexcept;
     /// Decode + execute a plan JSON text; codec errors become an error result.
-    QueryResult execute_json(const std::string& plan_json, const Budgets& budgets = {}, const QueryOptions& options = {});
-    /// Transport envelope {"rql","plan","budgets","options"} (text requests need a parser sidecar → unsupported).
-    QueryResult execute_request(const Json& request);
+    QueryResult execute_json(const std::string& plan_json, const Budgets& budgets = {}, const QueryOptions& options = {}) noexcept;
+    /// Transport envelope {"rql","plan","budgets","options"} as JSON text or value (text requests → unsupported).
+    QueryResult execute_request(const Json& request) noexcept;
+    QueryResult execute_request(const std::string& request_json) noexcept;
 
     /// Stable reference string: "Type#id" (id member) or session handle "Type@n".
-    std::string ref_of(const Value& v);
+    std::string ref_of(const Value& v) noexcept;
     /// Resolve a reference string (copied display forms tolerated). On failure returns missing and sets error.
-    Value resolve_ref(const std::string& reference, std::string& error) { return resolve_ref(reference, error, nullptr); }
+    Value resolve_ref(const std::string& reference, std::string& error) noexcept;
     /// Internal: fallback-search nodes count as visits of the calling query; results cached per query.
+    /// May throw budget-exceeded/timeout internally when x is set (only called inside execution).
     Value resolve_ref(const std::string& reference, std::string& error, detail::Exec* x);
-    void clear_session_handles();
+    void clear_session_handles() noexcept;
 
-    /// Capability manifest (spec/capability-manifest.schema.json).
-    Json capabilities();
+    /// Capability manifest (spec/capability-manifest.schema.json). Null Json on internal failure.
+    Json capabilities() noexcept;
     /// Type descriptor JSON (capability-manifest typeDescriptor).
-    Json describe_type(const TypeDescriptor& t) const;
+    Json describe_type(const TypeDescriptor& t) const noexcept;
 
 private:
     struct HandleKey {
@@ -141,9 +149,13 @@ private:
     std::unordered_map<HandleKey, int64_t, HandleHash> handles_;
     std::unordered_map<int64_t, HandleTarget> handle_targets_;
     int64_t next_handle_ = 0;
+    std::string last_error_;
 
     int64_t handle_of(const Value& v);
     Value search_sources(const std::string& type, const std::string& id, const Value* identity, detail::Exec* x);
+    Json describe_type_impl(const TypeDescriptor& t) const;
+    Json capabilities_impl();
+    std::string ref_of_impl(const Value& v);
 };
 
 }  // namespace rql

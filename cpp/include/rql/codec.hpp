@@ -21,6 +21,10 @@ QueryPlan decode_plan(const Json& json);
 QueryPlan decode_plan(std::string_view json_text);
 ExprPtr decode_expr(const Json& json);
 
+/// Non-throwing variants (use these from code built without exception handling at call sites).
+bool try_decode_plan(const Json& json, QueryPlan& out, Diagnostic& error) noexcept;
+bool try_decode_plan(std::string_view json_text, QueryPlan& out, Diagnostic& error) noexcept;
+
 /// Structural validation shared by codec and host-built plans (terminal placement).
 void validate_plan_structure(const QueryPlan& plan);
 

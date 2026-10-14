@@ -57,12 +57,14 @@ struct Budgets {
 
     /// Parses {"maxVisited":..,...}; throws RqlException(invalid-plan) on unknown keys / bad values.
     static Budgets from_json(const Json& j);
+    static bool try_from_json(const Json& j, Budgets& out, Diagnostic& error) noexcept;
 };
 
 struct QueryOptions {
     bool dry_run = false;
     bool allow_mutation = false;
     static QueryOptions from_json(const Json& j);
+    static bool try_from_json(const Json& j, QueryOptions& out, Diagnostic& error) noexcept;
 };
 
 enum class ResultKind : uint8_t { Rows, Items, Scalar, Schema };

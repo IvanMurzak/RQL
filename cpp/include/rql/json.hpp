@@ -82,7 +82,7 @@ public:
 
     /// max_depth bounds container nesting (hostile inputs cannot overflow the stack).
     static Json parse(std::string_view text, int max_depth = 512);  // throws JsonParseError
-    static bool try_parse(std::string_view text, Json& out, std::string& error, int max_depth = 512);
+    static bool try_parse(std::string_view text, Json& out, std::string& error, int max_depth = 512) noexcept;
 
 private:
     Type type_ = Type::Null;

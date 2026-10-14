@@ -21,6 +21,8 @@ struct Vec2 {
 
 struct Node {
     virtual ~Node() = default;
+    /// RTTI-free dynamic type for the provider (auto-detected by rql::TypeRegistry::wrap).
+    virtual rql::TypeKey rql_dynamic_type() const { return rql::type_key<Node>(); }
     int Id = 0;  // read-only for RQL (and the identity member)
     std::string Name;
     NodeKind Kind = NodeKind::Alpha;
@@ -36,6 +38,7 @@ struct Node {
 };
 
 struct Special : Node {
+    rql::TypeKey rql_dynamic_type() const override { return rql::type_key<Special>(); }
     int Power = 0;
 };
 

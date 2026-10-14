@@ -109,4 +109,24 @@ Json QueryResult::to_json(bool include_stats) const {
     return o;
 }
 
+namespace {
+template <class T>
+bool try_json(const Json& j, T& out, Diagnostic& error) noexcept {
+    try {
+        out = T::from_json(j);
+        return true;
+    } catch (const RqlException& ex) {
+        try {
+            error = Diagnostic::from(ex);
+        } catch (...) {
+        }
+    } catch (...) {
+    }
+    return false;
+}
+}  // namespace
+
+bool Budgets::try_from_json(const Json& j, Budgets& out, Diagnostic& error) noexcept { return try_json(j, out, error); }
+bool QueryOptions::try_from_json(const Json& j, QueryOptions& out, Diagnostic& error) noexcept { return try_json(j, out, error); }
+
 }  // namespace rql

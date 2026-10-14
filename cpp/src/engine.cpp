@@ -34,32 +34,53 @@ const char* kMethodNames[] = {"any", "all", "count", "sum", "min", "max", "avg",
 
 }  // namespace
 
-Engine& Engine::add_source(const std::string& name, std::function<Value()> getter, std::string description) {
-    validate_name(name, false);
-    for (auto& s : sources_) {
-        if (s.name == name) {
-            s.getter = std::move(getter);
-            s.description = std::move(description);
-            return *this;
+Engine& Engine::add_source(const std::string& name, std::function<Value()> getter, std::string description) noexcept {
+    try {
+        validate_name(name, false);
+        last_error_.clear();
+        for (auto& s : sources_) {
+            if (s.name == name) {
+                s.getter = std::move(getter);
+                s.description = std::move(description);
+                return *this;
+            }
         }
+        sources_.push_back({name, std::move(getter), std::move(description)});
+    } catch (const std::exception& ex) {
+        last_error_ = ex.what();
+    } catch (...) {
+        last_error_ = "add_source failed";
     }
-    sources_.push_back({name, std::move(getter), std::move(description)});
     return *this;
 }
 
-Engine& Engine::add_function(const std::string& name, FunctionHandler fn) {
-    validate_name(name, true);
-    functions_[name] = std::move(fn);
+Engine& Engine::add_function(const std::string& name, FunctionHandler fn) noexcept {
+    try {
+        validate_name(name, true);
+        last_error_.clear();
+        functions_[name] = std::move(fn);
+    } catch (const std::exception& ex) {
+        last_error_ = ex.what();
+    } catch (...) {
+        last_error_ = "add_function failed";
+    }
     return *this;
 }
 
-Engine& Engine::add_stage(const std::string& name, StageHandler handler) {
-    validate_name(name, true);
-    stages_[name] = std::move(handler);
+Engine& Engine::add_stage(const std::string& name, StageHandler handler) noexcept {
+    try {
+        validate_name(name, true);
+        last_error_.clear();
+        stages_[name] = std::move(handler);
+    } catch (const std::exception& ex) {
+        last_error_ = ex.what();
+    } catch (...) {
+        last_error_ = "add_stage failed";
+    }
     return *this;
 }
 
-const SourceRegistration* Engine::find_source(const std::string& name) const {
+const SourceRegistration* Engine::find_source(const std::string& name) const noexcept {
     for (auto& s : sources_)
         if (s.name == name) return &s;
     const SourceRegistration* hit = nullptr;
@@ -74,36 +95,68 @@ const SourceRegistration* Engine::find_source(const std::string& name) const {
 
 // ------------------------------------------------------------------ execution
 
-QueryResult Engine::execute(const QueryPlan& plan, const Budgets& budgets, const QueryOptions& options) {
-    detail::Exec x(*this, budgets, options, plan);
-    QueryResult r;
+namespace {
+QueryResult internal_error(const char* what) noexcept {
     try {
-        r = detail::run_pipeline(x);
-    } catch (const std::exception& ex) {
-        // Last line of defence: untrusted queries must never crash the host with a raw exception.
-        r = QueryResult::fail({Diagnostic::error("internal-error", std::string("internal error: ") + ex.what(),
-                                                 "this is an RQL runtime bug; please report the query")});
+        return QueryResult::fail({Diagnostic::error("internal-error", std::string("internal error: ") + what,
+                                                    "this is an RQL runtime bug or a throwing host callback; please report the query")});
     } catch (...) {
-        r = QueryResult::fail({Diagnostic::error("internal-error", "internal error: unknown exception",
-                                                 "this is an RQL runtime bug; please report the query")});
+        return QueryResult();  // ok=false, no diagnostics (allocation failure)
     }
-    r.stats.visited = x.visited;
-    r.stats.members_read = x.members_read;
-    r.stats.elapsed_ms = x.elapsed_ms();
-    return r;
+}
+}  // namespace
+
+QueryResult Engine::execute(const QueryPlan& plan, const Budgets& budgets, const QueryOptions& options) noexcept {
+    try {
+        if (!plan.source) return QueryResult::fail({Diagnostic::error("invalid-plan", "plan has no source")});
+        detail::Exec x(*this, budgets, options, plan);
+        QueryResult r;
+        try {
+            r = detail::run_pipeline(x);
+        } catch (const std::exception& ex) {
+            // Last line of defence: untrusted queries must never crash the host with a raw exception.
+            r = internal_error(ex.what());
+        } catch (...) {
+            r = internal_error("unknown exception");
+        }
+        r.stats.visited = x.visited;
+        r.stats.members_read = x.members_read;
+        r.stats.elapsed_ms = x.elapsed_ms();
+        return r;
+    } catch (const std::exception& ex) {
+        return internal_error(ex.what());
+    } catch (...) {
+        return internal_error("unknown exception");
+    }
 }
 
-QueryResult Engine::execute_json(const std::string& plan_json, const Budgets& budgets, const QueryOptions& options) {
+QueryResult Engine::execute_json(const std::string& plan_json, const Budgets& budgets, const QueryOptions& options) noexcept {
     QueryPlan plan;
-    try {
-        plan = decode_plan(std::string_view(plan_json));
-    } catch (const RqlException& ex) {
-        return QueryResult::fail({Diagnostic::from(ex)});
+    Diagnostic err;
+    if (!try_decode_plan(std::string_view(plan_json), plan, err)) {
+        try {
+            return QueryResult::fail({err});
+        } catch (...) {
+            return QueryResult();
+        }
     }
     return execute(plan, budgets, options);
 }
 
-QueryResult Engine::execute_request(const Json& req) {
+QueryResult Engine::execute_request(const std::string& request_json) noexcept {
+    Json req;
+    std::string error;
+    if (!Json::try_parse(request_json, req, error, 256)) {
+        try {
+            return QueryResult::fail({Diagnostic::error("invalid-plan", "request is not valid JSON: " + error)});
+        } catch (...) {
+            return QueryResult();
+        }
+    }
+    return execute_request(req);
+}
+
+QueryResult Engine::execute_request(const Json& req) noexcept {
     try {
         if (!req.is_object()) throw RqlException("invalid-plan", "request must be an object");
         for (size_t i = 0; i < req.size(); ++i) {
@@ -127,7 +180,15 @@ QueryResult Engine::execute_request(const Json& req) {
         QueryPlan p = decode_plan(*plan);
         return execute(p, b, o);
     } catch (const RqlException& ex) {
-        return QueryResult::fail({Diagnostic::from(ex)});
+        try {
+            return QueryResult::fail({Diagnostic::from(ex)});
+        } catch (...) {
+            return QueryResult();
+        }
+    } catch (const std::exception& ex) {
+        return internal_error(ex.what());
+    } catch (...) {
+        return internal_error("unknown exception");
     }
 }
 
@@ -150,13 +211,21 @@ int64_t Engine::handle_of(const Value& v) {
     return id;
 }
 
-void Engine::clear_session_handles() {
+void Engine::clear_session_handles() noexcept {
     std::lock_guard<std::mutex> lock(handle_mutex_);
     handles_.clear();
     handle_targets_.clear();
 }
 
-std::string Engine::ref_of(const Value& v) {
+std::string Engine::ref_of(const Value& v) noexcept {
+    try {
+        return ref_of_impl(v);
+    } catch (...) {
+        return "?";
+    }
+}
+
+std::string Engine::ref_of_impl(const Value& v) {
     if (v.is_object()) {
         const TypeDescriptor* t = v.type();
         if (const MemberDescriptor* idm = t->id_member()) {
@@ -243,6 +312,20 @@ Value Engine::search_sources(const std::string& type, const std::string& id, con
     return Value::missing();
 }
 
+Value Engine::resolve_ref(const std::string& reference, std::string& error) noexcept {
+    try {
+        return resolve_ref(reference, error, nullptr);
+    } catch (const std::exception& ex) {
+        try {
+            error = ex.what();
+        } catch (...) {
+        }
+        return Value::missing();
+    } catch (...) {
+        return Value::missing();
+    }
+}
+
 Value Engine::resolve_ref(const std::string& reference_in, std::string& error, detail::Exec* x) {
     std::string reference = reference_in;
     while (!reference.empty() && (reference.front() == ' ' || reference.front() == '\t')) reference.erase(reference.begin());
@@ -301,7 +384,15 @@ Value Engine::resolve_ref(const std::string& reference_in, std::string& error, d
 
 // ------------------------------------------------------------------ schema
 
-Json Engine::describe_type(const TypeDescriptor& t) const {
+Json Engine::describe_type(const TypeDescriptor& t) const noexcept {
+    try {
+        return describe_type_impl(t);
+    } catch (...) {
+        return Json();
+    }
+}
+
+Json Engine::describe_type_impl(const TypeDescriptor& t) const {
     Json o = Json::object();
     o.set("name", t.name);
     if (t.base) o.set("base", t.base->name);
@@ -333,7 +424,15 @@ Json Engine::describe_type(const TypeDescriptor& t) const {
     return o;
 }
 
-Json Engine::capabilities() {
+Json Engine::capabilities() noexcept {
+    try {
+        return capabilities_impl();
+    } catch (...) {
+        return Json();
+    }
+}
+
+Json Engine::capabilities_impl() {
     Json o = Json::object();
     o.set("rql", kRqlVersion);
     o.set("runtime", runtime_name);
@@ -382,7 +481,7 @@ Json Engine::capabilities() {
     limits.set("maxMutationTargets", mutations_.max_targets);
     o.set("limits", std::move(limits));
     Json types = Json::array();
-    for (auto* t : types_->registered()) types.push(describe_type(*t));
+    for (auto* t : types_->registered()) types.push(describe_type_impl(*t));
     o.set("types", std::move(types));
     return o;
 }

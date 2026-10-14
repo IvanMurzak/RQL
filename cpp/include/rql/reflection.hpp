@@ -24,8 +24,6 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
-#include <typeindex>
-#include <typeinfo>
 #include <tuple>
 #include <unordered_map>
 #include <utility>
@@ -35,6 +33,25 @@
 #include "rql/value.hpp"
 
 namespace rql {
+
+/// RTTI-free compile-time type key: the address of a per-type tag (unique per program image; in a
+/// multi-module build register and query types from the same module).
+using TypeKey = const void*;
+namespace detail {
+template <class T>
+struct TypeKeyTag {
+    static constexpr char id = 0;
+};
+/// Detects an optional `TypeKey rql_dynamic_type() const` (usually virtual) on a class.
+template <class T, class = void>
+struct has_rql_dynamic_type : std::false_type {};
+template <class T>
+struct has_rql_dynamic_type<T, std::void_t<decltype(std::declval<const T&>().rql_dynamic_type())>> : std::true_type {};
+}  // namespace detail
+template <class T>
+constexpr TypeKey type_key() noexcept {
+    return &detail::TypeKeyTag<std::remove_cv_t<T>>::id;
+}
 
 enum class TypeKind : uint8_t { Scalar, Enum, Object, Struct, List, Map };
 enum class ScalarKind : uint8_t { None, Bool, Integer, Single, Double, String, Any };
@@ -101,6 +118,12 @@ public:
     const TypeDescriptor* key = nullptr;      // map key
 
     std::function<std::shared_ptr<void>(const void*)> copy;  // struct copy
+
+    /// Native type key (class/enum descriptors).
+    TypeKey native_key = nullptr;
+    /// Optional dynamic-type hook for polymorphic hierarchies (no RTTI): given a pointer typed as THIS
+    /// descriptor's type, return the type key of the most-derived object. Inherited by subtypes.
+    std::function<TypeKey(void* self)> dynamic_key;
 
     /// Exact (ordinal) name first, then a unique case-insensitive match.
     const MemberDescriptor* find(const std::string& member) const;
@@ -175,10 +198,10 @@ public:
     /// Descriptor for a class/enum type (placeholder until registered).
     template <class T>
     TypeDescriptor* descriptor() {
-        return descriptor_for(std::type_index(typeid(std::remove_cv_t<T>)));
+        return descriptor_for(type_key<T>());
     }
-    TypeDescriptor* descriptor_for(std::type_index t);
-    const TypeDescriptor* find_native(std::type_index t) const;
+    TypeDescriptor* descriptor_for(TypeKey t);
+    const TypeDescriptor* find_native(TypeKey t) const;
     const TypeDescriptor* list_type(const TypeDescriptor* element, bool element_nullable);
     const TypeDescriptor* map_type(const TypeDescriptor* key, const TypeDescriptor* value, bool value_nullable);
     /// Registered object/struct/enum descriptors in registration order.
@@ -191,8 +214,20 @@ public:
         if (!p) return Value::null();
         TypeDescriptor* d = descriptor<U>();
         void* ptr = const_cast<void*>(static_cast<const void*>(p));
-        if constexpr (std::is_polymorphic_v<U>) {
-            const TypeDescriptor* dyn = find_native(std::type_index(typeid(*p)));
+        // Most-derived type without RTTI: a `rql_dynamic_type()` member, else the nearest dynamic_type hook.
+        TypeKey dyn_key = nullptr;
+        if constexpr (detail::has_rql_dynamic_type<U>::value) {
+            dyn_key = p->rql_dynamic_type();
+        } else {
+            for (const TypeDescriptor* t = d; t; t = t->base) {
+                if (t->dynamic_key) {
+                    if (void* bp = d->upcast(ptr, t)) dyn_key = t->dynamic_key(bp);
+                    break;
+                }
+            }
+        }
+        if (dyn_key && dyn_key != d->native_key) {
+            const TypeDescriptor* dyn = find_native(dyn_key);
             if (dyn && dyn != d && dyn->registered) {
                 if (void* down = dyn->downcast_from(d, ptr)) return finish_wrap(dyn, down, std::move(keep_alive));
             }
@@ -213,7 +248,7 @@ private:
     Value finish_wrap(const TypeDescriptor* d, void* p, std::shared_ptr<void> keep);
 
     std::deque<std::unique_ptr<TypeDescriptor>> owned_;
-    std::unordered_map<std::type_index, TypeDescriptor*> by_type_;
+    std::unordered_map<TypeKey, TypeDescriptor*> by_type_;
     std::vector<const TypeDescriptor*> order_;
     std::map<std::pair<const TypeDescriptor*, bool>, const TypeDescriptor*> lists_;
     std::map<std::tuple<const TypeDescriptor*, const TypeDescriptor*, bool>, const TypeDescriptor*> maps_;
@@ -657,6 +692,13 @@ public:
     /// Disable automatic id/display detection ("Id" / "Name").
     ClassBuilder& no_identity() { d_->id_name.clear(); d_->id_explicit = true; d_->display_name.clear(); d_->display_explicit = true; return *this; }
     ClassBuilder& also_is(std::string type_name) { d_->also_is.push_back(std::move(type_name)); return *this; }
+    /// Dynamic-type hook (RTTI-free polymorphism): f(const T&) returns rql::type_key<MostDerived>().
+    /// Not needed when T has a `TypeKey rql_dynamic_type() const` member.
+    template <class F>
+    ClassBuilder& dynamic_type(F f) {
+        d_->dynamic_key = [f](void* self) -> TypeKey { return f(*static_cast<const T*>(self)); };
+        return *this;
+    }
 
     /// Callable method (allowlisted for the `call` stage).
     template <class R, class C, class... A>
@@ -669,16 +711,30 @@ public:
         return add_method<R, A...>(std::move(name), [fn](T& t, A... a) -> R { return (t.*fn)(std::forward<A>(a)...); },
                                    std::move(param_names), std::move(description));
     }
+    template <class R, class C, class... A>
+    ClassBuilder& method(std::string name, R (C::*fn)(A...) noexcept, std::vector<std::string> param_names = {}, std::string description = {}) {
+        return add_method<R, A...>(std::move(name), [fn](T& t, A... a) -> R { return (t.*fn)(std::forward<A>(a)...); },
+                                   std::move(param_names), std::move(description));
+    }
+    template <class R, class C, class... A>
+    ClassBuilder& method(std::string name, R (C::*fn)(A...) const noexcept, std::vector<std::string> param_names = {}, std::string description = {}) {
+        return add_method<R, A...>(std::move(name), [fn](T& t, A... a) -> R { return (t.*fn)(std::forward<A>(a)...); },
+                                   std::move(param_names), std::move(description));
+    }
     /// Mark the last method as known but not callable (call → permission-denied).
-    ClassBuilder& not_callable() { d_->methods.back().callable = false; return *this; }
+    ClassBuilder& not_callable() {
+        if (!d_->methods.empty()) d_->methods.back().callable = false;
+        return *this;
+    }
 
 private:
     TypeRegistry* r_;
     TypeDescriptor* d_;
 
     MemberDescriptor& last() {
-        if (d_->members.empty()) throw std::logic_error("no member to modify");
-        return d_->members.back();
+        // Builder misuse (modifier before any member) must not throw: modify a scratch descriptor.
+        static thread_local MemberDescriptor scratch;
+        return d_->members.empty() ? scratch : d_->members.back();
     }
 
     void add(MemberDescriptor m) {
@@ -753,6 +809,7 @@ template <class T>
 ClassBuilder<T> TypeRegistry::object(std::string name) {
     static_assert(std::is_class_v<T>, "object<T> requires a class type");
     TypeDescriptor* d = descriptor<T>();
+    d->native_key = type_key<T>();
     d->name = std::move(name);
     d->friendly = d->name;
     d->kind = TypeKind::Object;
@@ -764,6 +821,7 @@ template <class T>
 ClassBuilder<T> TypeRegistry::structure(std::string name) {
     static_assert(std::is_class_v<T> && std::is_copy_constructible_v<T>, "structure<T> requires a copyable class type");
     TypeDescriptor* d = descriptor<T>();
+    d->native_key = type_key<T>();
     d->name = std::move(name);
     d->friendly = d->name;
     d->kind = TypeKind::Struct;
@@ -776,6 +834,7 @@ template <class T>
 EnumBuilder<T> TypeRegistry::enumeration(std::string name) {
     static_assert(std::is_enum_v<T>, "enumeration<T> requires an enum type");
     TypeDescriptor* d = descriptor<T>();
+    d->native_key = type_key<T>();
     d->name = std::move(name);
     d->friendly = d->name;
     d->kind = TypeKind::Enum;

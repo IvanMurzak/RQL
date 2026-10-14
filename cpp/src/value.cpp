@@ -211,7 +211,7 @@ std::string friendly_type_of(const Value& v) {
 
 Value snapshot(const Value& v) {
     if (v.is_list()) {
-        if (dynamic_cast<OwnedList*>(&v.list())) return v;
+        if (v.list().owned()) return v;
         std::vector<Value> items;
         auto& l = v.list();
         size_t n = l.size();
@@ -222,7 +222,7 @@ Value snapshot(const Value& v) {
         return out;
     }
     if (v.is_map()) {
-        if (dynamic_cast<OwnedMap*>(&v.map())) return v;
+        if (v.map().owned()) return v;
         std::vector<std::pair<Value, Value>> entries;
         v.map().for_each([&](const Value& k, const Value& val) {
             entries.emplace_back(k, snapshot(val));

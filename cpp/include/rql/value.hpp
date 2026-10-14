@@ -26,6 +26,8 @@ public:
     virtual const void* identity() const { return this; }
     virtual bool writable() const { return false; }
     virtual void set(size_t i, const Value& v);
+    /// True for runtime-owned lists (no live view into host data); used instead of RTTI.
+    virtual bool owned() const { return false; }
 };
 
 enum class MapLookup : uint8_t { BadKey, NotFound, Found };
@@ -45,6 +47,8 @@ public:
     virtual bool accepts_key(const Value& key) const;
     virtual void set(const Value& key, const Value& value);
     virtual void erase(const Value& key);
+    /// True for runtime-owned maps (no live view into host data); used instead of RTTI.
+    virtual bool owned() const { return false; }
 };
 
 struct ErrorInfo {
@@ -148,6 +152,7 @@ public:
     size_t size() const override { return items_.size(); }
     Value at(size_t i) const override { return items_[i]; }
     const TypeDescriptor* type() const override { return nullptr; }
+    bool owned() const override { return true; }
     const std::vector<Value>& items() const { return items_; }
 
 private:
@@ -162,6 +167,7 @@ public:
     void for_each(const std::function<bool(const Value&, const Value&)>& fn) const override;
     MapLookup find(const Value& key, Value& out) const override;
     const TypeDescriptor* type() const override { return type_; }
+    bool owned() const override { return true; }
     const std::vector<std::pair<Value, Value>>& entries() const { return entries_; }
 
 private:

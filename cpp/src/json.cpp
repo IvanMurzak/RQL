@@ -499,12 +499,17 @@ private:
 
 Json Json::parse(std::string_view text, int max_depth) { return Parser(text, max_depth).run(); }
 
-bool Json::try_parse(std::string_view text, Json& out, std::string& error, int max_depth) {
+bool Json::try_parse(std::string_view text, Json& out, std::string& error, int max_depth) noexcept {
     try {
         out = parse(text, max_depth);
         return true;
-    } catch (const JsonParseError& e) {
-        error = e.what();
+    } catch (const std::exception& e) {
+        try {
+            error = e.what();
+        } catch (...) {
+        }
+        return false;
+    } catch (...) {
         return false;
     }
 }

@@ -580,4 +580,34 @@ QueryPlan decode_plan(std::string_view json_text) {
     return decode_plan(j);
 }
 
+namespace {
+template <class F>
+bool try_decode(F f, QueryPlan& out, Diagnostic& error) noexcept {
+    try {
+        out = f();
+        return true;
+    } catch (const RqlException& ex) {
+        try {
+            error = Diagnostic::from(ex);
+        } catch (...) {
+        }
+    } catch (const std::exception& ex) {
+        try {
+            error = Diagnostic::error("invalid-plan", ex.what());
+        } catch (...) {
+        }
+    } catch (...) {
+    }
+    return false;
+}
+}  // namespace
+
+bool try_decode_plan(const Json& json, QueryPlan& out, Diagnostic& error) noexcept {
+    return try_decode([&] { return decode_plan(json); }, out, error);
+}
+
+bool try_decode_plan(std::string_view json_text, QueryPlan& out, Diagnostic& error) noexcept {
+    return try_decode([&] { return decode_plan(json_text); }, out, error);
+}
+
 }  // namespace rql
