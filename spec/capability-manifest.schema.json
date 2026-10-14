@@ -24,8 +24,9 @@
         "name": { "type": "string" },
         "base": { "type": "string" },
         "kind": { "enum": ["object", "struct", "enum"] },
+        "description": { "type": "string", "description": "host/adapter description, e.g. how to write literals of the type (spec §13)" },
         "values": { "type": "array", "items": { "type": "string" }, "description": "enum names" },
-        "members": { "type": "array", "items": { "type": "object", "required": ["name", "type"], "additionalProperties": false, "properties": { "name": { "type": "string" }, "type": { "type": "string" }, "writable": { "type": "boolean" } } } },
+        "members": { "type": "array", "items": { "type": "object", "required": ["name", "type"], "additionalProperties": false, "properties": { "name": { "type": "string" }, "type": { "type": "string" }, "writable": { "type": "boolean" }, "explicitOnly": { "type": "boolean", "description": "read only when a path names it (spec §13)" }, "description": { "type": "string" } } } },
         "methods": { "type": "array", "items": { "type": "string" } }
       }
     }

@@ -154,7 +154,7 @@ namespace Rql.Execution
                 var info = _x.Types.Info(t);
                 foreach (var m in info.Members)
                 {
-                    if (m.Member.DeclaringType != t) continue;
+                    if (m.DeclaringType != t) continue;
                     if (Holds(m.Type)) result.Add(info.ShortName + "." + m.Name);
                 }
             }
@@ -614,7 +614,7 @@ namespace Rql.Execution
             if (!info.IsObject) return;
             foreach (var m in info.Members)
             {
-                if (!m.Owning || TypeModel.IsScalarType(m.Type) || m.Type.IsValueType) continue;
+                if (!m.Owning || m.ExplicitOnly || TypeModel.IsScalarType(m.Type) || m.Type.IsValueType) continue;
                 object? cv;
                 _x.MembersRead++;
                 try { cv = m.Getter(v); }

@@ -49,6 +49,7 @@ namespace Rql.Execution
             {
                 var mo = new JsonObject { ["name"] = m.Name, ["type"] = TypeModel.FriendlyName(m.Type) };
                 if (showWritable && m.CanWrite) mo["writable"] = true;
+                if (m.ExplicitOnly) mo["explicitOnly"] = true;
                 if (m.Description != null) mo["description"] = m.Description;
                 members.Add(mo);
             }

@@ -69,7 +69,21 @@ namespace Rql.Execution
             Types = accessors == AccessorMode.Compiled ? TypeModel.Shared : new TypeModel(accessors);
         }
 
-        public TypeModel Types { get; }
+        public TypeModel Types { get; private set; }
+
+        /// <summary>
+        /// Register a type adapter (spec §13): virtual/hidden members, encoding, coercion, comparison, identity, liveness.
+        /// Register adapters before running queries; resolution order is deterministic (see <see cref="TypeModel.Explain"/>).
+        /// </summary>
+        public RqlEngine AddAdapter(RqlTypeAdapter adapter)
+        {
+            if (adapter == null) throw new ArgumentNullException(nameof(adapter));
+            if (ReferenceEquals(Types, TypeModel.Shared)) Types = new TypeModel(Types.Mode);
+            Types.AddAdapter(adapter);
+            _knownMembers = null;
+            return this;
+        }
+
         public EngineDefaults Defaults { get; } = new EngineDefaults();
         public MutationPolicy Mutations { get; } = new MutationPolicy();
         public string RuntimeName { get; set; } = "dotnet";
@@ -164,6 +178,8 @@ namespace Rql.Execution
         {
             var x = new Exec(this, budgets ?? new Budgets(), options ?? new QueryOptions(), plan);
             QueryResult result;
+            var outer = TypeModel.Active;
+            TypeModel.Active = Types;
             try
             {
                 result = new Pipeline(x).Run();
@@ -171,7 +187,11 @@ namespace Rql.Execution
             catch (Exception ex) when (!(ex is OutOfMemoryException))
             {
                 // Last line of defence: untrusted queries must never crash the host with a raw exception.
-                result = QueryResult.Fail(new[] { Diagnostic.Error("internal-error", $"{ex.GetType().Name}: {ex.Message}", "this is an RQL runtime bug; please report the query") });
+                result = QueryResult.Fail(new[] { Diagnostic.Error("internal-error", $"{ex.GetType().Name}: {ex.Message}", "this is an RQL runtime bug (or a host type adapter threw); please report the query") });
+            }
+            finally
+            {
+                TypeModel.Active = outer;
             }
             result.Stats.Visited = x.Visited;
             result.Stats.MembersRead = x.MembersRead;
@@ -193,9 +213,18 @@ namespace Rql.Execution
                 return Array.Empty<object?>();
             }
             var x = new Exec(this, budgets ?? new Budgets(), new QueryOptions(), plan);
-            var items = new Pipeline(x).LiveItems(x.MaxRows, out var diags);
-            diagnostics = diags;
-            return items;
+            var outer = TypeModel.Active;
+            TypeModel.Active = Types;
+            try
+            {
+                var items = new Pipeline(x).LiveItems(x.MaxRows, out var diags);
+                diagnostics = diags;
+                return items;
+            }
+            finally
+            {
+                TypeModel.Active = outer;
+            }
         }
 
         // ------------------------------------------------------------ references
@@ -204,13 +233,34 @@ namespace Rql.Execution
         public string RefOf(object o)
         {
             var info = Types.Info(o.GetType());
-            if (info.IdMember != null)
-            {
-                object? id;
-                try { id = info.IdMember.Getter(o); } catch { id = null; }
-                if (id != null) return info.ShortName + "#" + Convert.ToString(id, CultureInfo.InvariantCulture);
-            }
+            var id = StableIdOf(o, info);
+            if (id != null) return info.ShortName + "#" + id;
             return info.ShortName + "@" + HandleOf(o).ToString(CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>The "#id" part of a stable reference: adapter identity first, then the id member; null = none.</summary>
+        private static string? StableIdOf(object o, TypeInfo info)
+        {
+            foreach (var a in info.AdapterArray)
+            {
+                var sid = a.StableId(o);
+                if (sid != null) return sid;
+            }
+            if (info.IdMember == null) return null;
+            object? id;
+            try { id = info.IdMember.Getter(o); } catch { id = null; }
+            return id == null ? null : Convert.ToString(id, CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>Liveness: the first adapter verdict, else the host <see cref="IsAlive"/> hook, else alive.</summary>
+        internal bool Alive(object o)
+        {
+            foreach (var a in Types.Info(o.GetType()).AdapterArray)
+            {
+                var alive = a.IsAlive(o);
+                if (alive.HasValue) return alive.Value;
+            }
+            return IsAlive == null || IsAlive(o);
         }
 
         private long HandleOf(object o)
@@ -279,7 +329,7 @@ namespace Rql.Execution
                 error = $"reference '{reference}' does not resolve to a live object";
                 return null;
             }
-            if (IsAlive != null && !IsAlive(found))
+            if (!Alive(found))
             {
                 error = $"reference '{reference}' points to a destroyed object";
                 return null;
@@ -324,16 +374,11 @@ namespace Rql.Execution
                     continue;
                 }
                 if (!info.IsObject) continue;
-                if (info.IdMember != null && info.IsA(type))
-                {
-                    object? v;
-                    try { v = info.IdMember.Getter(o); } catch { v = null; }
-                    if (v != null && Convert.ToString(v, CultureInfo.InvariantCulture) == id) return o;
-                }
+                if (info.IsA(type) && StableIdOf(o, info) == id) return o;
                 if (depth >= 32) continue;
                 foreach (var m in info.Members)
                 {
-                    if (!m.Owning || TypeModel.IsScalarType(m.Type)) continue;
+                    if (!m.Owning || m.ExplicitOnly || TypeModel.IsScalarType(m.Type)) continue;
                     object? v;
                     try { v = m.Getter(o); } catch { continue; }
                     if (v != null && !v.GetType().IsValueType) stack.Push((v, depth + 1));

@@ -23,21 +23,66 @@ namespace Rql.Execution
         internal MemberAccessor(MemberInfo member, Type type, Func<object, object?> getter, bool canWrite, bool owning, int order)
         {
             Member = member; Name = member.Name; Type = type; Getter = getter; CanWrite = canWrite; Owning = owning; Order = order;
+            DeclaringType = member.DeclaringType!;
             Description = member.GetCustomAttribute<RqlDescriptionAttribute>()?.Text;
         }
 
+        private MemberAccessor(MemberAccessor m)
+        {
+            Member = m.Member; Name = m.Name; Type = m.Type; Getter = m.Getter; CanWrite = m.CanWrite; Owning = m.Owning; Order = m.Order;
+            DeclaringType = m.DeclaringType; Description = m.Description; ExplicitOnly = m.ExplicitOnly; Setter = m.Setter; Validate = m.Validate;
+        }
+
+        internal static MemberAccessor Virtual(string name, Type type, Type declaring, Func<object, object?> get, Action<object, object?>? set,
+            Func<object, object?, string?>? validate, string? description, bool owning, int order)
+        {
+            var m = new MemberAccessor(name, type, declaring, get, order)
+            {
+                Setter = set, CanWrite = set != null, Validate = validate, Description = description, Owning = owning,
+            };
+            return m;
+        }
+
+        private MemberAccessor(string name, Type type, Type declaring, Func<object, object?> get, int order)
+        {
+            Name = name; Type = type; DeclaringType = declaring; Getter = get; Order = order;
+        }
+
+        internal MemberAccessor With(bool? canWrite = null, bool? owning = null, bool? explicitOnly = null, string? description = null)
+        {
+            return new MemberAccessor(this)
+            {
+                CanWrite = canWrite ?? CanWrite,
+                Owning = owning ?? Owning,
+                ExplicitOnly = explicitOnly ?? ExplicitOnly,
+                Description = description ?? Description,
+            };
+        }
+
         public string Name { get; }
-        public MemberInfo Member { get; }
+        /// <summary>The reflected field/property; null for adapter-defined virtual members.</summary>
+        public MemberInfo? Member { get; }
+        public Type DeclaringType { get; }
         public Type Type { get; }
         public Func<object, object?> Getter { get; }
-        public bool CanWrite { get; }
+        public bool CanWrite { get; private set; }
         /// <summary>False for [RqlReference] members — not followed by generic recurse.</summary>
-        public bool Owning { get; }
+        public bool Owning { get; private set; }
+        /// <summary>Read only when a path names it: skipped by generic recurse, inline encoding and snapshots (spec §13).</summary>
+        public bool ExplicitOnly { get; private set; }
         public int Order { get; }
-        public string? Description { get; }
+        public string? Description { get; private set; }
+        public bool IsVirtual => Member == null;
+        internal Action<object, object?>? Setter { get; private set; }
+        /// <summary>Adapter validation of a coerced value before any write; returns a rejection reason or null.</summary>
+        internal Func<object, object?, string?>? Validate { get; private set; }
+
+        internal bool IsDefined(Type attribute) => Member != null && Member.IsDefined(attribute);
 
         public void SetValue(object target, object? value)
         {
+            if (Setter != null) { Setter(target, value); return; }
+            if (Member == null || !CanWriteReflected) throw new InvalidOperationException($"member '{Name}' is read-only");
             try
             {
                 if (Member is PropertyInfo p) p.SetValue(target, value);
@@ -48,6 +93,8 @@ namespace Rql.Execution
                 throw ex.InnerException;
             }
         }
+
+        private bool CanWriteReflected => Member is FieldInfo f ? !f.IsInitOnly && !f.IsLiteral : ((PropertyInfo)Member!).SetMethod != null;
     }
 
     public sealed class TypeInfo
@@ -69,6 +116,9 @@ namespace Rql.Execution
         public Type? KeyType { get; internal set; }
         internal Func<object, int>? CountGetter { get; set; }
         public IReadOnlyList<MethodInfo> Callable { get; internal set; } = Array.Empty<MethodInfo>();
+        /// <summary>Applicable type adapters, most specific first (spec §13).</summary>
+        public IReadOnlyList<RqlTypeAdapter> Adapters { get; internal set; } = Array.Empty<RqlTypeAdapter>();
+        internal RqlTypeAdapter[] AdapterArray = Array.Empty<RqlTypeAdapter>();
 
         public bool IsList => Kind == TypeKind.List;
         public bool IsMap => Kind == TypeKind.Map;
@@ -90,13 +140,38 @@ namespace Rql.Execution
     {
         public static readonly TypeModel Shared = new TypeModel(AccessorMode.Compiled);
 
+        /// <summary>The model of the query running on this thread (adapter-aware equality, ordering and coercion).</summary>
+        [ThreadStatic] internal static TypeModel? Active;
+
+        /// <summary>True once any engine registered an adapter: keeps the adapter-free hot paths to one static read.</summary>
+        internal static volatile bool AnyAdapters;
+
         private readonly ConcurrentDictionary<Type, TypeInfo> _cache = new ConcurrentDictionary<Type, TypeInfo>();
 
         private readonly Func<Type, TypeInfo> _build;
+        private readonly AdapterRegistry _adapters = new AdapterRegistry();
 
         public TypeModel(AccessorMode mode) { Mode = mode; _build = Build; }
 
         public AccessorMode Mode { get; }
+
+        internal bool HasAdapters => _adapters.Any;
+
+        /// <summary>
+        /// Register a type adapter (spec §13). Must not be called on <see cref="Shared"/>; engines own a model per adapter set.
+        /// Clears cached metadata, so register adapters before queries run.
+        /// </summary>
+        internal void AddAdapter(RqlTypeAdapter adapter)
+        {
+            if (ReferenceEquals(this, Shared)) throw new InvalidOperationException("the shared type model has no adapters");
+            _adapters.Add(adapter);
+            AnyAdapters = true;
+            _cache.Clear();
+        }
+
+        /// <summary>The ordered adapters applying to a type, most specific first, with their rank (diagnostics for hosts).</summary>
+        public IReadOnlyList<string> Explain(Type t) =>
+            _adapters.For(t).Select(a => $"{a.Name} (target {FriendlyName(a.Target)}, rank {AdapterRegistry.Rank(a.Target, t)}, priority {a.Priority})").ToList();
 
         public static TypeInfo Get(Type t) => Shared.Info(t);
 
@@ -117,11 +192,14 @@ namespace Rql.Execution
 
         private TypeInfo Build(Type t)
         {
+            var adapters = _adapters.For(t);
             var info = new TypeInfo(t)
             {
                 ShortName = ShortName(t),
                 FriendlyName = FriendlyName(t),
-                Description = t.GetCustomAttribute<RqlDescriptionAttribute>()?.Text,
+                Description = adapters.Select(a => a.Description).FirstOrDefault(d => d != null) ?? t.GetCustomAttribute<RqlDescriptionAttribute>()?.Text,
+                Adapters = adapters,
+                AdapterArray = adapters,
             };
 
             var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -163,11 +241,11 @@ namespace Rql.Execution
                 return info;
             }
 
-            BuildMembers(info, t);
+            BuildMembers(info, t, adapters);
             return info;
         }
 
-        private void BuildMembers(TypeInfo info, Type t)
+        private void BuildMembers(TypeInfo info, Type t, RqlTypeAdapter[] adapters)
         {
             var chain = new List<Type>();
             for (var b = t; b != null && b != typeof(object) && b != typeof(ValueType); b = b.BaseType) chain.Add(b);
@@ -198,30 +276,57 @@ namespace Rql.Execution
                 }
             }
 
+            if (adapters.Length > 0)
+            {
+                var table = new MemberTable(t, members, IncludeNonPublicFields);
+                for (int i = adapters.Length - 1; i >= 0; i--) adapters[i].ConfigureMembers(table);
+            }
+
             info.Members = members;
             info.ByName = members.ToDictionary(m => m.Name, StringComparer.Ordinal);
             var ci = new Dictionary<string, MemberAccessor?>(StringComparer.OrdinalIgnoreCase);
             foreach (var m in members) ci[m.Name] = ci.ContainsKey(m.Name) ? null : m;
             info.ByNameCI = ci;
 
-            info.IdMember = members.FirstOrDefault(m => m.Member.IsDefined(typeof(RqlIdAttribute)))
+            info.IdMember = members.FirstOrDefault(m => m.IsDefined(typeof(RqlIdAttribute)))
                             ?? members.FirstOrDefault(m => m.Name == "Id" && IsIdType(m.Type));
             // Stable identities never change through RQL (refs would silently break).
             if (info.IdMember != null && info.IdMember.CanWrite)
             {
                 var id = info.IdMember;
-                var ro = new MemberAccessor(id.Member, id.Type, id.Getter, false, id.Owning, id.Order);
+                var ro = id.With(canWrite: false);
                 members[members.IndexOf(id)] = ro;
                 info.ByName[ro.Name] = ro;
                 info.ByNameCI[ro.Name] = info.ByNameCI.TryGetValue(ro.Name, out var prev) && prev == null ? null : ro;
                 info.IdMember = ro;
             }
-            info.DisplayMember = members.FirstOrDefault(m => m.Member.IsDefined(typeof(RqlDisplayAttribute)))
+            info.DisplayMember = members.FirstOrDefault(m => m.IsDefined(typeof(RqlDisplayAttribute)))
                                  ?? members.FirstOrDefault(m => m.Name == "Name" && m.Type == typeof(string));
             info.Callable = t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
                 .Where(m => m.IsDefined(typeof(RqlCallableAttribute)) && !m.IsGenericMethodDefinition)
                 .OrderBy(m => m.Name, StringComparer.Ordinal)
                 .ToArray();
+        }
+
+        /// <summary>Adds non-public instance fields of the type chain matching <paramref name="include"/> (MemberTable.IncludeFields).</summary>
+        private void IncludeNonPublicFields(Type t, List<MemberAccessor> members, Func<FieldInfo, bool> include)
+        {
+            var chain = new List<Type>();
+            for (var b = t; b != null && b != typeof(object) && b != typeof(ValueType); b = b.BaseType) chain.Add(b);
+            chain.Reverse();
+            int order = members.Count == 0 ? 0 : members.Max(m => m.Order) + 1;
+            const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+            foreach (var decl in chain)
+            {
+                foreach (var f in decl.GetFields(flags).OrderBy(f => f.MetadataToken))
+                {
+                    // Compiler-generated backing fields ("<Name>k__BackingField") are never members.
+                    if (f.Name.IndexOf('<') >= 0 || f.FieldType.IsByRefLike || IsDelegate(f.FieldType) || f.IsDefined(typeof(RqlIgnoreAttribute))) continue;
+                    if (members.Any(m => m.Name == f.Name) || !include(f)) continue;
+                    bool canWrite = !f.IsInitOnly && !f.IsLiteral && !f.IsDefined(typeof(RqlReadOnlyAttribute));
+                    members.Add(new MemberAccessor(f, f.FieldType, MakeGetter(f), canWrite, !f.IsDefined(typeof(RqlReferenceAttribute)), order++));
+                }
+            }
         }
 
         private static bool IsIdType(Type t)
@@ -232,9 +337,18 @@ namespace Rql.Execution
 
         private static bool IsDelegate(Type t) => typeof(Delegate).IsAssignableFrom(t);
 
+        // Compiled getters depend only on the member, so every model (one per engine with adapters) shares them.
+        private static readonly ConcurrentDictionary<MemberInfo, Func<object, object?>> CompiledGetters =
+            new ConcurrentDictionary<MemberInfo, Func<object, object?>>();
+
         private Func<object, object?> MakeGetter(MemberInfo m)
         {
-            if (Mode == AccessorMode.Compiled)
+            if (Mode == AccessorMode.Compiled) return CompiledGetters.GetOrAdd(m, Compile);
+            return ReflectionGetter(m);
+        }
+
+        private static Func<object, object?> Compile(MemberInfo m)
+        {
             {
                 try
                 {
@@ -249,6 +363,11 @@ namespace Rql.Execution
                 catch (NotSupportedException) { }
                 catch (InvalidOperationException) { }
             }
+            return ReflectionGetter(m);
+        }
+
+        private static Func<object, object?> ReflectionGetter(MemberInfo m)
+        {
             if (m is PropertyInfo pi)
             {
                 return o =>

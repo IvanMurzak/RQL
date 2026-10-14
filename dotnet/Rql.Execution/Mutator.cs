@@ -81,6 +81,8 @@ namespace Rql.Execution
                         throw new RqlException(slot.DenyCode, $"'{label}' on {_x.Engine.RefOf(item)} is not writable{slot.DenyReason}");
                     if (!Coerce.TryTo(nv, slot.Type, out var coerced, out var why))
                         throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' ({TypeModel.FriendlyName(slot.Type)}): {why}");
+                    if (slot is MemberSlot ms && ms.M.Validate != null && ms.M.Validate(container, coerced) is string rejected)
+                        throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' on {_x.Engine.RefOf(item)}: {rejected}");
                     writes.Add(new PlannedWrite { Item = item, Segments = target.Segments, Label = label, Old = SafeGet(slot, container, label), New = coerced });
                 }
             }
@@ -364,6 +366,25 @@ namespace Rql.Execution
             }
             if (under != null) target = under;
             if (target == typeof(object) || target.IsInstanceOfType(v)) { result = v; return true; }
+
+            var model = TypeModel.Active;
+            if (model != null && model.HasAdapters)
+            {
+                foreach (var ad in model.Info(target).AdapterArray)
+                {
+                    switch (ad.TryCoerce(v, target, out var adapted, out var reason))
+                    {
+                        case AdapterOutcome.Ok:
+                            if (adapted != null && !target.IsInstanceOfType(adapted))
+                                throw new InvalidOperationException($"adapter {ad.Name} coerced to {adapted.GetType().Name}, not {target.Name}");
+                            result = adapted;
+                            return true;
+                        case AdapterOutcome.Failed:
+                            why = reason ?? "rejected by " + ad.Name;
+                            return false;
+                    }
+                }
+            }
 
             if (target.IsEnum)
             {

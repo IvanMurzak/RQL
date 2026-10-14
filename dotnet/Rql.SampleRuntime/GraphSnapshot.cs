@@ -65,6 +65,7 @@ namespace Rql.Sample
             into[path] = info.IsObject ? "obj " + info.ShortName : "struct " + info.ShortName;
             foreach (var m in info.Members)
             {
+                if (m.ExplicitOnly) continue;
                 object? mv;
                 try { mv = m.Getter(v); } catch (Exception ex) { into[path + "." + m.Name] = "throws " + ex.GetType().Name; continue; }
                 if (!m.Owning)

@@ -55,6 +55,19 @@ namespace Rql.Execution
 
         public JsonNode? Encode(object? v, int depth = 0)
         {
+            if (v != null && _x.Types.HasAdapters && !(v is Missing || v is Unknown || v is RqlError || v is RowValue || v is MapEntry))
+            {
+                var adapters = _x.Types.Info(v.GetType()).AdapterArray;
+                if (adapters.Length > 0)
+                {
+                    var ctx = new EncodeContext(Encode, o => Summary(o, _x.Types.Info(o.GetType())), depth);
+                    foreach (var a in adapters)
+                    {
+                        var n = a.Encode(v, ctx);
+                        if (n != null) return n;
+                    }
+                }
+            }
             switch (v)
             {
                 case null:
@@ -133,6 +146,7 @@ namespace Rql.Execution
                     var obj = new JsonObject();
                     foreach (var m in info.Members)
                     {
+                        if (m.ExplicitOnly) continue;
                         object? mv;
                         try { mv = m.Getter(v); } catch (Exception ex) { mv = new RqlError("getter-threw", ex.Message); }
                         obj[m.Name] = Encode(mv, depth + 1);
@@ -156,6 +170,7 @@ namespace Rql.Execution
             var obj = new JsonObject();
             foreach (var m in info.Members)
             {
+                if (m.ExplicitOnly) continue;
                 object? mv;
                 try { mv = m.Getter(o); } catch (Exception ex) { mv = new RqlError("getter-threw", ex.Message); }
                 if (mv != null && !(mv is string) && !(mv is RqlError) && !(mv is Missing))

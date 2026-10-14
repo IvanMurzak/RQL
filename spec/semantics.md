@@ -312,3 +312,36 @@ Recorded from the TypeScript and C++ ports (`typescript/SPEC-QUESTIONS.md`, `cpp
 | List assignment | Uses the runtime's natural semantics (alias in .NET/JS, copy in C++). Portable callers must not rely on aliasing. |
 | Extension stages | SHOULD be lazy (pull-based) so `first` bounds work; a runtime whose extension contract materializes input must say so. |
 | `maxOutputBytes` | Advisory size budget in UTF-8 bytes of the compact JSON encoding; runtimes may approximate within ±10%. |
+
+## 13. Type adapters (host extension, normative behaviour)
+
+Hosts customise how a runtime type is **read, shown, written and compared** with *type adapters*. Adapters change the
+reflection model and value semantics; they never change the language or the plan format, so plans stay portable.
+
+**Applicability and order.** An adapter targets an exact type, a base class (applies to subclasses), an interface, or
+an open generic type (e.g. `List<>`). For a runtime type, every applicable adapter participates, ordered by specificity:
+walking the base chain from the type itself, at each level the closed type before its open generic definition (so
+`List<int>`, then `List<>`, then `object`); then interfaces; then open generic interfaces. Ties are broken by the
+adapter's priority (higher first), then registration order — never by an unspecified order. Runtimes SHOULD expose an
+"explain" call listing the ordered adapters for a type. Runtimes without nominal generics (TypeScript, C++ without
+templates in the reflection layer) only implement the exact / base / interface tiers they can express.
+
+**Capabilities** (each optional; an adapter that does not implement one defers to the next adapter, then to the default):
+
+| Capability | Contract |
+|---|---|
+| Members | Applied from the least to the most specific adapter, so a subclass adapter refines a base adapter. Can **add** virtual members (name, declared type, getter, optional setter with validation, description), **hide** members, keep **only** a whitelist, include **non-public fields** by predicate (e.g. Unity `[SerializeField]`), mark members read-only, non-owning reference, or **explicit-only** (never read implicitly: not by generic `recurse`, inline encoding, ref search or snapshots — only when a path names it; `describe` lists it with `"explicitOnly": true`). Hidden members are unreadable AND unwritable (reads → `unknown-member` warning, writes → `unknown-member` error). Virtual members are non-owning by default (computed values are not structural children). Configuring a member that does not exist is a host bug and fails the query with `internal-error`. |
+| Encode | Replace the output encoding of values of the type (first adapter that encodes wins). |
+| Coerce | Convert a value supplied by a query (literal, list, other type) to the type on writes (`set`, `call` arguments). Values already of the target type bypass it. A failure carries a reason → `coercion-failed`, reason in the message. |
+| Compare | Equality and/or ordering of a value of the type with any other value (first adapter of the left operand that answers wins, then of the right operand with the result mirrored). An adapter typically coerces the other operand, so `Pos == "(1, -1)"` works. |
+| Identity / liveness | Stable id for `$ref`, resolution of `Type#id`, and an `IsAlive` verdict (destroyed objects → `stale-ref`). |
+| Describe | A one-line description of the type for schemas and `describe`, e.g. how to write literals. |
+
+Writes through adapter members keep the all-or-nothing guarantee: old values are read through the member getter before
+any write and restored through its setter on failure, so a virtual setter MUST round-trip its getter (`set(get())`
+restores the state). Validation runs while the mutation is planned, before any write, and rejects with a reason
+(→ `coercion-failed`); a setter that throws at write time triggers the rollback. Virtual setters on value types are
+rejected at configuration (they would write to a copy).
+
+**Conformance.** `fixtures/adapters/cases.json` specifies a test adapter set over the conformance graph that every runtime
+implements in its test harness (see the file's `adapters` section); its cases must pass in every runtime.

@@ -53,6 +53,7 @@ namespace Rql.Conformance
             NegativeSyntax(regen);
             NegativePlans();
             Execution(regen);
+            Adapters(regen);
         }
 
         // ------------------------------------------------------------ syntax / codec
@@ -124,15 +125,24 @@ namespace Rql.Conformance
             return e;
         }
 
-        public void Execution(bool regen)
+        public void Execution(bool regen) => Cases(regen, F("execution/cases.json"), NewEngine);
+
+        /// <summary>Spec §13 cases: the same graph with the fixture's test adapter set registered.</summary>
+        public void Adapters(bool regen) => Cases(regen, F("adapters/cases.json"), g =>
         {
-            var path = F("execution/cases.json");
+            var e = NewEngine(g);
+            TestAdapters.Register(e);
+            return e;
+        });
+
+        private void Cases(bool regen, string path, Func<Graph, RqlEngine> newEngine)
+        {
             var doc = Load(path);
             var graphPath = F("cross-runtime/graph.json");
             foreach (var c in doc["cases"]!.AsArray().Select(n => n!.AsObject()))
             {
                 var name = c["name"]!.GetValue<string>();
-                var engine = NewEngine(GraphLoader.Load(graphPath));
+                var engine = newEngine(GraphLoader.Load(graphPath));
                 var budgets = c["budgets"] is JsonObject bj ? Budgets.FromJson(JsonDocument.Parse(bj.ToJsonString()).RootElement) : null;
                 var options = new QueryOptions();
                 if (c["options"] is JsonObject oj)

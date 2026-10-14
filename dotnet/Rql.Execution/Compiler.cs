@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 
 namespace Rql.Execution
@@ -477,6 +478,7 @@ namespace Rql.Execution
         {
             if (V.IsAbsent(a) || V.IsAbsent(b)) return null;
             if (a == null || b == null) return a == null && b == null;
+            if (TypeModel.AnyAdapters && AdapterEqual(a, b) is bool adapted) return adapted;
             if (V.TryNumber(a, out var da, out var sa))
             {
                 if (V.TryNumber(b, out var db, out var sb))
@@ -503,6 +505,26 @@ namespace Rql.Execution
             return ReferenceEquals(a, b);
         }
 
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool? AdapterEqual(object a, object b)
+        {
+            var model = TypeModel.Active;
+            if (model == null || !model.HasAdapters) return null;
+            foreach (var ad in model.Info(a.GetType()).AdapterArray) { var r = ad.AreEqual(a, b); if (r.HasValue) return r; }
+            foreach (var ad in model.Info(b.GetType()).AdapterArray) { var r = ad.AreEqual(b, a); if (r.HasValue) return r; }
+            return null;
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static int? AdapterCompare(object a, object b)
+        {
+            var model = TypeModel.Active;
+            if (model == null || !model.HasAdapters) return null;
+            foreach (var ad in model.Info(a.GetType()).AdapterArray) { var r = ad.Compare(a, b); if (r.HasValue) return Math.Sign(r.Value); }
+            foreach (var ad in model.Info(b.GetType()).AdapterArray) { var r = ad.Compare(b, a); if (r.HasValue) return -Math.Sign(r.Value); }
+            return null;
+        }
+
         private static bool? EnumEqual(Enum e, object? other)
         {
             if (other is string s) return string.Equals(e.ToString(), s, StringComparison.OrdinalIgnoreCase);
@@ -515,6 +537,7 @@ namespace Rql.Execution
         internal static int? Compare(object? a, object? b)
         {
             if (a == null || b == null || V.IsAbsent(a) || V.IsAbsent(b)) return null;
+            if (TypeModel.AnyAdapters && AdapterCompare(a, b) is int adapted) return adapted;
             if (V.TryNumber(a, out var da, out var sa))
             {
                 if (V.TryNumber(b, out var db, out var sb))

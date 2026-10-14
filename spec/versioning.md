@@ -23,3 +23,7 @@
   carry `includeSelf: false`) — evidence: E6/E9 agents repeatedly lost the start items (`X.Dependencies | recurse Dependencies`).
 * `$type`/`$ref` on lists map over elements; `==` on lists/maps is unknown; integral doubles accepted for
   integer plan/budget fields; ASCII-only digits in text; portability decisions (§12).
+* Type adapters (§13): host extensions for members (virtual / hidden / only / non-public fields / read-only /
+  reference / explicit-only), encoding, coercion, comparison, identity and liveness, with deterministic resolution
+  order; golden vectors in `fixtures/adapters/cases.json`. No grammar or plan change. Capability manifest type
+  descriptors gain `description` and member `explicitOnly` / `description`.
