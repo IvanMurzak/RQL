@@ -69,6 +69,9 @@ struct MemberDescriptor {
     Setter setter;           // empty: not writable
     std::function<bool()> assignable;  // optional runtime check (e.g. owning pointers are never assignable)
     std::string description;
+    bool explicit_only = false;  // read only when a path names it (adapters, spec §13)
+    /// Adapter validation before any write: returns a rejection reason, empty = accept.
+    std::function<std::string(void* self, const Value& value)> validate;
 
     bool has_setter() const { return setter && !readonly && (!assignable || assignable()); }
 };
@@ -135,8 +138,11 @@ public:
     /// Convert a pointer typed as `base_type` (a base of this) to this type; nullptr if unrelated.
     void* downcast_from(const TypeDescriptor* base_type, void* p) const;
 
-    const MemberDescriptor* id_member() const;       // [explicit] or "Id" of integer/string type
-    const MemberDescriptor* display_member() const;  // [explicit] or "Name" of string type
+    const MemberDescriptor* id_member() const { return id_member_in(members); }  // [explicit] or "Id" of integer/string type
+    const MemberDescriptor* display_member() const { return display_member_in(members); }  // [explicit] or "Name" of string type
+    /// Same rules applied to another (e.g. adapter-shaped) member list of this type.
+    const MemberDescriptor* id_member_in(const std::vector<MemberDescriptor>& list) const;
+    const MemberDescriptor* display_member_in(const std::vector<MemberDescriptor>& list) const;
     /// Identity members are always read-only through RQL.
     bool member_writable(const MemberDescriptor& m) const { return m.has_setter() && &m != id_member(); }
 

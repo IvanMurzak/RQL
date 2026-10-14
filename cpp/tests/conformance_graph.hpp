@@ -32,7 +32,8 @@ struct Node {
     Vec2 Pos;
     std::vector<std::string> Tags;
     std::map<std::string, double> Props;
-    std::vector<std::unique_ptr<Node>> Children;
+    // shared_ptr (not unique_ptr): the member is assignable, as in the .NET reference (List<Node> has a setter).
+    std::vector<std::shared_ptr<Node>> Children;
     Node* Parent = nullptr;  // reference (non-owning)
     Node* Peer = nullptr;    // reference (non-owning)
 };
@@ -52,6 +53,8 @@ struct Graph {
 };
 
 void register_types(rql::TypeRegistry& reg);
+/// The spec §13 test adapter set (fixtures/adapters/cases.json "adapters").
+void register_test_adapters(rql::Engine& engine, rql::TypeRegistry& reg);
 std::unique_ptr<Graph> load_graph(const std::string& graph_json_path);
 std::string read_file(const std::string& path);
 

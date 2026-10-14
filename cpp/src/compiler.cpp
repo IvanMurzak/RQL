@@ -150,9 +150,28 @@ bool same_identity(const Value& a, const Value& b) {
 
 }  // namespace
 
+namespace {
+/// Adapters of a value's type for the running engine (spec §13), or null when none apply.
+const std::vector<const TypeAdapter*>* adapters_of(const Value& v) {
+    Engine* e = active_engine();
+    if (!e || !e->has_adapters() || !v.type() || v.is_row() || v.is_entry()) return nullptr;
+    const auto& list = e->view(v.type()).adapters;
+    return list.empty() ? nullptr : &list;
+}
+}  // namespace
+
 std::optional<bool> rql_equal(const Value& a, const Value& b) {
     if (a.is_absent() || b.is_absent()) return std::nullopt;
     if (a.is_null() || b.is_null()) return a.is_null() && b.is_null();
+    // Adapters of the left operand first, then of the right operand (spec §13).
+    if (auto* la = adapters_of(a))
+        for (auto* ad : *la)
+            if (ad->equals)
+                if (auto r = ad->equals(a, b)) return r;
+    if (auto* ra = adapters_of(b))
+        for (auto* ad : *ra)
+            if (ad->equals)
+                if (auto r = ad->equals(b, a)) return r;
     if (a.is_number()) {
         if (b.is_number()) {
             if (a.is_single() || b.is_single())
@@ -174,6 +193,16 @@ std::optional<bool> rql_equal(const Value& a, const Value& b) {
 
 std::optional<int> rql_compare(const Value& a, const Value& b) {
     if (a.is_null() || b.is_null() || a.is_absent() || b.is_absent()) return std::nullopt;
+    // Adapters of the left operand first, then of the right operand with the result mirrored (spec §13).
+    auto sign = [](int c) { return c < 0 ? -1 : (c > 0 ? 1 : 0); };
+    if (auto* la = adapters_of(a))
+        for (auto* ad : *la)
+            if (ad->compare)
+                if (auto r = ad->compare(a, b)) return sign(*r);
+    if (auto* ra = adapters_of(b))
+        for (auto* ad : *ra)
+            if (ad->compare)
+                if (auto r = ad->compare(b, a)) return -sign(*r);
     if (a.is_number()) {
         if (b.is_number()) {
             if (a.is_single() || b.is_single())
@@ -407,7 +436,7 @@ Value member_of(Exec& x, const Value& v, MemberSite& site) {
             if (t == site.cached_type) {
                 m = site.cached_member;
             } else {
-                m = t->find(site.name);
+                m = x.view(t).find(site.name);
                 if (!m && v.is_entry()) return member_of(x, v.entry().value, site);  // spec §4.4 delegation
                 if (!m) {
                     note_miss(site, t);

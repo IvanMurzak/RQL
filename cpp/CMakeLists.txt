@@ -37,7 +37,7 @@ endif()
 
 set(RQL_SOURCES
   src/json.cpp src/codec.cpp src/result.cpp src/value.cpp src/reflection.cpp
-  src/compiler.cpp src/pipeline.cpp src/encoder.cpp src/mutator.cpp src/engine.cpp)
+  src/compiler.cpp src/pipeline.cpp src/encoder.cpp src/mutator.cpp src/engine.cpp src/adapters.cpp)
 
 # rql_add_library(<target> <no_rtti:ON|OFF>)
 function(rql_add_library target no_rtti)

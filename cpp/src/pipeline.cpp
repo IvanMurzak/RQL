@@ -572,8 +572,8 @@ private:
             return;
         }
         if (!v.is_object()) return;
-        for (auto& m : v.type()->members) {
-            if (!m.owning || !m.type) continue;
+        for (auto& m : x_.view(v.type()).members) {
+            if (!m.owning || m.explicit_only || !m.type) continue;
             if (m.type->kind == TypeKind::Enum || m.type->kind == TypeKind::Struct) continue;
             if (m.type->kind == TypeKind::Scalar && m.type->scalar != ScalarKind::Any) continue;
             Value cv;
@@ -839,7 +839,7 @@ std::vector<const TypeDescriptor*> reachable_types(Exec& x, std::vector<std::pai
         }
         if (t->kind == TypeKind::Scalar) continue;
         types.push_back(t);
-        for (auto& m : t->members) queue.push_back(m.type);
+        for (auto& m : x.view(t).members) queue.push_back(m.type);
         if (t->kind == TypeKind::Object)
             for (auto* sub : registered)
                 if (sub != t && sub->derives_from(t)) queue.push_back(sub);
@@ -869,9 +869,8 @@ std::vector<std::string> holders(Exec& x, const std::string& type_name) {
     for (auto& r : roots)
         if (holds(r.second)) add("source " + r.first);
     for (auto* t : types) {
-        for (size_t i = 0; i < t->members.size(); ++i) {
-            const MemberDescriptor& m = t->members[i];
-            if (t->base && t->base->find(m.name)) continue;  // declared on the base
+        for (auto& m : x.view(t).members) {
+            if (t->base && x.view(t->base).find(m.name)) continue;  // declared on the base
             if (holds(m.type)) add(t->name + "." + m.name);
         }
     }
@@ -909,7 +908,7 @@ void add_warnings(Exec& x, QueryResult& r, bool only_general) {
             known_ready = true;
             known = {"key", "value", "count", "Count", "Length"};
             for (auto* t : reachable_types(x, nullptr))
-                for (auto& m : t->members) known.push_back(m.name);
+                for (auto& m : x.view(t).members) known.push_back(m.name);
             for (auto& st : x.plan.stages)
                 if (st.kind == StageKind::Select)
                     for (auto& f : st.fields) known.push_back(f.name);
@@ -942,7 +941,7 @@ void add_warnings(Exec& x, QueryResult& r, bool only_general) {
         for (auto* t : site.miss_types) {
             if (type_names.size() < 4 && std::find(type_names.begin(), type_names.end(), t->name) == type_names.end())
                 type_names.push_back(t->name);
-            for (auto& m : t->members)
+            for (auto& m : x.view(t).members)
                 if (std::find(candidates.begin(), candidates.end(), m.name) == candidates.end()) candidates.push_back(m.name);
         }
         auto close = suggest_closest(site.name, candidates, 3);

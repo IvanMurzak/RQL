@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "rql/adapters.hpp"
 #include "rql/codec.hpp"
 #include "rql/plan.hpp"
 #include "rql/reflection.hpp"
@@ -94,6 +95,20 @@ public:
     Engine& add_function(const std::string& name, FunctionHandler fn) noexcept;
     /// Namespaced extension stage "ns.stage".
     Engine& add_stage(const std::string& name, StageHandler handler) noexcept;
+    /// Register a type adapter (spec §13). Register adapters before running queries (not concurrently
+    /// with them). An adapter without a target or interface name is rejected via last_error().
+    Engine& add_adapter(TypeAdapter adapter) noexcept;
+    /// Ordered adapters applying to a type, most specific first: "name (target T, rank r, priority p)".
+    std::vector<std::string> explain(const TypeDescriptor& type) const noexcept;
+    bool has_adapters() const noexcept { return !adapters_.empty(); }
+    /// Internal: adapted view of a type for this engine (cached). Throws std::logic_error for adapter
+    /// configuration bugs (the running query then fails with internal-error).
+    const TypeView& view(const TypeDescriptor* type) const;
+    /// Liveness: first adapter verdict, else the is_alive hook, else alive.
+    bool alive(const Value& object);
+    /// "#id" part of a stable reference: adapter stable_id first, then the id member; nullopt = none.
+    std::optional<std::string> stable_id_of(const Value& object);
+
     /// Last registration error (empty when the last registration succeeded).
     const std::string& last_error() const noexcept { return last_error_; }
 
@@ -150,6 +165,10 @@ private:
     std::unordered_map<int64_t, HandleTarget> handle_targets_;
     int64_t next_handle_ = 0;
     std::string last_error_;
+    std::vector<std::unique_ptr<TypeAdapter>> adapters_;
+    mutable std::mutex view_mutex_;
+    mutable std::unordered_map<const TypeDescriptor*, std::unique_ptr<TypeView>> views_;
+    mutable std::vector<std::unique_ptr<TypeView>> retired_views_;  // kept alive after add_adapter invalidation
 
     int64_t handle_of(const Value& v);
     Value search_sources(const std::string& type, const std::string& id, const Value* identity, detail::Exec* x);

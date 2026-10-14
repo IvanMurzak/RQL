@@ -8,7 +8,7 @@
 | M3 measurement + DeepSeek evals | done | Tier A bench, Tier B runner, baseline + 9 experiments, reports, spend ledger |
 | M4 safe mutations + experiments | done | `set`/`call`, dry-run, receipts, all-or-nothing, limits; mutation tasks graded by state diff |
 | M5 TS/C++ parity | done for all fixture-covered features | `docs/feature-matrix.md` |
-| Type adapters (spec §13) | done in .NET; TS/C++ parity in progress | `docs/type-adapters.md`, `fixtures/adapters/cases.json` |
+| Type adapters (spec §13) | done in .NET, TS, C++ (C++: no non-public field inclusion) | `docs/type-adapters.md`, `fixtures/adapters/cases.json` |
 | M6 integration design | design only | `docs/architecture.md` §Integration path; no sibling repo modified |
 
 ## Next (prioritized)

@@ -1,5 +1,6 @@
 // Permissioned, all-or-nothing `set` / `call` (spec §8). Mirrors dotnet/Rql.Execution/Mutator.cs.
 #include <cmath>
+#include <stdexcept>
 
 #include "exec.hpp"
 
@@ -57,6 +58,7 @@ struct Slot {
     enum Kind { Member, ListIndex, MapKey } kind = Member;
     const MemberDescriptor* member = nullptr;
     const TypeDescriptor* owner = nullptr;
+    const TypeView* view = nullptr;
     int64_t index = 0;
     Value key;
     const TypeDescriptor* type = nullptr;
@@ -145,19 +147,20 @@ Slot slot_of(Exec& x, const Value& container, const Segment& seg, const std::str
     else if (seg.kind == SegmentKind::Key && seg.key.type == Literal::Type::String) name = seg.key.s;
     else throw RqlException("invalid-plan", "'" + label + "': invalid segment " + seg.to_string() + " on " + type_name);
     const TypeDescriptor* t = (container.is_object() || container.is_struct()) ? container.type() : nullptr;
-    const MemberDescriptor* m = t ? t->find(name) : nullptr;
+    const TypeView* tv = t ? &x.view(t) : nullptr;
+    const MemberDescriptor* m = tv ? tv->find(name) : nullptr;  // hidden members are unwritable (spec §13)
     if (!m) {
         std::vector<std::string> names;
-        if (t)
-            for (auto& mm : t->members) names.push_back(mm.name);
+        if (tv)
+            for (auto& mm : tv->members) names.push_back(mm.name);
         auto close = suggest_closest(name, names, 3);
         throw RqlException("unknown-member", "no member '" + name + "' on " + type_name,
                            !close.empty() ? "did you mean " + join(close, " / ") + "?" : "members: " + join(names, " "));
     }
-    (void)x;
     s.kind = Slot::Member;
     s.member = m;
     s.owner = t;
+    s.view = tv;
     s.type = m->type;
     s.nullable = m->nullable;
     return s;
@@ -174,7 +177,7 @@ Value safe_get(const Slot& slot, const Value& container, const std::string& labe
 /// Member slots must be writable and allowed by policy; list/map slots were checked by slot_of.
 void check_writable(Exec& x, const Slot& slot, const std::string& label, const Value& root, const std::string& what) {
     if (slot.kind != Slot::Member) return;
-    if (!slot.owner->member_writable(*slot.member))
+    if (!slot.view->member_writable(*slot.member))
         throw RqlException("readonly-member", "'" + label + "' on " + x.engine.ref_of(root) + " is not writable" + what + " (read-only member)");
     auto& policy = x.engine.mutations().can_write;
     if (policy && !policy(*slot.owner, *slot.member))
@@ -247,6 +250,33 @@ std::optional<Value> coerce(const Value& v, const TypeDescriptor* target, bool n
         return std::nullopt;
     }
     if (!target || (target->kind == TypeKind::Scalar && target->scalar == ScalarKind::Any)) return v;
+    // Values already of the target type bypass adapters.
+    if ((target->kind == TypeKind::Struct && v.is_struct() && v.type() == target) ||
+        (target->kind == TypeKind::Object && v.is_object() && v.type()->derives_from(target)) ||
+        (target->kind == TypeKind::Enum && v.is_enum() && v.type() == target))
+        return v;
+    if (Engine* e = active_engine(); e && e->has_adapters()) {
+        for (const TypeAdapter* ad : e->view(target).adapters) {
+            if (!ad->coerce) continue;
+            Value adapted;
+            std::string reason;
+            switch (ad->coerce(v, *target, adapted, reason)) {
+                case AdapterOutcome::Ok: {
+                    bool ok = adapted.is_null() ||
+                              (target->kind == TypeKind::Struct && adapted.is_struct() && adapted.type() == target) ||
+                              (target->kind == TypeKind::Object && adapted.is_object() && adapted.type()->derives_from(target)) ||
+                              (target->kind == TypeKind::Enum && adapted.is_enum() && adapted.type() == target) ||
+                              (target->kind != TypeKind::Struct && target->kind != TypeKind::Object && target->kind != TypeKind::Enum);
+                    if (!ok) throw std::logic_error("adapter " + ad->name + " coerced to " + type_name_of(adapted) + ", not " + target->name);
+                    return adapted;
+                }
+                case AdapterOutcome::Failed:
+                    why = reason.empty() ? "rejected by " + ad->name : reason;
+                    return std::nullopt;
+                case AdapterOutcome::NotHandled: break;
+            }
+        }
+    }
     switch (target->kind) {
         case TypeKind::Scalar:
             switch (target->scalar) {
@@ -375,6 +405,12 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
             if (!coerced)
                 throw RqlException("coercion-failed", "cannot assign " + describe_value(nv) + " to '" + a.label + "' (" +
                                                           (slot.type ? slot.type->friendly_name() : std::string("object")) + "): " + why);
+            if (slot.kind == Slot::Member && slot.member->validate) {
+                std::string rejected = slot.member->validate(container.ptr(), *coerced);  // before any write (spec §13)
+                if (!rejected.empty())
+                    throw RqlException("coercion-failed", "cannot assign " + describe_value(nv) + " to '" + a.label + "' on " +
+                                                              x.engine.ref_of(item) + ": " + rejected);
+            }
             writes.push_back({item, &a.target->segments, a.label, snapshot(safe_get(slot, container, a.label)), *coerced});
         }
     }

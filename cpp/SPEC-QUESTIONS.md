@@ -2,7 +2,7 @@
 
 Points where the spec is silent or a runtime has to pick a behaviour. Items 1–7 are now resolved by
 spec/semantics.md §12 (Portability decisions); the C++ runtime conforms to those decisions. Items 8–10
-remain open.
+remain open. Items 11–14 are resolved by §13 ("Scope" and the rollback paragraph).
 
 1. **Null for non-nullable reference-like members.** §8 says "null only for nullable / reference
    types". .NET treats `string` and `List<T>` as reference types (null accepted). In C++ `std::string`
@@ -30,3 +30,18 @@ remain open.
 9. **Extension stage laziness.** §5 requires `first` to stop pulling upstream; the C++ extension stage
    contract receives a materialized input vector. Should laziness be required of extension stages?
 10. **`maxOutputBytes` unit** (UTF-8 bytes vs UTF-16 chars of escaped JSON) is unspecified.
+
+## Type adapters (§13)
+
+11. **Explicit-only owning collections hide their elements from `ref()` search.** With the test set,
+    `Children` is explicit-only, so `ref("Node#4")` is `stale-ref` (now pinned by
+    `adapt-explicit-only-not-searched-by-ref`). Hosts that mark containers explicit-only must
+    provide `resolve_stable_ref`; worth stating in §13 / §7.
+12. **Virtual setter round-trip.** §13 requires `set(get())` to restore state; the fixture's `title`
+    adapter (get = upper, set = lower) does not round-trip mixed-case names (`B-2` → `b-2`). No case
+    rolls back such a name, so all runtimes pass, but the example contradicts the MUST.
+13. **`distinct` / `group-by` ignore adapter equality** (as in .NET: they use value/identity
+    equality). Should `distinct Pos` use the adapter's `equals`? The spec is silent.
+14. **Adapter scope.** C++ registers adapters per `Engine` (like .NET's per-engine model); the spec
+    does not say whether adapters belong to an engine or to the type registry.
+

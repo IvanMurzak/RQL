@@ -24,7 +24,7 @@ Json Encoder::number(double d, bool single) {
 Json Encoder::summary(const Value& obj) {
     Json o = Json::object();
     o.set("$ref", x_.engine.ref_of(obj));
-    if (const MemberDescriptor* dm = obj.type()->display_member()) {
+    if (const MemberDescriptor* dm = x_.view(obj.type()).display) {
         try {
             Value name = dm->getter(obj.ptr());
             if (name.is_string()) o.set("name", name.as_string());
@@ -37,7 +37,8 @@ Json Encoder::summary(const Value& obj) {
 
 Json Encoder::inline_object(const Value& obj, int depth) {
     Json o = Json::object();
-    for (auto& m : obj.type()->members) {
+    for (auto& m : x_.view(obj.type()).members) {
+        if (m.explicit_only) continue;  // never read implicitly (spec §13)
         Value mv;
         try {
             mv = m.getter(obj.ptr());
@@ -49,8 +50,8 @@ Json Encoder::inline_object(const Value& obj, int depth) {
             continue;
         }
         if (mv.is_object()) {
-            const TypeDescriptor* t = mv.type();
-            bool value_like = !t->id_member() && !t->display_member();
+            const TypeView& tv = x_.view(mv.type());
+            bool value_like = !tv.id && !tv.display;
             o.set(m.name, value_like && depth < 1 ? inline_object(mv, depth + 1) : summary(mv));
             continue;
         }
@@ -60,6 +61,17 @@ Json Encoder::inline_object(const Value& obj, int depth) {
 }
 
 Json Encoder::encode(const Value& v, int depth) {
+    // Adapter encoding first (spec §13): the first adapter that encodes wins.
+    if (x_.engine.has_adapters() && v.type() && !v.is_row() && !v.is_entry() && !v.is_absent() && !v.is_null()) {
+        const TypeView& tv = x_.view(v.type());
+        if (!tv.adapters.empty()) {
+            EncodeContext ctx([this](const Value& e, int d) { return encode(e, d); }, [this](const Value& o) { return summary(o); }, depth);
+            for (const TypeAdapter* a : tv.adapters) {
+                if (!a->encode) continue;
+                if (auto j = a->encode(v, ctx)) return std::move(*j);
+            }
+        }
+    }
     switch (v.kind()) {
         case Value::Kind::Missing:
         case Value::Kind::Null:
@@ -114,7 +126,8 @@ Json Encoder::encode(const Value& v, int depth) {
         case Value::Kind::Struct: {
             if (depth > 2) return Json(kEllipsis);
             Json o = Json::object();
-            for (auto& m : v.type()->members) {
+            for (auto& m : x_.view(v.type()).members) {
+                if (m.explicit_only) continue;
                 Value mv;
                 try {
                     mv = m.getter(v.ptr());
@@ -126,8 +139,8 @@ Json Encoder::encode(const Value& v, int depth) {
             return o;
         }
         case Value::Kind::Object: {
-            const TypeDescriptor* t = v.type();
-            if (!t->id_member() && !t->display_member() && depth <= 1) return inline_object(v, depth);
+            const TypeView& tv = x_.view(v.type());
+            if (!tv.id && !tv.display && depth <= 1) return inline_object(v, depth);
             return summary(v);
         }
     }

@@ -93,6 +93,88 @@ const SourceRegistration* Engine::find_source(const std::string& name) const noe
     return hit;
 }
 
+// ------------------------------------------------------------------ adapters
+
+namespace detail {
+namespace {
+thread_local Engine* g_active_engine = nullptr;
+}
+Engine* active_engine() noexcept { return g_active_engine; }
+ActiveEngineScope::ActiveEngineScope(Engine* e) noexcept : saved_(g_active_engine) { g_active_engine = e; }
+ActiveEngineScope::~ActiveEngineScope() { g_active_engine = saved_; }
+}  // namespace detail
+
+Engine& Engine::add_adapter(TypeAdapter adapter) noexcept {
+    try {
+        if (!adapter.target && adapter.interface_name.empty()) {
+            last_error_ = "type adapter '" + adapter.name + "' needs a target type or an interface name";
+            return *this;
+        }
+        if (adapter.name.empty()) adapter.name = adapter.target ? adapter.target->name + "Adapter" : adapter.interface_name + "Adapter";
+        last_error_.clear();
+        adapters_.push_back(std::make_unique<TypeAdapter>(std::move(adapter)));
+        std::lock_guard<std::mutex> lock(view_mutex_);
+        for (auto& kv : views_) retired_views_.push_back(std::move(kv.second));
+        views_.clear();
+    } catch (const std::exception& ex) {
+        last_error_ = ex.what();
+    } catch (...) {
+        last_error_ = "add_adapter failed";
+    }
+    return *this;
+}
+
+std::vector<std::string> Engine::explain(const TypeDescriptor& type) const noexcept {
+    std::vector<std::string> out;
+    try {
+        for (const TypeAdapter* a : detail::applicable_adapters(adapters_, type)) {
+            std::string target = a->target ? a->target->name : "interface " + a->interface_name;
+            out.push_back(a->name + " (target " + target + ", rank " + std::to_string(adapter_rank(*a, type)) + ", priority " +
+                          std::to_string(a->priority) + ")");
+        }
+    } catch (...) {
+        out.clear();
+    }
+    return out;
+}
+
+const TypeView& Engine::view(const TypeDescriptor* type) const {
+    std::lock_guard<std::mutex> lock(view_mutex_);
+    auto it = views_.find(type);
+    if (it != views_.end()) return *it->second;
+    auto v = detail::build_view(*types_, *type, adapters_);  // throws on adapter configuration bugs (not cached)
+    const TypeView& ref = *v;
+    views_.emplace(type, std::move(v));
+    return ref;
+}
+
+bool Engine::alive(const Value& object) {
+    if (object.type()) {
+        for (const TypeAdapter* a : view(object.type()).adapters) {
+            if (!a->is_alive) continue;
+            if (auto verdict = a->is_alive(object)) return *verdict;
+        }
+    }
+    return !is_alive || is_alive(object);
+}
+
+std::optional<std::string> Engine::stable_id_of(const Value& object) {
+    const TypeView& tv = view(object.type());
+    for (const TypeAdapter* a : tv.adapters) {
+        if (!a->stable_id) continue;
+        if (auto sid = a->stable_id(object)) return sid;
+    }
+    if (!tv.id) return std::nullopt;
+    Value id;
+    try {
+        id = tv.id->getter(object.ptr());
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+    if (id.is_null() || id.is_absent()) return std::nullopt;
+    return to_text(id);
+}
+
 // ------------------------------------------------------------------ execution
 
 namespace {
@@ -109,6 +191,7 @@ QueryResult internal_error(const char* what) noexcept {
 QueryResult Engine::execute(const QueryPlan& plan, const Budgets& budgets, const QueryOptions& options) noexcept {
     try {
         if (!plan.source) return QueryResult::fail({Diagnostic::error("invalid-plan", "plan has no source")});
+        detail::ActiveEngineScope active(this);
         detail::Exec x(*this, budgets, options, plan);
         QueryResult r;
         try {
@@ -228,15 +311,7 @@ std::string Engine::ref_of(const Value& v) noexcept {
 std::string Engine::ref_of_impl(const Value& v) {
     if (v.is_object()) {
         const TypeDescriptor* t = v.type();
-        if (const MemberDescriptor* idm = t->id_member()) {
-            Value id;
-            try {
-                id = idm->getter(v.ptr());
-            } catch (const std::exception&) {
-                id = Value::null();
-            }
-            if (!id.is_null() && !id.is_absent()) return t->name + "#" + to_text(id);
-        }
+        if (auto id = stable_id_of(v)) return t->name + "#" + *id;
         return t->name + "@" + std::to_string(handle_of(v));
     }
     return type_name_of(v) + "@" + std::to_string(handle_of(v));
@@ -284,20 +359,13 @@ Value Engine::search_sources(const std::string& type, const std::string& id, con
         const TypeDescriptor* t = o.type();
         if (identity) {
             if (a == ta && b == tb) return o;
-        } else if (const MemberDescriptor* idm = t->id_member()) {
-            if (t->is_a(type)) {
-                Value v;
-                try {
-                    v = idm->getter(o.ptr());
-                } catch (const std::exception&) {
-                    v = Value::null();
-                }
-                if (!v.is_null() && !v.is_absent() && to_text(v) == id) return o;
-            }
+        } else if (t->is_a(type)) {
+            auto sid = stable_id_of(o);
+            if (sid && *sid == id) return o;
         }
         if (depth >= 32) continue;
-        for (auto& m : t->members) {
-            if (!m.owning || !m.type) continue;
+        for (auto& m : view(t).members) {
+            if (!m.owning || m.explicit_only || !m.type) continue;
             if (m.type->kind == TypeKind::Enum || m.type->kind == TypeKind::Struct) continue;
             if (m.type->kind == TypeKind::Scalar && m.type->scalar != ScalarKind::Any) continue;
             Value v;
@@ -375,7 +443,7 @@ Value Engine::resolve_ref(const std::string& reference_in, std::string& error, d
         error = "reference '" + reference + "' does not resolve to a live object";
         return Value::missing();
     }
-    if (is_alive && !is_alive(found)) {
+    if (!alive(found)) {
         error = "reference '" + reference + "' points to a destroyed object";
         return Value::missing();
     }
@@ -393,11 +461,12 @@ Json Engine::describe_type(const TypeDescriptor& t) const noexcept {
 }
 
 Json Engine::describe_type_impl(const TypeDescriptor& t) const {
+    const TypeView& tv = view(&t);
     Json o = Json::object();
     o.set("name", t.name);
     if (t.base) o.set("base", t.base->name);
     o.set("kind", t.kind == TypeKind::Enum ? "enum" : t.kind == TypeKind::Struct ? "struct" : "object");
-    if (!t.description.empty()) o.set("description", t.description);
+    if (!tv.description.empty()) o.set("description", tv.description);
     if (t.kind == TypeKind::Enum) {
         Json values = Json::array();
         for (auto& e : t.enum_values) values.push(Json(e.first));
@@ -406,13 +475,14 @@ Json Engine::describe_type_impl(const TypeDescriptor& t) const {
         return o;
     }
     Json members = Json::array();
-    for (auto& m : t.members) {
+    for (auto& m : tv.members) {
         Json mo = Json::object();
         mo.set("name", m.name);
         std::string tn = m.type ? m.type->friendly_name() : "object";
         if (m.nullable && m.type && m.type->is_value_type() && m.type->scalar != ScalarKind::String) tn += "?";
         mo.set("type", tn);
-        if (mutations_.enabled && t.member_writable(m)) mo.set("writable", true);
+        if (mutations_.enabled && tv.member_writable(m)) mo.set("writable", true);
+        if (m.explicit_only) mo.set("explicitOnly", true);
         if (!m.description.empty()) mo.set("description", m.description);
         members.push(std::move(mo));
     }

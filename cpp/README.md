@@ -80,6 +80,33 @@ structs (value semantics) and objects (reference semantics), `std::optional<T>`,
 `std::unordered_map<K,V>` (iterated sorted by key for determinism). Add more by specializing
 `rql::Traits<T>` or by implementing the adapter interfaces below.
 
+## Type adapters (spec §13)
+
+`include/rql/adapters.hpp`. An `rql::TypeAdapter` is a struct of optional `std::function` capabilities
+(`configure_members`, `encode`, `coerce`, `equals`, `compare`, `stable_id`, `is_alive`, `description`)
+targeting a descriptor (exact type or base class) or an interface name (`also_is`). Register with
+`engine.add_adapter(...)` before running queries; `engine.explain(type)` lists the applicable adapters
+most specific first (base distance, then priority, then registration order; interfaces last; no
+open-generic tier in C++).
+
+```cpp
+rql::TypeAdapter vec;
+vec.target = reg.descriptor<FVector>();
+vec.description = "FVector: write as \"(x, y, z)\" or [x, y, z]";
+vec.configure_members = [](rql::MemberTable& t) { t.computed<FVector>("len", [](FVector& v) { return v.Size(); }); };
+vec.encode = [&](const rql::Value& v, const rql::EncodeContext&) -> std::optional<rql::Json> { ... };
+vec.coerce = [&](const rql::Value& v, const rql::TypeDescriptor&, rql::Value& out, std::string& why) { ... };
+rql::TypeAdapter uobj;
+uobj.target = reg.descriptor<UObject>();
+uobj.is_alive = [&](const rql::Value& v) -> std::optional<bool> { return IsValid(rql::value_as<UObject>(reg, v)); };
+engine.add_adapter(std::move(vec)).add_adapter(std::move(uobj));
+```
+
+Adapters are per `Engine`: the engine derives an adapted `TypeView` of each descriptor (members after
+adapters, id/display recomputed), so one `TypeRegistry` can serve engines with different adapter
+sets. Member-table configuration bugs (unknown member names, virtual setters on value types) fail
+the query with `internal-error`. Callbacks receive `self` as a pointer to the adapter's target type.
+
 ## Provider seam (how a future Unreal adapter plugs in)
 
 C++ has no runtime reflection, so the executor never touches C++ types directly. Everything goes

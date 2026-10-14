@@ -54,10 +54,11 @@ first), so a `Renderer` adapter refines what the `UnityEngine.Object` adapter co
 prints the resolved order.
 
 **Safety rules.** Validation runs before any write, and a setter that throws triggers the normal rollback. Virtual
-setters must round-trip their getter (the rollback writes the old value back through the setter). Virtual setters on
+setters should round-trip their getter (the rollback writes the old value back through the setter). Virtual setters on
 value types are rejected (they would write to a copy). Configuring a member that does not exist fails the query with
 `internal-error` and names the member. Adapters are per engine: engines without adapters keep the shared,
-adapter-free type model. When no adapter is registered anywhere, the cost is one static read (measured within ±2% of
+adapter-free type model. Objects reachable only through explicit-only members are not found by `ref("Type#id")`
+search, so give such hosts a `ResolveStableRef`. `distinct` / `group-by` don't use adapter equality in 0.1. When no adapter is registered anywhere, the cost is one static read (measured within ±2% of
 the pre-adapter build on every benchmark query, with dynamic PGO off for deterministic codegen).
 
 ## Unity-MCP converters → RQL adapters
@@ -94,4 +95,6 @@ What Unity-MCP does today through ReflectorNet converters, and the RQL equivalen
 
 TypeScript (ThreeJS hosts: `Vector3`, `Color`, `Object3D`) and C++ (Unreal: `FVector`, `FRotator`, `UObject`
 validity/pending-kill) implement the same capabilities with idiomatic APIs, limited to the resolution tiers their type
-systems can express. They pass the same `fixtures/adapters/cases.json`.
+systems can express (TS: exact / prototype chain / `matches(ctor)` predicate; C++: exact / base distance / interface
+name, no `IncludeFields` since C++ cannot reflect private fields). All three pass the same
+`fixtures/adapters/cases.json`.

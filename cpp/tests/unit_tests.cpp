@@ -13,6 +13,7 @@ using rql::Json;
 namespace {
 
 int passed = 0, failed = 0;
+std::string repo_root = "..";
 
 void check(bool ok, const std::string& what) {
     if (ok) ++passed;
@@ -386,13 +387,184 @@ void engine_tests() {
     check(!r.ok && first_code(r) == "budget-exceeded", "maxVisited budget");
 }
 
+
+// ------------------------------------------------------------------ type adapters (spec §13)
+
+struct Base {
+    int Id = 0;
+    std::string Name;
+};
+struct Derived : Base {
+    int Extra = 0;
+};
+struct Settings {  // identity-less, nameless: encoded inline
+    int Volume = 3;
+    std::string Secret = "s";
+};
+struct Holder2 {
+    Settings Prefs;
+};
+
+rql::QueryResult arun(rql::Engine& e, const std::string& plan, bool mutate = false) {
+    rql::QueryOptions o;
+    o.allow_mutation = mutate;
+    return e.execute_json(plan, {}, o);
+}
+
+void adapter_tests() {
+    // ranking + explain
+    {
+        rql::TypeRegistry reg;
+        reg.object<Base>("Base").member("Id", &Base::Id).member("Name", &Base::Name).also_is("IThing");
+        reg.object<Derived>("Derived").base<Base>().member("Extra", &Derived::Extra);
+        rql::Engine e(reg);
+        auto mk = [&](std::string name, const rql::TypeDescriptor* target, int prio, std::string iface = {}) {
+            rql::TypeAdapter a;
+            a.name = std::move(name);
+            a.target = target;
+            a.priority = prio;
+            a.interface_name = std::move(iface);
+            return a;
+        };
+        e.add_adapter(mk("IfaceAdapter", nullptr, 99, "IThing"));
+        e.add_adapter(mk("BaseLow", reg.descriptor<Base>(), 0));
+        e.add_adapter(mk("BaseHigh", reg.descriptor<Base>(), 5));
+        e.add_adapter(mk("BaseLow2", reg.descriptor<Base>(), 0));
+        e.add_adapter(mk("DerivedAdapter", reg.descriptor<Derived>(), -1));
+        auto ex = e.explain(*reg.descriptor<Derived>());
+        bool order = ex.size() == 5 && ex[0].rfind("DerivedAdapter (target Derived, rank 0", 0) == 0 &&
+                     ex[1].rfind("BaseHigh (target Base, rank 2, priority 5)", 0) == 0 && ex[2].rfind("BaseLow (", 0) == 0 &&
+                     ex[3].rfind("BaseLow2 (", 0) == 0 && ex[4].rfind("IfaceAdapter (target interface IThing, rank 10000", 0) == 0;
+        check(order, "adapters: ranking distance < priority < registration, interfaces last");
+        check(e.explain(*reg.descriptor<Base>()).size() == 4, "adapters: subclass adapter does not apply to base");
+        e.add_adapter(rql::TypeAdapter{});
+        check(!e.last_error().empty(), "adapters: adapter without target rejected");
+    }
+
+    rql::TypeRegistry reg;
+    conformance::register_types(reg);
+    std::string graph_path = repo_root + "/fixtures/cross-runtime/graph.json";
+
+    // stable id + liveness (stale-ref)
+    {
+        auto g = conformance::load_graph(graph_path);
+        rql::Engine e(reg);
+        e.add_object_source("g", g.get());
+        rql::TypeAdapter idad;
+        idad.name = "NodeIds";
+        idad.target = reg.descriptor<conformance::Node>();
+        rql::TypeRegistry* r = &reg;
+        idad.stable_id = [r](const rql::Value& v) -> std::optional<std::string> {
+            auto* n = rql::value_as<conformance::Node>(*r, v);
+            return n ? std::optional<std::string>("n" + std::to_string(n->Id)) : std::nullopt;
+        };
+        idad.is_alive = [r](const rql::Value& v) -> std::optional<bool> {
+            auto* n = rql::value_as<conformance::Node>(*r, v);
+            if (!n) return std::nullopt;
+            return n->Id != 5;
+        };
+        e.add_adapter(std::move(idad));
+        auto res = arun(e, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"first","n":1},{"op":"select","fields":[{"name":"r","expr":{"path":[{"meta":"ref"}]}}]}]})J");
+        check(res.ok && (*res.rows)[0][0].as_string() == "Node#n1", "adapters: stable_id drives $ref");
+        res = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Special#n3"}]},"stages":[{"op":"select","fields":[{"name":"n","expr":{"path":["Name"]}}]}]})J");
+        check(res.ok && (*res.rows)[0][0].as_string() == "a-2", "adapters: ref search uses stable_id (inherited by subclass)");
+        res = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#n5"}]},"stages":[{"op":"count"}]})J");
+        check(!res.ok && first_code(res) == "stale-ref", "adapters: is_alive=false → stale-ref");
+        res = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#1"}]},"stages":[{"op":"count"}]})J");
+        check(!res.ok && first_code(res) == "stale-ref", "adapters: id member no longer matches when stable_id is adapted");
+    }
+
+    // the fixture adapter set, through roots reachable without Children (explicit-only)
+    auto g = conformance::load_graph(graph_path);
+    rql::Engine e(reg);
+    e.add_object_source("g", g.get());
+    e.mutations().enabled = true;
+    conformance::register_test_adapters(e, reg);
+    auto res = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#1"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Pos"]},"value":{"lit":"(5, 6)"}}]}]})J", true);
+    check(res.ok && g->Nodes[0]->Pos.x == 5 && g->Nodes[0]->Pos.y == 6 && (*res.rows)[0][2].as_string() == "(0, 0)" &&
+              (*res.rows)[0][3].as_string() == "(5, 6)",
+          "adapters: coerce string literal to struct (receipt encoded by adapter)");
+    res = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#1"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Pos"]},"value":{"list":[{"lit":7},{"lit":8.5}]}}]}]})J", true);
+    check(res.ok && g->Nodes[0]->Pos.x == 7 && g->Nodes[0]->Pos.y == 8.5, "adapters: coerce list to struct");
+    res = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#1"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Pos"]},"value":{"lit":"nope"}}]}]})J", true);
+    check(!res.ok && first_code(res) == "coercion-failed" && res.diagnostics[0].message.find("expected (x, y) or [x, y]") != std::string::npos,
+          "adapters: coerce failure carries the reason");
+    res = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#5"}]},"stages":[{"op":"set","assign":[{"target":{"path":["title"]},"value":{"lit":"Root B2"}}]}]})J", true);
+    check(res.ok && g->Nodes[1]->Name == "root b2" && (*res.rows)[0][2].as_string() == "ROOT-B" && (*res.rows)[0][3].as_string() == "Root B2",
+          "adapters: virtual setter");
+    res = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#5"}]},"stages":[{"op":"set","assign":[{"target":{"path":["title"]},"value":{"lit":""}}]}]})J", true);
+    check(!res.ok && first_code(res) == "coercion-failed" && g->Nodes[1]->Name == "root b2", "adapters: validation rejects before any write");
+    res = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#5"}]},"stages":[{"op":"set","assign":[{"target":{"path":["childCount"]},"value":{"lit":5}}]}]})J", true);
+    check(!res.ok && first_code(res) == "readonly-member", "adapters: read-only virtual member");
+    res = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#5"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Note"]},"value":{"lit":"x"}}]}]})J", true);
+    check(!res.ok && first_code(res) == "unknown-member", "adapters: hidden member unwritable");
+    res = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#3"}]},"stages":[{"op":"count"}]})J");
+    check(!res.ok && first_code(res) == "stale-ref", "adapters: explicit-only Children not followed by ref search");
+    // rollback through the virtual setter: Node#1 written, then Node#3 (locked) throws
+    res = arun(e, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"first","n":1},{"op":"get","expr":{"list":[{"path":[]},{"path":["Children",{"index":1}]}]}},{"op":"set","assign":[{"target":{"path":["title"]},"value":{"lit":"x"}}]}]})J", true);
+    check(!res.ok && first_code(res) == "coercion-failed" && g->Nodes[0]->Name == "root-a" && g->Nodes[0]->Children[1]->Name == "a-2",
+          "adapters: setter throwing at write time rolls back earlier virtual writes");
+    res = arun(e, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"where","pred":{"op":"==","args":[{"lit":"(10, 10)"},{"path":["Pos"]}]}},{"op":"count"}]})J");
+    check(res.ok && res.value.as_number() == 1, "adapters: right-operand adapter equality (mirrored)");
+    res = arun(e, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"where","pred":{"op":"<","args":[{"lit":"(100, 0)"},{"path":["Pos"]}]}},{"op":"count"}]})J");
+    check(res.ok && res.value.as_number() == 0, "adapters: right-operand ordering mirrored");
+
+    // explicit-only skipped in inline encoding; describe lists explicitOnly
+    {
+        rql::TypeRegistry r2;
+        r2.object<Settings>("Settings").member("Volume", &Settings::Volume).member("Secret", &Settings::Secret);
+        r2.object<Holder2>("Holder2").member("Prefs", &Holder2::Prefs);
+        Holder2 h2;
+        rql::Engine e2(r2);
+        e2.add_object_source("h", &h2);
+        rql::TypeAdapter a;
+        a.target = r2.descriptor<Settings>();
+        a.configure_members = [](rql::MemberTable& t) { t.explicit_only({"Secret"}); };
+        e2.add_adapter(std::move(a));
+        auto r = arun(e2, R"J({"rql":"0.1","source":{"path":["h"]},"stages":[{"op":"select","fields":[{"name":"p","expr":{"path":["Prefs"]}},{"name":"s","expr":{"path":["Prefs","Secret"]}}]}]})J");
+        check(r.ok && (*r.rows)[0][0].find("Volume") && !(*r.rows)[0][0].find("Secret") && (*r.rows)[0][1].as_string() == "s",
+              "adapters: explicit-only skipped by inline encoding, readable by name");
+        r = arun(e2, R"J({"rql":"0.1","source":{"path":["h","Prefs"]},"stages":[{"op":"describe"}]})J");
+        bool flagged = false;
+        if (r.ok && r.types)
+            for (auto& m : r.types->at(0).find("members")->items())
+                if (m.find("name")->as_string() == "Secret" && m.find("explicitOnly")) flagged = true;
+        check(flagged, "adapters: describe marks explicitOnly");
+    }
+
+    // configuration bugs → internal-error
+    {
+        auto g2 = conformance::load_graph(graph_path);
+        rql::Engine bad(reg);
+        bad.add_object_source("g", g2.get());
+        rql::TypeAdapter a;
+        a.target = reg.descriptor<conformance::Node>();
+        a.configure_members = [](rql::MemberTable& t) { t.read_only({"NoSuchMember"}); };
+        bad.add_adapter(std::move(a));
+        auto r = arun(bad, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"select","fields":[{"name":"n","expr":{"path":["Name"]}}]}]})J");
+        check(!r.ok && first_code(r) == "internal-error", "adapters: configuring a missing member → internal-error");
+        rql::Engine bad2(reg);
+        bad2.add_object_source("g", g2.get());
+        rql::TypeAdapter b;
+        b.target = reg.descriptor<conformance::Vec2>();
+        b.configure_members = [](rql::MemberTable& t) {
+            t.add("y2", rql::builtin::double_type(), [](void*) { return rql::Value::number(0); }, [](void*, const rql::Value&) {});
+        };
+        bad2.add_adapter(std::move(b));
+        r = arun(bad2, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"select","fields":[{"name":"p","expr":{"path":["Pos","y2"]}}]}]})J");
+        check(!r.ok && first_code(r) == "internal-error", "adapters: virtual setter on a value type rejected (internal-error)");
+    }
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc > 1) repo_root = argv[1];
     try {
         json_tests();
         codec_tests();
         engine_tests();
+        adapter_tests();
     } catch (const std::exception& ex) {
         std::cout << "FATAL " << ex.what() << "\n";
         return 2;

@@ -81,6 +81,16 @@ public:
     std::unordered_map<std::string, std::shared_ptr<std::regex>> regex_cache;
     std::unordered_map<std::string, Value> ref_cache;  // fallback ref() search results
 
+    /// Adapted view of a type (per-query cache in front of the engine's cache).
+    const TypeView& view(const TypeDescriptor* t) {
+        auto it = views.find(t);
+        if (it != views.end()) return *it->second;
+        const TypeView& v = engine.view(t);
+        views.emplace(t, &v);
+        return v;
+    }
+    std::unordered_map<const TypeDescriptor*, const TypeView*> views;
+
     void visit();
     void check_time() const;
     void getter_threw(const std::string& member, const std::string& what);
@@ -91,6 +101,23 @@ private:
 };
 
 using Eval = std::function<Value(Exec&)>;
+
+/// Engine whose query runs on this thread (adapter-aware equality / ordering / coercion), or null.
+Engine* active_engine() noexcept;
+class ActiveEngineScope {
+public:
+    explicit ActiveEngineScope(Engine* e) noexcept;
+    ~ActiveEngineScope();
+    ActiveEngineScope(const ActiveEngineScope&) = delete;
+    ActiveEngineScope& operator=(const ActiveEngineScope&) = delete;
+
+private:
+    Engine* saved_;
+};
+
+std::vector<const TypeAdapter*> applicable_adapters(const std::vector<std::unique_ptr<TypeAdapter>>& all, const TypeDescriptor& type);
+std::unique_ptr<TypeView> build_view(TypeRegistry& registry, const TypeDescriptor& type,
+                                     const std::vector<std::unique_ptr<TypeAdapter>>& adapters);
 
 // ---------------------------------------------------------------- value semantics (compiler.cpp)
 

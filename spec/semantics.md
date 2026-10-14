@@ -338,10 +338,17 @@ templates in the reflection layer) only implement the exact / base / interface t
 | Describe | A one-line description of the type for schemas and `describe`, e.g. how to write literals. |
 
 Writes through adapter members keep the all-or-nothing guarantee: old values are read through the member getter before
-any write and restored through its setter on failure, so a virtual setter MUST round-trip its getter (`set(get())`
-restores the state). Validation runs while the mutation is planned, before any write, and rejects with a reason
+any write and restored through its setter on failure. Adapters SHOULD make virtual setters round-trip their getter;
+a lossy member (`set(get())` changes state, e.g. the fixture's case-folding `title`) restores only what its getter
+exposes. Validation runs while the mutation is planned, before any write, and rejects with a reason
 (→ `coercion-failed`); a setter that throws at write time triggers the rollback. Virtual setters on value types are
 rejected at configuration (they would write to a copy).
+
+**Scope.** Adapters belong to an engine (a host may run engines with different adapter sets over one type registry);
+engines without adapters behave exactly as without this section. An explicit-only member is also not searched by
+`ref("Type#id")` fallback resolution, so objects reachable only through one need a host stable-ref resolver.
+`distinct`, `group-by` keys and `in`/`contains` over maps hash by built-in value identity and do not consult adapter
+equality in 0.1.
 
 **Conformance.** `fixtures/adapters/cases.json` specifies a test adapter set over the conformance graph that every runtime
 implements in its test harness (see the file's `adapters` section); its cases must pass in every runtime.

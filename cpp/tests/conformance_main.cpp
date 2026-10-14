@@ -108,17 +108,18 @@ void step(const Json& c, const std::string& name, const char* plan_key, const ch
                                                    (verbose ? "\n  full: " + result.dump(false) : ""));
 }
 
-void execution(const std::string& root) {
-    Json doc = load(F(root, "execution/cases.json"));
+void cases(const std::string& root, const std::string& file, bool adapters) {
+    Json doc = load(F(root, file));
     std::string graph_path = F(root, "cross-runtime/graph.json");
     rql::TypeRegistry reg;
     conformance::register_types(reg);
     for (auto& c : doc.find("cases")->items()) {
-        std::string name = c.find("name")->as_string();
+        std::string name = (adapters ? "adapters/" : "") + c.find("name")->as_string();
         auto graph = conformance::load_graph(graph_path);  // fresh graph per case
-        rql::Engine engine(reg);
+        rql::Engine engine(reg);                            // fresh engine per case
         engine.add_object_source("g", graph.get());
         engine.mutations().enabled = true;
+        if (adapters) conformance::register_test_adapters(engine, reg);
         rql::Budgets budgets;
         rql::QueryOptions options;
         try {
@@ -147,7 +148,8 @@ int main(int argc, char** argv) {
         syntax_codec(root);
         negative_syntax(root);
         negative_plans(root);
-        execution(root);
+        cases(root, "execution/cases.json", false);
+        cases(root, "adapters/cases.json", true);  // spec §13 type adapters
     } catch (const std::exception& ex) {
         std::cout << "FATAL " << ex.what() << "\n";
         return 2;

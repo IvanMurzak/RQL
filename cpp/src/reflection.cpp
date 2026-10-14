@@ -156,15 +156,15 @@ void* TypeDescriptor::downcast_from(const TypeDescriptor* base_type, void* p) co
     return p;
 }
 
-const MemberDescriptor* TypeDescriptor::id_member() const {
+const MemberDescriptor* TypeDescriptor::id_member_in(const std::vector<MemberDescriptor>& list) const {
     if (kind != TypeKind::Object) return nullptr;
     if (id_explicit) {
         if (id_name.empty()) return nullptr;
-        for (auto& m : members)
+        for (auto& m : list)
             if (m.name == id_name) return &m;
         return nullptr;
     }
-    for (auto& m : members) {
+    for (auto& m : list) {
         if (m.name == "Id" && m.type && m.type->kind == TypeKind::Scalar &&
             (m.type->scalar == ScalarKind::Integer || m.type->scalar == ScalarKind::String))
             return &m;
@@ -172,15 +172,15 @@ const MemberDescriptor* TypeDescriptor::id_member() const {
     return nullptr;
 }
 
-const MemberDescriptor* TypeDescriptor::display_member() const {
+const MemberDescriptor* TypeDescriptor::display_member_in(const std::vector<MemberDescriptor>& list) const {
     if (kind != TypeKind::Object) return nullptr;
     if (display_explicit) {
         if (display_name.empty()) return nullptr;
-        for (auto& m : members)
+        for (auto& m : list)
             if (m.name == display_name) return &m;
         return nullptr;
     }
-    for (auto& m : members)
+    for (auto& m : list)
         if (m.name == "Name" && m.type && m.type->scalar == ScalarKind::String) return &m;
     return nullptr;
 }
