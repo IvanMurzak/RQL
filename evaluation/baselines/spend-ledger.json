@@ -1,6 +1,6 @@
 {
   "CapUsd": 25,
-  "SpentUsd": 3.5006223419999962,
+  "SpentUsd": 3.521525267999995,
   "Runs": [
     {
       "id": "probe-20261013T203447Z",
@@ -261,6 +261,20 @@
       "split": "all",
       "taskRuns": 4,
       "costUsd": 0.013683
+    },
+    {
+      "id": "20261014-000438-RQL-all",
+      "config": "RQL",
+      "split": "all",
+      "taskRuns": 30,
+      "costUsd": 0.006866
+    },
+    {
+      "id": "20261014-000508-ReflectorNet-all",
+      "config": "ReflectorNet",
+      "split": "all",
+      "taskRuns": 15,
+      "costUsd": 0.014036
     }
   ]
 }

@@ -1,3 +1,4 @@
+#include <string_view>
 #include "rql/codec.hpp"
 
 #include <algorithm>
@@ -279,9 +280,11 @@ namespace {
 
 [[noreturn]] void invalid(const std::string& m) { throw RqlException("invalid-plan", m); }
 
-const Json& required(const Json& obj, const char* name, const std::string& ctx) {
+// `ctx` is a string_view by value: a `const std::string&` would bind a temporary for every literal
+// argument, which GCC 13+ reports as a possibly dangling reference in the returned `const Json&`.
+const Json& required(const Json& obj, const char* name, std::string_view ctx) {
     const Json* v = obj.find(name);
-    if (!v) invalid(ctx + "." + name + " is required");
+    if (!v) invalid(std::string(ctx) + "." + name + " is required");
     return *v;
 }
 
