@@ -47,5 +47,15 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Particles.Tests
             Assert.IsFalse(bad.Ok);
             StringAssert.Contains("[1].color", Table(bad));
         }
+
+        [Test]
+        public void ComparesInTheWrittenForms()
+        {
+            Assert.IsTrue(M(P + " | set main.startColor = \"#ff0000\"").Ok);
+            Assert.AreEqual(1L, Count(P + " | where main.startColor == \"(1, 0, 0, 1)\" | count"));
+            Assert.AreEqual(0L, Count(P + " | where main.startColor == \"#0000ff\" | count"));
+            Assert.IsTrue(M(P + " | set main.startColor = [\"#ff0000\", \"#0000ff\"]").Ok);
+            Assert.AreEqual(1L, Count(P + " | where main.startColor == [\"#ff0000\", \"#0000ff\"] | count"));
+        }
     }
 }

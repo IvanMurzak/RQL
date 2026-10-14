@@ -72,8 +72,9 @@ namespace Rql.Execution
         protected override bool? Equal(T value, object? other, RqlKernel kernel)
         {
             if (!TryParse(other, kernel, out var o)) return null;
+            // Written as !(d <= tol) so a NaN component is unequal to everything (NaN > tol is false).
             for (int i = 0; i < Width; i++)
-                if (Math.Abs(Part(value, i) - Part(o, i)) > Tolerance) return false;
+                if (!(Math.Abs(Part(value, i) - Part(o, i)) <= Tolerance)) return false;
             return true;
         }
 

@@ -43,5 +43,18 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Particles
             reason = "expected a number or [min, max]";
             return AdapterOutcome.Failed;
         }
+
+        // Comparisons accept what writes accept (`where main.startLifetime == 3`, `== [5, 25]`); curve modes defer.
+        protected override bool? Equal(ParticleSystem.MinMaxCurve value, object? other, RqlKernel kernel)
+        {
+            if (!kernel.TryCoerce(other, typeof(ParticleSystem.MinMaxCurve), out var coerced, out _) || !(coerced is ParticleSystem.MinMaxCurve o)) return null;
+            if (value.mode != o.mode) return false;
+            return value.mode switch
+            {
+                ParticleSystemCurveMode.Constant => kernel.Equal(value.constant, o.constant),
+                ParticleSystemCurveMode.TwoConstants => kernel.Equal(value.constantMin, o.constantMin) == true && kernel.Equal(value.constantMax, o.constantMax) == true,
+                _ => null,
+            };
+        }
     }
 }

@@ -25,10 +25,7 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Adapters
         {
             var keys = new JsonArray();
             foreach (var k in value.colorKeys)
-            {
-                var alpha = value.Evaluate(k.time).a;
-                keys.Add(new JsonArray(context.EncodeValue(new Color(k.color.r, k.color.g, k.color.b, alpha)), JsonValue.Create(k.time)));
-            }
+                keys.Add(new JsonArray(context.EncodeValue(KeyColor(value, k)), JsonValue.Create(k.time)));
             return keys;
         }
 
@@ -70,8 +67,12 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Adapters
             var b = o.colorKeys;
             if (a.Length != b.Length) return false;
             for (int i = 0; i < a.Length; i++)
-                if (Math.Abs(a[i].time - b[i].time) >= 1e-4f || kernel.Equal(a[i].color, b[i].color) != true) return false;
+                if (Math.Abs(a[i].time - b[i].time) >= 1e-4f || kernel.Equal(KeyColor(value, a[i]), KeyColor(o, b[i])) != true) return false;
             return true;
         }
+
+        // A key as it is read and compared: its RGB plus the gradient's alpha at its time (alpha keys are separate in Unity and
+        // the color key's own alpha is not meaningful), so equality matches the encoded form.
+        private static Color KeyColor(Gradient g, GradientColorKey k) => new Color(k.color.r, k.color.g, k.color.b, g.Evaluate(k.time).a);
     }
 }

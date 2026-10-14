@@ -48,5 +48,15 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Particles.Tests
             Assert.IsFalse(badRange.Ok);
             StringAssert.Contains("[1]", Table(badRange));
         }
+
+        [Test]
+        public void ComparesInTheWrittenForms()
+        {
+            Assert.IsTrue(M(P + " | set main.startLifetime = 3, emission.rateOverTime = [5, 25]").Ok);
+            Assert.AreEqual(1L, Count(P + " | where main.startLifetime == 3 | count"));
+            Assert.AreEqual(0L, Count(P + " | where main.startLifetime == 4 | count"));
+            Assert.AreEqual(1L, Count(P + " | where emission.rateOverTime == [5, 25] | count"));
+            Assert.AreEqual(0L, Count(P + " | where emission.rateOverTime == 5 | count"));
+        }
     }
 }

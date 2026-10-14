@@ -30,6 +30,13 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Particles.Tests
 
         protected static QueryResult M(string rql) => RqlUnity.Engine.Execute(rql, null, new QueryOptions { AllowMutation = true });
 
+        protected static long Count(string rql)
+        {
+            var r = Q(rql);
+            Assert.IsTrue(r.Ok, Table(r));
+            return r.Value!.GetValue<long>();
+        }
+
         protected static string Table(QueryResult r) => AgentFormat.Render(r, OutputFormat.Table);
 
         protected static string Cell(QueryResult r)

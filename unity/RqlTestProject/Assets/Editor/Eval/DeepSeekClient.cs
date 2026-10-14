@@ -75,23 +75,25 @@ namespace RqlTest.Eval
             for (int attempt = 0; ; attempt++)
             {
                 string? text = null;
-                HttpResponseMessage? resp = null;
+                HttpStatusCode status = 0;
                 Exception? error = null;
                 try
                 {
+                    // The body is read in full, so the response (and its connection) is released before any retry.
                     using var content = new StringContent(body, Encoding.UTF8, "application/json");
-                    resp = await _http.PostAsync(_baseUrl + "/chat/completions", content);
+                    using var resp = await _http.PostAsync(_baseUrl + "/chat/completions", content);
+                    status = resp.StatusCode;
                     text = await resp.Content.ReadAsStringAsync();
                 }
                 catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException) { error = ex; }
-                bool transient = error != null || resp!.StatusCode == (HttpStatusCode)429 || (int)resp.StatusCode >= 500;
+                bool transient = error != null || status == (HttpStatusCode)429 || (int)status >= 500;
                 if (transient && attempt < 4)
                 {
                     await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt + 1)));
                     continue;
                 }
                 if (error != null) throw new InvalidOperationException("provider request failed: " + error.Message);
-                if (!resp!.IsSuccessStatusCode) throw new InvalidOperationException($"provider returned {(int)resp.StatusCode}: {Redact(text ?? "")}");
+                if ((int)status < 200 || (int)status > 299) throw new InvalidOperationException($"provider returned {(int)status}: {Redact(text ?? "")}");
                 var json = JsonNode.Parse(text!)!.AsObject();
                 var choice = json["choices"]![0]!.AsObject();
                 var u = new Usage();

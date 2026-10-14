@@ -43,7 +43,8 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
             var byName = new Dictionary<string, List<Type>>(StringComparer.OrdinalIgnoreCase);
             void Add(Type t)
             {
-                if (!t.IsPublic || t.IsGenericTypeDefinition) return;
+                // IsVisible, not IsPublic: nested public types (ParticleSystem.MinMaxCurve, ParticleSystem.MainModule …) count too.
+                if (!t.IsVisible || t.IsGenericTypeDefinition) return;
                 foreach (var key in new[] { t.Name, t.FullName })
                 {
                     if (key == null) continue;

@@ -159,6 +159,10 @@ namespace Rql.Execution
     /// <summary>Cached, policy-filtered reflection metadata per CLR type.</summary>
     public sealed class TypeModel
     {
+        // Every live model, so a process-wide kind change (TreatAsObject) invalidates them all. Declared before Shared:
+        // static initializers run in textual order and Shared's constructor registers itself here.
+        private static readonly List<WeakReference<TypeModel>> Models = new List<WeakReference<TypeModel>>();
+
         public static readonly TypeModel Shared = new TypeModel(AccessorMode.Compiled);
 
 
@@ -171,7 +175,16 @@ namespace Rql.Execution
         private readonly Func<Type, TypeInfo> _build;
         private readonly AdapterRegistry _adapters = new AdapterRegistry();
 
-        public TypeModel(AccessorMode mode) { Mode = mode; _build = Build; }
+        public TypeModel(AccessorMode mode)
+        {
+            Mode = mode;
+            _build = Build;
+            lock (Models)
+            {
+                Models.RemoveAll(w => !w.TryGetTarget(out _));
+                Models.Add(new WeakReference<TypeModel>(this));
+            }
+        }
 
         private Func<Type, bool>? _excluded;
 
@@ -264,7 +277,10 @@ namespace Rql.Execution
         public static void TreatAsObject(Type type)
         {
             if (type == null) throw new ArgumentNullException(nameof(type));
-            if (ObjectKinds.TryAdd(type, true)) Shared._cache.Clear();
+            if (!ObjectKinds.TryAdd(type, true)) return;
+            lock (Models)
+                foreach (var w in Models)
+                    if (w.TryGetTarget(out var model)) model._cache.Clear();
         }
 
         private static bool IsTreatedAsObject(Type t)

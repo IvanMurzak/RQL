@@ -58,6 +58,16 @@ namespace Rql.Tests
         }
 
         [Fact]
+        public void NaNComponentsAreNeverEqual()
+        {
+            var (e, bodies) = Engine();
+            bodies[1].Position = new Vec3 { x = float.NaN, y = 1, z = 0 };
+            var r = e.Execute("bodies | where Position == \"(0, 1, 0)\" | select Name");
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal(new[] { "c" }, Enumerable.Range(0, r.Rows!.Count).Select(i => Cell(r, i, 0)));
+        }
+
+        [Fact]
         public void WritesTextListAndObjectLiterals()
         {
             var (e, bodies) = Engine();

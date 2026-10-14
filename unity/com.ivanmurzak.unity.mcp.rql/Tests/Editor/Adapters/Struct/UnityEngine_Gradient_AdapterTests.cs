@@ -53,5 +53,13 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Tests.Adapters
             var nine = "[" + string.Join(", ", Enumerable.Range(0, 9).Select(i => $"[\"#ffffff\", {i / 8f:0.###}]")) + "]";
             AssertFails(M(B + " | set gradient = " + nine), "coercion-failed", "1..8 keys");
         }
+
+        [Test]
+        public void ComparesAlphaAsItIsRead()
+        {
+            AssertOk(M(B + " | set gradient = [[\"(1, 0, 0, 1)\", 0], [\"(0, 0, 1, 0.5)\", 1]]"));
+            Assert.AreEqual("Holder", Cell(Q(B + " | where gradient == [[\"(1, 0, 0, 1)\", 0], [\"(0, 0, 1, 0.5)\", 1]] | select gameObject.name")));
+            Assert.AreEqual(0, Q(B + " | where gradient == [[\"#ff0000\", 0], [\"#0000ff\", 1]] | select gameObject.name").Rows!.Count);
+        }
     }
 }

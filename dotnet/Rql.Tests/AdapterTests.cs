@@ -445,6 +445,21 @@ namespace Rql.Tests
             Assert.True(TypeModel.Get(typeof(TransformLike)).IsObject);
         }
 
+        public class LateTransformLike : System.Collections.IEnumerable
+        {
+            public System.Collections.IEnumerator GetEnumerator() { yield break; }
+        }
+
+        [Fact]
+        public void TreatAsObjectInvalidatesEngineOwnedModels()
+        {
+            // An engine with adapters owns its model; a kind cached before the registration must not survive it.
+            var e = new RqlEngine().AddAdapter(new UrgencyOrder());
+            Assert.True(e.Types.Info(typeof(LateTransformLike)).IsList);
+            TypeModel.TreatAsObject(typeof(LateTransformLike));
+            Assert.True(e.Types.Info(typeof(LateTransformLike)).IsObject);
+        }
+
         [Fact]
         public void HostFunctionsCanStartAQuery()
         {

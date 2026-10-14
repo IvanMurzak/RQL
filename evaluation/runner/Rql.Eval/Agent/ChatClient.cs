@@ -110,20 +110,22 @@ namespace Rql.Eval.Agent
             var sw = Stopwatch.StartNew();
             while (true)
             {
-                HttpResponseMessage? resp = null;
+                HttpStatusCode status = 0;
                 string? text = null;
                 Exception? error = null;
                 try
                 {
+                    // The body is read in full, so the response (and its connection) is released before any retry.
                     using var content = new StringContent(body, Encoding.UTF8, "application/json");
-                    resp = await _http.PostAsync(_baseUrl + "/chat/completions", content, ct).ConfigureAwait(false);
+                    using var resp = await _http.PostAsync(_baseUrl + "/chat/completions", content, ct).ConfigureAwait(false);
+                    status = resp.StatusCode;
                     text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException && !ct.IsCancellationRequested)
                 {
                     error = ex;
                 }
-                bool transient = error != null || resp!.StatusCode == (HttpStatusCode)429 || (int)resp.StatusCode >= 500;
+                bool transient = error != null || status == (HttpStatusCode)429 || (int)status >= 500;
                 if (transient && retries < 4)
                 {
                     retries++;
@@ -131,8 +133,8 @@ namespace Rql.Eval.Agent
                     continue;
                 }
                 if (error != null) throw new InvalidOperationException("provider request failed: " + error.Message);
-                if (!resp!.IsSuccessStatusCode)
-                    throw new InvalidOperationException($"provider returned {(int)resp.StatusCode}: {Redact(text ?? "")}");
+                if ((int)status < 200 || (int)status > 299)
+                    throw new InvalidOperationException($"provider returned {(int)status}: {Redact(text ?? "")}");
                 var json = JsonNode.Parse(text!)!.AsObject();
                 var choice = json["choices"]![0]!.AsObject();
                 var usage = json["usage"]?.AsObject();

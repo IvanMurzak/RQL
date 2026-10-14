@@ -22,4 +22,5 @@ by design, ADR-0003). Details: [TypeScript](feature-matrix-typescript.md), [C++]
 | `describe` / schema | ✅ full | names differ (not in fixtures) | minimal |
 | Top-N `sort | first n` fusion, allocation-optimized recurse | ✅ | — (full sort, same results) | — |
 | Extension sources/functions/stages | ✅ (lazy) | ✅ | ✅ (stages materialize input) |
+| Host function as query source (`ns.fn(…) \| …`, spec §2) | ✅ | — pending | — pending |
 | AOT-safe accessor mode | ✅ `AccessorMode.Reflection` | n/a | n/a |

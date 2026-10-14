@@ -51,5 +51,19 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Particles
             reason = "expected a color, [color, color] or gradient keys (" + why + ")";
             return AdapterOutcome.Failed;
         }
+
+        // Comparisons accept what writes accept (`where main.startColor == "#ff0000"`); colors / gradients compare through the kernel.
+        protected override bool? Equal(ParticleSystem.MinMaxGradient value, object? other, RqlKernel kernel)
+        {
+            if (!kernel.TryCoerce(other, typeof(ParticleSystem.MinMaxGradient), out var coerced, out _) || !(coerced is ParticleSystem.MinMaxGradient o)) return null;
+            if (value.mode != o.mode) return false;
+            return value.mode switch
+            {
+                ParticleSystemGradientMode.Color => kernel.Equal(value.color, o.color),
+                ParticleSystemGradientMode.TwoColors => kernel.Equal(value.colorMin, o.colorMin) == true && kernel.Equal(value.colorMax, o.colorMax) == true,
+                ParticleSystemGradientMode.Gradient => kernel.Equal(value.gradient, o.gradient),
+                _ => null,
+            };
+        }
     }
 }

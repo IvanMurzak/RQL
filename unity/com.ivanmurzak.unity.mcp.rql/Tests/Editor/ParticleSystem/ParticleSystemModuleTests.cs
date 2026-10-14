@@ -19,5 +19,15 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Particles.Tests
             CollectionAssert.Contains(modules, typeof(Modules.UnityCoreModule).FullName);
             Assert.IsTrue(RqlUnity.Engine.Modules.All(m => m.Ok), string.Join("\n", RqlUnity.Engine.Modules));
         }
+
+        [Test]
+        public void SchemaFindsNestedParticleTypes()
+        {
+            // ParticleSystem.MinMaxCurve / MainModule are nested types: the type index must include them.
+            var curve = RqlUnitySchema.Render(RqlUnity.Engine, "MinMaxCurve");
+            StringAssert.DoesNotContain("unknown-type", curve);
+            StringAssert.Contains("constantMin", curve);
+            StringAssert.DoesNotContain("unknown-type", RqlUnitySchema.Render(RqlUnity.Engine, "MainModule"));
+        }
     }
 }
