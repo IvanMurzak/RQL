@@ -1,0 +1,33 @@
+/*
+ * RQL tools for Unity-MCP — experimental, local only.
+ * Copyright (c) 2026 Ivan Murzak. Not for redistribution.
+ */
+
+#nullable enable
+using System;
+using Rql.Execution;
+using Object = UnityEngine.Object;
+
+namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Adapters
+{
+    /// <summary>
+    /// Every UnityEngine.Object: identity ($ref "Type#id", see the version-specific <c>IdOf</c>), fake-null objects read as
+    /// null, summaries show the lowercase <c>name</c>, private [SerializeField] fields are members, [Obsolete] /
+    /// [NonSerialized] members are hidden.
+    /// </summary>
+    public sealed partial class UnityEngine_Object_Adapter : RqlTypeAdapter
+    {
+        public UnityEngine_Object_Adapter() : base(typeof(Object)) { }
+
+        public override string? StableId(object value) => value is Object o ? IdOf(o) : null;
+
+        public override bool? IsAlive(object value) => value is Object o ? o != null : (bool?)null;
+
+        public override void ConfigureMembers(MemberTable members) =>
+            members
+                .HideWhere(m => m.Member != null && (m.Member.IsDefined(typeof(ObsoleteAttribute), true) || m.Member.IsDefined(typeof(NonSerializedAttribute), true)))
+                .IncludeFields(f => f.IsPrivate && f.IsDefined(typeof(UnityEngine.SerializeField), false))
+                .HideExisting("hideFlags")
+                .Display("name");
+    }
+}

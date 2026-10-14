@@ -1,0 +1,33 @@
+{
+    "name": "com.IvanMurzak.Unity.MCP.Rql.Editor.ParticleSystem",
+    "rootNamespace": "com.IvanMurzak.Unity.MCP.Rql.Editor.ParticleSystem",
+    "references": [
+        "com.IvanMurzak.Unity.MCP.Rql.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "System.Text.Json.dll",
+        "Rql.Contracts.dll",
+        "Rql.Parser.dll",
+        "Rql.Execution.dll"
+    ],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "UNITY_MCP_READY",
+        "UNITY_MCP_DEPS_8",
+        "RQL_UNITY_PARTICLESYSTEM"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.modules.particlesystem",
+            "expression": "1.0.0",
+            "define": "RQL_UNITY_PARTICLESYSTEM"
+        }
+    ],
+    "noEngineReferences": false
+}

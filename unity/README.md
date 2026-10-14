@@ -21,15 +21,45 @@ Unity-MCP discovers them like any extension tool. The App lists Unity tools live
 change is needed: the catalog shows the one-line blurb, and the agent loads the full description (the RQL language
 guide, adapted from the evaluated prompt v4) before first use.
 
-Sources: `objects`, `roots`, `scenes`, `selection`; functions `unity.assets("t:Material")`, `unity.asset(path)`.
-Unity adapters (`Editor/Scripts/UnityAdapters.cs`):
-- **Ids and liveness:** `$ref` ids come from `EntityId`; destroyed objects read as null.
+## Structure (mirrors Unity-MCP's converters)
+
+```
+com.ivanmurzak.unity.mcp.rql/Editor/
+  Scripts/RqlUnity.cs                 engine: Undo / SetDirty hooks, module discovery (assembly scan)
+  Scripts/RqlUnity.Refs[.pre-Unity.6.5].cs   Type#id resolution per Unity version
+  Scripts/Tool_Rql.cs, RqlGuide.cs, RqlUnitySchema.cs   the MCP tools and their texts
+  Scripts/Modules/UnityCoreModule.cs  sources, functions, core adapters, type blacklist
+  Scripts/Adapters/<Group>/UnityEngine_<Type>_Adapter[.part][.pre-Unity.6.5].cs   one adapter per file
+  Modules/ParticleSystem/             OPTIONAL module: own asmdef, compiles only with com.unity.modules.particlesystem
+```
+
+- **Version split:** `X.cs` targets the current Unity (`#if UNITY_6000_5_OR_NEWER`); `X.pre-Unity.6.5.cs` targets everything
+  before (`#if !…`). When the next Unity changes an API, today's `X.cs` becomes `X.pre-Unity.<new>.cs` and a new `X.cs`
+  targets the newest version.
+- **Modules (`IRqlModule`, RQL's counterpart of Unity-MCP's `IReflectorModule`):** `Order` plus `Configure(ctx)` registering
+  adapters, exclusions, sources and functions. `RqlUnity` scans the loaded assemblies, so any installed package that
+  contains a module contributes it. Failures are isolated and reported in the Console.
+- **Optional Unity packages:** put the module in its own asmdef with `versionDefines` on the package and that define in
+  `defineConstraints`, as `Modules/ParticleSystem/` does. Disabling the package removes the assembly and with it the
+  adapters. This is verified: with `com.unity.modules.particlesystem` removed the project compiles and the module is
+  gone; re-added, it is back.
+- **Extension packages** (like the Unity-AI-* extensions): a package with an Editor asmdef that references
+  `com.IvanMurzak.Unity.MCP.Rql.Editor` and contains an `IRqlModule`.
+- **Adapters reuse each other only through the kernel.** For example, `UnityEngine_MinMaxGradient_Adapter` accepts a
+  color, two colors or gradient keys via `kernel.TryCoerce(value, typeof(Color) / typeof(Gradient))` and encodes via
+  `context.EncodeValue`. It never references the Color or Gradient adapter. Recursion protection, the write policy and
+  error paths (`[1].color: …`) are the kernel's job.
+
+Adapters today:
+- **Identity and liveness:** `$ref` ids come from `EntityId`; destroyed objects read as null.
 - **Members:** private `[SerializeField]` fields are members, `[Obsolete]` members are hidden.
 - **GameObject:** `components` / `children` / `active` members.
 - **Renderer:** `material(s)` and `mesh` are explicit-only; `sharedMaterials` writes are assigned back.
-- **Literals:** vectors and colors are read and written as `"(x, y, z)"`, `[x, y, z]`, `{x: …}` or `"#rrggbb"`.
+- **Literals:** vectors and colors as `"(x, y, z)"`, `[x, y, z]`, `{x: …}` or `"#rrggbb"`; gradients as
+  `[[color, time], …]`.
 - **Materials:** shader properties as `properties["_Color"]`.
-- **Writes:** Undo before each write, SetDirty after.
+- **Particle systems:** module handles write through; `MinMaxCurve` takes a number or `[min, max]`, `MinMaxGradient`
+  a color, two colors or a gradient.
 
 ## Run it
 
@@ -45,7 +75,8 @@ Batch mode (from this folder; `U` = the Unity 6000.6 binary):
 ```bash
 "$U" -batchmode -nographics -projectPath "$PWD/RqlTestProject" -rqlWaitReady -logFile -   # restore NuGet + compile, exit 0 when ready
 "$U" -batchmode -nographics -projectPath "$PWD/RqlTestProject" -runTests -testPlatform EditMode \
-     -assemblyNames com.IvanMurzak.Unity.MCP.Rql.Editor.Tests -testResults results.xml -logFile -
+     -assemblyNames "com.IvanMurzak.Unity.MCP.Rql.Editor.Tests;com.IvanMurzak.Unity.MCP.Rql.Editor.ParticleSystem.Tests" \
+     -testResults results.xml -logFile -
 "$U" -batchmode -nographics -quit -projectPath "$PWD/RqlTestProject" -executeMethod RqlTest.EditorTools.RqlSmoke.Run -logFile -
 ```
 
@@ -53,6 +84,6 @@ Batch mode (from this folder; `U` = the Unity 6000.6 binary):
 
 - **Unity versions:** compiled and tested on Unity 6000.6.4f1 (macOS) only. Code paths for Unity < 6.5 (instance ids
   instead of EntityId) are in place but not compiled here.
-- **RQL runtimes:** RQL features added for this experiment (`TypeModel.TreatAsObject`, host functions as query sources)
-  exist in the .NET runtime only so far.
+- **RQL runtimes:** RQL features added for this experiment exist in the .NET runtime only so far:
+  `TypeModel.TreatAsObject`, host functions as query sources, the kernel context for adapters, and modules.
 - **Edit mode only:** the tools run in the Editor; Play Mode objects work but writes there are not undoable.

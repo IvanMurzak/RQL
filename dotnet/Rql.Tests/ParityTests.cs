@@ -290,20 +290,39 @@ namespace Rql.Tests
         private sealed class ByName : RqlTypeAdapter { public ByName(string name) : base(name) { } }
 
         [Fact]
-        public void AdaptersAreDiscoveredFromAssembliesInOrder()
+        public void ModulesAreDiscoveredOrderedAndIsolated()
         {
             var e = new RqlEngine();
-            var errors = e.AddAdaptersFrom(typeof(ParityTests).Assembly);
-            Assert.Contains(errors, err => err.Contains(nameof(Throwing)));
-            var order = e.Types.Explain(typeof(Discovered)).Select(x => x.Split(' ')[0]).ToArray();
-            // Same rank: higher priority first, so the order attribute only decides registration order.
-            Assert.Equal(new[] { nameof(SecondDiscovered), nameof(FirstDiscovered) }, order);
+            var reports = e.AddModulesFrom(new[] { typeof(ParityTests).Assembly });
+            var names = reports.Select(r => r.Module.Split('+').Last()).ToList();
+            Assert.Equal(new[] { nameof(FirstModule), nameof(SecondModule), nameof(ThrowingModule) }, names.Where(n => n.EndsWith("Module")).ToArray());
+            Assert.Contains(reports, r => r.Module.EndsWith(nameof(ThrowingModule)) && !r.Ok && r.Error!.Contains("broken module"));
+            // The modules' adapters are registered: Second's adapter (priority 1) answers first.
+            Assert.Equal(new[] { nameof(SecondDiscovered), nameof(FirstDiscovered) },
+                e.Types.Explain(typeof(Discovered)).Select(x => x.Split(' ')[0]).ToArray());
+            Assert.Equal(reports.Count, e.Modules.Count);
         }
 
         public sealed class Discovered { }
+        public sealed class FirstDiscovered : RqlTypeAdapter<Discovered> { public FirstDiscovered() : base(priority: 0) { } }
+        public sealed class SecondDiscovered : RqlTypeAdapter<Discovered> { public SecondDiscovered() : base(priority: 1) { } }
 
-        [RqlAdapterOrder(1)] public sealed class FirstDiscovered : RqlTypeAdapter<Discovered> { public FirstDiscovered() : base(priority: 0) { } }
-        [RqlAdapterOrder(2)] public sealed class SecondDiscovered : RqlTypeAdapter<Discovered> { public SecondDiscovered() : base(priority: 1) { } }
-        public sealed class Throwing : RqlTypeAdapter<Discovered> { public Throwing() : base() { throw new InvalidOperationException("broken module"); } }
+        public sealed class FirstModule : IRqlModule
+        {
+            public int Order => 1;
+            public void Configure(RqlModuleContext c) => c.AddAdapter(new FirstDiscovered());
+        }
+
+        public sealed class SecondModule : IRqlModule
+        {
+            public int Order => 2;
+            public void Configure(RqlModuleContext c) => c.AddAdapter(new SecondDiscovered());
+        }
+
+        public sealed class ThrowingModule : IRqlModule
+        {
+            public int Order => 3;
+            public void Configure(RqlModuleContext c) => throw new InvalidOperationException("broken module");
+        }
     }
 }

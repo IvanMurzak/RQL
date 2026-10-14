@@ -4,6 +4,8 @@
  */
 
 #nullable enable
+// UAC0005 (Unity 6.6 analyzer) suggests CurrentAssemblies APIs that older supported Unity versions lack.
+#pragma warning disable UAC0005
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -22,7 +24,7 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
     /// adapters and Editor integration for writes (Undo before, SetDirty after). One engine per domain (static fields reset
     /// on domain reload). Every call must run on the main thread.
     /// </summary>
-    public static class RqlUnity
+    public static partial class RqlUnity
     {
         /// <summary>Most assets <c>unity.assets(...)</c> loads per call (loading assets is expensive).</summary>
         public const int MaxAssets = 200;
@@ -34,18 +36,16 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
         /// <summary>Drop the engine (tests, or after changing adapters).</summary>
         public static void Reset() => _engine = null;
 
+        /// <summary>Assemblies never scanned for RQL modules (engine, BCL and tool assemblies; same idea as Unity-MCP's scan ignore list).</summary>
+        private static readonly string[] SkippedAssemblyPrefixes =
+        {
+            "mscorlib", "netstandard", "System", "Microsoft", "Mono.", "nunit.", "UnityEngine", "UnityEditor", "Unity.",
+            "R3", "McpPlugin", "ReflectorNet", "Rql.", "Bee.", "ExCSS", "JetBrains",
+        };
+
         public static RqlEngine Create()
         {
-            // Transform enumerates its children, but RQL must treat it as an object with members.
-            TypeModel.TreatAsObject(typeof(Transform));
-
             var engine = new RqlEngine(AccessorMode.Compiled) { RuntimeName = "unity" };
-            engine.AddSource("objects", AllGameObjects, "every GameObject in the loaded scenes, depth-first, inactive ones included");
-            engine.AddSource("roots", RootGameObjects, "root GameObjects of the loaded scenes");
-            engine.AddSource("scenes", LoadedScenes, "loaded scenes");
-            engine.AddSource("selection", () => Selection.objects.Where(o => o != null).ToList(), "objects selected in the Editor");
-            engine.AddFunction("unity.assets", FindAssets);
-            engine.AddFunction("unity.asset", LoadAsset);
             engine.ResolveStableRef = ResolveStableRef;
 
             engine.Mutations.Enabled = true;
@@ -64,7 +64,11 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
                 }
             };
 
-            UnityAdapters.Register(engine);
+            // Everything else — sources, adapters, exclusions — comes from modules: the core module in this package plus any
+            // module in an installed extension package or an optional-package assembly (e.g. Particle System).
+            var reports = engine.AddModulesFrom(AppDomain.CurrentDomain.GetAssemblies(),
+                asm => SkippedAssemblyPrefixes.Any(p => (asm.GetName().Name ?? "").StartsWith(p, StringComparison.Ordinal)));
+            foreach (var failed in reports.Where(r => !r.Ok)) Debug.LogWarning($"[RQL] module skipped: {failed}");
             return engine;
         }
 
@@ -84,7 +88,7 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
             return scenes;
         }
 
-        private static List<Scene> LoadedScenes() => Scenes();
+        public static List<Object> SelectedObjects() => Selection.objects.Where(o => o != null).ToList();
 
         public static List<GameObject> RootGameObjects()
         {
@@ -109,7 +113,7 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
         // ------------------------------------------------------------ functions
 
         /// <summary><c>unity.assets("t:Material", folder?)</c>: assets matching an AssetDatabase filter (at most <see cref="MaxAssets"/>).</summary>
-        private static object? FindAssets(object?[] args)
+        public static object? FindAssets(object?[] args)
         {
             if (args.Length < 1 || !(args[0] is string filter)) return new RqlError("type-mismatch", "unity.assets(filter, folder?) expects a filter string such as \"t:Material\"");
             var folders = args.Length > 1 && args[1] is string folder ? new[] { folder } : null;
@@ -124,24 +128,11 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
         }
 
         /// <summary><c>unity.asset("Assets/…/Red.mat")</c>: the main asset at a path, or null.</summary>
-        private static object? LoadAsset(object?[] args)
+        public static object? LoadAsset(object?[] args)
         {
             if (args.Length != 1 || !(args[0] is string path)) return new RqlError("type-mismatch", "unity.asset(path) expects an asset path");
             return AssetDatabase.LoadMainAssetAtPath(path);
         }
 
-        // ------------------------------------------------------------ references
-
-        /// <summary><c>Type#id</c> where id is the entity / instance id (see <see cref="UnityAdapters"/>); the engine checks the type.</summary>
-        private static object? ResolveStableRef(string type, string id)
-        {
-            if (!ulong.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out _) && !long.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out _)) return null;
-#if UNITY_6000_5_OR_NEWER
-            var o = EditorUtility.EntityIdToObject(com.IvanMurzak.Unity.MCP.Runtime.Utils.EntityIdUtils.FromString(id));
-#else
-            var o = EditorUtility.InstanceIDToObject(int.Parse(id, CultureInfo.InvariantCulture));
-#endif
-            return o == null ? null : o;
-        }
     }
 }

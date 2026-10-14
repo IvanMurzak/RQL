@@ -312,7 +312,7 @@ namespace Rql.Tests
         {
             // Host order differs from the numeric enum order: Medium is the most urgent.
             private static int Rank(Urgency p) => p == Urgency.Medium ? 2 : p == Urgency.High ? 1 : 0;
-            protected override int? Order(Urgency p, object? other) => other is Urgency o ? Rank(p).CompareTo(Rank(o)) : (int?)null;
+            protected override int? Order(Urgency p, object? other, RqlKernel kernel) => other is Urgency o ? Rank(p).CompareTo(Rank(o)) : (int?)null;
         }
 
         [Fact]
@@ -330,7 +330,7 @@ namespace Rql.Tests
 
         private sealed class ByIdDesc : RqlTypeAdapter<Counter>
         {
-            protected override int? Order(Counter c, object? other) => other is Counter o ? o.Id.CompareTo(c.Id) : (int?)null;
+            protected override int? Order(Counter c, object? other, RqlKernel kernel) => other is Counter o ? o.Id.CompareTo(c.Id) : (int?)null;
         }
 
         [Fact]

@@ -69,7 +69,7 @@ namespace Rql.Execution
                 var adapters = _x.Types.Info(v.GetType()).EncodeAdapters;
                 if (adapters.Length > 0)
                 {
-                    var ctx = new EncodeContext(_encode, _summary, depth);
+                    var ctx = new EncodeContext(_encode, _summary, depth, _x.Types);
                     foreach (var a in adapters)
                     {
                         var n = a.Encode(v, ctx);

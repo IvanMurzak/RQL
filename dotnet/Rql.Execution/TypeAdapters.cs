@@ -77,19 +77,21 @@ namespace Rql.Execution
         /// Convert <paramref name="value"/> (a query literal, list, or another runtime value) to <paramref name="target"/>,
         /// which is the adapter's type or a subtype. Used for writes (<c>set</c>, <c>call</c> arguments) only; to make
         /// comparisons accept the same literals, coerce the other operand in <see cref="AreEqual"/> / <see cref="Compare"/>.
+        /// Nested values go through <paramref name="kernel"/> (e.g. <c>kernel.TryCoerce(item, typeof(Color), …)</c>), which
+        /// applies the adapters registered for that type without this adapter knowing them.
         /// </summary>
-        public virtual AdapterOutcome TryCoerce(object? value, Type target, out object? result, out string? reason)
+        public virtual AdapterOutcome TryCoerce(object? value, Type target, RqlKernel kernel, out object? result, out string? reason)
         {
             result = null;
             reason = null;
             return AdapterOutcome.NotHandled;
         }
 
-        /// <summary>Equality of a value of the adapter's type with any other value; null defers.</summary>
-        public virtual bool? AreEqual(object value, object? other) => null;
+        /// <summary>Equality of a value of the adapter's type with any other value; null defers. Nested values: <c>kernel.Equal</c>.</summary>
+        public virtual bool? AreEqual(object value, object? other, RqlKernel kernel) => null;
 
         /// <summary>Ordering of a value of the adapter's type with any other value; null defers (incomparable by default).</summary>
-        public virtual int? Compare(object value, object? other) => null;
+        public virtual int? Compare(object value, object? other, RqlKernel kernel) => null;
 
         /// <summary>Stable id for <c>$ref</c> ("Type#id"); null defers to the identity member / session handles.</summary>
         public virtual string? StableId(object value) => null;
@@ -141,11 +143,11 @@ namespace Rql.Execution
         public sealed override JsonNode? Encode(object value, EncodeContext context) => value is T t ? Encode(t, context) : null;
         protected virtual JsonNode? Encode(T value, EncodeContext context) => null;
 
-        public sealed override bool? AreEqual(object value, object? other) => value is T t ? Equal(t, other) : null;
-        protected virtual bool? Equal(T value, object? other) => null;
+        public sealed override bool? AreEqual(object value, object? other, RqlKernel kernel) => value is T t ? Equal(t, other, kernel) : null;
+        protected virtual bool? Equal(T value, object? other, RqlKernel kernel) => null;
 
-        public sealed override int? Compare(object value, object? other) => value is T t ? Order(t, other) : null;
-        protected virtual int? Order(T value, object? other) => null;
+        public sealed override int? Compare(object value, object? other, RqlKernel kernel) => value is T t ? Order(t, other, kernel) : null;
+        protected virtual int? Order(T value, object? other, RqlKernel kernel) => null;
 
         public sealed override string? StableId(object value) => value is T t ? Id(t) : null;
         protected virtual string? Id(T value) => null;
@@ -160,12 +162,19 @@ namespace Rql.Execution
         private readonly Func<object?, int, JsonNode?> _encode;
         private readonly Func<object, JsonObject> _summary;
 
-        internal EncodeContext(Func<object?, int, JsonNode?> encode, Func<object, JsonObject> summary, int depth)
+        private readonly TypeModel _types;
+        private RqlKernel? _kernel;
+
+        internal EncodeContext(Func<object?, int, JsonNode?> encode, Func<object, JsonObject> summary, int depth, TypeModel types)
         {
             _encode = encode;
             _summary = summary;
             Depth = depth;
+            _types = types;
         }
+
+        /// <summary>The engine's value operations (coerce / compare) for adapters that need them while encoding.</summary>
+        public RqlKernel Kernel => _kernel ??= new RqlKernel(_types, null);
 
         /// <summary>Nesting depth of the value being encoded (0 = a top-level cell).</summary>
         public int Depth { get; }

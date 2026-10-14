@@ -33,14 +33,6 @@ namespace Rql
         public string? Description { get; }
     }
 
-    /// <summary>Registration order for <see cref="RqlEngine.AddAdaptersFrom"/> (lower first; ties by full type name).</summary>
-    [AttributeUsage(AttributeTargets.Class, Inherited = false)]
-    public sealed class RqlAdapterOrderAttribute : Attribute
-    {
-        public RqlAdapterOrderAttribute(int order) { Order = order; }
-        public int Order { get; }
-    }
-
     /// <summary>Optional human description of a type or member, surfaced by schema/describe.</summary>
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct | AttributeTargets.Property | AttributeTargets.Field | AttributeTargets.Enum)]
     public sealed class RqlDescriptionAttribute : Attribute

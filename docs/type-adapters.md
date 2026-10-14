@@ -51,7 +51,8 @@ sealed class RendererAdapter : RqlTypeAdapter<Renderer>
 | Identity / display | `Identity(name)`, `Display(name)` | `$ref` ids, summary names |
 | Literals | `LiteralSchema` (JSON Schema), object literals reach `TryCoerce` | `describe` → `literal` |
 | Host hooks | `engine.Mutations.BeforeWrite` / `Committed` (records with `Owner`) | undo, dirty marking, vetoes |
-| Discovery | `engine.AddAdaptersFrom(assemblies)`, `[RqlAdapterOrder]`, `RqlTypeAdapter(string typeName)` | module scanning, optional engine modules |
+| Kernel | `RqlKernel` passed to `TryCoerce` / `AreEqual` / `Compare` (and `EncodeContext.Kernel`): `TryCoerce(value, type, path)`, `Equal`, `Compare` | composite values reuse whatever adapter handles a nested type |
+| Modules | `IRqlModule { Order; Configure(ctx) }`, `engine.AddModulesFrom(assemblies)`, `RqlTypeAdapter(string typeName)` | optional packages contribute adapters by being installed |
 | Identity | `StableId(value)`, `IsAlive(value)` | `$ref` / `ref("Type#id")`, `stale-ref` |
 | Describe | `Description` | schema / `describe` |
 
@@ -96,7 +97,7 @@ they rely on the generic ones plus `SetDirty` after modifications (covered by th
 | `[Serializable]` class fields, `[SerializeReference]` subtype replacement (`$type`) | object literals construct values: `set effect = {"$type": "BurnEffect", damage: 3}` |
 | Collections: element writes, whole-list replacement | `set items[2] = …`, list literals, `append` / `insert` / `remove-at` / `without` |
 | Post-modification `EditorUtility.SetDirty` / repaint | `Mutations.Committed` with the owners; `Mutations.BeforeWrite` for `Undo.RecordObjects` or a veto |
-| Converter modules discovered by assembly scan | `engine.AddAdaptersFrom(assemblies)` with `[RqlAdapterOrder]`, failures isolated and reported |
+| Converter modules discovered by assembly scan (`IReflectorModule`) | `IRqlModule` discovered by `engine.AddModulesFrom(assemblies)`: ordered, failures isolated and reported; an extension package (or an asmdef gated on an optional Unity module) contributes its module just by being present |
 
 Deliberately different: RQL queries and assigns members instead of round-tripping whole serialized objects (no
 SerializedMember diff format, no JSON repair of malformed nesting); writes are all-or-nothing instead of partial

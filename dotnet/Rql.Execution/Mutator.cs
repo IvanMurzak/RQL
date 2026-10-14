@@ -432,8 +432,10 @@ namespace Rql.Execution
         }
 
         /// <summary>Build <paramref name="target"/> from an object literal: concrete type, construction, member assignment (spec §4.5).</summary>
-        private static bool TryConstruct(TypeModel model, Func<Type, MemberAccessor, bool>? policy, ObjectValue literal, Type target, out object? result, out string why)
+        private static bool TryConstruct(RqlKernel kernel, ObjectValue literal, Type target, out object? result, out string why)
         {
+            var model = kernel.Types;
+            var policy = kernel.WritePolicy;
             result = null;
             why = "";
             var info = model.Info(target);
@@ -448,7 +450,7 @@ namespace Rql.Execution
                 foreach (var kv in literal)
                 {
                     if (!Compiler.TryCoerceKey(kv.Key, keyType, out var key) || key == null) { why = $"invalid key '{kv.Key}' for {TypeModel.FriendlyName(target)}"; return false; }
-                    if (!TryTo(model, policy, kv.Value, valueType, out var mv, out var w)) { why = $"'{kv.Key}': {w}"; return false; }
+                    if (!TryTo(kernel, kv.Value, valueType, out var mv, out var w)) { why = $"'{kv.Key}': {w}"; return false; }
                     map[key] = mv;
                 }
                 result = map;
@@ -487,7 +489,7 @@ namespace Rql.Execution
                 // Building a value assigns members, so the host's per-member write policy applies as for `set`.
                 if (policy != null && !policy(concrete, m))
                     throw new RqlException("permission-denied", $"member '{m.Name}' of {ci.ShortName} may not be written (denied by host policy)");
-                if (!TryTo(model, policy, kv.Value, m.Type, out var mv, out var w)) { why = $"'{m.Name}': {w}"; return false; }
+                if (!TryTo(kernel, kv.Value, m.Type, out var mv, out var w)) { why = $"'{m.Name}': {w}"; return false; }
                 if (m.Validate?.Invoke(instance, mv) is string rejected) { why = $"'{m.Name}': {rejected}"; return false; }
                 try { m.SetValue(instance, mv); }
                 catch (Exception ex) when (!(ex is OutOfMemoryException)) { why = $"'{m.Name}': {ex.Message}"; return false; }
@@ -519,11 +521,16 @@ namespace Rql.Execution
         }
 
         public static bool TryTo(TypeModel model, object? v, Type target, out object? result, out string why) =>
-            TryTo(model, null, v, target, out result, out why);
+            TryTo(new RqlKernel(model, null), v, target, out result, out why);
 
         /// <summary>Coercion for writes; <paramref name="policy"/> (the host's per-member write policy) also governs construction.</summary>
-        public static bool TryTo(TypeModel model, Func<Type, MemberAccessor, bool>? policy, object? v, Type target, out object? result, out string why)
+        public static bool TryTo(TypeModel model, Func<Type, MemberAccessor, bool>? policy, object? v, Type target, out object? result, out string why) =>
+            TryTo(new RqlKernel(model, policy), v, target, out result, out why);
+
+        /// <summary>The one coercion pipeline (spec §8, §13): adapters, object literals, lists, scalars. Nested coercions reuse the kernel.</summary>
+        internal static bool TryTo(RqlKernel kernel, object? v, Type target, out object? result, out string why)
         {
+            var model = kernel.Types;
             why = "";
             result = null;
             if (v is Missing || v is Unknown || v is RqlError) { why = "value is " + V.Describe(v); return false; }
@@ -541,7 +548,14 @@ namespace Rql.Execution
             {
                 foreach (var ad in model.Info(target).CoerceAdapters)
                 {
-                    switch (ad.TryCoerce(v, target, out var adapted, out var reason))
+                    // An adapter that asks the kernel for its own target type (to reuse the default behaviour) is skipped.
+                    if (!kernel.Enter(ad, target, RqlKernel.OpCoerce)) continue;
+                    AdapterOutcome outcome;
+                    object? adapted;
+                    string? reason;
+                    try { outcome = ad.TryCoerce(v, target, kernel, out adapted, out reason); }
+                    finally { kernel.Exit(ad, target, RqlKernel.OpCoerce); }
+                    switch (outcome)
                     {
                         case AdapterOutcome.Ok:
                             if (adapted != null && !target.IsInstanceOfType(adapted))
@@ -555,7 +569,7 @@ namespace Rql.Execution
                 }
             }
 
-            if (v is ObjectValue literal) return TryConstruct(model, policy, literal, target, out result, out why);
+            if (v is ObjectValue literal) return TryConstruct(kernel, literal, target, out result, out why);
 
             if (target.IsEnum)
             {
@@ -609,7 +623,7 @@ namespace Rql.Execution
                 var items = new List<object?>();
                 foreach (var el in src)
                 {
-                    if (!TryTo(model, policy, el, elem, out var ce, out var w)) { why = "element: " + w; return false; }
+                    if (!TryTo(kernel, el, elem, out var ce, out var w)) { why = $"[{items.Count}]: " + w; return false; }
                     items.Add(ce);
                 }
                 if (target.IsArray)

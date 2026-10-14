@@ -394,9 +394,21 @@ it is the Material, for `set Uniforms["_Color"]` the material owning the virtual
 system. That is what hosts mark dirty or record for undo. A failing committed hook is a
 `getter-threw` warning; the writes stay applied.
 
-**Discovery and optional types (non-normative, runtime convenience).** Runtimes with assembly/module reflection MAY
-register every public adapter found in given modules (failures isolated and reported) and MAY let an adapter target a
-type by name, being inert when no loaded module defines it.
+**Kernel (adapter composition).** Adapters never call each other. An adapter that needs a nested operation — coerce a
+component of a composite literal, compare elements, encode a member — asks the engine's *kernel* for that operation on a
+type (`kernel.TryCoerce(value, Color)`, `kernel.Equal(a, b)`, `kernel.Compare(a, b)`, encode via the encode context),
+without knowing which adapter, if any, handles the type. The kernel runs exactly the pipeline a query would (adapters by
+priority, built-in behaviour, object-literal construction) and owns the cross-cutting rules, so adapters do not repeat
+them: (1) **recursion protection** — an adapter already performing an operation for a type is skipped when the kernel is
+asked for the same operation and type again, so asking for one's own type yields the next adapter or the built-in
+behaviour; a nesting limit (32) bounds the rest; (2) the host's **write policy** applies to every member assigned while
+building nested values; (3) **error paths** — a nested failure's reason is prefixed with its location (`[1].color: …`).
+
+**Modules (non-normative, host convenience).** Adapters, type exclusions, sources and functions are contributed by
+*modules* (order + configure). Runtimes with module/assembly reflection discover modules by scan, configure them in
+order (then by name), isolate failures (a failing module is reported, the others still configure) and report the result.
+A module that lives in an optional package exists exactly when that package is installed, so enabling or disabling an
+engine feature (e.g. Unity's Particle System) enables or disables its adapters.
 
 **Scope.** Adapters belong to an engine (a host may run engines with different adapter sets over one type registry);
 engines without adapters behave exactly as without this section. An explicit-only member is also not searched by

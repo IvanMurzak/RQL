@@ -120,31 +120,19 @@ namespace Rql.Execution
         }
 
         /// <summary>
-        /// Register every public concrete <see cref="RqlTypeAdapter"/> with a public parameterless constructor found in the assemblies,
-        /// ordered by <see cref="RqlAdapterOrderAttribute"/> then full name. A failing adapter or assembly is skipped and reported
-        /// (the others still register), so one broken module cannot disable the rest.
+        /// Configure every <see cref="IRqlModule"/> found in <paramref name="assemblies"/> (public, concrete, parameterless),
+        /// ordered by <see cref="IRqlModule.Order"/> then full name. A module (or assembly) that fails is reported and skipped;
+        /// the others still configure. <paramref name="skipAssembly"/> prunes assemblies from the scan (e.g. engine / BCL ones).
         /// </summary>
-        public IReadOnlyList<string> AddAdaptersFrom(params System.Reflection.Assembly[] assemblies)
+        public IReadOnlyList<RqlModuleReport> AddModulesFrom(IEnumerable<System.Reflection.Assembly> assemblies, Func<System.Reflection.Assembly, bool>? skipAssembly = null)
         {
-            var errors = new List<string>();
-            var found = new List<Type>();
-            foreach (var asm in assemblies)
-            {
-                found.AddRange(TypeModel.LoadableTypes(asm, errors.Add).Where(t => t.IsClass && t.IsVisible && !t.IsAbstract && !t.ContainsGenericParameters
-                                                && typeof(RqlTypeAdapter).IsAssignableFrom(t) && t.GetConstructor(Type.EmptyTypes) != null));
-            }
-            int Order(Type t) => (t.GetCustomAttributes(typeof(RqlAdapterOrderAttribute), false).FirstOrDefault() as RqlAdapterOrderAttribute)?.Order ?? 0;
-            foreach (var t in found.OrderBy(Order).ThenBy(t => t.FullName, StringComparer.Ordinal))
-            {
-                try
-                {
-                    var adapter = (RqlTypeAdapter)Activator.CreateInstance(t)!;
-                    if (adapter.IsBound) AddAdapter(adapter);
-                }
-                catch (Exception ex) { errors.Add($"{t.FullName}: {(ex.InnerException ?? ex).Message}"); }
-            }
-            return errors;
+            var reports = ModuleDiscovery.Configure(this, assemblies, skipAssembly);
+            Modules = Modules.Concat(reports).ToList();
+            return reports;
         }
+
+        /// <summary>Every module configured on this engine so far, with failures.</summary>
+        public IReadOnlyList<RqlModuleReport> Modules { get; private set; } = Array.Empty<RqlModuleReport>();
 
         /// <summary>
         /// Register a type adapter (spec §13): virtual/hidden members, methods, maps, encoding, coercion, comparison, identity,

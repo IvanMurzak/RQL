@@ -45,7 +45,7 @@ namespace Rql.Conformance
 
             protected override JsonNode? Encode(Vec2 v, EncodeContext context) => JsonValue.Create("(" + Num(v.x) + ", " + Num(v.y) + ")");
 
-            public override AdapterOutcome TryCoerce(object? value, Type target, out object? result, out string? reason)
+            public override AdapterOutcome TryCoerce(object? value, Type target, RqlKernel kernel, out object? result, out string? reason)
             {
                 reason = null;
                 result = null;
@@ -57,10 +57,10 @@ namespace Rql.Conformance
                 return AdapterOutcome.Failed;
             }
 
-            protected override bool? Equal(Vec2 value, object? other) =>
+            protected override bool? Equal(Vec2 value, object? other, RqlKernel kernel) =>
                 TryVec(other, out var o) ? Math.Abs(value.x - o.x) <= 1e-9 && Math.Abs(value.y - o.y) <= 1e-9 : (bool?)null;
 
-            protected override int? Order(Vec2 value, object? other) =>
+            protected override int? Order(Vec2 value, object? other, RqlKernel kernel) =>
                 TryVec(other, out var o) ? Length(value).CompareTo(Length(o)) : (int?)null;
 
             private static double Length(Vec2 v) => Math.Sqrt(v.x * v.x + v.y * v.y);

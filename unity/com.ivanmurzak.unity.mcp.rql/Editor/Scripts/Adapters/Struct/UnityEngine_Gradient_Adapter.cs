@@ -1,0 +1,76 @@
+/*
+ * RQL tools for Unity-MCP — experimental, local only.
+ * Copyright (c) 2026 Ivan Murzak. Not for redistribution.
+ */
+
+#nullable enable
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json.Nodes;
+using Rql.Execution;
+using UnityEngine;
+
+namespace com.IvanMurzak.Unity.MCP.Rql.Editor.Adapters
+{
+    /// <summary>
+    /// Gradient: written as a list of keys, [[color, time], …] or [{color: …, time: …}, …]; read as the same list. Colors are
+    /// coerced and encoded by the kernel — whatever adapter handles Color — so this adapter never knows the Color format.
+    /// The key's alpha becomes an alpha key at the same time.
+    /// </summary>
+    public sealed class UnityEngine_Gradient_Adapter : RqlTypeAdapter<Gradient>
+    {
+        public override string Description => "Gradient: write as [[color, time], …] or [{color: \"#ff0000\", time: 0}, …]";
+
+        protected override JsonNode? Encode(Gradient value, EncodeContext context)
+        {
+            var keys = new JsonArray();
+            foreach (var k in value.colorKeys)
+            {
+                var alpha = value.Evaluate(k.time).a;
+                keys.Add(new JsonArray(context.EncodeValue(new Color(k.color.r, k.color.g, k.color.b, alpha)), JsonValue.Create(k.time)));
+            }
+            return keys;
+        }
+
+        public override AdapterOutcome TryCoerce(object? value, Type target, RqlKernel kernel, out object? result, out string? reason)
+        {
+            result = null;
+            reason = null;
+            if (!(value is IList<object?> list)) return AdapterOutcome.NotHandled;
+            var colors = new List<GradientColorKey>();
+            var alphas = new List<GradientAlphaKey>();
+            for (int i = 0; i < list.Count; i++)
+            {
+                object? c, t;
+                switch (list[i])
+                {
+                    case IList<object?> pair when pair.Count == 2: c = pair[0]; t = pair[1]; break;
+                    case ObjectValue o when o.ContainsKey("color") && o.ContainsKey("time"): c = o["color"]; t = o["time"]; break;
+                    default: reason = $"[{i}]: expected [color, time] or {{color, time}}"; return AdapterOutcome.Failed;
+                }
+                if (!kernel.TryCoerce(c, typeof(Color), out var color, out reason, path: $"[{i}].color")) return AdapterOutcome.Failed;
+                if (!kernel.TryCoerce(t, typeof(float), out var time, out reason, path: $"[{i}].time")) return AdapterOutcome.Failed;
+                var col = (Color)color!;
+                colors.Add(new GradientColorKey(col, (float)time!));
+                alphas.Add(new GradientAlphaKey(col.a, (float)time!));
+            }
+            if (colors.Count < 1 || colors.Count > 8) { reason = "a Gradient has 1..8 keys"; return AdapterOutcome.Failed; }
+            var g = new Gradient();
+            g.SetKeys(colors.ToArray(), alphas.ToArray());
+            result = g;
+            return AdapterOutcome.Ok;
+        }
+
+        protected override bool? Equal(Gradient value, object? other, RqlKernel kernel)
+        {
+            Gradient? o = other as Gradient;
+            if (o == null && kernel.TryCoerce(other, typeof(Gradient), out var coerced, out _)) o = coerced as Gradient;
+            if (o == null) return null;
+            var a = value.colorKeys;
+            var b = o.colorKeys;
+            if (a.Length != b.Length) return false;
+            return a.Zip(b, (x, y) => Math.Abs(x.time - y.time) < 1e-4f && kernel.Equal(x.color, y.color) == true).All(eq => eq);
+        }
+    }
+}

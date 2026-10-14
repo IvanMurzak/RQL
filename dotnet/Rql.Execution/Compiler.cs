@@ -492,11 +492,15 @@ namespace Rql.Execution
         private static object Tri(bool? b) => b == null ? Unknown.Value : V.Bool(b.Value);
 
         /// <summary>Equality per spec §4.1 (adapters per §13); null = unknown.</summary>
-        internal static bool? Equal(TypeModel? model, object? a, object? b)
+        internal static bool? Equal(TypeModel? model, object? a, object? b) => Equal(model, null, a, b);
+
+        internal static bool? Equal(RqlKernel kernel, object? a, object? b) => Equal(kernel.Types, kernel, a, b);
+
+        private static bool? Equal(TypeModel? model, RqlKernel? kernel, object? a, object? b)
         {
             if (V.IsAbsent(a) || V.IsAbsent(b)) return null;
             if (a == null || b == null) return a == null && b == null;
-            if (model != null && (model.Caps & AdapterCaps.Equality) != 0 && AdapterEqual(model, a, b) is bool adapted) return adapted;
+            if (model != null && (model.Caps & AdapterCaps.Equality) != 0 && AdapterEqual(model, kernel ?? new RqlKernel(model, null), a, b) is bool adapted) return adapted;
             if (V.TryNumber(a, out var da, out var sa))
             {
                 if (V.TryNumber(b, out var db, out var sb))
@@ -523,20 +527,38 @@ namespace Rql.Execution
             return ReferenceEquals(a, b);
         }
 
-        // First adapter answer for the left operand, then for the right operand (spec §13); ordering is mirrored.
+        // First adapter answer for the left operand, then for the right operand (spec §13); ordering is mirrored. An adapter
+        // already running this operation for the type (it asked the kernel about its own type) is skipped.
         [MethodImpl(MethodImplOptions.NoInlining)]
-        private static bool? AdapterEqual(TypeModel model, object a, object b)
+        private static bool? AdapterEqual(TypeModel model, RqlKernel kernel, object a, object b)
         {
-            foreach (var ad in model.Info(a.GetType()).EqualityAdapters) { var r = ad.AreEqual(a, b); if (r.HasValue) return r; }
-            foreach (var ad in model.Info(b.GetType()).EqualityAdapters) { var r = ad.AreEqual(b, a); if (r.HasValue) return r; }
+            foreach (var (x, y) in new[] { (a, b), (b, a) })
+            {
+                var type = x.GetType();
+                foreach (var ad in model.Info(type).EqualityAdapters)
+                {
+                    if (!kernel.Enter(ad, type, RqlKernel.OpEqual)) continue;
+                    try { var r = ad.AreEqual(x, y, kernel); if (r.HasValue) return r; }
+                    finally { kernel.Exit(ad, type, RqlKernel.OpEqual); }
+                }
+            }
             return null;
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
-        private static int? AdapterCompare(TypeModel model, object a, object b)
+        private static int? AdapterCompare(TypeModel model, RqlKernel kernel, object a, object b)
         {
-            foreach (var ad in model.Info(a.GetType()).OrderingAdapters) { var r = ad.Compare(a, b); if (r.HasValue) return Math.Sign(r.Value); }
-            foreach (var ad in model.Info(b.GetType()).OrderingAdapters) { var r = ad.Compare(b, a); if (r.HasValue) return -Math.Sign(r.Value); }
+            for (int side = 0; side < 2; side++)
+            {
+                var (x, y) = side == 0 ? (a, b) : (b, a);
+                var type = x.GetType();
+                foreach (var ad in model.Info(type).OrderingAdapters)
+                {
+                    if (!kernel.Enter(ad, type, RqlKernel.OpCompare)) continue;
+                    try { var r = ad.Compare(x, y, kernel); if (r.HasValue) return side == 0 ? Math.Sign(r.Value) : -Math.Sign(r.Value); }
+                    finally { kernel.Exit(ad, type, RqlKernel.OpCompare); }
+                }
+            }
             return null;
         }
 
@@ -549,10 +571,14 @@ namespace Rql.Execution
         }
 
         /// <summary>Ordering comparison; null = incomparable.</summary>
-        internal static int? Compare(TypeModel? model, object? a, object? b)
+        internal static int? Compare(TypeModel? model, object? a, object? b) => Compare(model, null, a, b);
+
+        internal static int? Compare(RqlKernel kernel, object? a, object? b) => Compare(kernel.Types, kernel, a, b);
+
+        private static int? Compare(TypeModel? model, RqlKernel? kernel, object? a, object? b)
         {
             if (a == null || b == null || V.IsAbsent(a) || V.IsAbsent(b)) return null;
-            if (model != null && (model.Caps & AdapterCaps.Ordering) != 0 && AdapterCompare(model, a, b) is int adapted) return adapted;
+            if (model != null && (model.Caps & AdapterCaps.Ordering) != 0 && AdapterCompare(model, kernel ?? new RqlKernel(model, null), a, b) is int adapted) return adapted;
             if (V.TryNumber(a, out var da, out var sa))
             {
                 if (V.TryNumber(b, out var db, out var sb))
