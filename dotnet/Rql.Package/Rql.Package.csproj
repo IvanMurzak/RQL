@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Pack-only project: the NuGet package com.IvanMurzak.Rql = Rql.Execution + Rql.Parser + Rql.Contracts in one package
+    (Unity-MCP's NuGet resolver installs one id). The build graph of the libraries stays normal; only this project knows
+    the package shape. Pack: scripts/pack.sh.
+  -->
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.1;net8.0</TargetFrameworks>
+    <IsPackable>true</IsPackable>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>false</SuppressDependenciesWhenPacking>
+    <PackageId>com.IvanMurzak.Rql</PackageId>
+    <Title>RQL — Reflection Query Language</Title>
+    <Description>RQL: a compact pipeline language for AI agents to query and safely change live .NET object graphs (game worlds, application state) — sources, filters, projections, set / call mutations, type adapters. Contains Rql.Execution, Rql.Parser and Rql.Contracts.</Description>
+    <PackageTags>rql;query;reflection;ai;agent;mcp;unity;godot</PackageTags>
+    <!-- NuGet's toolset does not know the SPDX id PolyForm-Shield-1.0.0 (NU5124): the license ships as a file. -->
+    <PackageLicenseFile>LICENSE.md</PackageLicenseFile>
+    <PackageReadmeFile>PACKAGE.md</PackageReadmeFile>
+    <PackageProjectUrl>https://ai-game.dev</PackageProjectUrl>
+    <Copyright>Copyright (c) 2026 Ivan Murzak</Copyright>
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);IncludeRqlAssemblies</TargetsForTfmSpecificContentInPackage>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- PrivateAssets="all" also drops the libraries' own package dependencies from the nuspec: a package the libraries
+         need must be referenced here too (System.Text.Json comes from Directory.Build.targets; check-package.sh checks it). -->
+    <ProjectReference Include="..\Rql.Execution\Rql.Execution.csproj" PrivateAssets="all" />
+    <None Include="..\PACKAGE.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\LICENSE.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+  <!-- The three RQL assemblies (Execution and what it references in this repo) go to lib/<tfm>/. -->
+  <Target Name="IncludeRqlAssemblies" DependsOnTargets="ResolveReferences">
+    <ItemGroup>
+      <TfmSpecificPackageFile Include="@(ReferenceCopyLocalPaths)" Condition="'%(ReferenceCopyLocalPaths.ReferenceSourceTarget)' == 'ProjectReference' And '%(ReferenceCopyLocalPaths.Extension)' == '.dll'" PackagePath="lib/$(TargetFramework)" />
+    </ItemGroup>
+  </Target>
+</Project>

@@ -9,5 +9,7 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <Version>0.1.0</Version>
     <Authors>Ivan Murzak</Authors>
+    <!-- Only Rql.Package is packed (com.IvanMurzak.Rql, see scripts/pack.sh); no other project opts in. -->
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 </Project>

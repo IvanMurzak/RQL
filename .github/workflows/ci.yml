@@ -36,3 +36,5 @@ jobs:
         run: dotnet --list-sdks && node --version && cmake --version | head -1 && c++ --version | head -1
       - name: Test all runtimes + conformance + task self-check (no LLM)
         run: scripts/test-all.sh
+      - name: Pack com.IvanMurzak.Rql and check the package
+        run: scripts/pack.sh ./packages

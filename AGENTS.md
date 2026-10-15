@@ -7,7 +7,8 @@ on ReflectorNet, Unity, Unreal, MCP or any hosted service.
 ## Layout
 - `spec/` — normative grammar, semantics, JSON schemas. **The semantic contract wins over any implementation.**
 - `fixtures/` — shared golden vectors (syntax, negative, execution, cross-runtime graph). All runtimes run them.
-- `dotnet/` — reference implementation (Contracts, Parser, Execution, SampleRuntime, Conformance, Tests, Bench).
+- `dotnet/` — reference implementation (Contracts, Parser, Execution, SampleRuntime, Conformance, Tests, Bench;
+  `Rql.Package` = the pack-only NuGet project).
 - `typescript/` — TS packages (contracts, parser, execution) + tests.
 - `cpp/` — C++17 library (QueryPlan codec, provider-based executor) + tests (CMake).
 - `evaluation/` — LLM agent evaluation: tasks, runner, configs, baselines, reports.
@@ -27,7 +28,9 @@ on ReflectorNet, Unity, Unreal, MCP or any hosted service.
 5. Evaluation discipline: fixed model/prompt/budgets per comparison, paired tasks, report sample sizes,
    provider-reported usage (mark estimates), keep held-out split unseen during tuning, never invent numbers.
    Respect the spend cap in `evaluation/configs/*.json`.
-6. Local-first: no package publishing, no deployments.
+6. Publishing: only `com.IvanMurzak.Rql` to NuGet, only by dispatching `.github/workflows/release.yml` (owner decision
+   2026-10-14; Trusted Publishing, no API key). The repo stays private; the license is PolyForm Shield 1.0.0 (`LICENSE.md`).
+   No other publishing or deployments.
 
 ## Commands
 - .NET: `dotnet test dotnet/Rql.slnx` (needs .NET SDK 10; libraries target netstandard2.1 + net8.0).
@@ -35,3 +38,4 @@ on ReflectorNet, Unity, Unreal, MCP or any hosted service.
 - TS: `cd typescript && npm install && npm test`.
 - C++: `cmake -S cpp -B cpp/build && cmake --build cpp/build && ctest --test-dir cpp/build`.
 - Everything: `scripts/test-all.sh`.
+- NuGet package (pack + check, no publish): `scripts/pack.sh [out-dir]`.
