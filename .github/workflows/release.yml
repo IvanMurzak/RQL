@@ -1,9 +1,10 @@
 name: Release
 
 # Releases ONLY by a manual dispatch (as ReflectorNet / McpPlugin). Merging a version bump to `main` publishes nothing.
-# Order: guard + every runtime's tests + conformance -> pack + package check (scripts/pack.sh) -> NuGet publish (Trusted
-# Publishing) -> verify the version is live on NuGet -> tag nuget-v<version> + GitHub Release. The tag is created only
-# after the package is live, so a re-dispatch after a failed publish / verify is always possible (--skip-duplicate).
+# Order: guard -> pack + package check (scripts/pack.sh) + version checks -> every runtime's tests + conformance -> NuGet
+# publish (Trusted Publishing) -> verify the version is live on NuGet -> tag nuget-v<version> + GitHub Release. The tag is
+# created only after the package is live, so a re-dispatch of the same commit after a failed publish / verify is always
+# possible (--skip-duplicate); a version already live from another commit fails the run.
 #
 #   gh workflow run release.yml -R IvanMurzak/RQL --ref main -f dry_run=true
 #   gh workflow run release.yml -R IvanMurzak/RQL --ref main -f dry_run=false
@@ -48,8 +49,10 @@ jobs:
     steps:
       - name: Ref guard
         if: inputs.dry_run != true && github.ref != 'refs/heads/main'
+        env:
+          REF: ${{ github.ref }}
         run: |
-          echo "::error::A real release must be dispatched on refs/heads/main (got '${{ github.ref }}'). Use dry_run=true on other refs."
+          echo "::error::A real release must be dispatched on refs/heads/main (got '$REF'). Use dry_run=true on other refs."
           exit 1
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
@@ -60,23 +63,37 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      # A full run before publishing is a deliberate gate, even when ci.yml already passed this commit.
-      - name: Test all runtimes + conformance (no LLM)
-        run: scripts/test-all.sh
+      # Pack and the version checks run first so a forgotten version bump fails in minutes, not after the full suite.
       - name: Pack + check the package
         id: pack
         run: |
           version=$(scripts/pack.sh ./packages)   # fails the step when the pack or the package check fails
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - name: Tag must not exist
+      - name: Tag must not exist; a version already on NuGet must come from this commit
         env:
-          TAG: nuget-v${{ steps.pack.outputs.version }}
+          VERSION: ${{ steps.pack.outputs.version }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
-            if [ "$DRY_RUN" = "true" ]; then echo "::warning::Tag $TAG already exists (a real run would fail here)."
-            else echo "::error::Tag $TAG already exists: bump <Version> in dotnet/Directory.Build.props on main, then dispatch again."; exit 1; fi
-          fi
+          fail() { if [ "$DRY_RUN" = "true" ]; then echo "::warning::$1 (a real run would fail here)."; else echo "::error::$1"; exit 1; fi; }
+          bump="bump <Version> in dotnet/Directory.Build.props on main, then dispatch again"
+          rc=0; git ls-remote --exit-code --tags origin "refs/tags/nuget-v$VERSION" >/dev/null || rc=$?
+          case $rc in
+            0) fail "Tag nuget-v$VERSION already exists: $bump" ;;
+            2) ;;   # no such tag
+            *) echo "::error::git ls-remote failed (exit $rc)"; exit 1 ;;
+          esac
+          # publish uses --skip-duplicate (re-dispatch after a failed verify / tag). That is safe only when the live
+          # package was built from this very commit; otherwise the tag + Release would not match what NuGet serves.
+          id=${PACKAGE_ID,,}; v=${VERSION,,}; nuspec="$RUNNER_TEMP/live.nuspec"
+          code=$(curl -sS -o "$nuspec" -w '%{http_code}' --max-time 30 "https://api.nuget.org/v3-flatcontainer/$id/$v/$id.nuspec")
+          case $code in
+            404) ;;   # not published yet
+            200) grep -qF "commit=\"$GITHUB_SHA\"" "$nuspec" || fail "$PACKAGE_ID $VERSION is already on NuGet from another commit: $bump" ;;
+            *) echo "::error::NuGet lookup failed (HTTP $code)"; exit 1 ;;
+          esac
+      # A full run before publishing is a deliberate gate, even when ci.yml already passed this commit.
+      - name: Test all runtimes + conformance (no LLM)
+        run: scripts/test-all.sh
       - uses: actions/upload-artifact@v7
         with:
           name: nupkg
@@ -112,8 +129,9 @@ jobs:
         run: dotnet nuget push "./packages/$PACKAGE_ID.$VERSION.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
       - name: Verify the version is live on NuGet
         run: |
+          # The flat container lists ids and versions lowercased; match the version literally (dots are not wildcards).
           for i in $(seq 1 60); do
-            if curl -fsS --max-time 20 "https://api.nuget.org/v3-flatcontainer/${PACKAGE_ID,,}/index.json" | grep -q "\"$VERSION\""; then
+            if curl -fsS --max-time 20 "https://api.nuget.org/v3-flatcontainer/${PACKAGE_ID,,}/index.json" | grep -qF "\"${VERSION,,}\""; then
               echo "$PACKAGE_ID $VERSION is live"; exit 0
             fi
             sleep 20

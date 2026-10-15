@@ -19,3 +19,5 @@ evaluation/runs/
 *.tsbuildinfo
 unity/.local/
 .artifacts/
+# scripts/pack.sh default output (anchored: typescript/packages/ is source)
+/packages/

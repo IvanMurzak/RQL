@@ -21,6 +21,8 @@
     <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);IncludeRqlAssemblies</TargetsForTfmSpecificContentInPackage>
   </PropertyGroup>
   <ItemGroup>
+    <!-- PrivateAssets="all" also drops the libraries' own package dependencies from the nuspec: a package the libraries
+         need must be referenced here too (System.Text.Json comes from Directory.Build.targets; check-package.sh checks it). -->
     <ProjectReference Include="..\Rql.Execution\Rql.Execution.csproj" PrivateAssets="all" />
     <None Include="..\PACKAGE.md" Pack="true" PackagePath="\" />
     <None Include="..\..\LICENSE.md" Pack="true" PackagePath="\" />

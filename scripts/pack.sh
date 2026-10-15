@@ -3,6 +3,7 @@
 # Used by ci.yml (every PR) and release.yml. Usage: scripts/pack.sh [out-dir]
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
+if [ -z "${DOTNET_ROOT:-}" ] && [ -x "$HOME/.dotnet/dotnet" ]; then export DOTNET_ROOT="$HOME/.dotnet" PATH="$HOME/.dotnet:$PATH"; fi
 proj="$here/../dotnet/Rql.Package/Rql.Package.csproj"
 out="${1:-./packages}"
 version=$(dotnet msbuild "$proj" -getProperty:PackageVersion)
