@@ -1,0 +1,158 @@
+name: Release
+
+# Releases ONLY by a manual dispatch (as ReflectorNet / McpPlugin). Merging a version bump to `main` publishes nothing.
+# Order: guard -> every runtime's tests + conformance -> pack + package check -> NuGet publish (Trusted Publishing)
+# -> verify the version is live on NuGet -> tag + GitHub Release. The tag is created only after the package is live,
+# so a re-dispatch after a failed publish / verify is always possible (the push is --skip-duplicate).
+#
+#   gh workflow run release.yml -R IvanMurzak/RQL --ref main -f dry_run=true
+#   gh workflow run release.yml -R IvanMurzak/RQL --ref main -f dry_run=false
+#
+# NuGet Trusted Publishing: nuget.org account IvanMurzak needs a policy for repository IvanMurzak/RQL, workflow
+# release.yml. The package id is com.IvanMurzak.Rql; the version is <Version> in dotnet/Directory.Build.props.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run every test and the pack, publish NOTHING (no NuGet push, no tag, no GitHub Release)."
+        required: false
+        default: false
+        type: boolean
+      release_notes:
+        description: "Optional markdown appended to the GitHub Release body."
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: release
+  cancel-in-progress: false   # never cancel running self-hosted jobs (it can wedge the runner)
+
+permissions:
+  contents: read
+
+env:
+  # runner-manager's sandboxed runners are root without CAP_CHOWN: tool archives must not restore owners.
+  TAR_OPTIONS: --no-same-owner
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  PACKAGE_ID: com.IvanMurzak.Rql
+
+jobs:
+  guard:
+    runs-on: [self-hosted, linux, rm-anastasiia-wsl-linux-x64]
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Ref guard
+        if: inputs.dry_run != true && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::A real release must be dispatched on refs/heads/main (got '${{ github.ref }}'). Use dry_run=true on other refs."
+          exit 1
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Version from dotnet/Directory.Build.props
+        id: version
+        run: |
+          version=$(grep -oP '<Version>\K[^<]+' dotnet/Directory.Build.props)
+          if [ -z "$version" ]; then echo "::error::No <Version> in dotnet/Directory.Build.props"; exit 1; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Version: $version"
+      - name: Tag must not exist
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "::warning::Tag '$VERSION' already exists. Dry run continues (a real run would fail here)."
+            else
+              echo "::error::Tag '$VERSION' already exists: bump <Version> in dotnet/Directory.Build.props on main, then dispatch again."
+              exit 1
+            fi
+          fi
+
+  test-and-pack:
+    needs: guard
+    runs-on: [self-hosted, linux, rm-anastasiia-wsl-linux-x64]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Test all runtimes + conformance (no LLM)
+        run: scripts/test-all.sh
+      - name: Pack
+        run: dotnet pack dotnet/Rql.Execution/Rql.Execution.csproj -c Release -o ./packages
+      - name: Check the package
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: scripts/check-package.sh "./packages/$PACKAGE_ID.$VERSION.nupkg"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nupkg
+          path: ./packages/*.nupkg
+          if-no-files-found: error
+
+  publish:
+    needs: [guard, test-and-pack]
+    if: inputs.dry_run != true
+    runs-on: [self-hosted, linux, rm-anastasiia-wsl-linux-x64]
+    timeout-minutes: 30
+    permissions:
+      id-token: write   # NuGet Trusted Publishing (OIDC); no API key is stored anywhere
+      contents: write   # tag + GitHub Release, after the package is verified live
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/download-artifact@v7
+        with:
+          name: nupkg
+          path: ./packages
+      - name: Login to NuGet with Trusted Publishing
+        id: nuget_login
+        uses: NuGet/login@v1
+        with:
+          user: IvanMurzak
+      - name: Publish to NuGet
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          NUGET_API_KEY: ${{ steps.nuget_login.outputs.NUGET_API_KEY }}
+        run: |
+          nupkg="./packages/$PACKAGE_ID.$VERSION.nupkg"
+          test -f "$nupkg" || { echo "::error::$nupkg not found"; exit 1; }
+          dotnet nuget push "$nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+      - name: Verify the version is live on NuGet
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          id=$(echo "$PACKAGE_ID" | tr '[:upper:]' '[:lower:]')
+          for i in $(seq 1 60); do
+            if curl -fsS "https://api.nuget.org/v3-flatcontainer/$id/index.json" | grep -q "\"$VERSION\""; then
+              echo "$PACKAGE_ID $VERSION is live"; exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::$PACKAGE_ID $VERSION did not appear on NuGet within 20 minutes"; exit 1
+      - name: Tag + GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.guard.outputs.version }}
+          name: RQL ${{ needs.guard.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          files: ./packages/*.nupkg
+          body: |
+            NuGet: https://www.nuget.org/packages/com.IvanMurzak.Rql/${{ needs.guard.outputs.version }}
+
+            ${{ inputs.release_notes }}

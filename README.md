@@ -86,3 +86,8 @@ Raw traces stay in the gitignored `evaluation/runs/`.
 
 Local and private: no package is published. License: **pending the owner's decision**
 ([ADR-0007](docs/decisions/0007-license.md)). Agent rules: [`AGENTS.md`](AGENTS.md).
+
+## License
+
+PolyForm Shield 1.0.0 (see [LICENSE.md](LICENSE.md)): free to use, including in commercial products, except to provide a
+product that competes with the licensor's products. Published to NuGet as `com.IvanMurzak.Rql` (`.github/workflows/release.yml`).

@@ -36,3 +36,8 @@ jobs:
         run: dotnet --list-sdks && node --version && cmake --version | head -1 && c++ --version | head -1
       - name: Test all runtimes + conformance + task self-check (no LLM)
         run: scripts/test-all.sh
+      - name: Pack com.IvanMurzak.Rql and check the package
+        run: |
+          dotnet pack dotnet/Rql.Execution/Rql.Execution.csproj -c Release -o ./packages
+          version=$(grep -oP '<Version>\K[^<]+' dotnet/Directory.Build.props)
+          scripts/check-package.sh "./packages/com.IvanMurzak.Rql.$version.nupkg"
