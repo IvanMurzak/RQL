@@ -6,7 +6,10 @@ pkg="${1:?nupkg path}"
 test -f "$pkg" || { echo "::error::$pkg not found"; exit 1; }
 listing=$(unzip -l "$pkg")
 fail=0
-for tfm in netstandard2.1 net8.0; do
+# Every target framework in the package must carry all three assemblies; netstandard2.1 (Unity) must be there.
+tfms=$(grep -oE 'lib/[^/]+/' <<<"$listing" | sort -u | cut -d/ -f2)
+grep -qx netstandard2.1 <<<"$tfms" || { echo "::error::no lib/netstandard2.1/"; fail=1; }
+for tfm in $tfms; do
   for dll in Rql.Contracts Rql.Parser Rql.Execution; do
     grep -q "lib/$tfm/$dll.dll" <<<"$listing" || { echo "::error::missing lib/$tfm/$dll.dll"; fail=1; }
   done

@@ -7,8 +7,5 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Rql.Execution\Rql.Execution.csproj" />
-    <!-- Rql.Execution ships Parser / Contracts inside its package (PrivateAssets): reference them directly. -->
-    <ProjectReference Include="..\Rql.Parser\Rql.Parser.csproj" />
-    <ProjectReference Include="..\Rql.Contracts\Rql.Contracts.csproj" />
   </ItemGroup>
 </Project>

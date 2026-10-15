@@ -6,32 +6,9 @@
     <RootNamespace>Rql</RootNamespace>
     <Description>RQL executor over live CLR object graphs (System.Reflection, no pre-serialization).</Description>
   </PropertyGroup>
-  <!-- NuGet package com.IvanMurzak.Rql: this assembly plus Rql.Parser and Rql.Contracts inside one package. -->
-  <PropertyGroup>
-    <IsPackable>true</IsPackable>
-    <PackageId>com.IvanMurzak.Rql</PackageId>
-    <Title>RQL — Reflection Query Language</Title>
-    <PackageDescription>RQL: a compact pipeline language for AI agents to query and safely change live .NET object graphs (game worlds, application state) — sources, filters, projections, set / call mutations, type adapters. Contains Rql.Execution, Rql.Parser and Rql.Contracts.</PackageDescription>
-    <PackageTags>rql;query;reflection;ai;agent;mcp;unity;godot</PackageTags>
-    <PackageLicenseFile>LICENSE.md</PackageLicenseFile>
-    <PackageReadmeFile>PACKAGE.md</PackageReadmeFile>
-    <PackageProjectUrl>https://ai-game.dev</PackageProjectUrl>
-    <Copyright>Copyright (c) 2026 Ivan Murzak</Copyright>
-    <IncludeSymbols>false</IncludeSymbols>
-    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);IncludeRqlReferences</TargetsForTfmSpecificBuildOutput>
-  </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Rql.Parser\Rql.Parser.csproj" PrivateAssets="all" />
-    <ProjectReference Include="..\Rql.Contracts\Rql.Contracts.csproj" PrivateAssets="all" />
-    <None Include="..\PACKAGE.md" Pack="true" PackagePath="\" />
-    <None Include="..\..\LICENSE.md" Pack="true" PackagePath="\" />
+    <ProjectReference Include="..\Rql.Parser\Rql.Parser.csproj" />
   </ItemGroup>
-  <!-- The referenced RQL assemblies ship inside this package (lib/<tfm>/), not as separate packages. -->
-  <Target Name="IncludeRqlReferences" DependsOnTargets="ResolveReferences">
-    <ItemGroup>
-      <BuildOutputInPackage Include="@(ReferenceCopyLocalPaths->WithMetadataValue('ReferenceSourceTarget', 'ProjectReference'))" />
-    </ItemGroup>
-  </Target>
   <ItemGroup>
     <InternalsVisibleTo Include="Rql.Tests" />
   </ItemGroup>

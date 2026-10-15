@@ -1,7 +1,17 @@
-# ADR-0007: License — DECISION PENDING (owner)
+# ADR-0007: License — PolyForm Shield 1.0.0
 
-**Status:** proposed
+**Status:** accepted (owner decision, 2026-10-14)
 
-The repository is private and carries no license yet. Sibling projects ReflectorNet and MCP-Plugin-dotnet are
-Apache-2.0 (checked via the GitHub API); Apache-2.0 is the consistent default (MIT the alternative).
-**The owner must choose before any publication.** Until then: all rights reserved, local/private use only.
+RQL is licensed under **PolyForm Shield 1.0.0** (`LICENSE.md`): anyone may use it, including in commercial products
+such as games built with Unity-MCP, except to provide a product that competes with the licensor's products. The source
+repository stays private; the .NET runtime is published to NuGet as `com.IvanMurzak.Rql` (`.github/workflows/release.yml`).
+
+Considered: Apache-2.0 / MIT (as ReflectorNet and MCP-Plugin-dotnet) — rejected, they allow competitors to ship RQL in
+competing products; Elastic License 2.0 — only forbids offering it as a managed service; Business Source License 1.1 —
+workable but needs a custom use grant and a change date; PolyForm Noncommercial — would block commercial studios using
+Unity-MCP.
+
+Packaging note: NuGet's toolset does not recognise the SPDX id `PolyForm-Shield-1.0.0` (NU5124), so the package carries
+the license as a file (`<license type="file">LICENSE.md</license>`).
+
+Downstream: Unity-MCP and McpPlugin (Apache-2.0) depend on the package; their users accept PolyForm Shield for RQL.

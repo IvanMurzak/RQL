@@ -27,7 +27,9 @@ on ReflectorNet, Unity, Unreal, MCP or any hosted service.
 5. Evaluation discipline: fixed model/prompt/budgets per comparison, paired tasks, report sample sizes,
    provider-reported usage (mark estimates), keep held-out split unseen during tuning, never invent numbers.
    Respect the spend cap in `evaluation/configs/*.json`.
-6. Local-first: no package publishing, no deployments.
+6. Publishing: only `com.IvanMurzak.Rql` to NuGet, only by dispatching `.github/workflows/release.yml` (owner decision
+   2026-10-14; Trusted Publishing, no API key). The repo stays private; the license is PolyForm Shield 1.0.0 (`LICENSE.md`).
+   No other publishing or deployments.
 
 ## Commands
 - .NET: `dotnet test dotnet/Rql.slnx` (needs .NET SDK 10; libraries target netstandard2.1 + net8.0).

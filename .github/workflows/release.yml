@@ -1,15 +1,16 @@
 name: Release
 
 # Releases ONLY by a manual dispatch (as ReflectorNet / McpPlugin). Merging a version bump to `main` publishes nothing.
-# Order: guard -> every runtime's tests + conformance -> pack + package check -> NuGet publish (Trusted Publishing)
-# -> verify the version is live on NuGet -> tag + GitHub Release. The tag is created only after the package is live,
-# so a re-dispatch after a failed publish / verify is always possible (the push is --skip-duplicate).
+# Order: guard + every runtime's tests + conformance -> pack + package check (scripts/pack.sh) -> NuGet publish (Trusted
+# Publishing) -> verify the version is live on NuGet -> tag nuget-v<version> + GitHub Release. The tag is created only
+# after the package is live, so a re-dispatch after a failed publish / verify is always possible (--skip-duplicate).
 #
 #   gh workflow run release.yml -R IvanMurzak/RQL --ref main -f dry_run=true
 #   gh workflow run release.yml -R IvanMurzak/RQL --ref main -f dry_run=false
 #
 # NuGet Trusted Publishing: nuget.org account IvanMurzak needs a policy for repository IvanMurzak/RQL, workflow
-# release.yml. The package id is com.IvanMurzak.Rql; the version is <Version> in dotnet/Directory.Build.props.
+# release.yml. Package com.IvanMurzak.Rql (dotnet/Rql.Package); version = <Version> in dotnet/Directory.Build.props.
+# Tags are prefixed (nuget-v…): the TypeScript and Unity packages of this repo version independently.
 on:
   workflow_dispatch:
     inputs:
@@ -39,47 +40,17 @@ env:
   PACKAGE_ID: com.IvanMurzak.Rql
 
 jobs:
-  guard:
+  test-and-pack:
     runs-on: [self-hosted, linux, rm-anastasiia-wsl-linux-x64]
-    timeout-minutes: 10
+    timeout-minutes: 40
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.pack.outputs.version }}
     steps:
       - name: Ref guard
         if: inputs.dry_run != true && github.ref != 'refs/heads/main'
         run: |
           echo "::error::A real release must be dispatched on refs/heads/main (got '${{ github.ref }}'). Use dry_run=true on other refs."
           exit 1
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          fetch-tags: true
-      - name: Version from dotnet/Directory.Build.props
-        id: version
-        run: |
-          version=$(grep -oP '<Version>\K[^<]+' dotnet/Directory.Build.props)
-          if [ -z "$version" ]; then echo "::error::No <Version> in dotnet/Directory.Build.props"; exit 1; fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Version: $version"
-      - name: Tag must not exist
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          DRY_RUN: ${{ inputs.dry_run }}
-        run: |
-          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
-            if [ "$DRY_RUN" = "true" ]; then
-              echo "::warning::Tag '$VERSION' already exists. Dry run continues (a real run would fail here)."
-            else
-              echo "::error::Tag '$VERSION' already exists: bump <Version> in dotnet/Directory.Build.props on main, then dispatch again."
-              exit 1
-            fi
-          fi
-
-  test-and-pack:
-    needs: guard
-    runs-on: [self-hosted, linux, rm-anastasiia-wsl-linux-x64]
-    timeout-minutes: 40
-    steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
         with:
@@ -89,14 +60,23 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      # A full run before publishing is a deliberate gate, even when ci.yml already passed this commit.
       - name: Test all runtimes + conformance (no LLM)
         run: scripts/test-all.sh
-      - name: Pack
-        run: dotnet pack dotnet/Rql.Execution/Rql.Execution.csproj -c Release -o ./packages
-      - name: Check the package
+      - name: Pack + check the package
+        id: pack
+        run: |
+          version=$(scripts/pack.sh ./packages)   # fails the step when the pack or the package check fails
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Tag must not exist
         env:
-          VERSION: ${{ needs.guard.outputs.version }}
-        run: scripts/check-package.sh "./packages/$PACKAGE_ID.$VERSION.nupkg"
+          TAG: nuget-v${{ steps.pack.outputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            if [ "$DRY_RUN" = "true" ]; then echo "::warning::Tag $TAG already exists (a real run would fail here)."
+            else echo "::error::Tag $TAG already exists: bump <Version> in dotnet/Directory.Build.props on main, then dispatch again."; exit 1; fi
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: nupkg
@@ -104,15 +84,16 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [guard, test-and-pack]
+    needs: test-and-pack
     if: inputs.dry_run != true
     runs-on: [self-hosted, linux, rm-anastasiia-wsl-linux-x64]
     timeout-minutes: 30
     permissions:
       id-token: write   # NuGet Trusted Publishing (OIDC); no API key is stored anywhere
       contents: write   # tag + GitHub Release, after the package is verified live
+    env:
+      VERSION: ${{ needs.test-and-pack.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x
@@ -127,19 +108,12 @@ jobs:
           user: IvanMurzak
       - name: Publish to NuGet
         env:
-          VERSION: ${{ needs.guard.outputs.version }}
           NUGET_API_KEY: ${{ steps.nuget_login.outputs.NUGET_API_KEY }}
-        run: |
-          nupkg="./packages/$PACKAGE_ID.$VERSION.nupkg"
-          test -f "$nupkg" || { echo "::error::$nupkg not found"; exit 1; }
-          dotnet nuget push "$nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+        run: dotnet nuget push "./packages/$PACKAGE_ID.$VERSION.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
       - name: Verify the version is live on NuGet
-        env:
-          VERSION: ${{ needs.guard.outputs.version }}
         run: |
-          id=$(echo "$PACKAGE_ID" | tr '[:upper:]' '[:lower:]')
           for i in $(seq 1 60); do
-            if curl -fsS "https://api.nuget.org/v3-flatcontainer/$id/index.json" | grep -q "\"$VERSION\""; then
+            if curl -fsS --max-time 20 "https://api.nuget.org/v3-flatcontainer/${PACKAGE_ID,,}/index.json" | grep -q "\"$VERSION\""; then
               echo "$PACKAGE_ID $VERSION is live"; exit 0
             fi
             sleep 20
@@ -148,11 +122,11 @@ jobs:
       - name: Tag + GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ needs.guard.outputs.version }}
-          name: RQL ${{ needs.guard.outputs.version }}
+          tag_name: nuget-v${{ env.VERSION }}
+          name: RQL ${{ env.VERSION }} (NuGet)
           target_commitish: ${{ github.sha }}
           files: ./packages/*.nupkg
           body: |
-            NuGet: https://www.nuget.org/packages/com.IvanMurzak.Rql/${{ needs.guard.outputs.version }}
+            NuGet: https://www.nuget.org/packages/${{ env.PACKAGE_ID }}/${{ env.VERSION }}
 
             ${{ inputs.release_notes }}
