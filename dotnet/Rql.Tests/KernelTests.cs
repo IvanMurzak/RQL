@@ -83,6 +83,21 @@ namespace Rql.Tests
 
         private static readonly QueryOptions Mutate = new QueryOptions { AllowMutation = true };
 
+        public class Owner { public object camera => "base"; public int id { get; set; } = 1; }
+        public sealed class Hiding : Owner { public new string camera => "derived"; }
+
+        [Fact]
+        public void APropertyHiddenByOneOfAnotherTypeResolvesToTheMostDerived()
+        {
+            // Type.GetProperty throws AmbiguousMatchException here (Unity: PlayerInput.camera over Component.camera).
+            var e = new RqlEngine();
+            e.AddSource("h", () => new Hiding());
+            var r = e.Execute("h | select camera, id");
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal("derived", r.Rows![0][0]!.GetValue<string>());
+            Assert.Equal(1, e.Execute("h | describe").ToJson(includeStats: false).Split("\"camera\"").Length - 1);
+        }
+
         [Fact]
         public void CompositeAdaptersCoerceNestedValuesThroughTheKernel()
         {

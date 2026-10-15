@@ -407,15 +407,22 @@ namespace Rql.Execution
             var seen = new HashSet<string>(StringComparer.Ordinal);
             int order = 0;
             const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+            static bool Readable(PropertyInfo p) => p.GetIndexParameters().Length == 0 && p.GetMethod != null && p.GetMethod.IsPublic;
+            // Overridden/new properties: keep the most derived accessor, but the base declaration order. Not Type.GetProperty:
+            // it throws AmbiguousMatchException when a `new` property hides one of another type (Unity's PlayerInput.camera
+            // over the obsolete Component.camera).
+            var mostDerived = new Dictionary<string, PropertyInfo>(StringComparer.Ordinal);
+            foreach (var decl in chain)
+                foreach (var p in decl.GetProperties(flags))
+                    if (Readable(p)) mostDerived[p.Name] = p;
             foreach (var decl in chain)
             {
                 AddFields(decl, members, seen, null, ref order);
                 foreach (var p in decl.GetProperties(flags).OrderBy(p => p.MetadataToken))
                 {
-                    if (p.GetIndexParameters().Length > 0 || p.GetMethod == null || !p.GetMethod.IsPublic) continue;
+                    if (!Readable(p)) continue;
                     if (p.IsDefined(typeof(RqlIgnoreAttribute)) || p.PropertyType.IsByRefLike || IsDelegate(p.PropertyType)) continue;
-                    // Overridden/new properties: keep the most derived accessor, but the base declaration order.
-                    var most = t.GetProperty(p.Name, BindingFlags.Public | BindingFlags.Instance) ?? p;
+                    var most = mostDerived[p.Name];
                     if (!seen.Add(p.Name)) continue;
                     bool canWrite = most.SetMethod != null && most.SetMethod.IsPublic && !most.IsDefined(typeof(RqlReadOnlyAttribute));
                     members.Add(new MemberAccessor(most, most.PropertyType, MakeGetter(most), canWrite, !most.IsDefined(typeof(RqlReferenceAttribute)), order++));
