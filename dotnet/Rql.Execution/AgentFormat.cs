@@ -64,27 +64,49 @@ namespace Rql.Execution
         }
 
         /// <summary>One value as compact text: strings raw (quoted only when ambiguous), objects "Type#id(Name)".</summary>
-        public static string Cell(JsonNode? n)
+        public static string Cell(JsonNode? n) => Cell(n, nested: false);
+
+        // Inside {…} / […] a string is also quoted when it holds a separator or a space, so the value reads back unambiguously
+        // ({description:"List tools, filter by name"} rather than {description:List tools, filter by name}).
+        // Agent-facing text, not HTML: '+', '<', '&' and non-ASCII stay as they are inside quotes.
+        private static readonly JsonSerializerOptions Readable = new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+        private static readonly char[] NestedSeparators = { ',', ':', '{', '}', '[', ']', '"', ' ', '\t' };
+
+        private static string Cell(JsonNode? n, bool nested)
         {
             switch (n)
             {
                 case null: return "null";
                 case JsonValue v:
                     if (v.TryGetValue<string>(out var s))
-                        return s.Length == 0 || s.IndexOfAny(new[] { '|', '\n', '\r' }) >= 0 || s == "null" || s.Trim() != s ? JsonSerializer.Serialize(s) : s;
+                        return s.Length == 0 || s.IndexOfAny(new[] { '|', '\n', '\r' }) >= 0 || s == "null" || s.Trim() != s
+                               || (nested && (s.IndexOfAny(NestedSeparators) >= 0 || s == "true" || s == "false" || LooksNumeric(s)))
+                            ? JsonSerializer.Serialize(s, Readable) : s;
                     return v.ToJsonString();
                 case JsonObject o when o["$ref"] is JsonValue rv && rv.TryGetValue<string>(out var r):
                     return o.TryGetPropertyValue("name", out var name) && name is JsonValue nv && nv.TryGetValue<string>(out var ns) ? r + "(" + ns + ")" : r;
                 case JsonObject o when o["$error"] is JsonValue ev && ev.TryGetValue<string>(out var code):
                     return "error(" + code + ")";
                 case JsonObject o:
-                    return "{" + string.Join(",", o.Select(kv => kv.Key + ":" + Cell(kv.Value))) + "}";
+                    return "{" + string.Join(",", o.Select(kv => Key(kv.Key) + ":" + Cell(kv.Value, nested: true))) + "}";
                 case JsonArray a:
-                    return "[" + string.Join(",", a.Select(Cell)) + "]";
+                    return "[" + string.Join(",", a.Select(x => Cell(x, nested: true))) + "]";
                 default:
                     return n.ToJsonString();
             }
         }
+
+        // Keys that are not plain identifiers ("tool-12", "a b", "1x") are quoted so the object reads back unambiguously.
+        private static string Key(string key)
+        {
+            bool plain = key.Length > 0 && (char.IsLetter(key[0]) || key[0] == '_' || key[0] == '$');
+            for (int i = 1; plain && i < key.Length; i++) plain = char.IsLetterOrDigit(key[i]) || key[i] == '_' || key[i] == '$';
+            return plain ? key : JsonSerializer.Serialize(key, Readable);
+        }
+
+        private static bool LooksNumeric(string s) =>
+            double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _);
 
         // ------------------------------------------------------------ schema
 

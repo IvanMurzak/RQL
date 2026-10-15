@@ -278,6 +278,19 @@ namespace Rql.Tests
     /// <summary>Regression tests for the independent review findings (security + robustness).</summary>
     public class HostValueApiTests
     {
+        public sealed class NamedThing
+        {
+            [RqlDisplay] public string Name { get; set; } = "";
+            public int Count { get; set; }
+        }
+
+        [Fact]
+        public void PresentShowsListsOfPlainObjects()
+        {
+            var text = AgentFormat.Render(new SampleHost(7, WorldSize.Small).Engine.Present(new List<NamedThing> { new NamedThing { Name = "A", Count = 1 }, new NamedThing { Name = "B", Count = 2 } }), OutputFormat.Table);
+            Assert.Contains("B", text);
+        }
+
         private static SampleHost Host() => new SampleHost(7, WorldSize.Small);
 
         [Fact]
@@ -326,6 +339,14 @@ namespace Rql.Tests
             Assert.Equal(2, many.Total);
             var nested = AgentFormat.Render(h.Engine.Present(new Settings()), OutputFormat.Table);
             Assert.Contains("1920", nested);                       // Graphics.Width: nested plain objects written out
+            // Plain objects with a display member (Name) are written out in full, not as summaries.
+            var named = AgentFormat.Render(h.Engine.Present(new List<NamedThing> { new NamedThing { Name = "Sword", Count = 12 }, new NamedThing { Name = "Shield", Count = 30 } }), OutputFormat.Table);
+            Assert.Contains("Sword", named);
+            Assert.Contains("30", named);
+            Assert.DoesNotContain("NamedThing@", named);
+            // Identity objects stay references.
+            var product = AgentFormat.Render(h.Engine.Present(new List<Product> { new Product { Sku = "S-1", Name = "Sword" } }), OutputFormat.Table);
+            Assert.Contains("S-1", product);
             var scalar = h.Engine.Present(42);
             Assert.Equal(42, scalar.Value!.GetValue<long>());
         }

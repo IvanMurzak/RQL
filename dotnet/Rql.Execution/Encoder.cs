@@ -174,7 +174,8 @@ namespace Rql.Execution
                     return obj;
                 }
                 case TypeKind.Object:
-                    if (info.IdMember == null && info.DisplayMember == null && depth <= Math.Max(1, _expand)) return Inline(v, info, depth);
+                    // A display member only shapes summaries; whole values (expand > 0) write plain objects out in full.
+                    if (info.IdMember == null && (info.DisplayMember == null || _expand > 0) && depth <= Math.Max(1, _expand)) return Inline(v, info, depth);
                     return Summary(v, info);
                 default:
                     return JsonValue.Create(Convert.ToString(v, CultureInfo.InvariantCulture));
@@ -205,7 +206,7 @@ namespace Rql.Execution
                         obj[m.Name] = JsonValue.Create(TypeModel.FriendlyName(mv.GetType()) + "[" + (V.Count(mv) ?? 0).ToString(CultureInfo.InvariantCulture) + "]");
                         continue;
                     }
-                    if (mi.IsObject) { obj[m.Name] = mi.IdMember == null && mi.DisplayMember == null && depth < Math.Max(1, _expand) ? Inline(mv, mi, depth + 1) : Summary(mv, mi); continue; }
+                    if (mi.IsObject) { obj[m.Name] = mi.IdMember == null && (mi.DisplayMember == null || _expand > 0) && depth < Math.Max(1, _expand) ? Inline(mv, mi, depth + 1) : Summary(mv, mi); continue; }
                 }
                 obj[m.Name] = Encode(mv, depth + 1);
             }
