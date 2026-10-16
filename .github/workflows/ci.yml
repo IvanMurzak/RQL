@@ -84,13 +84,10 @@ jobs:
         run: ${{ env.CHAIN_PY }} .github/scripts/chain_feed.py apply --node rql --job test-all
       - name: Test all runtimes + conformance + task self-check (no LLM)
         run: scripts/test-all.sh
+      # On a chain run the pack is at the lock's ws version into .artifacts/nuget, where `record` proves the three
+      # assemblies' ProductVersion (not uploaded: consumer legs self-build RQL). Otherwise: ./packages, own version.
       - name: Pack com.IvanMurzak.Rql and check the package
-        run: scripts/pack.sh ./packages
-      # The root's own pack at the lock's ws version (the manifest's `pack:` recipe), proven by
-      # `record` from the three assemblies' ProductVersion. Not uploaded: consumer legs self-build RQL.
-      - name: chain pack
-        if: env.CHAIN_ACTIVE == '1'
-        run: dotnet pack dotnet/Rql.Package/Rql.Package.csproj --configuration Release --output .artifacts/nuget ${{ env.CHAIN_BUILD_PROPS }}
+        run: scripts/pack.sh ${{ env.CHAIN_ACTIVE == '1' && '.artifacts/nuget' || './packages' }} ${{ env.CHAIN_BUILD_PROPS }}
       - name: chain leg record
         id: chain_record
         if: always()
