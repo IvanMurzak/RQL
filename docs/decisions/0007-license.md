@@ -4,7 +4,8 @@
 
 RQL is licensed under **PolyForm Shield 1.0.0** (`LICENSE.md`): anyone may use it, including in commercial products
 such as games built with Unity-MCP, except to provide a product that competes with the licensor's products. The source
-repository is public since 2026-10-15 (owner decision, so the chain train can clone it); the .NET runtime is published to NuGet as `com.IvanMurzak.Rql` (`.github/workflows/release.yml`).
+repository is public since 2026-10-15 (owner decision, so the chain train can clone it); the .NET runtime is published
+to NuGet as `com.IvanMurzak.Rql` (`.github/workflows/release.yml`).
 
 Considered: Apache-2.0 / MIT (as ReflectorNet and MCP-Plugin-dotnet) — rejected, they allow competitors to ship RQL in
 competing products; Elastic License 2.0 — only forbids offering it as a managed service; Business Source License 1.1 —

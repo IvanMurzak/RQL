@@ -15,8 +15,8 @@ jobs:
     # Ephemeral Linux runners spawned by runner-manager in WSL2 (Ubuntu-24.04) on ANASTASIIA.
     # runner-manager answers a job only when EVERY runs-on label is one of the policy's routing labels
     # (the policy carries rm-anastasiia-wsl-linux-x64, linux, self-hosted); the selector keeps other runners away.
-    # Public repo on a self-hosted runner: a pull request from a FORK must never run here (it would execute
-    # untrusted code on the host). Same-repo PRs, pushes to main and dispatches run as before.
+    # Fork PRs skip cleanly here. This is NOT the security boundary (a fork PR runs its own copy of this file):
+    # the repo setting "Require approval for all external contributors" is what keeps fork code off this host.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, rm-anastasiia-wsl-linux-x64]
     timeout-minutes: 30
