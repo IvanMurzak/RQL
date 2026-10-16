@@ -4,11 +4,30 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Chain leg contract (ai-game-dev-software `.scripts/chain/leg/chain_feed.py` §C1-C5, node `rql`):
+  # a chain run dispatches this workflow with the lock; on every other event each chain step is a no-op.
   workflow_dispatch:
+    inputs:
+      lock:
+        description: the chain lock JSON (<= 60000 characters)
+        required: false
+        default: ""
+        type: string
+      lock_hash8:
+        description: first 8 hex characters of the lock hash
+        required: false
+        default: ""
+        type: string
+
+run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.lock_hash8 != '' && format('chain {0} rql', inputs.lock_hash8) || '' }}
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.lock_hash8 != '' && format('chain-{0}-{1}', inputs.lock_hash8, github.workflow) || format('ci-{0}', github.ref) }}
   cancel-in-progress: false   # never cancel running self-hosted jobs (it can wedge the runner)
+
+env:
+  CHAIN_LOCK: ${{ inputs.lock }}
+  CHAIN_LOCK_HASH8: ${{ inputs.lock_hash8 }}
 
 jobs:
   # A fork PR skips test-all (below), and a skipped job reports success: fail here instead so a fork PR
@@ -46,7 +65,39 @@ jobs:
           node-version: 22
       - name: Toolchain versions
         run: dotnet --list-sdks && node --version && cmake --version | head -1 && c++ --version | head -1
+      - name: chain python (posix)
+        if: always() && env.CHAIN_PY == ''
+        shell: bash
+        run: |
+          for c in python3 python; do
+            exe="$("$c" -c 'import sys, select, socket, ssl, zlib, ctypes, hashlib; sys.version_info >= (3, 9) or sys.exit(1); print(sys.executable.replace(chr(92), chr(47)))' 2>/dev/null)" || continue
+            case "$exe" in /*) ;; *) continue ;; esac
+            case "$exe" in *[[:space:]]*) continue ;; esac
+            [ -f "$exe" ] && [ -x "$exe" ] || continue
+            echo "CHAIN_PY=$exe" >> "$GITHUB_ENV"; exit 0
+          done
+          echo 'chain: no Python 3.9+ on PATH that runs and reports an absolute, space-free sys.executable (tried python3, python)' >&2; exit 2
+      # Chain feed (§C4): asserts this run is at the lock's sha and exports CHAIN_BUILD_PROPS
+      # (-p:Version=<ws>) + CHAIN_WS_VERSION + CHAIN_ACTIVE. RQL is a root: no lower layers to build.
+      - name: chain feed
+        id: chain
+        run: ${{ env.CHAIN_PY }} .github/scripts/chain_feed.py apply --node rql --job test-all
       - name: Test all runtimes + conformance + task self-check (no LLM)
         run: scripts/test-all.sh
       - name: Pack com.IvanMurzak.Rql and check the package
         run: scripts/pack.sh ./packages
+      # The root's own pack at the lock's ws version (the manifest's `pack:` recipe), proven by
+      # `record` from the three assemblies' ProductVersion. Not uploaded: consumer legs self-build RQL.
+      - name: chain pack
+        if: env.CHAIN_ACTIVE == '1'
+        run: dotnet pack dotnet/Rql.Package/Rql.Package.csproj --configuration Release --output .artifacts/nuget ${{ env.CHAIN_BUILD_PROPS }}
+      - name: chain leg record
+        id: chain_record
+        if: always()
+        run: ${{ env.CHAIN_PY }} .github/scripts/chain_feed.py record --node rql --job test-all --job-status ${{ job.status }} --out chain-leg.json
+      - name: chain leg artifact
+        if: always() && steps.chain_record.outputs.artifact_name != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.chain_record.outputs.artifact_name }}
+          path: chain-leg.json
