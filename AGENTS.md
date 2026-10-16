@@ -29,7 +29,8 @@ on ReflectorNet, Unity, Unreal, MCP or any hosted service.
    provider-reported usage (mark estimates), keep held-out split unseen during tuning, never invent numbers.
    Respect the spend cap in `evaluation/configs/*.json`.
 6. Publishing: only `com.IvanMurzak.Rql` to NuGet, only by dispatching `.github/workflows/release.yml` (owner decision
-   2026-10-14; Trusted Publishing, no API key). The repo stays private; the license is PolyForm Shield 1.0.0 (`LICENSE.md`).
+   2026-10-14; Trusted Publishing, no API key). The repo is public (ADR-0007); the license is PolyForm Shield 1.0.0
+   (`LICENSE.md`).
    No other publishing or deployments.
 
 ## Commands

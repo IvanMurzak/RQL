@@ -1,7 +1,7 @@
 # RQL in Unity — experiment
 
 Local experiment: RQL tools inside the Unity Editor, served by Unity-MCP, so the AI Game Dev App's agent can use them.
-Nothing here is published; the package stays in this private repository.
+Nothing here is published; the package stays in this repository.
 
 | Folder | What |
 |---|---|

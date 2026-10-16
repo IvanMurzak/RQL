@@ -84,7 +84,7 @@ Raw traces stay in the gitignored `evaluation/runs/`.
 
 ## Status and policy
 
-Private repository. The .NET runtime is published to NuGet as `com.IvanMurzak.Rql` (only by dispatching
+Public repository. The .NET runtime is published to NuGet as `com.IvanMurzak.Rql` (only by dispatching
 `.github/workflows/release.yml`); nothing else is published. License: PolyForm Shield 1.0.0
 ([ADR-0007](docs/decisions/0007-license.md)). Agent rules: [`AGENTS.md`](AGENTS.md).
 
