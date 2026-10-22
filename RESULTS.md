@@ -211,6 +211,12 @@ Fairness notes:
 
 Both ReflectorNet findings were filed as https://github.com/IvanMurzak/ReflectorNet/issues/109 (minimal repro, no Unity).
 
+**Version note:** the numbers above were measured with ReflectorNet 5.4.2. The runner now pins 5.5.0, which includes
+the #109 fixes from 5.4.3 (bracketed path keys, bounded `View` traversal; ReflectorNet #110) and the write-back fix
+(a failed write-back is no longer reported as success; #111). Not re-measured: a `Toolset=reflectornet` run on 5.5.0 is
+expected to differ from this table (the `[mat/wood]` and `View(world/LocalPlayer, depth 1)` failures above target those
+fixes). Rerun both sides before quoting a current comparison.
+
 ## 4. Spend
 
 Total recorded DeepSeek spend for the whole session: **$3.54** of the $25 global cap (balance before
