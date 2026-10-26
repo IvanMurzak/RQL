@@ -60,19 +60,20 @@ namespace Rql.Execution
 
         internal static CallableMethod FromReflection(MethodInfo m, string? description)
         {
-            var ps = m.GetParameters()
+            var pis = m.GetParameters();
+            var ps = pis
                 .Select(p => new CallableParameter(p.Name ?? "arg", p.ParameterType, p.HasDefaultValue, p.HasDefaultValue ? p.DefaultValue : null))
                 .ToArray();
             // Companion validator: a public instance method Validate<Name> with the same parameter types returning string.
-            var types = m.GetParameters().Select(p => p.ParameterType).ToArray();
+            var types = pis.Select(p => p.ParameterType).ToArray();
             var companion = m.ReflectedType?.GetMethod("Validate" + m.Name, BindingFlags.Public | BindingFlags.Instance, null, types, null);
             Func<object, object?[], string?>? validate = companion != null && companion.ReturnType == typeof(string)
-                ? (target, args) => (string?)Invoke(companion, target, args)
+                ? (target, args) => (string?)InvokeUnwrapped(companion, target, args)
                 : (Func<object, object?[], string?>?)null;
-            return new CallableMethod(m.Name, ps, m.ReturnType, (target, args) => Invoke(m, target, args), description, validate);
+            return new CallableMethod(m.Name, ps, m.ReturnType, (target, args) => InvokeUnwrapped(m, target, args), description, validate);
         }
 
-        private static object? Invoke(MethodInfo m, object target, object?[] args)
+        private static object? InvokeUnwrapped(MethodInfo m, object target, object?[] args)
         {
             try { return m.Invoke(target, args); }
             catch (TargetInvocationException ex) when (ex.InnerException != null) { throw ex.InnerException; }
