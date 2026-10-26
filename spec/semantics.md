@@ -82,6 +82,10 @@ If the source value is a `list` its elements become the item stream; a `map` yie
 * **Projected rows** (after `select`/`group-by`) have exactly their columns as members. A row with a
   **single** column stands for that column's value: member access, `get $`, `recurse` and `$ref`
   delegate to it, so `world | select LocalPlayer.Inventory | get Slots` navigates as expected.
+  A bare path of two or more member names whose dotted text equals a column name (matched like a single-name column:
+  ordinal first, else case-insensitive) resolves to that column before any member navigation, so
+  `select Owner.Label Intensity | sort Owner.Label` sorts by the projected `Owner.Label` column (the same in `where`,
+  `select`, `distinct`, `group-by` and every other expression after the projection).
 * `$` is the current item. Inside a method argument (`Components.any(...)`) `$` and bare names
   refer to the current *element*. **Scope chain:** when the first segment of a bare path is
   `missing` on the element, it is resolved against the enclosing item(s), innermost first — so
@@ -106,12 +110,16 @@ extend the path. Projection/aggregation results have no `$path`.
 
 * `==`/`=` and `!=`: numbers numerically; strings ordinal **case-sensitive**; bools; enums vs
   string (name, case-insensitive) or number; objects by identity; `null == null` is `true`;
-  `null` vs non-null is `false` for `==` and `true` for `!=`. Lists/structs/maps: `unknown`.
+  `null` vs non-null is `false` for `==` and `true` for `!=`. Lists/structs/maps: `unknown` — including a struct
+  against an object literal (§4.5), unless a type adapter's comparison answers (§13).
 * `<`, `<=`, `>`, `>=`: numbers, strings (ordinal), enums (underlying value). Otherwise `unknown`.
 * `contains`, `starts-with`, `ends-with`: on strings — ordinal **case-insensitive** substring test.
   `contains` on a list — membership using `==`. Otherwise `unknown`.
 * `matches`: .NET-compatible regex subset (literal chars, `. * + ? ^ $ [] () |` and `\d \w \s`),
-  case-insensitive. Runtimes without a regex engine report `unsupported`.
+  case-insensitive (like `contains` / `starts-with` / `ends-with`). Runtimes without a regex engine report `unsupported`.
+  A pattern that does not compile is an `invalid-regex` error naming the pattern: when the pattern is a literal, the
+  query fails before it runs; a computed pattern yields `unknown` for that item plus one `invalid-regex` warning.
+  A match that exceeds the runtime's per-match regex time limit yields `unknown` plus one `timeout` warning.
 * `x in [a, b]` / `x not in [...]`: `==` against each list element.
 * `x is null`, `x is not null`: `true`/`false` (missing → `unknown`).
 * `x is TypeName`: `true` if the runtime type of `x` or any base type/implemented interface has
@@ -133,11 +141,16 @@ modulo by zero → `error(div-by-zero)`. Other operand kinds → `error(type-mis
 | `len(x)` | string length, list/map size; otherwise `missing`. |
 | `lower(s)`, `upper(s)` | invariant case conversion. |
 | `abs(n)`, `round(n[, digits])`, `floor(n)`, `ceil(n)` | numeric. |
+| `sqrt(n)`, `pow(base, exponent)` | numeric (IEEE: `sqrt` of a negative number is NaN). |
+| `min(a, b, ...)`, `max(a, b, ...)` | the smallest / largest of two or more numbers (the `min` / `max` *stages* and *methods* aggregate a stream or a collection instead; with one argument the call is an `arity` error). |
 | `ref(s, ...)` | root scope only: resolve object references. |
 | `append(list, v, ...)` | a new list: the elements of `list` followed by the values. |
 | `insert(list, i, v)` | a new list with `v` inserted before index `i` (negative `i` counts from the end, `-1` appends). |
 | `remove-at(list, i)` | a new list without the element at `i` (negative from the end). |
 | `without(list, v)` | a new list without the elements equal to `v` (§4.1). |
+
+Numeric functions return `null` / `missing` / an error value unchanged when an argument is one (the first such argument),
+and a `type-mismatch` error value for any other non-number argument.
 
 List functions never modify their argument; assign the result (`set Tags = append(Tags, "x")`). A first argument that is
 not a list, a non-integral index or an index out of range yields a `type-mismatch` error value.
@@ -150,6 +163,11 @@ Collection **methods** (`list.method(args)`), args evaluated per element with `$
 | `all(pred)` | `true` if every element's pred is `true` (empty → `true`). |
 | `count([pred])` | number of elements (whose pred is `true`). |
 | `sum(e)`, `min(e)`, `max(e)`, `avg(e)` | aggregate of `e` over elements (non-numbers ignored; `min`/`max` also order strings). Empty: `sum` → `0`, others → `null`. |
+
+Aggregates (methods and stages) skip `null` and `missing` silently. Any other value they skip — a non-number for
+`sum` / `avg`, a value that is not orderable against the others for `min` / `max` (e.g. a bool, an object, or a
+number among strings) — is counted, and the query gets one `type-mismatch` **warning** per aggregate naming how many
+values were ignored, so `sum Name` reports why its answer is `0`.
 | `first([pred])` | first element (matching), or `missing`. |
 | `keys()`, `values()` | for maps. |
 
@@ -196,7 +214,7 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
 | `count` | terminal: number of items. |
 | `get e` | replace each item by `e`; `list` results are flattened into separate items; `missing`/`null` dropped. |
 | `recurse [via...] [max-depth=N] [include-self=false]` | depth-first pre-order expansion of each item into **itself (depth 0) and** its descendants; `include-self=false` emits descendants only. With `via` members (e.g. `recurse Children`) only those members are followed; without, every **owning** object-valued member and list/map element of objects is followed (runtime member order). Members the descriptor marks as non-owning references (parent links, targets, shared assets) are not followed by generic recursion. Cycle-safe: each object identity is emitted at most once per stage. `max-depth` default 8, hard cap per budget. |
-| `distinct [e]` | keep the first item for each distinct value of `e` (default `$`; objects by identity). |
+| `distinct [e]` | keep the first item for each distinct value of `e` (default `$`; objects by identity; projected rows by their column values, so `select Tag \| distinct` keeps one row per tag; structs and other values by value). |
 | `sum/min/max/avg e` | terminal aggregate, same rules as the collection methods (`sum` of nothing → `0`). |
 | `group-by e` | replaces the stream by rows `{key, count}` (members `key`, `count`) in order of first appearance of the key; `null`/`missing` keys form one `null` group. Can be followed by `sort count desc`, `where count > 1`, etc. |
 | `describe` | terminal: schema of the distinct runtime types of the items (members, kinds, writability). |
@@ -227,7 +245,14 @@ members, where nested identified objects become summaries and collections become
 `"…"`); lists → JSON array of encoded values (max `budgets.maxListItems`, default 20, then a
 trailing string `"…+N"`); maps → JSON object (string keys) of encoded values with the same limit.
 Numbers: integral values without fraction; floats in shortest round-trip form of the *runtime's
-own precision* (a C# `float` 0.1f encodes as `0.1`, not `0.10000000149`).
+own precision* (a C# `float` 0.1f encodes as `0.1`, not `0.10000000149`; `(float)Math.PI / 2` as `1.5707964`, the
+shortest of the 9-digit forms, not `1.57079637`). Non-finite numbers encode as the strings `"NaN"`, `"Infinity"` and
+`"-Infinity"`. This JSON form is exact: it is what plans, receipts and hosts may parse back.
+
+**Display numbers.** Text meant for agents and people (the compact `table` encoding of the tool layer,
+`docs/agent-tool-contract.md`) prints every number with at most 15 significant digits, so a computed
+`0.1 + 0.2` shows as `0.3` (its JSON form stays `0.30000000000000004`); integral values print without fraction and
+non-finite values as `NaN` / `Infinity` / `-Infinity`. Numeric tuple text written by type adapters follows §13.
 
 `total` is the number of items/rows the pipeline produced; when it exceeds `budgets.maxRows`
 (default 50) only that many are returned and `truncated: true`.
@@ -254,6 +279,9 @@ conformance form.
 ## 8. Mutations
 
 Mutations are disabled unless the caller's policy enables them (`permission-denied` otherwise).
+A request that asks for mutation (`options.allowMutation`) must end in a `set` or `call` stage; otherwise it is
+refused with `invalid-plan` before anything runs (the mutation tool never doubles as a query tool, and a forgotten
+`set` is reported instead of silently returning rows).
 
 * Targets must be objects with identity; value-type or scalar items (e.g. from `get Transform.Position`)
   are rejected with `invalid-plan` because a change to a copy would be lost.
@@ -266,12 +294,19 @@ Mutations are disabled unless the caller's policy enables them (`permission-deni
   (`Transform.Position.x = 1`) MUST write back the modified copy to every enclosing value-type
   member up to the first reference object. Target member must be writable and allowed by
   policy (`readonly-member`, `permission-denied`).
-* `call m(args)`: only methods allowlisted by the runtime policy; arguments coerced as above.
+* `call m(args)`: only methods allowlisted by the runtime policy; arguments coerced as above. A method that throws
+  stops the stage with error `call-threw` (naming the method and the exception); calls completed before it are not
+  rolled back.
 * **All-or-nothing**: every target and assignment is resolved and coerced before any write. If
   more than `budgets.maxMutationTargets` (default 20) items reach the stage → `mutation-limit`,
   nothing written. If a write fails midway the runtime MUST restore already-written values.
 * **Dry-run** (`options.dryRun`) computes and returns the receipt without writing.
 * Receipt: `kind: "rows"`, columns `["$ref", "member", "old", "new"]` (`call`: `["$ref", "method", "result"]`).
+  After the writes, `new` is the value **read back** from each written member, i.e. what the host actually stored (a
+  setter or the host may clamp, normalise or ignore a value: `set mass = -1` can report `1E-07`, an unknown tag can
+  keep the old one). On a dry run nothing is written and `new` is the planned (coerced) value. If the read-back fails,
+  `new` is the planned value and the query gets a `getter-threw` warning. Host committed hooks (§13) receive the
+  read-back values too.
 
 ## 9. Extensions
 
@@ -280,7 +315,9 @@ and **type descriptors**. Names of non-core extensions MUST be namespaced (`unit
 `myapp.`). The parser accepts unknown names structurally; binding fails with `unknown-stage`/
 `unknown-function` if no extension is registered. In expressions `ns.fn(x)` parses as method `fn`
 on path `ns`; when the path is a bare dotted identifier chain that matches a registered function
-namespace, the binder treats it as the function `ns.fn`.
+namespace, the binder treats it as the function `ns.fn`. An extension function that throws evaluates to
+`error(function-threw)` for that call, and the query gets one `function-threw` warning naming the function and the
+exception (a getter that throws is `getter-threw`, a `call`ed method `call-threw`).
 
 ## 10. Budgets and errors
 
@@ -299,14 +336,26 @@ Budgets (request-level, all optional, runtime may clamp to its own hard caps):
 Diagnostics: `{severity: "error"|"warning", code, message, at?: {start, end}, hint?}`. Error codes
 are a closed set in v0.1: `syntax-error`, `invalid-plan`, `version-unsupported`, `unknown-source`,
 `unknown-stage`, `unknown-function`, `unknown-member` (warning: no evaluated item had it),
-`unknown-meta`, `type-mismatch`, `arity`, `div-by-zero`, `getter-threw`, `stale-ref`,
-`permission-denied`, `readonly-member`, `coercion-failed`, `mutation-limit`, `budget-exceeded`,
+`unknown-meta`, `type-mismatch`, `arity`, `div-by-zero`, `getter-threw` (a member read threw), `call-threw` (a `call`ed
+method threw, §8), `function-threw` (an extension function threw, §9), `hook-threw` (warning: a host committed hook
+threw, §13), `invalid-regex` (§4.1), `stale-ref`,
+`permission-denied`, `readonly-member`, `coercion-failed` (a value cannot be converted to the member type),
+`invalid-value` (the value converts, but the host's validation of the member rejects it, §13), `mutation-limit`, `budget-exceeded`,
 `timeout`, `output-truncated`, `unsupported`, `internal-error` (a runtime bug surfaced as a diagnostic instead of
 a crash), `no-match` (warning: an `x is T` test was false
 for every tested item; the hint names where `T` objects are reachable).
 
 `unknown-member` SHOULD carry a `hint` with the closest member names of the observed types —
 this is the main self-correction channel for agents.
+
+**Suggestions** ("did you mean …?" for members, sources, stages, functions and type names) rank candidates the same
+way in every runtime. Comparison is ASCII case-insensitive. A candidate qualifies when its *optimal string alignment*
+distance to the name (Damerau–Levenshtein without repeated edits of a substring: insertion, deletion, substitution and
+the transposition of two adjacent characters each cost 1, so `Lable` → `Label` is 1) is at most `max(1, ⌊len/3⌋)` of
+the name's length, or when it contains the name (at least 3 characters), or when the name contains it and it is at
+least half as long as the name (`LabelText` → `Label`, but not `NoSuchType` → `Type`). Order: containment first, then
+distance, then ordinal name; at most 3 suggestions. When nothing qualifies, a hint MAY list the type's members, at most
+12 of them followed by `… (N more)`.
 Runtimes SHOULD also report `unknown-member` for a bare name that was never evaluated (short-circuit,
 empty stream) when no type statically reachable from the sources declares it and no `select` alias
 produces it.
@@ -365,7 +414,7 @@ templates in the reflection layer) only implement the exact / base / interface t
 |---|---|
 | Members | Applied from the least to the most specific adapter, so a subclass adapter refines a base adapter. Can **add** virtual members (name, declared type, getter, optional setter with validation, description), **hide** members, keep **only** a whitelist, include **non-public fields** by predicate (e.g. Unity `[SerializeField]`), mark members read-only, non-owning reference, or **explicit-only** (never read implicitly: not by generic `recurse`, inline encoding, ref search or snapshots — only when a path names it; `describe` lists it with `"explicitOnly": true`). Hidden members are unreadable AND unwritable (reads → `unknown-member` warning, writes → `unknown-member` error). Virtual members are non-owning by default (computed values are not structural children). Identity and display members are chosen among non-explicit-only members (they are read for every `$ref` and summary). Configuring a member that does not exist — including `hide` / `only` with an unknown name — is a host bug and fails the query with `internal-error`. |
 | Methods | Add callable methods (name, typed parameters with optional defaults, result type, description) invoked by the `call` stage exactly like host-allowlisted methods: arguments are coerced to the parameter types (adapter coercion applies), overloads are chosen by arity then coercibility, results go to the receipt, `dryRun` invokes nothing, and calls are not rolled back. Runtimes with method reflection MAY also expose existing host methods by name (for engine types that cannot be annotated) and hide methods. `describe` lists every callable method as `name(type param, …)` plus the description. |
-| Virtual maps | A member whose value is a string-keyed map defined by the adapter: the owner's keys, per-key get, optional per-key set and validation. An optional per-key existence test avoids scanning the keys on lookups. Reads and writes use the ordinary map paths (`M["k"]`, `set M["k"] = v`): values are coerced to the declared value type, validation runs before any write (`coercion-failed` with the reason), writes take part in rollback, a map without setter is `readonly-member`, writes go to existing entries only (an absent key is `coercion-failed` "no entry", because a new entry could not be
+| Virtual maps | A member whose value is a string-keyed map defined by the adapter: the owner's keys, per-key get, optional per-key set and validation. An optional per-key existence test avoids scanning the keys on lookups. Reads and writes use the ordinary map paths (`M["k"]`, `set M["k"] = v`): values are coerced to the declared value type, validation runs before any write (`invalid-value` with the reason), writes take part in rollback, a map without setter is `readonly-member`, writes go to existing entries only (an absent key is `invalid-value` "no entry", because a new entry could not be
 removed again on rollback), and entries are never removed. Schemas show the type as `Dictionary<string, T>`. |
 | Encode | Replace the output encoding of values of the type (first adapter that encodes wins). |
 | Coerce | Convert a value supplied by a query (literal, list, other type) to the type on writes (`set`, `call` arguments). Values already of the target type bypass it. A failure carries a reason → `coercion-failed`, reason in the message. |
@@ -376,12 +425,31 @@ removed again on rollback), and entries are never removed. Schemas show the type
 | Literals | Coercion receives object literals (§4.5) and may build values itself; an adapter may publish a JSON Schema of the literals it accepts, shown by `describe` as `literal`. |
 | Describe | A one-line description of the type for schemas and `describe`, e.g. how to write literals. |
 
+**Numeric tuples** (vectors, rotations, quaternions, colors: adapters that encode a struct as text `"(x, y, z)"`, such
+as the .NET `NumericTupleAdapter`; hosts with their own tuple adapters SHOULD follow the same rules so agents see one
+format across engines):
+
+* *Display*: each component is printed with at most 6 significant digits when the component is single precision and
+  12 when it is double precision, a component whose magnitude is below `1e-6` (single) / `1e-9` (double) prints as
+  `0`, `-0` prints as `0`, and non-finite components print as `NaN`, `Infinity`, `-Infinity`. So float noise such as
+  `(9.999998, 45, 29.9999981)` or `(-8.742278E-08, 0, -2)` reads `(10, 45, 30)` and `(0, 0, -2)`. The text is a
+  display form: it parses back to within the equality tolerance, not bit-exactly.
+* *Input*: text components accept `nan`, `inf`, `infinity` with an optional sign, case-insensitively, besides
+  numbers, so every printed form parses back.
+* *Equality*: component-wise within a tolerance of `max(1e-5, 1e-5 × |larger component|)` (an absolute tolerance near
+  zero, relative for large values, so a printed value compares equal to its source); a NaN component equals nothing.
+  The other operand may be the tuple text, a list of numbers, or an **object literal**: its keys name members
+  (case-insensitively), members it leaves out keep the compared value's own components, so
+  `Position == {x: 0, y: 3}` tests x and y only; a key that is not a member makes the comparison `unknown`. `!=` is
+  the negation of that result.
+
 Writes through adapter members keep the all-or-nothing guarantee: old values are read through the member getter before
 any write and restored through its setter on failure — including the write whose setter threw, since a setter may change
 state before throwing. Adapters SHOULD make virtual setters round-trip their getter;
 a lossy member (`set(get())` changes state, e.g. the fixture's case-folding `title`) restores only what its getter
 exposes. Validation runs while the mutation is planned, before any write, and rejects with a reason
-(→ `coercion-failed`); a setter that throws at write time triggers the rollback. Virtual setters on value types are
+(→ `invalid-value`, naming the value as the query wrote it, e.g. `invalid value 99 for 'layer'`; a member validated while an
+object literal is constructed fails that construction with `coercion-failed`); a setter that throws at write time triggers the rollback. Virtual setters on value types are
 rejected at configuration (they would write to a copy).
 
 **Host write hooks.** Hosts may observe mutations: a *before-write* hook receives every planned change (item, owner,
@@ -392,7 +460,7 @@ whose state changes: the nearest enclosing object on the written path — never 
 views) or struct (including writes-through handles); the item when there is none. For `set Renderer.sharedMaterial.color`
 it is the Material, for `set Uniforms["_Color"]` the material owning the virtual map, for `set main.duration` the particle
 system. That is what hosts mark dirty or record for undo. A failing committed hook is a
-`getter-threw` warning; the writes stay applied.
+`hook-threw` warning; the writes stay applied.
 
 **Kernel (adapter composition).** Adapters never call each other. An adapter that needs a nested operation — coerce a
 component of a composite literal, compare elements, encode a member — asks the engine's *kernel* for that operation on a

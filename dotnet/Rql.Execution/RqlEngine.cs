@@ -639,6 +639,15 @@ namespace Rql.Execution
         {
             if (GetterErrors++ == 0) FirstGetterError = $"getter '{member}' threw {ex.GetType().Name}: {ex.Message}";
         }
+
+        private HashSet<string>? _warned;
+
+        /// <summary>Adds a warning once per <paramref name="key"/> (default: code + message), however often it recurs.</summary>
+        public void WarnOnce(string code, string message, string? key = null)
+        {
+            _warned ??= new HashSet<string>(StringComparer.Ordinal);
+            if (_warned.Add(key ?? code + "\n" + message)) Diagnostics.Add(Diagnostic.Warning(code, message));
+        }
     }
 
     /// <summary>Statistics of one `x is T` test, used for the no-match diagnostic.</summary>

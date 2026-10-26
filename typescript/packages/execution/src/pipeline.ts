@@ -26,7 +26,7 @@ import { Encoder } from './encoder.js';
 import type { ArgEvaluator, SourceRegistration } from './engine.js';
 import { PathNode, type Exec } from './exec.js';
 import { Mutator } from './mutator.js';
-import { closest } from './suggest.js';
+import { closest, memberList } from './suggest.js';
 import { EnumType, EnumValue, unwrapNullable, type TypeInfo } from './types.js';
 import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, isAbsent, toNumber } from './values.js';
 
@@ -57,6 +57,8 @@ export class Pipeline {
       const fail = failResult(x.diagnostics.filter((d) => d.severity === 'error' && d.code !== e.code));
       fail.diagnostics.unshift(e.toDiagnostic());
       this.addWarnings(fail, true);
+      // A warning of the failure's own code (e.g. a throwing function) only repeats the error.
+      fail.diagnostics = fail.diagnostics.filter((d) => d.severity !== 'warning' || d.code !== e.code);
       return fail;
     }
     const errors = x.diagnostics.filter((d) => d.severity === 'error');
@@ -126,7 +128,7 @@ export class Pipeline {
       const typeNames = [...new Set(types.map((t) => t.shortName))].slice(0, 4).join(', ');
       const candidates = [...new Set(types.flatMap((t) => t.members.map((m) => m.name)))];
       const close = closest(site.name, candidates, 3);
-      let hint = close.length > 0 ? `did you mean ${close.join(' / ')}?` : candidates.length > 0 ? 'members: ' + candidates.slice(0, 24).join(' ') : '';
+      let hint = close.length > 0 ? `did you mean ${close.join(' / ')}?` : candidates.length > 0 ? memberList(candidates) : '';
       if (close.length === 0 && /^\p{Lu}/u.test(site.name)) {
         hint += (hint.length > 0 ? '; ' : '') + `if '${site.name}' is a value, quote it: "${site.name}"`;
       }
@@ -179,6 +181,15 @@ export class Pipeline {
   private runCore(): QueryResult {
     const x = this.x;
     const plan = x.plan;
+    const last = plan.stages[plan.stages.length - 1];
+    if (x.options.allowMutation && last?.kind !== 'set' && last?.kind !== 'call') {
+      throw new RqlError(
+        'invalid-plan',
+        'a mutation request must end with a set or call stage; nothing was changed',
+        undefined,
+        "add '| set Member = value' or '| call Method(...)', or use the query tool to read",
+      );
+    }
     let stream: Iterable<Item> = this.compileSource(plan.source);
     let terminal: Stage | undefined;
     for (const st of plan.stages) {
@@ -201,7 +212,7 @@ export class Pipeline {
       }
       case 'expr': {
         const sel = this.c.compile(terminal.expr!);
-        const r = reduce(x.types, this.values(stream, sel), terminal.op);
+        const r = reduce(x, this.values(stream, sel), terminal.op);
         return { ok: true, kind: 'scalar', value: encoder.encode(r), diagnostics: [], stats: { visited: 0, membersRead: 0, elapsedMs: 0 } };
       }
       case 'set':
@@ -675,6 +686,15 @@ function compareSortKeys(x: Exec, a: unknown, b: unknown, desc: boolean): number
 const enumIds = new WeakMap<object, number>();
 let nextEnumId = 0;
 
+/** A stable identity number for objects compared by identity inside composite (row) keys. */
+const objectIds = new WeakMap<object, number>();
+let nextObjectId = 0;
+function objectId(o: object): number {
+  let id = objectIds.get(o);
+  if (id === undefined) objectIds.set(o, (id = nextObjectId++));
+  return id;
+}
+
 /**
  * Key for distinct/group-by equality: numbers numerically, strings ordinally, enums by type+value,
  * structs member-wise, objects by identity (the object itself is the key).
@@ -691,6 +711,15 @@ export function distinctKey(x: Exec, v: unknown): unknown {
     return `e:${id}:${typeof v.value}:${String(v.value)}`;
   }
   if (v instanceof Date) return 't:' + String(v.getTime());
+  if (v instanceof RowValue) {
+    // Projected rows compare by their column values (spec §5), each with the same equality.
+    const parts = v.values.map((cv) => {
+      const k = distinctKey(x, cv);
+      if (typeof k === 'string') return JSON.stringify(k);
+      return typeof k === 'object' && k !== null ? 'o:' + String(objectId(k)) : 'p:' + String(k);
+    });
+    return `r:[${parts.join(',')}]`;
+  }
   if (typeof v === 'object') {
     const info = x.types.infoOf(v);
     if (info.kind === 'struct') {

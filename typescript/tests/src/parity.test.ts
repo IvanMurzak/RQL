@@ -96,7 +96,7 @@ test('host hooks: owner is the last reference object on the path; veto; dry-run;
   };
   const warned = e.execute('renderers | set Name = "x"', {}, mut);
   assert.equal(warned.ok, true);
-  assert.equal(warned.diagnostics[0]?.code, 'getter-threw');
+  assert.equal(warned.diagnostics[0]?.code, 'hook-threw');
   assert.deepEqual(renderers.map((x) => x.Name), ['x', 'x']);
 });
 
@@ -121,7 +121,7 @@ test('host hooks on call: completed calls are reported even when a later call fa
   const committed: string[] = [];
   e.mutations.committed = (records) => void committed.push(...records.map((r) => `${(r.item as Counter).Id}:${r.member}:${r.method?.name}`));
   const r = e.execute('cs | call inc()', {}, mut);
-  assert.equal(r.diagnostics[0]?.code, 'getter-threw');
+  assert.equal(r.diagnostics[0]?.code, 'call-threw');
   assert.deepEqual(committed, ['1:inc():inc']);
 });
 
@@ -346,7 +346,7 @@ test('hook owner: nearest enclosing object (virtual-map entry → material, hand
   assert.deepEqual(owners, [mesh.material, mesh, systems[0]]);
 });
 
-test('virtual maps accept writes to existing entries only (no entry → coercion-failed before validation)', () => {
+test('virtual maps accept writes to existing entries only (no entry → invalid-value before the entry validator)', () => {
   let validated = 0;
   let written = 0;
   class Mat {
@@ -375,7 +375,8 @@ test('virtual maps accept writes to existing entries only (no entry → coercion
     });
   e.mutations.enabled = true;
   const r = e.execute('mats | set v["a"] = 2, v["b"] = 3', {}, mut);
-  assert.equal(r.diagnostics[0]?.code, 'coercion-failed');
+  assert.equal(r.diagnostics[0]?.code, 'invalid-value');
+  assert.ok(r.diagnostics[0]!.message.includes("invalid value 3 for 'v[\"b\"]'"), r.diagnostics[0]!.message);
   assert.ok(r.diagnostics[0]!.message.includes("no entry 'b'"));
   assert.deepEqual([validated, written, mat.values], [1, 0, { a: 1 }]);
 });

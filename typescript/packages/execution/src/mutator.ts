@@ -7,7 +7,7 @@ import { errorMessage, type Exec } from './exec.js';
 import type { MutationRecord } from './engine.js';
 import type { Item } from './pipeline.js';
 import { adapterName } from './adapters.js';
-import { closest } from './suggest.js';
+import { closest, memberList } from './suggest.js';
 import {
   EnumType,
   EnumValue,
@@ -138,7 +138,11 @@ class MapSlot extends Slot {
     else m.set(this.key, raw);
   }
   override validate(container: object, value: unknown): string | undefined {
-    return container instanceof StringMap ? container.validate(String(this.key), value) : undefined;
+    if (!(container instanceof StringMap)) return undefined;
+    const k = String(this.key);
+    // Virtual maps only take writes to existing entries: a new key could not be removed again on rollback.
+    if (container instanceof VirtualMap && !container.has(k)) return `no entry '${k}'`;
+    return container.validate(k, value);
   }
 }
 
@@ -197,7 +201,7 @@ export class Mutator {
   /**
    * Runs a host hook (not on dry-run). `records` is built once per set/call and shared by both hooks.
    * beforeWrite: a throw vetoes the mutation (permission-denied, nothing written). committed: a throw is a
-   * getter-threw warning, the writes stay.
+   * hook-threw warning, the writes stay.
    */
   private runHook(kind: 'beforeWrite' | 'committed', records: () => readonly MutationRecord[]): void {
     const hook = this.x.engine.mutations[kind];
@@ -209,7 +213,7 @@ export class Mutator {
     } catch (e) {
       if (kind === 'beforeWrite') throw new RqlError('permission-denied', `the host rejected the change before anything was written: ${errorMessage(e)}`);
       const name = e instanceof Error ? e.name : typeof e;
-      this.x.warn('getter-threw', `host commit hook threw ${name}: ${errorMessage(e)}; the writes were applied`);
+      this.x.warn('hook-threw', `host commit hook threw ${name}: ${errorMessage(e)}; the writes were applied`);
     }
   }
 
@@ -264,12 +268,13 @@ export class Mutator {
         if (!co.ok) throw new RqlError(co.code ?? 'coercion-failed', `cannot assign ${describeValue(nv)} to '${lbl}' (${friendlyName(slot.type, x.types)}): ${co.why}`);
         // Validation runs while the mutation is planned, before any write (spec §13).
         const rejected = slot.validate(container, co.value);
-        if (rejected !== undefined) throw new RqlError('coercion-failed', `cannot assign ${describeValue(nv)} to '${lbl}' on ${this.refOf(item)}: ${rejected}`);
+        if (rejected !== undefined) throw new RqlError('invalid-value', `invalid value ${valueText(nv)} for '${lbl}' on ${this.refOf(item)}: ${rejected}`);
         writes.push({ item, owner, segments: target.segments, label: lbl, old: safeGet(slot, container, lbl), new: co.value });
       }
     }
 
-    const records = once(() => writes.map((w): MutationRecord => ({ item: w.item, owner: w.owner, member: w.label, old: w.old, new: w.new })));
+    const toRecords = (): MutationRecord[] => writes.map((w): MutationRecord => ({ item: w.item, owner: w.owner, member: w.label, old: w.old, new: w.new }));
+    let records = once(toRecords);
     this.runHook('beforeWrite', records);
     if (!x.options.dryRun) {
       let applied = 0;
@@ -299,6 +304,9 @@ export class Mutator {
         if (!selfRestored) rolled += `; restoring '${failed.label}' itself also failed, so it may be partially modified`;
         throw new RqlError('coercion-failed', `write '${writes[applied]!.label}' failed (${errorMessage(e)}); ${rolled}`);
       }
+      // The receipt (and the committed hook) report what the host stored, which a setter may have clamped (spec §8).
+      for (const w of writes) w.new = this.readBack(w);
+      records = once(toRecords);
     }
 
     this.runHook('committed', records);
@@ -306,6 +314,34 @@ export class Mutator {
     const r = this.enc.rows(['$ref', 'member', 'old', 'new'], rows);
     if (x.options.dryRun) r.dryRun = true;
     return r;
+  }
+
+  /** The written member's value after the writes; the planned value (plus a warning) when it cannot be read. */
+  private readBack(w: PlannedWrite): unknown {
+    try {
+      let cur: object = w.item;
+      let declared: TypeRef = 'any';
+      for (let i = 0; ; i++) {
+        const slot = this.slotOf(cur, declared, w.segments[i]!, w.label);
+        const v = slot.get(cur);
+        if (i === w.segments.length - 1) {
+          // List / map slots hold raw enum values; the receipt shows the enum like the planned value.
+          const et = unwrapNullable(slot.type);
+          return et instanceof EnumType && (typeof v === 'number' || typeof v === 'string') ? et.wrap(v) : v;
+        }
+        if (v === null || v === undefined || v === MISSING || typeof v !== 'object') return w.new;
+        cur = v;
+        declared = slot.type;
+      }
+    } catch (e) {
+      const name = e instanceof Error ? e.name : typeof e;
+      this.x.warnOnce(
+        'getter-threw',
+        `reading back '${w.label}' after the write failed (${name}: ${errorMessage(e)}); the receipt shows the planned value`,
+        'read-back',
+      );
+      return w.new;
+    }
   }
 
   private slotOf(container: object, declared: TypeRef, seg: Segment, lbl: string): Slot {
@@ -321,8 +357,6 @@ export class Mutator {
       // Member syntax addresses an existing key case-insensitively, like reads (spec §3); new keys keep the given spelling.
       const k = key === undefined ? undefined : coerceKey(container as MapLike, key, args?.key ?? 'any', seg.kind === 'member');
       if (k === undefined) throw new RqlError('coercion-failed', `invalid map key in '${lbl}'`);
-      // Virtual maps accept writes to existing entries only: rollback could not remove an added key.
-      if (container instanceof VirtualMap && !container.has(String(k))) throw new RqlError('coercion-failed', `'${lbl}': no entry '${String(k)}'`);
       const entryType = container instanceof VirtualMap ? container.entryType(String(k)) : undefined;
       return new MapSlot(k, entryType ?? args?.of ?? 'any');
     }
@@ -339,7 +373,7 @@ export class Mutator {
     if (m === undefined) {
       const names = info.membersOf(container).map((mm) => mm.name);
       const close = closest(name, names, 3);
-      throw new RqlError('unknown-member', `no member '${name}' on ${info.shortName}`, undefined, close.length > 0 ? `did you mean ${close.join(' / ')}?` : 'members: ' + names.join(' '));
+      throw new RqlError('unknown-member', `no member '${name}' on ${info.shortName}`, undefined, close.length > 0 ? `did you mean ${close.join(' / ')}?` : memberList(names));
     }
     return new MemberSlot(info, m);
   }
@@ -477,7 +511,7 @@ export class Mutator {
           // Completed calls are not rolled back, so the host still learns about them.
           const completed = done;
           this.runHook('committed', () => callRecords().slice(0, completed));
-          throw new RqlError('getter-threw', `${p.method.name} on ${x.engine.refOf(p.item)} threw ${name}: ${errorMessage(e)}; ${done} earlier call(s) completed and are NOT rolled back`);
+          throw new RqlError('call-threw', `${p.method.name} on ${x.engine.refOf(p.item)} threw ${name}: ${errorMessage(e)}; ${done} earlier call(s) completed and are NOT rolled back`);
         }
       }
       done++;
@@ -503,6 +537,15 @@ function safeGet(slot: Slot, container: object, lbl: string): unknown {
     const name = e instanceof Error ? e.name : typeof e;
     throw new RqlError('getter-threw', `reading '${lbl}' failed: ${name}: ${errorMessage(e)}`);
   }
+}
+
+/** A value as the query wrote it (99, "Tag", true), for invalid-value messages; other kinds by description. */
+function valueText(v: unknown): string {
+  if (v === null || v === undefined) return 'null';
+  if (typeof v === 'string') return '"' + v + '"';
+  if (typeof v === 'boolean') return v ? 'true' : 'false';
+  const n = toNumber(v);
+  return n !== undefined ? formatNumber(n) : describeValue(v);
 }
 
 function label(p: PathExpr): string {

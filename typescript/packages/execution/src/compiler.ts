@@ -14,7 +14,7 @@ export type Eval = (x: Exec) => unknown;
 type Truth = boolean | undefined;
 
 export const CORE_FUNCTIONS = [
-  'has', 'is-null', 'len', 'lower', 'upper', 'abs', 'round', 'floor', 'ceil', 'coalesce', 'ref',
+  'has', 'is-null', 'len', 'lower', 'upper', 'abs', 'round', 'floor', 'ceil', 'sqrt', 'pow', 'min', 'max', 'coalesce', 'ref',
   'append', 'insert', 'remove-at', 'without',
   'contains', 'starts-with', 'ends-with', 'matches',
 ];
@@ -102,6 +102,19 @@ export class Compiler {
           break;
       }
     });
+    if (relativeToItem && p.segments.length > 1 && p.segments.every((s) => s.kind === 'member')) {
+      // After `select Owner.Label`, the path Owner.Label names that column (spec §3), not Owner on the row.
+      const column = p.segments.map((s) => (s.kind === 'member' ? s.name : '')).join('.');
+      const navigate = cur;
+      return (x) => {
+        const row = x.current;
+        if (row instanceof RowValue) {
+          const i = row.indexOf(column);
+          if (i >= 0) return row.values[i];
+        }
+        return navigate(x);
+      };
+    }
     return cur;
   }
 
@@ -206,8 +219,9 @@ export class Compiler {
       case 'ends-with':
         return (x) => tri(stringTest(a(x), b(x), (s, t) => s.toUpperCase().endsWith(t.toUpperCase())));
       case 'matches':
+        checkLiteralRegex(o.args[1]);
         return (x) => {
-          const r = tri(matches(a(x), b(x)));
+          const r = tri(matches(x, a(x), b(x)));
           x.checkTime(); // regexes have no per-match timeout in JS; bound the whole query
           return r;
         };
@@ -262,12 +276,12 @@ export class Compiler {
     if (on !== undefined && on.kind === 'path' && on.on === undefined && on.segments.length > 0 && on.segments.every((s) => s.kind === 'member')) {
       const ns = on.segments.map((s) => (s.kind === 'member' ? s.name : '')).join('.') + '.' + c.name;
       const ext = this.x.engine.functions.get(ns);
-      if (ext !== undefined) return this.compileExtension(ext, c.args);
+      if (ext !== undefined) return this.compileExtension(ns, ext, c.args);
     }
     return on === undefined ? this.compileFunction(c) : this.compileMethod(c, on);
   }
 
-  private compileExtension(fn: (args: unknown[]) => unknown, argExprs: readonly Expr[]): Eval {
+  private compileExtension(fnName: string, fn: (args: unknown[]) => unknown, argExprs: readonly Expr[]): Eval {
     const args = argExprs.map((e) => this.compile(e));
     return (x) => {
       const vals = args.map((a) => a(x));
@@ -275,7 +289,9 @@ export class Compiler {
         const r = fn(vals);
         return r === undefined ? null : r;
       } catch (e) {
-        return new ErrorValue('getter-threw', errorMessage(e));
+        const detail = `${fnName}() threw ${e instanceof Error ? e.name : typeof e}: ${errorMessage(e)}`;
+        x.warnOnce('function-threw', detail, 'function-threw:' + fnName);
+        return new ErrorValue('function-threw', detail);
       }
     };
   }
@@ -291,7 +307,7 @@ export class Compiler {
     const name = c.name.toLowerCase();
     if (c.name.includes('.')) {
       const ext = this.x.engine.functions.get(c.name);
-      if (ext !== undefined) return this.compileExtension(ext, c.args);
+      if (ext !== undefined) return this.compileExtension(c.name, ext, c.args);
     }
     switch (name) {
       case 'has': {
@@ -318,11 +334,32 @@ export class Compiler {
       }
       case 'abs':
       case 'floor':
-      case 'ceil': {
+      case 'ceil':
+      case 'sqrt': {
         this.arity(c, 1, 1);
         const a = this.compile(c.args[0]!);
-        const f = name === 'abs' ? Math.abs : name === 'floor' ? Math.floor : Math.ceil;
+        const f = name === 'abs' ? Math.abs : name === 'floor' ? Math.floor : name === 'ceil' ? Math.ceil : Math.sqrt;
         return (x) => num(a(x), f);
+      }
+      case 'pow':
+      case 'min':
+      case 'max': {
+        if (name === 'pow') this.arity(c, 2, 2);
+        else this.arity(c, 2, 64);
+        const args = c.args.map((e) => this.compile(e));
+        // Math.min / Math.max match .NET (NaN wins; -0 < +0).
+        const f: (l: number, r: number) => number = name === 'pow' ? Math.pow : name === 'min' ? Math.min : Math.max;
+        return (x) => {
+          let acc = 0;
+          for (let i = 0; i < args.length; i++) {
+            const v = args[i]!(x);
+            if (v === null || isAbsent(v)) return v;
+            const d = toNumber(v);
+            if (d === undefined) return new ErrorValue('type-mismatch', `${name}() expects numbers, got ${describeValue(v)}`);
+            acc = i === 0 ? d : f(acc, d);
+          }
+          return acc;
+        };
       }
       case 'round': {
         this.arity(c, 1, 2);
@@ -701,20 +738,39 @@ function stringTest(a: unknown, b: unknown, test: (s: string, t: string) => bool
   return test(a, b);
 }
 
-const regexCache = new Map<string, RegExp | null>();
+/** A compiled pattern, or the compile error message of an invalid one. */
+type CompiledRegex = { re: RegExp; error?: undefined } | { re?: undefined; error: string };
 
-function matches(a: unknown, b: unknown): Truth {
-  if (typeof a !== 'string' || typeof b !== 'string') return undefined;
-  let re = regexCache.get(b);
-  if (re === undefined) {
+const regexCache = new Map<string, CompiledRegex>();
+
+function getRegex(pattern: string): CompiledRegex {
+  let hit = regexCache.get(pattern);
+  if (hit === undefined) {
     try {
-      re = new RegExp(b, 'i');
-    } catch {
-      re = null;
+      hit = { re: new RegExp(pattern, 'i') };
+    } catch (e) {
+      hit = { error: errorMessage(e) };
     }
-    if (regexCache.size < 256) regexCache.set(b, re);
+    if (regexCache.size < 256) regexCache.set(pattern, hit);
   }
-  return re === null ? undefined : re.test(a);
+  return hit;
+}
+
+/** A literal pattern that does not compile fails the query before it runs (spec §4.1). */
+function checkLiteralRegex(pattern: Expr | undefined): void {
+  if (pattern?.kind !== 'lit' || typeof pattern.value !== 'string') return;
+  const { error } = getRegex(pattern.value);
+  if (error !== undefined) throw new RqlError('invalid-regex', `invalid regex "${pattern.value}": ${error}`, pattern.span);
+}
+
+function matches(x: Exec, a: unknown, b: unknown): Truth {
+  if (typeof a !== 'string' || typeof b !== 'string') return undefined;
+  const { re, error } = getRegex(b);
+  if (re === undefined) {
+    x.warnOnce('invalid-regex', `invalid regex "${b}": ${error}; such values count as unknown`, 'invalid-regex');
+    return undefined;
+  }
+  return re.test(a);
 }
 
 function isIn(x: Exec, a: unknown, b: unknown): Truth {
@@ -931,7 +987,7 @@ function aggregate(x: Exec, v: unknown, sel: Eval | undefined, kind: string): un
         values.push(sel(x));
       } else values.push(el);
     }
-    return reduce(x.types, values, kind);
+    return reduce(x, values, kind);
   } finally {
     x.outer.pop();
     x.current = saved;
@@ -944,29 +1000,43 @@ function hasOrdering(model: TypeModel, v: unknown): boolean {
   return typeof v === 'object' && v !== null && model.hasCapability('compare') && model.infoOf(v).adapterSet.compare.length > 0;
 }
 
-/** sum / avg over numbers; min / max over numbers, strings, enums and adapter-ordered values (spec §4.3, §13). */
-export function reduce(model: TypeModel, values: Iterable<unknown>, kind: string): unknown {
+/**
+ * sum / avg over numbers; min / max over numbers, strings, enums and adapter-ordered values (spec §4.3, §13).
+ * null / missing are skipped silently; any other value that cannot take part is skipped too and reported once per
+ * aggregate kind as a type-mismatch warning.
+ */
+export function reduce(x: Exec, values: Iterable<unknown>, kind: string): unknown {
+  const model = x.types;
   let sum = 0;
   let n = 0;
+  let ignored = 0;
+  let firstIgnored = '';
   let best: unknown = null;
   const minmax = kind === 'min' || kind === 'max';
   for (const val of values) {
+    if (val === null || val === undefined || isAbsent(val)) continue;
+    let used: boolean;
     if (minmax) {
-      if (val === null || isAbsent(val)) continue;
-      if (toNumber(val) === undefined && typeof val !== 'string' && !(val instanceof EnumValue) && !hasOrdering(model, val)) continue;
-      if (best === null) {
-        best = val;
-        continue;
+      used = toNumber(val) !== undefined || typeof val === 'string' || val instanceof EnumValue || hasOrdering(model, val);
+      if (used && best === null) best = val;
+      else if (used) {
+        const c = compare(model, val, best);
+        if (c === undefined) used = false;
+        else if ((kind === 'min' && c < 0) || (kind === 'max' && c > 0)) best = val;
       }
-      const c = compare(model, val, best);
-      if (c === undefined) continue;
-      if ((kind === 'min' && c < 0) || (kind === 'max' && c > 0)) best = val;
-      continue;
+    } else {
+      const d = toNumber(val);
+      used = d !== undefined;
+      if (d !== undefined) {
+        sum += d;
+        n++;
+      }
     }
-    const d = toNumber(val);
-    if (d === undefined) continue;
-    sum += d;
-    n++;
+    if (!used && ignored++ === 0) firstIgnored = describeValue(val);
+  }
+  if (ignored > 0) {
+    const what = minmax ? 'value(s) not comparable with the others' : 'non-numeric value(s)';
+    x.warnOnce('type-mismatch', `${kind} ignored ${ignored} ${what} (first: ${firstIgnored})`, 'aggregate:' + kind);
   }
   if (kind === 'sum') return sum;
   if (kind === 'avg') return n === 0 ? null : sum / n;

@@ -14,7 +14,9 @@ recommended for MCP integrations.
 * **table** (default for agents): optional diagnostic lines (`error|warning <code>: <message> — hint: <hint>`),
   a header line (`N results` or `N of M (truncated; …)`, `DRY RUN — nothing changed;` for dry runs),
   then `col|col|…` and one row per line. Objects render as `Type#id(Name)`, structs/maps as
-  `{k:v,…}`, lists as `[a,b]`, strings unquoted unless ambiguous.
+  `{k:v,…}`, lists as `[a,b]`, strings unquoted unless ambiguous (quoted strings escape only `"`, `\` and control
+  characters; other Unicode, emoji included, stays raw). Fractional numbers show at most 15 significant digits
+  (display numbers, spec §6: `0.1 + 0.2` shows `0.3`); the json rendering keeps the exact values.
 * **json**: the conformance `QueryResult` without stats.
 
 Experiment E5 compared both (see `RESULTS.md`).

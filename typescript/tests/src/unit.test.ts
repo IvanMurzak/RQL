@@ -14,7 +14,9 @@ test('formatNumber matches .NET "R" formatting', () => {
   assert.equal(formatNumber(0.0001), '0.0001');
   assert.equal(formatNumber(0.00001), '1E-05');
   assert.equal(formatNumber(-1.5e-7), '-1.5E-07');
-  assert.equal(formatNumber(Infinity), '∞');
+  assert.equal(formatNumber(Infinity), 'Infinity');
+  assert.equal(formatNumber(-Infinity), '-Infinity');
+  assert.equal(formatNumber(NaN), 'NaN');
 });
 
 test('plan codec round-trips generic stages with sorted named options', () => {
@@ -166,4 +168,154 @@ test('request maxMutationTargets is capped by the host ceiling', () => {
   const r = e.execute('xs | set v = 1', { maxMutationTargets: 100 }, { allowMutation: true });
   assert.equal(r.diagnostics[0]?.code, 'mutation-limit');
   assert.ok(xs.every((x) => x.v === 0));
+});
+
+// ---------------------------------------------------------------- live-battery findings (0.2.0)
+
+class Light {
+  Label = '';
+  Intensity = 0;
+  Parent: Light | null = null;
+}
+
+class Body {
+  Name = 'Crate';
+  private mass = 1;
+  /** Clamps like Unity's Rigidbody.mass. */
+  get Mass(): number {
+    return this.mass;
+  }
+  set Mass(v: number) {
+    this.mass = v < 1e-7 ? 1e-7 : v;
+  }
+}
+
+function battery(): { e: RqlEngine; bodies: Body[] } {
+  const lamp = Object.assign(new Light(), { Label: 'Lamp', Intensity: 2 });
+  const sun = Object.assign(new Light(), { Label: 'Sun', Intensity: 10 });
+  lamp.Parent = sun;
+  sun.Parent = lamp;
+  const lights = [lamp, sun];
+  const bodies = [new Body()];
+  const model = new TypeModel()
+    .register(Light, { members: ['Label', { name: 'Intensity', type: t.number }, { name: 'Parent', type: t.of(Light) }] })
+    .register(Body, { members: ['Name', { name: 'Mass', type: t.number }] });
+  const e = new RqlEngine({ types: model }).addSource('lights', () => lights).addSource('bodies', () => bodies);
+  e.mutations.enabled = true;
+  return { e, bodies };
+}
+
+const hintOf = (r: { diagnostics: readonly { code: string; hint?: string }[] }): string => r.diagnostics.find((d) => d.code === 'unknown-member')?.hint ?? '';
+
+test('suggestions use optimal string alignment and a tight containment rule', () => {
+  const { e } = battery();
+  assert.equal(hintOf(e.execute('lights | where Lable == "Lamp"')), 'did you mean Label?');
+
+  class Thing {
+    Type = 1;
+    Transform = 2;
+  }
+  const model = new TypeModel().register(Thing, { members: [{ name: 'Type', type: t.int }, { name: 'Transform', type: t.int }] });
+  const te = new RqlEngine({ types: model }).addSource('things', () => [new Thing()]);
+  // "NoSuchType" contains "Type", but "Type" is under half its length: no suggestion.
+  const hint = hintOf(te.execute('things | where NoSuchType == 1'));
+  assert.ok(!hint.startsWith('did you mean'), hint);
+});
+
+test('member listings in hints are capped at 12 names', () => {
+  const names = Array.from({ length: 40 }, (_, i) => 'Member' + String(i));
+  class Wide {}
+  const model = new TypeModel().register(Wide, { members: names.map((name) => ({ name, type: t.int })) });
+  const wide = Object.assign(new Wide(), Object.fromEntries(names.map((n, i) => [n, i])));
+  const e = new RqlEngine({ types: model }).addSource('ws', () => [wide]);
+  e.mutations.enabled = true;
+  const hint = hintOf(e.execute('ws | where zzzz == 1'));
+  assert.ok(hint.startsWith('members: Member0 Member1 '), hint);
+  assert.ok(hint.endsWith('Member11 … (28 more)'), hint);
+  const setHint = e.execute('ws | set zzzz = 1', {}, { allowMutation: true }).diagnostics[0]?.hint ?? '';
+  assert.ok(setHint.endsWith('Member11 … (28 more)'), setHint);
+});
+
+test('math functions sqrt / pow / min / max', () => {
+  const { e } = battery();
+  const r = e.execute('lights | select d=(sqrt(Intensity)) p=(pow(Intensity, 2)) m=(max(Intensity, 5)) n=(min(Intensity, 5, 3))');
+  assert.equal(r.ok, true, JSON.stringify(r.diagnostics));
+  assert.deepEqual(rows(r), [
+    [Math.SQRT2, 4, 5, 2],
+    [Math.sqrt(10), 100, 10, 3],
+  ]);
+  const odd = e.execute('lights | first | select a=(sqrt(-1)) b=(min(1, Nothing)) c=(max(1, Label)) d=(pow(2, null))');
+  assert.deepEqual(rows(odd), [['NaN', null, { $error: 'type-mismatch' }, null]]);
+  assert.equal(e.execute('lights | select x=(max(1))').diagnostics[0]?.code, 'arity');
+  assert.equal(e.execute('lights | select x=(pow(1, 2, 3))').diagnostics[0]?.code, 'arity');
+  // The stage keeps aggregating the stream.
+  assert.equal(e.execute('lights | max Intensity').value, 10);
+});
+
+test('a dotted path after select names the projected column (no warning)', () => {
+  const { e } = battery();
+  const r = e.execute('lights | select Parent.Label Label | sort Parent.Label desc');
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.diagnostics, []);
+  assert.deepEqual(rows(r), [
+    ['Sun', 'Lamp'],
+    ['Lamp', 'Sun'],
+  ]);
+});
+
+test('set receipts report the value read back; dry run keeps the planned value', () => {
+  const { e, bodies } = battery();
+  const seen: unknown[] = [];
+  e.mutations.committed = (records) => void seen.push(...records.map((rec) => rec.new));
+  const r = e.execute('bodies | set Mass = -1', {}, { allowMutation: true });
+  assert.equal(r.ok, true, JSON.stringify(r.diagnostics));
+  assert.equal(bodies[0]!.Mass, 1e-7);
+  assert.deepEqual(rows(r)[0]!.slice(1), ['Mass', 1, 1e-7]);
+  assert.deepEqual(seen, [1e-7]); // the committed hook sees the read-back value too
+  const dry = e.execute('bodies | set Mass = -5', {}, { allowMutation: true, dryRun: true });
+  assert.equal(rows(dry)[0]![3], -5);
+});
+
+test('an invalid literal regex fails before running; a computed one warns once', () => {
+  const { e } = battery();
+  const r = e.execute('lights | where Label matches "([" | count');
+  assert.equal(r.ok, false);
+  assert.equal(r.diagnostics[0]?.code, 'invalid-regex');
+  assert.ok(r.diagnostics[0]?.message.includes('(['));
+  const computed = e.execute('lights | where Label matches (Label + "[") | count');
+  assert.equal(computed.value, 0);
+  assert.equal(computed.diagnostics.filter((d) => d.code === 'invalid-regex').length, 1);
+});
+
+test('a throwing extension function is an error value plus one function-threw warning', () => {
+  const { e } = battery();
+  e.addFunction('app.find', () => {
+    throw new RangeError('no such object');
+  });
+  const r = e.execute('lights | select f=(app.find(Label))');
+  assert.equal(r.ok, true);
+  assert.deepEqual(rows(r), [[{ $error: 'function-threw' }], [{ $error: 'function-threw' }]]);
+  const warnings = r.diagnostics.filter((d) => d.code === 'function-threw');
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0]?.message, 'app.find() threw RangeError: no such object');
+});
+
+test('aggregates warn once about ignored values', () => {
+  const { e } = battery();
+  const r = e.execute('lights | sum Label');
+  assert.equal(r.value, 0);
+  assert.deepEqual(
+    r.diagnostics.map((d) => [d.code, d.message]),
+    [['type-mismatch', 'sum ignored 2 non-numeric value(s) (first: "Lamp")']],
+  );
+  assert.deepEqual(e.execute('lights | sum Intensity').diagnostics, []);
+});
+
+test('a mutation request must end with set or call', () => {
+  const { e, bodies } = battery();
+  const r = e.execute('bodies | select Name', {}, { allowMutation: true });
+  assert.equal(r.ok, false);
+  assert.equal(r.diagnostics[0]?.code, 'invalid-plan');
+  assert.equal(e.execute('bodies', {}, { allowMutation: true }).diagnostics[0]?.code, 'invalid-plan');
+  assert.equal(bodies[0]!.Mass, 1);
 });

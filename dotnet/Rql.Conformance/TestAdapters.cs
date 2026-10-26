@@ -112,6 +112,7 @@ namespace Rql.Conformance
                         description: "Props as a validated map")
                     .Map("labels", n => Labels, (n, k) => k == "name" ? n.Name : n.Kind.ToString(), description: "read-only labels")
                     .Function<string, string>("greet", (n, who) => "hi " + who + ", I am " + n.Name, "who", "a greeting (no state change)")
+                    .Function<string, string>("fail", (n, why) => throw new InvalidOperationException(why), "why", "always throws (call-threw)")
                     .Add("tagsCopy", n => new List<string>(n.Tags), (n, v) => n.Tags = v, description: "a copy of Tags (copy-on-read)")
                     .CopyOnRead("tagsCopy")
                     .Untyped.AddMixedMap("fields", n => FieldNames, (n, k) => FieldType(k),

@@ -53,7 +53,7 @@ sealed class RendererAdapter : RqlTypeAdapter<Renderer>
 | Host hooks | `engine.Mutations.BeforeWrite` / `Committed` (records with `Owner`) | undo, dirty marking, vetoes |
 | Kernel | `RqlKernel` passed to `TryCoerce` / `AreEqual` / `Compare`: `TryCoerce(value, type, path)`, `Equal`, `Compare`; one kernel per type model / execution, recursion guard and depth per thread | composite values reuse whatever adapter handles a nested type |
 | Modules | `IRqlModule { Order; Configure(ctx) }`, `engine.AddModulesFrom(assemblies)` or `engine.AddModules(types)` (hosts with a type index, e.g. Unity's TypeCache); `AddFunction(name, fn, description)` | optional packages contribute adapters, sources and functions by being installed |
-| Numeric structs | `NumericTupleAdapter<T>` (`Width`, `Part`, `Make`, `Expected`, optional `ParseExtra`) | vectors / quaternions / colors: `"(x, y)"` / `[x, y]` / `{x, y}` in, compact `"(x, y)"` out, approximate equality |
+| Numeric structs | `NumericTupleAdapter<T>` (`Width`, `Part`, `Make`, `Expected`, optional `ParseExtra`) | vectors / quaternions / colors: `"(x, y)"` (also `nan` / `inf`) / `[x, y]` / `{x, y}` in, tidy `"(x, y)"` display out (6 significant digits, noise below 1e-6 as 0, spec §13 "Numeric tuples"), approximate equality (absolute 1e-5, relative for large values) with text, lists and object literals (members left out keep the compared value's) |
 | Identity | `StableId(value)`, `IsAlive(value)` | `$ref` / `ref("Type#id")`, `stale-ref` |
 | Describe | `Description` | schema / `describe` |
 

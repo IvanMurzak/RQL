@@ -6,8 +6,8 @@
  */
 export function formatNumber(d: number): string {
   if (Number.isNaN(d)) return 'NaN';
-  if (d === Infinity) return '∞';
-  if (d === -Infinity) return '-∞';
+  if (d === Infinity) return 'Infinity';
+  if (d === -Infinity) return '-Infinity';
   if (d === 0) return Object.is(d, -0) ? '-0' : '0';
   const sign = d < 0 ? '-' : '';
   const [mant = '0', expText = '0'] = Math.abs(d).toExponential().split('e');

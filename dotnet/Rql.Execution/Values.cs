@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 
 namespace Rql.Execution
 {
@@ -172,18 +173,29 @@ namespace Rql.Execution
         /// </summary>
         public static string FormatNumber(double d)
         {
-            var s = d.ToString("G15", CultureInfo.InvariantCulture);
-            return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var back) && back.Equals(d)
-                ? s : d.ToString("G17", CultureInfo.InvariantCulture);
+            for (int p = 15; p < 17; p++)
+            {
+                var s = d.ToString(DigitFormats[p], CultureInfo.InvariantCulture);
+                if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var back) && back.Equals(d)) return s;
+            }
+            return d.ToString("G17", CultureInfo.InvariantCulture);
         }
 
-        /// <summary>Shortest text that parses back to the same float (0.1f prints as 0.1, not 0.100000001).</summary>
+        /// <summary>
+        /// Shortest text that parses back to the same float: 0.1f prints as 0.1 (not 0.100000001) and (float)Math.PI / 2 as
+        /// 1.5707964 (not 1.57079637). Fewer than 6 digits never need a separate try: rounding to 6 digits already drops them.
+        /// </summary>
         public static string FormatNumber(float f)
         {
-            var s = f.ToString("G7", CultureInfo.InvariantCulture);
-            return float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var back) && back.Equals(f)
-                ? s : f.ToString("G9", CultureInfo.InvariantCulture);
+            for (int p = 6; p < 9; p++)
+            {
+                var s = f.ToString(DigitFormats[p], CultureInfo.InvariantCulture);
+                if (float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var back) && back.Equals(f)) return s;
+            }
+            return f.ToString("G9", CultureInfo.InvariantCulture);
         }
+
+        private static readonly string[] DigitFormats = Enumerable.Range(0, 18).Select(p => "G" + p.ToString(CultureInfo.InvariantCulture)).ToArray();
     }
 
     /// <summary>Reference equality for identity sets (cycles, distinct).</summary>

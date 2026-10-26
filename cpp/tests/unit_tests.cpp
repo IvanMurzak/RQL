@@ -270,7 +270,7 @@ void engine_tests() {
     r = run(e, R"({"rql":"0.1","source":{"path":["h","Counters"]},"stages":[{"op":"call","method":"Nope","args":[]}]})", true);
     check(!r.ok && first_code(r) == "unknown-function", "call: unknown method");
     r = run(e, R"({"rql":"0.1","source":{"path":["h","Counters"]},"stages":[{"op":"call","method":"Fail","args":[]}]})", true);
-    check(!r.ok && first_code(r) == "getter-threw", "call: throwing method");
+    check(!r.ok && first_code(r) == "call-threw", "call: throwing method → call-threw");
     r = run(e, R"({"rql":"0.1","source":{"path":["h","Counters"]},"stages":[{"op":"first","n":1},{"op":"call","method":"Describe","args":[{"lit":"#"}]}]})", true);
     check(r.ok && (*r.rows)[0][2].as_string() == "#c1", "call: const method + string arg");
 
@@ -561,10 +561,10 @@ void adapter_tests() {
     check(!res.ok && first_code(res) == "coercion-failed" && res.diagnostics[0].message.find("expected (x, y) or [x, y]") != std::string::npos,
           "adapters: coerce failure carries the reason");
     res = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#5"}]},"stages":[{"op":"set","assign":[{"target":{"path":["title"]},"value":{"lit":"Root B2"}}]}]})J", true);
-    check(res.ok && g->Nodes[1]->Name == "root b2" && (*res.rows)[0][2].as_string() == "ROOT-B" && (*res.rows)[0][3].as_string() == "Root B2",
-          "adapters: virtual setter");
+    check(res.ok && g->Nodes[1]->Name == "root b2" && (*res.rows)[0][2].as_string() == "ROOT-B" && (*res.rows)[0][3].as_string() == "ROOT B2",
+          "adapters: virtual setter (receipt reads back the stored value)");
     res = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#5"}]},"stages":[{"op":"set","assign":[{"target":{"path":["title"]},"value":{"lit":""}}]}]})J", true);
-    check(!res.ok && first_code(res) == "coercion-failed" && g->Nodes[1]->Name == "root b2", "adapters: validation rejects before any write");
+    check(!res.ok && first_code(res) == "invalid-value" && g->Nodes[1]->Name == "root b2", "adapters: validation rejects before any write");
     res = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#5"}]},"stages":[{"op":"set","assign":[{"target":{"path":["childCount"]},"value":{"lit":5}}]}]})J", true);
     check(!res.ok && first_code(res) == "readonly-member", "adapters: read-only virtual member");
     res = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#5"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Note"]},"value":{"lit":"x"}}]}]})J", true);
@@ -867,11 +867,11 @@ void adapter_tests() {
                   (*r.rows)[0][2].as_number() == 0.5,
               "methods/maps: validated virtual map write (receipt old value)");
         r = arun(ue, R"J({"rql":"0.1","source":{"path":["level","Actors"]},"stages":[{"op":"set","assign":[{"target":{"path":["ScalarParams",{"key":"Metallic"}]},"value":{"lit":0.9}},{"target":{"path":["ScalarParams",{"key":"Opacity"}]},"value":{"lit":2}}]}]})J", true);
-        check(!r.ok && first_code(r) == "coercion-failed" && r.diagnostics[0].message.find("[0, 1]") != std::string::npos &&
+        check(!r.ok && first_code(r) == "invalid-value" && r.diagnostics[0].message.find("[0, 1]") != std::string::npos &&
                   level.Actors[0]->Material.scalars[1].second == 0.0,
               "methods/maps: entry validation rejects before any write (all-or-nothing)");
         r = arun(ue, R"J({"rql":"0.1","source":{"path":["level","Actors"]},"stages":[{"op":"set","assign":[{"target":{"path":["ScalarParams",{"key":"Emissive"}]},"value":{"lit":0.1}}]}]})J", true);
-        check(!r.ok && first_code(r) == "coercion-failed" && level.Actors[0]->Material.scalars.size() == 3, "methods/maps: no new entries beyond the owner's keys");
+        check(!r.ok && first_code(r) == "invalid-value" && level.Actors[0]->Material.scalars.size() == 3, "methods/maps: no new entries beyond the owner's keys");
         r = arun(ue, R"J({"rql":"0.1","source":{"path":["level","Actors"]},"stages":[{"op":"set","assign":[{"target":{"path":["ScalarParams"]},"value":{"lit":1}}]}]})J", true);
         check(!r.ok && first_code(r) == "readonly-member", "methods/maps: the map member itself is not assignable");
         r = arun(ue, R"J({"rql":"0.1","source":{"path":["level","Actors"]},"stages":[{"op":"where","pred":{"op":"==","args":[{"path":["Id"]},{"lit":2}]}},{"op":"call","method":"SetActorHiddenInGame","args":[{"lit":true}]}]})J", true);
@@ -996,13 +996,13 @@ void adapter_tests() {
         before_calls = after_calls = 0;
         r = run(ue, R"J({"rql":"0.1","source":{"path":["w","Materials"]},"stages":[{"op":"set","assign":[{"target":{"path":["Roughness"]},"value":{"lit":0.9}}]}]})J", true, true);
         check(r.ok && r.dry_run && before_calls == 0 && after_calls == 0 && world.Materials[0]->Roughness == 0.25, "parity: no hooks on dry-run");
-        // committed failure → getter-threw warning, writes stay
+        // committed failure → hook-threw warning, writes stay
         ue.mutations().committed = [&](const std::vector<rql::MutationRecord>&) { throw std::runtime_error("SetDirty failed"); };
         r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Materials"]},"stages":[{"op":"set","assign":[{"target":{"path":["Roughness"]},"value":{"lit":0.75}}]}]})J", true);
         bool warned = false;
         for (auto& d : r.diagnostics)
-            if (d.code == "getter-threw" && d.severity == rql::Severity::Warning) warned = true;
-        check(r.ok && warned && world.Materials[0]->Roughness == 0.75, "parity: committed failure → getter-threw warning, writes applied");
+            if (d.code == "hook-threw" && d.severity == rql::Severity::Warning) warned = true;
+        check(r.ok && warned && world.Materials[0]->Roughness == 0.75, "parity: committed failure → hook-threw warning, writes applied");
         // owner rule: the nearest enclosing OBJECT (never a map view, list or struct handle)
         rql::TypeAdapter matParams;
         matParams.target = ur.descriptor<UMaterialInstance>();
@@ -1021,7 +1021,7 @@ void adapter_tests() {
               "review: owner = material for a virtual-map entry, the component for a handle-struct member");
         before.clear();
         r = arun(ue, R"J({"rql":"0.1","source":{"path":["w","Components"]},"stages":[{"op":"first","n":1},{"op":"set","assign":[{"target":{"path":["Material","ScalarParams",{"key":"Metallic"}]},"value":{"lit":0.2}}]}]})J", true);
-        check(!r.ok && first_code(r) == "coercion-failed" && r.diagnostics[0].message.find("no entry 'Metallic'") != std::string::npos && before.empty(),
+        check(!r.ok && first_code(r) == "invalid-value" && r.diagnostics[0].message.find("no entry 'Metallic'") != std::string::npos && before.empty(),
               "review: virtual maps reject writes to absent keys while planning");
         ue.mutations().before_write = nullptr;
         ue.mutations().committed = nullptr;
@@ -1200,6 +1200,139 @@ void adapter_tests() {
     }
 }
 
+// ------------------------------------------------------------------ semantics port (math, suggestions, receipts, codes)
+
+struct PBody {
+    int Id = 0;
+    std::string Label;
+    std::string Type;
+    double Mass = 1;
+};
+struct PWide {
+    int Id = 0;
+};
+struct PWorld {
+    std::vector<std::unique_ptr<PBody>> Bodies;
+    PWide Wide;
+};
+
+bool has_diag(const rql::QueryResult& r, const std::string& code, rql::Severity sev, size_t* count = nullptr) {
+    size_t n = 0;
+    for (auto& d : r.diagnostics)
+        if (d.code == code && d.severity == sev) ++n;
+    if (count) *count = n;
+    return n > 0;
+}
+
+std::string hint_of(const rql::QueryResult& r, const std::string& code) {
+    for (auto& d : r.diagnostics)
+        if (d.code == code) return d.hint;
+    return "";
+}
+
+void port_tests() {
+    // shortest round-trip single-precision formatting; non-BMP characters round-trip through JSON
+    check(rql::format_float(static_cast<float>(3.14159265358979323846 / 2)) == "1.5707964", "float: (float)(pi/2) → 1.5707964");
+    check(rql::format_float(136.0f / 255.0f) == "0.53333336", "float: 136/255f → 0.53333336");
+    check(rql::format_float(0.1f) == "0.1", "float: 0.1f → 0.1");
+    const std::string emoji = "a\xF0\x9F\x98\x80" "b";
+    check(Json::parse(Json(emoji).dump()).as_string() == emoji, "json: emoji round-trips through dump/parse");
+
+    rql::TypeRegistry reg;
+    reg.object<PBody>("PBody")
+        .member("Id", &PBody::Id)
+        .member("Label", &PBody::Label)
+        .member("Type", &PBody::Type)
+        .property("Mass", [](PBody& b) { return b.Mass; }, [](PBody& b, double v) { b.Mass = v < 1e-7 ? 1e-7 : v; });  // clamps
+    auto wide = reg.object<PWide>("PWide");
+    wide.member("Id", &PWide::Id);
+    for (int i = 0; i < 15; ++i) wide.property("m" + std::to_string(i), [i](PWide&) { return i; });
+    reg.object<PWorld>("PWorld").member("Bodies", &PWorld::Bodies).member("Wide", &PWorld::Wide);
+    PWorld w;
+    for (int i = 1; i <= 2; ++i) {
+        auto b = std::make_unique<PBody>();
+        b->Id = i;
+        b->Label = i == 1 ? "zeta" : "alpha";
+        b->Mass = 4.0 * i;
+        w.Bodies.push_back(std::move(b));
+    }
+    rql::Engine e(reg);
+    e.add_object_source("w", &w);
+    e.mutations().enabled = true;
+
+    // math functions (results are doubles; NaN propagates through min / max like .NET Math.Min / Max)
+    auto r = run(e, R"J({"rql":"0.1","source":{"path":["w"]},"stages":[{"op":"select","fields":[
+        {"name":"p","expr":{"call":"pow","args":[{"lit":2},{"lit":10}]}},
+        {"name":"lo","expr":{"call":"min","args":[{"lit":3},{"lit":1},{"lit":2}]}},
+        {"name":"hi","expr":{"call":"max","args":[{"lit":3},{"lit":7.5}]}},
+        {"name":"n1","expr":{"call":"min","args":[{"call":"sqrt","args":[{"lit":-1}]},{"lit":1}]}},
+        {"name":"n2","expr":{"call":"max","args":[{"lit":1},{"call":"sqrt","args":[{"lit":-1}]}]}},
+        {"name":"bad","expr":{"call":"min","args":[{"lit":1},{"lit":"x"}]}},
+        {"name":"nul","expr":{"call":"max","args":[{"lit":1},{"lit":null}]}}]}]})J");
+    bool math_ok = r.ok && r.rows && (*r.rows)[0][0].as_number() == 1024 && (*r.rows)[0][1].as_number() == 1 &&
+                   (*r.rows)[0][2].as_number() == 7.5 && (*r.rows)[0][3].is_string() && (*r.rows)[0][3].as_string() == "NaN" &&
+                   (*r.rows)[0][4].is_string() && (*r.rows)[0][4].as_string() == "NaN" && (*r.rows)[0][5].find("$error") &&
+                   (*r.rows)[0][5].find("$error")->as_string() == "type-mismatch" && (*r.rows)[0][6].is_null();
+    check(math_ok, "math: pow / min / max / NaN / type-mismatch / null");
+    r = run(e, R"J({"rql":"0.1","source":{"path":["w"]},"stages":[{"op":"select","fields":[{"name":"a","expr":{"call":"min","args":[{"lit":1}]}}]}]})J");
+    check(!r.ok && first_code(r) == "arity", "math: min with one argument → arity");
+
+    // suggestions: optimal string alignment and containment rules
+    r = run(e, R"J({"rql":"0.1","source":{"path":["w","Bodies"]},"stages":[{"op":"select","fields":[{"name":"x","expr":{"path":["Lable"]}}]}]})J");
+    check(r.ok && hint_of(r, "unknown-member").find("did you mean Label?") == 0, "suggest: Lable → Label (transposition = 1)");
+    r = run(e, R"J({"rql":"0.1","source":{"path":["w","Bodies"]},"stages":[{"op":"select","fields":[{"name":"x","expr":{"path":["NoSuchType"]}}]}]})J");
+    check(r.ok && hint_of(r, "unknown-member").find("did you mean") == std::string::npos, "suggest: NoSuchType does not suggest Type");
+    r = run(e, R"J({"rql":"0.1","source":{"path":["w","Wide"]},"stages":[{"op":"select","fields":[{"name":"x","expr":{"path":["Qqqq"]}}]}]})J");
+    {
+        std::string h = hint_of(r, "unknown-member");
+        check(r.ok && h.find("members: Id m0 ") == 0 && h.find("m10 \xE2\x80\xA6 (4 more)") != std::string::npos && h.find("m11") == std::string::npos,
+              "suggest: member list capped at 12 names + … (N more)");
+    }
+
+    // a dotted path names a projected column of that name
+    r = run(e, R"J({"rql":"0.1","source":{"path":["w","Bodies"]},"stages":[{"op":"select","fields":[{"name":"Type.Label","expr":{"path":["Label"]}}]},{"op":"sort","keys":[{"expr":{"path":["Type","Label"]}}]}]})J");
+    check(r.ok && r.diagnostics.empty() && (*r.rows)[0][0].as_string() == "alpha" && (*r.rows)[1][0].as_string() == "zeta",
+          "select: dotted path resolves to the dotted column");
+
+    // matches: invalid literal → error before running; computed invalid → one warning
+    r = run(e, R"J({"rql":"0.1","source":{"path":["w","Bodies"]},"stages":[{"op":"where","pred":{"op":"matches","args":[{"path":["Label"]},{"lit":"(["}]}},{"op":"count"}]})J");
+    check(!r.ok && first_code(r) == "invalid-regex" && r.diagnostics[0].message.find("([") != std::string::npos, "matches: invalid literal regex → invalid-regex");
+    r = run(e, R"J({"rql":"0.1","source":{"path":["w","Bodies"]},"stages":[{"op":"where","pred":{"op":"matches","args":[{"path":["Label"]},{"op":"+","args":[{"path":["Label"]},{"lit":"["}]}]}},{"op":"count"}]})J");
+    size_t n = 0;
+    check(r.ok && has_diag(r, "invalid-regex", rql::Severity::Warning, &n) && n == 1, "matches: computed invalid regex → one warning");
+
+    // aggregates report ignored values once
+    r = run(e, R"J({"rql":"0.1","source":{"path":["w","Bodies"]},"stages":[{"op":"sum","expr":{"path":["Label"]}}]})J");
+    check(r.ok && r.value.as_number() == 0 && has_diag(r, "type-mismatch", rql::Severity::Warning, &n) && n == 1 &&
+              r.diagnostics[0].message.find("sum ignored 2 non-numeric value(s)") == 0,
+          "aggregate: sum of strings warns once");
+
+    // extension function that throws: error value + one warning; as the source the query fails once
+    e.add_function("app.find", [](const std::vector<rql::Value>&) -> rql::Value { throw std::runtime_error("no such object"); });
+    r = run(e, R"J({"rql":"0.1","source":{"path":["w","Bodies"]},"stages":[{"op":"select","fields":[{"name":"f","expr":{"call":"find","on":{"path":["app"]},"args":[{"path":["Label"]}]}}]}]})J");
+    check(r.ok && (*r.rows)[0][0].find("$error") && (*r.rows)[0][0].find("$error")->as_string() == "function-threw" &&
+              has_diag(r, "function-threw", rql::Severity::Warning, &n) && n == 1 &&
+              r.diagnostics[0].message == "app.find() threw: no such object",
+          "function-threw: error value + one warning");
+    r = run(e, R"J({"rql":"0.1","source":{"call":"find","on":{"path":["app"]},"args":[{"lit":"x"}]},"stages":[{"op":"count"}]})J");
+    check(!r.ok && r.diagnostics.size() == 1 && first_code(r) == "function-threw", "function-threw: source function fails the query once");
+
+    // a mutation request must end in set / call
+    r = run(e, R"J({"rql":"0.1","source":{"path":["w","Bodies"]},"stages":[{"op":"count"}]})J", true);
+    check(!r.ok && first_code(r) == "invalid-plan" && w.Bodies[0]->Mass == 4, "mutation request without set/call → invalid-plan");
+
+    // receipts read the stored value back (the setter clamps); dry runs keep the planned value; hooks see read-back
+    double hooked = 0;
+    e.mutations().committed = [&](const std::vector<rql::MutationRecord>& recs) { hooked = recs.empty() ? 0 : recs[0].new_value.as_number(); };
+    const char* clamp = R"J({"rql":"0.1","source":{"path":["w","Bodies"]},"stages":[{"op":"first","n":1},{"op":"set","assign":[{"target":{"path":["Mass"]},"value":{"lit":-5}}]}]})J";
+    r = run(e, clamp, true, true);
+    check(r.ok && r.dry_run && (*r.rows)[0][3].as_number() == -5 && w.Bodies[0]->Mass == 4, "receipt: dry run shows the planned value");
+    r = run(e, clamp, true);
+    check(r.ok && (*r.rows)[0][3].as_number() == 1e-7 && w.Bodies[0]->Mass == 1e-7 && hooked == 1e-7,
+          "receipt: new is the read-back (clamped) value, also for the committed hook");
+    e.mutations().committed = nullptr;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1209,6 +1342,7 @@ int main(int argc, char** argv) {
         codec_tests();
         engine_tests();
         adapter_tests();
+        port_tests();
     } catch (const std::exception& ex) {
         std::cout << "FATAL " << ex.what() << "\n";
         return 2;

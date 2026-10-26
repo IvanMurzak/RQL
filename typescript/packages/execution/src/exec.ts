@@ -139,6 +139,17 @@ export class Exec {
     this.diagnostics.push(diagnostic('warning', code, message, hint));
   }
 
+  private warned: Set<string> | undefined;
+
+  /** Adds a warning once per `key` (default: code + message), however often it recurs. */
+  warnOnce(code: Diagnostic['code'], message: string, key?: string): void {
+    this.warned ??= new Set<string>();
+    const k = key ?? code + '\n' + message;
+    if (this.warned.has(k)) return;
+    this.warned.add(k);
+    this.warn(code, message);
+  }
+
   visit(): void {
     if (++this.visited > this.maxVisited) {
       throw new RqlError(

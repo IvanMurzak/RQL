@@ -177,6 +177,11 @@ void register_test_adapters(rql::Engine& engine, rql::TypeRegistry& reg) {
                 rql::builtin::string_type(),
                 [](Node& n, const std::vector<rql::Value>& args) { return rql::Value::string("hi " + args[0].as_string() + ", I am " + n.Name); },
                 "a greeting (no state change)")
+            .method<Node>(
+                "fail", {rql::ParamDescriptor{"why", rql::builtin::string_type(), false, false, rql::Value()}},
+                rql::builtin::string_type(),
+                [](Node&, const std::vector<rql::Value>& args) -> rql::Value { throw std::runtime_error(args[0].as_string()); },
+                "always throws (call-threw)")
             .property<Node>(
                 "tagsCopy", [](Node& n) { return std::vector<std::string>(n.Tags); }, [](Node& n, std::vector<std::string> v) { n.Tags = std::move(v); },
                 nullptr, "a copy of Tags (copy-on-read)")

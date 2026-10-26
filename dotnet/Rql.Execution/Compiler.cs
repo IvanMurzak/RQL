@@ -19,7 +19,7 @@ namespace Rql.Execution
 
         public static readonly string[] CoreFunctions =
         {
-            "has", "is-null", "len", "lower", "upper", "abs", "round", "floor", "ceil", "coalesce", "ref",
+            "has", "is-null", "len", "lower", "upper", "abs", "round", "floor", "ceil", "sqrt", "pow", "min", "max", "coalesce", "ref",
             "append", "insert", "remove-at", "without",
             "contains", "starts-with", "ends-with", "matches",
         };
@@ -131,6 +131,21 @@ namespace Rql.Execution
                         cur = CompileMeta(seg.Name!, prev, first);
                         break;
                 }
+            }
+            if (relativeToItem && p.Segments.Count > 1 && p.Segments.All(s => s.Kind == SegmentKind.Member))
+            {
+                // After `select Owner.Label`, the path Owner.Label names that column (spec §3), not Owner on the row.
+                var column = string.Join(".", p.Segments.Select(s => s.Name));
+                var navigate = cur;
+                return x =>
+                {
+                    if (x.Current is RowValue row)
+                    {
+                        int i = row.IndexOf(column);
+                        if (i >= 0) return row.Values[i];
+                    }
+                    return navigate(x);
+                };
             }
             return cur;
         }
@@ -429,9 +444,10 @@ namespace Rql.Execution
                 case "starts-with": return x => Tri(StringTest(a(x), b!(x), (s, t) => s.StartsWith(t, StringComparison.OrdinalIgnoreCase)));
                 case "ends-with": return x => Tri(StringTest(a(x), b!(x), (s, t) => s.EndsWith(t, StringComparison.OrdinalIgnoreCase)));
                 case "matches":
+                    CheckLiteralRegex(o.Args[1]);
                     return x =>
                     {
-                        var r = Tri(Matches(a(x), b!(x)));
+                        var r = Tri(Matches(x, a(x), b!(x)));
                         x.CheckTime(); // the per-match regex timeout alone does not bound the whole query
                         return r;
                     };
@@ -639,24 +655,44 @@ namespace Rql.Execution
             return test(V.AsString(a), V.AsString(b));
         }
 
-        private static readonly Dictionary<string, Regex> RegexCache = new Dictionary<string, Regex>();
+        // Compiled patterns, or the compile error message of an invalid one.
+        private static readonly Dictionary<string, (Regex? re, string? error)> RegexCache = new Dictionary<string, (Regex?, string?)>();
 
-        private static bool? Matches(object? a, object? b)
+        private static (Regex? re, string? error) GetRegex(string pattern)
         {
-            if (a == null || b == null || !V.IsString(a) || !(b is string pattern)) return null;
-            Regex? re;
             lock (RegexCache)
             {
-                if (!RegexCache.TryGetValue(pattern, out re))
-                {
-                    try { re = new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50)); }
-                    catch (ArgumentException) { re = null; }
-                    if (RegexCache.Count < 256) RegexCache[pattern] = re!;
-                }
+                if (RegexCache.TryGetValue(pattern, out var hit)) return hit;
+                (Regex?, string?) made;
+                try { made = (new Regex(pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50)), null); }
+                catch (ArgumentException ex) { made = (null, ex.Message); }
+                if (RegexCache.Count < 256) RegexCache[pattern] = made;
+                return made;
             }
-            if (re == null) return null;
+        }
+
+        /// <summary>A literal pattern that does not compile fails the query before it runs (spec §4.1).</summary>
+        private static void CheckLiteralRegex(Expr pattern)
+        {
+            if (pattern is LitExpr l && l.Value is string p && GetRegex(p).error is string error)
+                throw new RqlException("invalid-regex", $"invalid regex \"{p}\": {error}", pattern.Span);
+        }
+
+        private static bool? Matches(Exec x, object? a, object? b)
+        {
+            if (a == null || b == null || !V.IsString(a) || !(b is string pattern)) return null;
+            var (re, error) = GetRegex(pattern);
+            if (re == null)
+            {
+                x.WarnOnce("invalid-regex", $"invalid regex \"{pattern}\": {error}; such values count as unknown", "invalid-regex");
+                return null;
+            }
             try { return re.IsMatch(V.AsString(a)); }
-            catch (RegexMatchTimeoutException) { return null; }
+            catch (RegexMatchTimeoutException)
+            {
+                x.WarnOnce("timeout", $"regex \"{pattern}\" timed out on a value; such values count as unknown (simplify the pattern)", "regex-timeout");
+                return null;
+            }
         }
 
         private static bool? In(TypeModel model, object? a, object? b)
@@ -709,7 +745,7 @@ namespace Rql.Execution
 
         private Eval CompileCall(CallExpr c)
         {
-            if (ExtensionName(c, _x.Engine.Functions) is string ext) return CompileExtension(_x.Engine.Functions[ext], c.Args);
+            if (ExtensionName(c, _x.Engine.Functions) is string ext) return CompileExtension(ext, _x.Engine.Functions[ext], c.Args);
             if (c.On == null) return CompileFunction(c);
             return CompileMethod(c);
         }
@@ -728,7 +764,7 @@ namespace Rql.Execution
             return name != null && functions.ContainsKey(name) ? name : null;
         }
 
-        private Eval CompileExtension(Func<object?[], object?> fn, IReadOnlyList<Expr> argExprs)
+        private Eval CompileExtension(string name, Func<object?[], object?> fn, IReadOnlyList<Expr> argExprs)
         {
             var args = argExprs.Select(Compile).ToArray();
             return x =>
@@ -736,7 +772,13 @@ namespace Rql.Execution
                 var vals = new object?[args.Length];
                 for (int i = 0; i < args.Length; i++) vals[i] = args[i](x);
                 try { return fn(vals); }
-                catch (Exception ex) { return new RqlError("getter-threw", ex.Message); }
+                catch (Exception ex) when (!(ex is OutOfMemoryException))
+                {
+                    var inner = ex is System.Reflection.TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
+                    var detail = $"{name}() threw {inner.GetType().Name}: {inner.Message}";
+                    x.WarnOnce("function-threw", detail, "function-threw:" + name);
+                    return new RqlError("function-threw", detail);
+                }
             };
         }
 
@@ -783,11 +825,44 @@ namespace Rql.Execution
                 case "abs":
                 case "floor":
                 case "ceil":
+                case "sqrt":
                 {
                     Arity(c, 1, 1);
                     var a = Compile(c.Args[0]);
-                    Func<double, double> f = name == "abs" ? Math.Abs : name == "floor" ? (Func<double, double>)Math.Floor : Math.Ceiling;
+                    Func<double, double> f = name switch
+                    {
+                        "abs" => Math.Abs,
+                        "floor" => Math.Floor,
+                        "ceil" => Math.Ceiling,
+                        _ => Math.Sqrt,
+                    };
                     return x => Num(a(x), f);
+                }
+                case "pow":
+                case "min":
+                case "max":
+                {
+                    if (name == "pow") Arity(c, 2, 2);
+                    else Arity(c, 2, 64);
+                    var args = c.Args.Select(Compile).ToArray();
+                    Func<double, double, double> f = name switch
+                    {
+                        "pow" => Math.Pow,
+                        "min" => Math.Min,
+                        _ => Math.Max,
+                    };
+                    return x =>
+                    {
+                        double acc = 0;
+                        for (int i = 0; i < args.Length; i++)
+                        {
+                            var v = args[i](x);
+                            if (v == null || V.IsAbsent(v)) return v;
+                            if (!V.TryNumber(v, out var d)) return new RqlError("type-mismatch", $"{name}() expects numbers, got {V.Describe(v)}");
+                            acc = i == 0 ? d : f(acc, d);
+                        }
+                        return acc;
+                    };
                 }
                 case "round":
                 {
@@ -1084,7 +1159,7 @@ namespace Rql.Execution
                     }
                     values.Add(val);
                 }
-                return Reduce(x.Types, values, kind);
+                return Reduce(x, values, kind);
             }
             finally
             {
@@ -1121,26 +1196,43 @@ namespace Rql.Execution
             return copy;
         }
 
-        internal static object? Reduce(TypeModel model, IEnumerable<object?> values, string kind)
+        /// <summary>
+        /// Aggregates values (spec §4.3): null / missing are skipped silently; any other value that cannot take part is
+        /// skipped too and reported once per aggregate kind as a type-mismatch warning on <paramref name="x"/>.
+        /// </summary>
+        internal static object? Reduce(Exec x, IEnumerable<object?> values, string kind)
         {
+            var model = x.Types;
             double sum = 0;
-            int n = 0;
+            int n = 0, ignored = 0;
+            string? firstIgnored = null;
             object? best = null;
             foreach (var val in values)
             {
+                if (val == null || V.IsAbsent(val)) continue;
+                bool used;
                 if (kind == "min" || kind == "max")
                 {
-                    if (val == null || V.IsAbsent(val)) continue;
-                    if (!V.IsNumber(val) && !V.IsString(val) && !(val is Enum) && !AdapterOrdered(model, val)) continue;
-                    if (best == null) { best = val; continue; }
-                    var c = Compare(model, val, best);
-                    if (c == null) continue;
-                    if ((kind == "min" && c < 0) || (kind == "max" && c > 0)) best = val;
-                    continue;
+                    used = V.IsNumber(val) || V.IsString(val) || val is Enum || AdapterOrdered(model, val);
+                    if (used && best == null) best = val;
+                    else if (used)
+                    {
+                        var c = Compare(model, val, best);
+                        if (c == null) used = false;
+                        else if ((kind == "min" && c < 0) || (kind == "max" && c > 0)) best = val;
+                    }
                 }
-                if (!V.TryNumber(val, out var d)) continue;
-                sum += d;
-                n++;
+                else
+                {
+                    used = V.TryNumber(val, out var d);
+                    if (used) { sum += d; n++; }
+                }
+                if (!used && ignored++ == 0) firstIgnored = V.Describe(val);
+            }
+            if (ignored > 0)
+            {
+                var what = kind == "min" || kind == "max" ? "value(s) not comparable with the others" : "non-numeric value(s)";
+                x.WarnOnce("type-mismatch", $"{kind} ignored {ignored} {what} (first: {firstIgnored})", "aggregate:" + kind);
             }
             switch (kind)
             {

@@ -93,6 +93,73 @@ namespace Rql.Tests
         }
 
         [Fact]
+        public void FloatsPrintShortestNotNineDigits()
+        {
+            Assert.Equal("1.5707964", V.FormatNumber((float)(System.Math.PI / 2)));
+            Assert.Equal("0.53333336", V.FormatNumber(136f / 255f));
+            Assert.Equal("0.30000000000000004", V.FormatNumber(0.1 + 0.2)); // the exact JSON form keeps double noise
+        }
+
+        [Theory]
+        [InlineData(9.999998f, 45f, 29.9999981f, "(10, 45, 30)")]
+        [InlineData(-8.742278E-08f, 0f, -2f, "(0, 0, -2)")]
+        [InlineData(-0f, 1.5707964f, 12345.67f, "(0, 1.5708, 12345.7)")]
+        [InlineData(float.NaN, float.PositiveInfinity, float.NegativeInfinity, "(NaN, Infinity, -Infinity)")]
+        public void DisplayTextIsTidy(float x, float y, float z, string expected)
+        {
+            var (e, bodies) = Engine();
+            bodies[0].Position = new Vec3 { x = x, y = y, z = z };
+            var r = e.Execute("bodies | where Name == \"a\" | select Position");
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal(expected, Cell(r, 0, 0));
+        }
+
+        [Fact]
+        public void DisplayedValuesCompareEqualToTheirSource()
+        {
+            var (e, bodies) = Engine();
+            bodies[0].Position = new Vec3 { x = 12345.67f, y = 9.999998f, z = 0 };
+            var shown = Cell(e.Execute("bodies | where Name == \"a\" | select Position"), 0, 0);
+            var r = e.Execute("bodies | where Position == \"" + shown + "\" | select Name");
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal("a", Cell(r, 0, 0));
+        }
+
+        [Theory]
+        [InlineData("(inf, 0, 0)", float.PositiveInfinity)]
+        [InlineData("(-INF, 0, 0)", float.NegativeInfinity)]
+        [InlineData("(+Infinity, 0, 0)", float.PositiveInfinity)]
+        [InlineData("(-infinity, 0, 0)", float.NegativeInfinity)]
+        [InlineData("(nan, 0, 0)", float.NaN)]
+        [InlineData("(Infinity, 0, 0)", float.PositiveInfinity)]
+        public void ParsesNonFiniteTokens(string text, float expected)
+        {
+            var (e, bodies) = Engine();
+            var r = e.Execute("bodies | where Name == \"a\" | set Position = \"" + text + "\"", options: new QueryOptions { AllowMutation = true });
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal(expected, bodies[0].Position.x);
+            Assert.False(e.Execute("bodies | where Name == \"a\" | set Position = \"(--inf, 0, 0)\"", options: new QueryOptions { AllowMutation = true }).Ok);
+        }
+
+        [Fact]
+        public void ComparesWithObjectLiteralsByMemberName()
+        {
+            var (e, _) = Engine();
+            string Names(string q)
+            {
+                var r = e.Execute(q);
+                Assert.True(r.Ok, r.ToJson(includeStats: false));
+                return string.Join(",", Enumerable.Range(0, r.Rows!.Count).Select(i => Cell(r, i, 0)));
+            }
+            Assert.Equal("a", Names("bodies | where Position == {x: 1, y: 2, z: 3} | select Name"));
+            Assert.Equal("b,c", Names("bodies | where Position == {x: 0, y: 1, z: 0} | select Name"));
+            Assert.Equal("b,c", Names("bodies | where Position == {Y: 1} | select Name"));     // left-out members match
+            Assert.Equal("a", Names("bodies | where Position != {y: 1} | select Name"));
+            Assert.Equal("", Names("bodies | where Position == {w: 1} | select Name"));       // unknown member: unknown
+            Assert.Equal("", Names("bodies | where Position != {w: 1} | select Name"));
+        }
+
+        [Fact]
         public void RejectsWrongShapesWithTheExpectedForm()
         {
             var (e, bodies) = Engine();

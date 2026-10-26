@@ -47,7 +47,7 @@ export interface MutationPolicy {
   beforeWrite?: (records: readonly MutationRecord[]) => void;
   /**
    * Runs after every write succeeded (not on dry-run or rollback), e.g. to mark the owners dirty. A throw
-   * becomes a getter-threw warning; the writes stay applied. Completed calls are reported even when a later call fails.
+   * becomes a hook-threw warning; the writes stay applied. Completed calls are reported even when a later call fails.
    */
   committed?: (records: readonly MutationRecord[]) => void;
 }
