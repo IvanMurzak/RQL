@@ -39,17 +39,17 @@ jobs:
       - run: echo "::error::PRs from forks are not tested here; push the change to a branch of this repo." && exit 1
 
   test-all:
-    # Ephemeral Linux runners spawned by runner-manager in WSL2 (Ubuntu-24.04) on ANASTASIIA.
-    # runner-manager answers a job only when EVERY runs-on label is one of the policy's routing labels
-    # (the policy carries rm-anastasiia-wsl-linux-x64, linux, self-hosted); the selector keeps other runners away.
+    # Any self-hosted runner of this repo, no machine name: the job is portable (Linux x64 on ANASTASIIA's WSL, macOS
+    # arm64 on the Mac mini); every runner-manager policy serving RQL routes `self-hosted`.
     # Fork PRs skip cleanly here. This is NOT the security boundary (a fork PR runs its own copy of this file):
-    # the repo setting "Require approval for all external contributors" is what keeps fork code off this host
+    # the repo setting "Require approval for all external contributors" is what keeps fork code off our runners
     # (settable only once the repo is public: set it right after the visibility flip).
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, linux, rm-anastasiia-wsl-linux-x64]
+    runs-on: [self-hosted]
     timeout-minutes: 30
     env:
-      # runner-manager's sandboxed runners are root without CAP_CHOWN: tool archives must not restore owners.
+      # Linux host: runner-manager's sandboxed runners are root without CAP_CHOWN, so tool archives must not restore
+      # owners (GNU tar reads TAR_OPTIONS; macOS bsdtar ignores it).
       TAR_OPTIONS: --no-same-owner
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       DOTNET_NOLOGO: "1"
