@@ -52,8 +52,8 @@ namespace Rql.Execution
         /// <summary>Relative per-component tolerance (spec §13: 1e-5).</summary>
         protected const double RelativeTolerance = 1e-5;
 
-        /// <summary>Significant digits of the display text (spec §13: 6 for single-precision components).</summary>
-        protected const int DisplayDigits = 6;
+        /// <summary>Display format: 6 significant digits for single-precision components (spec §13).</summary>
+        private const string DisplayFormat = "G6";
 
         /// <summary>Components smaller than this print as 0 (float noise such as cos(90°) = -4.371139E-08).</summary>
         protected const double DisplayZero = 1e-6;
@@ -88,7 +88,7 @@ namespace Rql.Execution
             if (float.IsNaN(f)) return "NaN";
             if (float.IsInfinity(f)) return f > 0 ? "Infinity" : "-Infinity";
             if (Math.Abs(f) < DisplayZero) return "0";
-            return ((double)f).ToString("G" + DisplayDigits.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
+            return ((double)f).ToString(DisplayFormat, CultureInfo.InvariantCulture);
         }
 
         protected override bool? Equal(T value, object? other, RqlKernel kernel)
@@ -171,9 +171,9 @@ namespace Rql.Execution
         private static bool TryParseComponent(string text, out float value)
         {
             if (float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value)) return true;
-            var body = text.TrimStart('+', '-');
-            if (body.Length != text.Length - 1 && body.Length != text.Length) return false; // at most one sign
-            bool negative = text.StartsWith("-", StringComparison.Ordinal);
+            bool signed = text.Length > 0 && (text[0] == '+' || text[0] == '-');
+            bool negative = signed && text[0] == '-';
+            var body = signed ? text.Substring(1) : text;
             if (string.Equals(body, "nan", StringComparison.OrdinalIgnoreCase)) { value = float.NaN; return true; }
             if (string.Equals(body, "inf", StringComparison.OrdinalIgnoreCase) || string.Equals(body, "infinity", StringComparison.OrdinalIgnoreCase))
             {

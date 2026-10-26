@@ -2,7 +2,6 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
 
 namespace Rql.Execution
 {
@@ -173,12 +172,13 @@ namespace Rql.Execution
         /// </summary>
         public static string FormatNumber(double d)
         {
-            for (int p = 15; p < 17; p++)
+            string s = "";
+            for (int p = 15; p <= 17; p++)
             {
-                var s = d.ToString(DigitFormats[p], CultureInfo.InvariantCulture);
-                if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var back) && back.Equals(d)) return s;
+                s = d.ToString("G" + p, CultureInfo.InvariantCulture);
+                if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var back) && back.Equals(d)) break;
             }
-            return d.ToString("G17", CultureInfo.InvariantCulture);
+            return s;
         }
 
         /// <summary>
@@ -187,15 +187,14 @@ namespace Rql.Execution
         /// </summary>
         public static string FormatNumber(float f)
         {
-            for (int p = 6; p < 9; p++)
+            string s = "";
+            for (int p = 6; p <= 9; p++)
             {
-                var s = f.ToString(DigitFormats[p], CultureInfo.InvariantCulture);
-                if (float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var back) && back.Equals(f)) return s;
+                s = f.ToString("G" + p, CultureInfo.InvariantCulture);
+                if (float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var back) && back.Equals(f)) break;
             }
-            return f.ToString("G9", CultureInfo.InvariantCulture);
+            return s;
         }
-
-        private static readonly string[] DigitFormats = Enumerable.Range(0, 18).Select(p => "G" + p.ToString(CultureInfo.InvariantCulture)).ToArray();
     }
 
     /// <summary>Reference equality for identity sets (cycles, distinct).</summary>

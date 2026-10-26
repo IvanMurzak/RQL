@@ -1054,9 +1054,13 @@ QueryResult fail_with(Exec& x, const RqlException& ex) {
         if (d.severity == Severity::Error && d.code != ex.code()) diags.push_back(d);
     QueryResult r = QueryResult::fail(std::move(diags));
     add_warnings(x, r, true);
-    // A warning of the failure's own code (a throwing source function) only repeats the error.
+    // A warning that the failure repeats (a throwing source function warns, then fails with the same detail) is dropped.
+    const std::string failure = ex.what();
     r.diagnostics.erase(std::remove_if(r.diagnostics.begin(), r.diagnostics.end(),
-                                       [&](const Diagnostic& d) { return d.severity == Severity::Warning && d.code == ex.code(); }),
+                                       [&](const Diagnostic& d) {
+                                           return d.severity == Severity::Warning && d.code == ex.code() &&
+                                                  failure.find(d.message) != std::string::npos;
+                                       }),
                         r.diagnostics.end());
     return r;
 }

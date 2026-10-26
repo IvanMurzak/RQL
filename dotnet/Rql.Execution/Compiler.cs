@@ -137,12 +137,14 @@ namespace Rql.Execution
                 // After `select Owner.Label`, the path Owner.Label names that column (spec §3), not Owner on the row.
                 var column = string.Join(".", p.Segments.Select(s => s.Name));
                 var navigate = cur;
+                string[]? seenColumns = null; // the rows of one stage share their column array: look the name up once
+                int at = -1;
                 return x =>
                 {
                     if (x.Current is RowValue row)
                     {
-                        int i = row.IndexOf(column);
-                        if (i >= 0) return row.Values[i];
+                        if (!ReferenceEquals(row.Columns, seenColumns)) { seenColumns = row.Columns; at = row.IndexOf(column); }
+                        if (at >= 0) return row.Values[at];
                     }
                     return navigate(x);
                 };
@@ -774,8 +776,7 @@ namespace Rql.Execution
                 try { return fn(vals); }
                 catch (Exception ex) when (!(ex is OutOfMemoryException))
                 {
-                    var inner = ex is System.Reflection.TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
-                    var detail = $"{name}() threw {inner.GetType().Name}: {inner.Message}";
+                    var detail = $"{name}() threw {ex.GetType().Name}: {ex.Message}";
                     x.WarnOnce("function-threw", detail, "function-threw:" + name);
                     return new RqlError("function-threw", detail);
                 }

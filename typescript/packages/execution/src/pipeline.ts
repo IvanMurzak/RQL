@@ -57,8 +57,8 @@ export class Pipeline {
       const fail = failResult(x.diagnostics.filter((d) => d.severity === 'error' && d.code !== e.code));
       fail.diagnostics.unshift(e.toDiagnostic());
       this.addWarnings(fail, true);
-      // A warning of the failure's own code (e.g. a throwing function) only repeats the error.
-      fail.diagnostics = fail.diagnostics.filter((d) => d.severity !== 'warning' || d.code !== e.code);
+      // A warning that the failure repeats (a throwing source function warns, then fails with the same detail) is dropped.
+      fail.diagnostics = fail.diagnostics.filter((d) => d.severity !== 'warning' || d.code !== e.code || !e.message.includes(d.message));
       return fail;
     }
     const errors = x.diagnostics.filter((d) => d.severity === 'error');

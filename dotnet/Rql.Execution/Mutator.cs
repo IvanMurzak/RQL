@@ -165,8 +165,7 @@ namespace Rql.Execution
             }
             catch (Exception ex) when (!(ex is OutOfMemoryException))
             {
-                var inner = ex is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
-                _x.WarnOnce("getter-threw", $"reading back '{w.Label}' after the write failed ({inner.GetType().Name}: {inner.Message}); the receipt shows the planned value", "read-back");
+                _x.WarnOnce("getter-threw", $"reading back '{w.Label}' after the write failed ({ex.GetType().Name}: {ex.Message}); the receipt shows the planned value", "read-back");
                 return w.New;
             }
         }
@@ -458,8 +457,7 @@ namespace Rql.Execution
                         // Completed calls are not rolled back, so the host still learns about them.
                         int completed = done;
                         RunHook(_x.Engine.Mutations.Committed, callRecords.Take(completed).ToList(), veto: false);
-                        var inner = ex is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
-                        throw new RqlException("call-threw", $"{method.Name} on {_x.Engine.RefOf(item)} threw {inner.GetType().Name}: {inner.Message}; {done} earlier call(s) completed and are NOT rolled back");
+                        throw new RqlException("call-threw", $"{method.Name} on {_x.Engine.RefOf(item)} threw {ex.GetType().Name}: {ex.Message}; {done} earlier call(s) completed and are NOT rolled back");
                     }
                 }
                 done++;

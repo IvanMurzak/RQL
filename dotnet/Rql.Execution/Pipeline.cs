@@ -54,8 +54,8 @@ namespace Rql.Execution
                 result = QueryResult.Fail(_x.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error && d.Code != ex.Code));
                 result.Diagnostics.Insert(0, ex.ToDiagnostic());
                 AddWarnings(result, onlyGeneral: true);
-                // A warning of the failure's own code (a throwing source function) only repeats the error.
-                result.Diagnostics.RemoveAll(d => d.Severity == DiagnosticSeverity.Warning && d.Code == ex.Code);
+                // A warning that the failure repeats (a throwing source function warns, then fails with the same detail) is dropped.
+                result.Diagnostics.RemoveAll(d => d.Severity == DiagnosticSeverity.Warning && d.Code == ex.Code && ex.Message.Contains(d.Message));
                 return result;
             }
             if (_x.Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))

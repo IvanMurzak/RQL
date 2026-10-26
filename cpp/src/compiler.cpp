@@ -1114,15 +1114,17 @@ Eval Compiler::compile_function(const Expr& c) {
         else arity(c, 2, 64);
         std::vector<Eval> args;
         for (auto& e : c.args) args.push_back(compile(*e));
-        const int fn = name == "pow" ? 0 : name == "min" ? 1 : 2;
-        return [args, fn, name](Exec& x) -> Value {
+        double (*f)(double, double) = name == "pow"   ? static_cast<double (*)(double, double)>(std::pow)
+                                      : name == "min" ? math_min
+                                                      : math_max;
+        return [args, f, name](Exec& x) -> Value {
             double acc = 0;
             for (size_t i = 0; i < args.size(); ++i) {
                 Value v = args[i](x);
                 if (v.is_null() || v.is_absent()) return v;  // the first null / missing / error / unknown argument
                 double d;
                 if (!try_number(v, d)) return Value::error("type-mismatch", name + "() expects numbers, got " + describe_value(v));
-                acc = i == 0 ? d : fn == 0 ? std::pow(acc, d) : fn == 1 ? math_min(acc, d) : math_max(acc, d);
+                acc = i == 0 ? d : f(acc, d);
             }
             return Value::number(acc);
         };
