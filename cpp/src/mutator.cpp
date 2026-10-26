@@ -714,6 +714,15 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
             throw RqlException("coercion-failed", "cannot call " + s.method + " on " + x.ref_of(item) + ": " + why,
                                "signature: " + join(cs, ", "));
         }
+        // The method's own check, for every target before the first call (and on dry runs): all-or-nothing (spec §8).
+        if (chosen->validate) {
+            std::string rejected;
+            if (auto failure = capture_failure([&] { rejected = chosen->validate(item.ptr(), coerced); }))
+                rejected = "its check threw: " + *failure;
+            if (!rejected.empty())
+                throw RqlException("invalid-value", "cannot call " + t->signature(*chosen) + " on " + x.ref_of(item) + ": " + rejected +
+                                                        "; nothing was called");
+        }
         planned.push_back({item, chosen, std::move(coerced)});
     }
 

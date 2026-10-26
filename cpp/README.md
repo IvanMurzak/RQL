@@ -103,8 +103,12 @@ engine.add_adapter(std::move(vec)).add_adapter(std::move(uobj));
 ```
 
 Adapters can also add **callable methods** (`MemberTable::method(name, params, returns, fn,
-description)`, `hide_methods`) invoked by `call` exactly like registered host methods (coercion,
-defaults, overloads by arity, dry-run), and **virtual maps** (`MemberTable::map(name, keys, get, set,
+description, validate)`, `hide_methods`) invoked by `call` exactly like registered host methods (coercion,
+defaults, overloads by arity, dry-run). A method may carry an optional **validator**
+(`MethodDescriptor::validate`, `CallValidator = std::string(void* self, const std::vector<Value>& args)`;
+`ClassBuilder::validate_call(v)` for host methods): `call` runs it with the coerced arguments for every
+target before the first call, on dry runs too, and a non-empty reason (or a throwing check) fails the
+stage with `invalid-value` and nothing is called (spec §8). Adapters also add **virtual maps** (`MemberTable::map(name, keys, get, set,
 validate)`) read and written through the ordinary map paths, e.g. a `UMaterialInstanceDynamic`'s
 scalar parameters as `ScalarParams["Roughness"]` with validation before any write.
 

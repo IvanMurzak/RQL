@@ -171,7 +171,11 @@ void register_test_adapters(rql::Engine& engine, rql::TypeRegistry& reg) {
                     n.Value += args[0].as_number();
                     return rql::Value::number(n.Value);
                 },
-                "Value += by; returns the new Value")
+                "Value += by; returns the new Value",
+                [](Node& n, const std::vector<rql::Value>& args) -> std::string {
+                    if (args[0].as_number() < 0) return "by must be non-negative";
+                    return n.Id == 5 ? "node 5 is frozen" : "";
+                })
             .method<Node>(
                 "greet", {rql::ParamDescriptor{"who", rql::builtin::string_type(), false, false, rql::Value()}},
                 rql::builtin::string_type(),

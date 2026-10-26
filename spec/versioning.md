@@ -37,6 +37,6 @@
   containment rule, member listings are capped (§10); a dotted path naming a projected column resolves to it (§3); a
   mutation request without `set` / `call` is `invalid-plan` (§8); receipts report the read-back `new` value (§8);
   codes `call-threw`, `function-threw`, `hook-threw` (all formerly `getter-threw`), `invalid-value` (validator
-  rejections, formerly `coercion-failed`) and `invalid-regex` (§4.1, §10, §13);
+  rejections, formerly `coercion-failed`) and `invalid-regex` (§4.1, §10, §13); `call` validators checked for every target before the first call (§8);
   aggregates warn about ignored values (§4.3); `distinct` compares projected rows by value (§5); display numbers and
   non-finite encoding (§6); numeric tuple display, input and object-literal equality (§13).

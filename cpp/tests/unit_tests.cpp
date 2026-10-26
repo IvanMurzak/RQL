@@ -1211,9 +1211,16 @@ struct PBody {
 struct PWide {
     int Id = 0;
 };
+struct PDoor {
+    int Id = 0;
+    bool Locked = false;
+    int Opened = 0;
+    void Open(int force) { Opened += force; }
+};
 struct PWorld {
     std::vector<std::unique_ptr<PBody>> Bodies;
     PWide Wide;
+    std::vector<std::unique_ptr<PDoor>> Doors;
 };
 
 bool has_diag(const rql::QueryResult& r, const std::string& code, rql::Severity sev, size_t* count = nullptr) {
@@ -1247,8 +1254,24 @@ void port_tests() {
     auto wide = reg.object<PWide>("PWide");
     wide.member("Id", &PWide::Id);
     for (int i = 0; i < 15; ++i) wide.property("m" + std::to_string(i), [i](PWide&) { return i; });
-    reg.object<PWorld>("PWorld").member("Bodies", &PWorld::Bodies).member("Wide", &PWorld::Wide);
+    reg.object<PDoor>("PDoor")
+        .member("Id", &PDoor::Id)
+        .member("Locked", &PDoor::Locked)
+        .member("Opened", &PDoor::Opened)
+        .method("Open", &PDoor::Open, {"force"})
+        .validate_call([](PDoor& d, const std::vector<rql::Value>& args) -> std::string {
+            if (d.Locked) return "door " + std::to_string(d.Id) + " is locked";
+            if (args[0].as_number() > 10) throw std::runtime_error("force gauge broken");
+            return "";
+        });
+    reg.object<PWorld>("PWorld").member("Bodies", &PWorld::Bodies).member("Wide", &PWorld::Wide).member("Doors", &PWorld::Doors);
     PWorld w;
+    for (int i = 1; i <= 2; ++i) {
+        auto d = std::make_unique<PDoor>();
+        d->Id = i;
+        d->Locked = i == 2;
+        w.Doors.push_back(std::move(d));
+    }
     for (int i = 1; i <= 2; ++i) {
         auto b = std::make_unique<PBody>();
         b->Id = i;
@@ -1331,6 +1354,18 @@ void port_tests() {
     check(r.ok && (*r.rows)[0][3].as_number() == 1e-7 && w.Bodies[0]->Mass == 1e-7 && hooked == 1e-7,
           "receipt: new is the read-back (clamped) value, also for the committed hook");
     e.mutations().committed = nullptr;
+
+    // call validators: every target is checked before the first call, on dry runs too (spec §8)
+    r = run(e, R"J({"rql":"0.1","source":{"path":["w","Doors"]},"stages":[{"op":"call","method":"Open","args":[{"lit":1}]}]})J", true);
+    check(!r.ok && first_code(r) == "invalid-value" && r.diagnostics[0].message.find("door 2 is locked; nothing was called") != std::string::npos &&
+              w.Doors[0]->Opened == 0 && w.Doors[1]->Opened == 0,
+          "call validator: one rejected target → nothing called");
+    const char* force = R"J({"rql":"0.1","source":{"path":["w","Doors"]},"stages":[{"op":"first","n":1},{"op":"call","method":"Open","args":[{"lit":20}]}]})J";
+    r = run(e, force, true, true);
+    check(!r.ok && first_code(r) == "invalid-value" && r.diagnostics[0].message.find("its check threw: force gauge broken") != std::string::npos,
+          "call validator: dry run reports the refusal (throwing check)");
+    r = run(e, R"J({"rql":"0.1","source":{"path":["w","Doors"]},"stages":[{"op":"first","n":1},{"op":"call","method":"Open","args":[{"lit":2}]}]})J", true);
+    check(r.ok && w.Doors[0]->Opened == 2, "call validator: accepted call runs");
 }
 
 }  // namespace

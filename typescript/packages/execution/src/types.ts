@@ -345,6 +345,11 @@ export interface MethodSpec<T extends object = object> {
   description?: string;
   /** Custom invocation (default: `target[name](...args)`). */
   invoke?(target: T, args: unknown[]): unknown;
+  /**
+   * Optional check of a planned call (target, coerced arguments): the rejection reason, or null / undefined. The `call`
+   * stage runs it for every target before the first call, on dry runs too (spec §8); a rejection is `invalid-value`.
+   */
+  validate?(target: T, args: unknown[]): string | null | undefined;
 }
 
 export interface TypeSpec<T extends object = object> {
@@ -461,6 +466,8 @@ export class MethodAccessor {
     readonly returns: TypeRef | undefined,
     readonly description: string | undefined,
     readonly invoke: (target: object, args: unknown[]) => unknown,
+    /** Optional check of a planned call: the rejection reason, or null / undefined (spec §8). */
+    readonly validate?: (target: object, args: unknown[]) => string | null | undefined,
   ) {}
 
   signature(model?: TypeModel): string {
@@ -1101,7 +1108,8 @@ export class TypeModel {
             if (typeof fn !== 'function') throw new TypeError(`${name} is not a function`);
             return (fn as (...a: unknown[]) => unknown).apply(o, args);
           };
-    return new MethodAccessor(name, spec.params ?? [], spec.returns, spec.description, invoke);
+    const validate = spec.validate !== undefined ? spec.validate.bind(spec) : undefined;
+    return new MethodAccessor(name, spec.params ?? [], spec.returns, spec.description, invoke, validate);
   }
 
   // ---------------------------------------------------------------- dynamic fallback
@@ -1301,10 +1309,14 @@ class MemberTableImpl implements MemberTable<object> {
     return this.map(name, spec, 'any', description);
   }
 
-  method<A extends unknown[]>(name: string, params: readonly ParamSpec[], returns: TypeRef | undefined, fn: (target: object, ...args: A) => unknown, description?: string): this {
+  method<A extends unknown[]>(name: string, params: readonly ParamSpec[], returns: TypeRef | undefined, fn: (target: object, ...args: A) => unknown,
+    description?: string,
+    validate?: (target: object, ...args: A) => string | null | undefined,
+  ): this {
     if (name.length === 0) throw new Error('method name required');
     // Arguments arrive coerced to the declared parameter types, in parameter order.
-    putMethod(this.methodList, new MethodAccessor(name, params, returns, description, (o, args) => fn(o, ...(args as A))));
+    const check = validate !== undefined ? (o: object, args: unknown[]) => validate(o, ...(args as A)) : undefined;
+    putMethod(this.methodList, new MethodAccessor(name, params, returns, description, (o, args) => fn(o, ...(args as A)), check));
     return this;
   }
 

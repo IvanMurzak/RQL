@@ -43,7 +43,7 @@ sealed class RendererAdapter : RqlTypeAdapter<Renderer>
 | Encode | `Encode(value, EncodeContext)` (context: `EncodeValue`, `Summary`, `Depth`) | Output cells |
 | Coerce | `TryCoerce(value, target, out result, out reason)` → `NotHandled` / `Ok` / `Failed` | `set` values, `call` arguments |
 | Compare | `AreEqual(value, other)`, `Compare(value, other)` | `==`, `!=`, `<`…, `sort`, `in`, `contains` |
-| Methods | `MemberTable.AddMethod`, typed `Method` / `Function`, `Expose(name)` for unannotated CLR methods, `HideMethods` | `call` stage, `describe` |
+| Methods | `MemberTable.AddMethod`, typed `Method` / `Function` (optional `validate` per call), `Expose(name)` for unannotated CLR methods, `HideMethods`; `[RqlCallable]` methods take a companion `string Validate<Name>(same parameters)` | `call` stage (validators run for every target before the first call, dry runs too: `invalid-value`), `describe` |
 | Virtual maps | `MemberTable.AddMap` / typed `Map<TValue>(name, keys, get, set?, validate?)` | `M["k"]` reads, `set M["k"] = v` writes |
 | Mixed-type maps | `MemberTable.AddMixedMap(name, keys, entryType, get, set?, validate?)` | per-key value types (e.g. Material properties) |
 | Write-back | `CopyOnRead(names)`, `WritesThrough()` | copy-returning getters, handle structs |

@@ -60,9 +60,18 @@ export interface MemberTable<T extends object = object> {
   /**
    * Add a callable method (replaces one with the same name and arity). Arguments are coerced to the
    * parameter types (adapter coercion applies) and missing trailing ones take their `default`; the
-   * result goes to the `call` receipt; `dryRun` invokes nothing.
+   * result goes to the `call` receipt; `dryRun` invokes nothing. The optional `validate` returns a rejection reason (or
+   * null / undefined) for a planned call; it runs for every target before the first call, on dry runs too, and a
+   * rejection fails the stage with `invalid-value`, nothing called (spec §8).
    */
-  method<A extends unknown[]>(name: string, params: readonly ParamSpec[], returns: TypeRef | undefined, fn: (target: T, ...args: A) => unknown, description?: string): this;
+  method<A extends unknown[]>(
+    name: string,
+    params: readonly ParamSpec[],
+    returns: TypeRef | undefined,
+    fn: (target: T, ...args: A) => unknown,
+    description?: string,
+    validate?: (target: T, ...args: A) => string | null | undefined,
+  ): this;
   /** Remove callable methods by name (all overloads); unknown names fail the query. */
   hideMethods(...names: string[]): this;
   /**

@@ -571,6 +571,33 @@ namespace Rql.Tests
             Assert.Contains("0.30000000000000004", r.ToJson(includeStats: false)); // the JSON form stays exact
         }
 
+        public sealed class Door
+        {
+            public string Name { get; set; } = "";
+            public bool Locked { get; set; }
+            public int Opened { get; private set; }
+            [RqlCallable] public void Open(int force) => Opened += force;
+            /// <summary>Companion validator of Open (spec §8): runs for every target before the first call.</summary>
+            public string? ValidateOpen(int force) => Locked ? $"{Name} is locked" : force > 10 ? "too much force" : null;
+        }
+
+        [Fact]
+        public void CallValidatorsMakeCallsAllOrNothing()
+        {
+            var doors = new List<Door> { new Door { Name = "front" }, new Door { Name = "back", Locked = true } };
+            var e = new RqlEngine().AddSource("doors", () => doors);
+            e.Mutations.Enabled = true;
+            var refused = e.Execute("doors | call Open(1)", options: Mutate);
+            Assert.False(refused.Ok);
+            Assert.Equal("invalid-value", refused.Diagnostics[0].Code);
+            Assert.Contains("back is locked", refused.Diagnostics[0].Message);
+            Assert.All(doors, d => Assert.Equal(0, d.Opened));   // nothing was called, not even the first door
+            var dry = e.Execute("doors | where Name == \"front\" | call Open(20)", options: new QueryOptions { AllowMutation = true, DryRun = true });
+            Assert.Equal("invalid-value", dry.Diagnostics[0].Code);           // a dry run reports the refusal
+            Assert.True(e.Execute("doors | where Name == \"front\" | call Open(2)", options: Mutate).Ok);
+            Assert.Equal(2, doors[0].Opened);
+        }
+
         [Fact]
         public void InvalidLiteralRegexFailsBeforeRunning()
         {

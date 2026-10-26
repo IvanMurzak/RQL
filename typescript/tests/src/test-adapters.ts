@@ -98,6 +98,7 @@ export const nodeAdapter: TypeAdapter<Node> = {
           return n.Value;
         },
         'Value += by; returns the new Value',
+        (n, by: number) => (by < 0 ? 'by must be non-negative' : n.Id === 5 ? 'node 5 is frozen' : undefined),
       )
       .add<string[]>('tagsCopy', {
         type: t.list(t.string),

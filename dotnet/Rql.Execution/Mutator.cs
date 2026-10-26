@@ -434,6 +434,15 @@ namespace Rql.Execution
                 if (chosen == null)
                     throw new RqlException("coercion-failed", $"cannot call {s.Method} on {_x.Engine.RefOf(item)}: {why}", null,
                         "signature: " + string.Join(", ", candidates.Select(m => m.Signature)));
+                // The method's own check, for every target before the first call (and on dry runs): all-or-nothing (spec §8).
+                if (chosen.Validate != null)
+                {
+                    string? rejected;
+                    try { rejected = chosen.Validate(item, coerced!); }
+                    catch (Exception ex) when (!(ex is OutOfMemoryException)) { rejected = $"its check threw {ex.GetType().Name}: {ex.Message}"; }
+                    if (rejected != null)
+                        throw new RqlException("invalid-value", $"cannot call {chosen.Signature} on {_x.Engine.RefOf(item)}: {rejected}; nothing was called");
+                }
                 planned.Add((item, chosen, coerced!));
             }
 

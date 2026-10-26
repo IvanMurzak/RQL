@@ -107,7 +107,10 @@ engine.addAdapter({
 ```
 
 Methods are chosen by arity, then by whether the arguments coerce (adapter coercion applies, `default`
-fills missing trailing arguments). Virtual-map writes go through the ordinary map paths: coercion to the
+fills missing trailing arguments). A method may take an optional validator after the description,
+`.method(name, params, returns, fn, description, (target, ...args) => reason | null | undefined)` (declared
+methods: `validate(target, args)` in the `MethodSpec`); the `call` stage runs it for every target before the
+first call, on dry runs too, and a rejection fails with `invalid-value` with nothing called. Virtual-map writes go through the ordinary map paths: coercion to the
 value type, validation before any write, rollback, `readonly-member` without a setter.
 
 Resolution: exact class (rank 0), base classes by prototype-chain distance (up to `Object`), then

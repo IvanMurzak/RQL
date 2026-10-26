@@ -311,6 +311,43 @@ test('aggregates warn once about ignored values', () => {
   assert.deepEqual(e.execute('lights | sum Intensity').diagnostics, []);
 });
 
+test('call validators run for every target before the first call, on dry runs too', () => {
+  class Door {
+    Opened = 0;
+    constructor(
+      public Id: number,
+      public Locked: boolean,
+    ) {}
+  }
+  const doors = [new Door(1, false), new Door(2, true)];
+  const types = new TypeModel().register(Door, { members: [{ name: 'Id', type: t.int }, { name: 'Locked', type: t.bool }] });
+  const e = new RqlEngine({ types })
+    .addSource('doors', () => doors)
+    .addAdapter({
+      target: Door,
+      members: (m) =>
+        m.method(
+          'open',
+          [{ name: 'force', type: t.int }],
+          undefined,
+          (d, force: number) => void (d.Opened += force),
+          'open the door',
+          (d, force: number) => (d.Locked ? `door ${d.Id} is locked` : force > 10 ? 'too much force' : null),
+        ),
+    });
+  e.mutations.enabled = true;
+  const refused = e.execute('doors | call open(1)', {}, { allowMutation: true });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.diagnostics[0]?.code, 'invalid-value');
+  assert.equal(refused.diagnostics[0]?.message, 'cannot call open(int force) on Door#2: door 2 is locked; nothing was called');
+  assert.deepEqual(doors.map((d) => d.Opened), [0, 0]); // not even the first door was opened
+  const dry = e.execute('doors | where Id == 1 | call open(20)', {}, { allowMutation: true, dryRun: true });
+  assert.equal(dry.diagnostics[0]?.code, 'invalid-value'); // a dry run reports the refusal
+  assert.ok(dry.diagnostics[0]!.message.includes('too much force'));
+  assert.equal(e.execute('doors | where Id == 1 | call open(2)', {}, { allowMutation: true }).ok, true);
+  assert.deepEqual(doors.map((d) => d.Opened), [2, 0]);
+});
+
 test('a mutation request must end with set or call', () => {
   const { e, bodies } = battery();
   const r = e.execute('bodies | select Name', {}, { allowMutation: true });

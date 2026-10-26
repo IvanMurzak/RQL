@@ -491,6 +491,19 @@ export class Mutator {
       if (chosen === undefined) {
         throw new RqlError('coercion-failed', `cannot call ${s.method} on ${x.engine.refOf(item)}: ${why}`, undefined, 'signature: ' + candidates.map((m) => m.signature(x.types)).join(', '));
       }
+      // The method's own check, for every target before the first call (and on dry runs): all-or-nothing (spec §8).
+      const check = chosen.method.validate;
+      if (check !== undefined) {
+        let rejected: string | null | undefined;
+        try {
+          rejected = check(item, chosen.args);
+        } catch (e) {
+          rejected = `its check threw ${e instanceof Error ? e.name : typeof e}: ${errorMessage(e)}`;
+        }
+        if (rejected !== null && rejected !== undefined) {
+          throw new RqlError('invalid-value', `cannot call ${chosen.method.signature(x.types)} on ${x.engine.refOf(item)}: ${rejected}; nothing was called`);
+        }
+      }
       planned.push({ item, ...chosen });
     }
 

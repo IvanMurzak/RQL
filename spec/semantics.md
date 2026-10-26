@@ -294,9 +294,14 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   (`Transform.Position.x = 1`) MUST write back the modified copy to every enclosing value-type
   member up to the first reference object. Target member must be writable and allowed by
   policy (`readonly-member`, `permission-denied`).
-* `call m(args)`: only methods allowlisted by the runtime policy; arguments coerced as above. A method that throws
-  stops the stage with error `call-threw` (naming the method and the exception); calls completed before it are not
-  rolled back.
+* `call m(args)`: only methods allowlisted by the runtime policy; arguments coerced as above. A method MAY declare a
+  **validator** (target, coerced arguments → rejection reason or none; .NET: the `validate` of an adapter method, or a
+  public companion `string Validate<Name>(same parameters)` next to an `[RqlCallable]` method). Every target's call is
+  resolved, coerced and validated before the first call — on dry runs too, so a dry run reports a call that would be
+  refused — and a rejection fails the stage with `invalid-value` (naming the method, the target and the reason) with
+  nothing called. Methods without a validator behave as before. A method that throws stops the stage with error
+  `call-threw` (naming the method and the exception); calls completed before it are not rolled back (calls cannot be
+  undone generically: hosts make them safe through validators).
 * **All-or-nothing**: every target and assignment is resolved and coerced before any write. If
   more than `budgets.maxMutationTargets` (default 20) items reach the stage → `mutation-limit`,
   nothing written. If a write fails midway the runtime MUST restore already-written values.
@@ -413,7 +418,7 @@ templates in the reflection layer) only implement the exact / base / interface t
 | Capability | Contract |
 |---|---|
 | Members | Applied from the least to the most specific adapter, so a subclass adapter refines a base adapter. Can **add** virtual members (name, declared type, getter, optional setter with validation, description), **hide** members, keep **only** a whitelist, include **non-public fields** by predicate (e.g. Unity `[SerializeField]`), mark members read-only, non-owning reference, or **explicit-only** (never read implicitly: not by generic `recurse`, inline encoding, ref search or snapshots — only when a path names it; `describe` lists it with `"explicitOnly": true`). Hidden members are unreadable AND unwritable (reads → `unknown-member` warning, writes → `unknown-member` error). Virtual members are non-owning by default (computed values are not structural children). Identity and display members are chosen among non-explicit-only members (they are read for every `$ref` and summary). Configuring a member that does not exist — including `hide` / `only` with an unknown name — is a host bug and fails the query with `internal-error`. |
-| Methods | Add callable methods (name, typed parameters with optional defaults, result type, description) invoked by the `call` stage exactly like host-allowlisted methods: arguments are coerced to the parameter types (adapter coercion applies), overloads are chosen by arity then coercibility, results go to the receipt, `dryRun` invokes nothing, and calls are not rolled back. Runtimes with method reflection MAY also expose existing host methods by name (for engine types that cannot be annotated) and hide methods. `describe` lists every callable method as `name(type param, …)` plus the description. |
+| Methods | Add callable methods (name, typed parameters with optional defaults, result type, description, optional validator, §8) invoked by the `call` stage exactly like host-allowlisted methods: arguments are coerced to the parameter types (adapter coercion applies), overloads are chosen by arity then coercibility, results go to the receipt, `dryRun` invokes nothing, and calls are not rolled back. Runtimes with method reflection MAY also expose existing host methods by name (for engine types that cannot be annotated) and hide methods. `describe` lists every callable method as `name(type param, …)` plus the description. |
 | Virtual maps | A member whose value is a string-keyed map defined by the adapter: the owner's keys, per-key get, optional per-key set and validation. An optional per-key existence test avoids scanning the keys on lookups. Reads and writes use the ordinary map paths (`M["k"]`, `set M["k"] = v`): values are coerced to the declared value type, validation runs before any write (`invalid-value` with the reason), writes take part in rollback, a map without setter is `readonly-member`, writes go to existing entries only (an absent key is `invalid-value` "no entry", because a new entry could not be
 removed again on rollback), and entries are never removed. Schemas show the type as `Dictionary<string, T>`. |
 | Encode | Replace the output encoding of values of the type (first adapter that encodes wins). |
