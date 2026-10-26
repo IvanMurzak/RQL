@@ -48,7 +48,8 @@ jobs:
     runs-on: [self-hosted]
     timeout-minutes: 30
     env:
-      # runner-manager's sandboxed runners are root without CAP_CHOWN: tool archives must not restore owners.
+      # Linux host: runner-manager's sandboxed runners are root without CAP_CHOWN, so tool archives must not restore
+      # owners (GNU tar reads TAR_OPTIONS; macOS bsdtar ignores it).
       TAR_OPTIONS: --no-same-owner
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       DOTNET_NOLOGO: "1"

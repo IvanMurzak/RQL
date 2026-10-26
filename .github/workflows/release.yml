@@ -34,7 +34,8 @@ permissions:
   contents: read
 
 env:
-  # runner-manager's sandboxed runners are root without CAP_CHOWN: tool archives must not restore owners.
+  # Linux host: runner-manager's sandboxed runners are root without CAP_CHOWN, so tool archives must not restore
+  # owners (GNU tar reads TAR_OPTIONS; macOS bsdtar ignores it).
   TAR_OPTIONS: --no-same-owner
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
   DOTNET_NOLOGO: "1"
@@ -84,7 +85,8 @@ jobs:
           esac
           # publish uses --skip-duplicate (re-dispatch after a failed verify / tag). That is safe only when the live
           # package was built from this very commit; otherwise the tag + Release would not match what NuGet serves.
-          id=${PACKAGE_ID,,}; v=${VERSION,,}; nuspec="$RUNNER_TEMP/live.nuspec"
+          # tr, not ${x,,}: macOS bash is 3.2.
+          id=$(printf %s "$PACKAGE_ID" | tr '[:upper:]' '[:lower:]'); v=$(printf %s "$VERSION" | tr '[:upper:]' '[:lower:]'); nuspec="$RUNNER_TEMP/live.nuspec"
           code=$(curl -sS -o "$nuspec" -w '%{http_code}' --max-time 30 "https://api.nuget.org/v3-flatcontainer/$id/$v/$id.nuspec")
           case $code in
             404) ;;   # not published yet
@@ -131,7 +133,7 @@ jobs:
         run: |
           # The flat container lists ids and versions lowercased; match the version literally (dots are not wildcards).
           for i in $(seq 1 60); do
-            if curl -fsS --max-time 20 "https://api.nuget.org/v3-flatcontainer/${PACKAGE_ID,,}/index.json" | grep -qF "\"${VERSION,,}\""; then
+            if curl -fsS --max-time 20 "https://api.nuget.org/v3-flatcontainer/$(printf %s "$PACKAGE_ID" | tr '[:upper:]' '[:lower:]')/index.json" | grep -qF "\"$(printf %s "$VERSION" | tr '[:upper:]' '[:lower:]')\""; then
               echo "$PACKAGE_ID $VERSION is live"; exit 0
             fi
             sleep 20
