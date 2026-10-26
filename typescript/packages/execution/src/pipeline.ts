@@ -140,7 +140,12 @@ export class Pipeline {
   private knownNames(): ReadonlyMap<string, string> {
     const names = new Map(this.x.engine.knownMemberNames());
     for (const st of this.x.plan.stages) {
-      if (st.kind === 'select') for (const f of st.fields) if (!names.has(f.name.toUpperCase())) names.set(f.name.toUpperCase(), f.name);
+      if (st.kind !== 'select') continue;
+      for (const f of st.fields) {
+        // `select Owner.Label | sort Owner.Label` names the column and navigates no Owner.
+        const dot = f.name.indexOf('.');
+        for (const n of dot > 0 ? [f.name, f.name.slice(0, dot)] : [f.name]) if (!names.has(n.toUpperCase())) names.set(n.toUpperCase(), n);
+      }
     }
     return names;
   }
@@ -686,13 +691,28 @@ function compareSortKeys(x: Exec, a: unknown, b: unknown, desc: boolean): number
 const enumIds = new WeakMap<object, number>();
 let nextEnumId = 0;
 
-/** A stable identity number for objects compared by identity inside composite (row) keys. */
+/** Stable identity numbers for values compared by identity inside composite (row / struct) keys. */
 const objectIds = new WeakMap<object, number>();
+const otherIds = new Map<unknown, number>(); // symbols and other non-object identities (rare)
 let nextObjectId = 0;
-function objectId(o: object): number {
-  let id = objectIds.get(o);
-  if (id === undefined) objectIds.set(o, (id = nextObjectId++));
+function identityId(v: unknown): number {
+  const weak = (typeof v === 'object' && v !== null) || typeof v === 'function';
+  let id = weak ? objectIds.get(v as object) : otherIds.get(v);
+  if (id === undefined) {
+    id = nextObjectId++;
+    if (weak) objectIds.set(v as object, id);
+    else otherIds.set(v, id);
+  }
   return id;
+}
+
+/**
+ * One component of a composite key: string keys quoted (so a separator inside a value cannot merge two keys),
+ * identity-compared values by a stable id.
+ */
+function keyPart(x: Exec, v: unknown): string {
+  const k = distinctKey(x, v);
+  return typeof k === 'string' ? JSON.stringify(k) : 'o:' + String(identityId(k));
 }
 
 /**
@@ -713,22 +733,12 @@ export function distinctKey(x: Exec, v: unknown): unknown {
   if (v instanceof Date) return 't:' + String(v.getTime());
   if (v instanceof RowValue) {
     // Projected rows compare by their column values (spec §5), each with the same equality.
-    const parts = v.values.map((cv) => {
-      const k = distinctKey(x, cv);
-      if (typeof k === 'string') return JSON.stringify(k);
-      return typeof k === 'object' && k !== null ? 'o:' + String(objectId(k)) : 'p:' + String(k);
-    });
-    return `r:[${parts.join(',')}]`;
+    return `r:[${v.values.map((cv) => keyPart(x, cv)).join(',')}]`;
   }
   if (typeof v === 'object') {
     const info = x.types.infoOf(v);
     if (info.kind === 'struct') {
-      const parts = info.implicitMembersOf(v).map((m) => {
-        const mv = m.get(v);
-        const k = distinctKey(x, mv);
-        return typeof k === 'string' ? k : '#';
-      });
-      return `v:${info.shortName}(${parts.join(',')})`;
+      return `v:${JSON.stringify(info.shortName)}(${info.implicitMembersOf(v).map((m) => keyPart(x, m.get(v))).join(',')})`;
     }
     return v;
   }

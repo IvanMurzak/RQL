@@ -348,6 +348,80 @@ test('call validators run for every target before the first call, on dry runs to
   assert.deepEqual(doors.map((d) => d.Opened), [2, 0]);
 });
 
+test('receipts of enum list elements show old and new by name', () => {
+  enum Mood {
+    Calm,
+    Angry = 5,
+  }
+  class Npc {
+    Id = 1;
+    Moods: Mood[] = [Mood.Calm, Mood.Angry];
+  }
+  const npc = new Npc();
+  const MoodType = new EnumType('Mood', Mood);
+  const model = new TypeModel().register(Npc, { members: [{ name: 'Id', type: t.int }, { name: 'Moods', type: t.list(MoodType) }] });
+  const e = new RqlEngine({ types: model }).addSource('npcs', () => [npc]);
+  e.mutations.enabled = true;
+  assert.deepEqual(rows(e.execute('npcs | set Moods[1] = "Calm"', {}, { allowMutation: true })), [['Npc#1', 'Moods[1]', 'Angry', 'Calm']]);
+  assert.deepEqual(npc.Moods, [Mood.Calm, Mood.Calm]); // raw values stored
+  assert.deepEqual(rows(e.execute('npcs | set Moods[0] = "Angry"', {}, { allowMutation: true, dryRun: true })), [['Npc#1', 'Moods[0]', 'Calm', 'Angry']]);
+});
+
+test('distinct keys of rows and structs do not collide', () => {
+  class Pair {
+    constructor(
+      public a: unknown,
+      public b: unknown,
+    ) {}
+  }
+  class Holder {
+    constructor(
+      public Id: number,
+      public p: Pair,
+      public f: unknown,
+    ) {}
+  }
+  const model = new TypeModel()
+    .register(Pair, { kind: 'struct', members: [{ name: 'a', type: t.any }, { name: 'b', type: t.any }] })
+    .register(Holder, { members: [{ name: 'Id', type: t.int }, { name: 'p', type: t.of(Pair) }, { name: 'f', type: t.any }] });
+  const o1 = { Id: 1 };
+  const o2 = { Id: 2 };
+  const hs = [
+    new Holder(1, new Pair('a,s:b', 'c'), () => 1),
+    new Holder(2, new Pair('a', 'b,s:c'), () => 1),
+    new Holder(3, new Pair(o1, 'x'), () => 1),
+    new Holder(4, new Pair(o2, 'x'), () => 1),
+  ];
+  const e = new RqlEngine({ types: model }).addSource('hs', () => hs);
+  // Structs: separators inside strings and members differing only by object references stay distinct.
+  assert.equal(e.execute('hs | get p | distinct | count').value, 4);
+  // Rows: string columns quoted; functions with the same source text compare by identity.
+  assert.equal(e.execute('hs | select p.a p.b | distinct | count').value, 4);
+  assert.equal(e.execute('hs | select f | distinct | count').value, 4);
+  hs[1]!.f = hs[0]!.f;
+  assert.equal(e.execute('hs | select f | distinct | count').value, 3);
+});
+
+test('aggregates count error values as ignored (min / max never use them)', () => {
+  const e = new RqlEngine().addSource('xs', () => [{ v: 1 }, { v: 2 }]);
+  const sum = e.execute('xs | sum (v / 0)');
+  assert.equal(sum.value, 0);
+  assert.deepEqual(sum.diagnostics.map((d) => d.message), ['sum ignored 2 non-numeric value(s) (first: error(div-by-zero))']);
+  const max = e.execute('xs | max (v / 0)');
+  assert.equal(max.value, null);
+  assert.equal(max.diagnostics[0]?.code, 'type-mismatch');
+  // missing stays silent (the unknown name gets its own unknown-member warning, no type-mismatch)
+  assert.ok(!e.execute('xs | sum Nothing').diagnostics.some((d) => d.code === 'type-mismatch'));
+});
+
+test('a dotted select alias makes its first segment a known name (no "not evaluated" warning)', () => {
+  const world = { enemies: [{ name: 'orc', settings: { volume: 3 } }, { name: 'elf', settings: { volume: 1 } }] };
+  const e = new RqlEngine().addSource('world', () => world);
+  const r = e.execute('world.enemies | select settings.volume | sort settings.volume');
+  assert.deepEqual(r.diagnostics, []);
+  assert.deepEqual(rows(r), [[1], [3]]);
+});
+
 test('a mutation request must end with set or call', () => {
   const { e, bodies } = battery();
   const r = e.execute('bodies | select Name', {}, { allowMutation: true });

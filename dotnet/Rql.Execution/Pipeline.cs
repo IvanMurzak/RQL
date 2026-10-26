@@ -127,7 +127,13 @@ namespace Rql.Execution
         {
             var names = new HashSet<string>(_x.Engine.KnownMemberNames(), StringComparer.OrdinalIgnoreCase);
             foreach (var st in _x.Plan.Stages)
-                if (st is SelectStage sel) foreach (var f in sel.Fields) names.Add(f.Name);
+                if (st is SelectStage sel)
+                    foreach (var f in sel.Fields)
+                    {
+                        names.Add(f.Name);
+                        int dot = f.Name.IndexOf('.');
+                        if (dot > 0) names.Add(f.Name.Substring(0, dot)); // select Owner.Label | sort Owner.Label navigates no Owner
+                    }
             return names;
         }
 

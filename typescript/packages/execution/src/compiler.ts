@@ -1014,10 +1014,10 @@ export function reduce(x: Exec, values: Iterable<unknown>, kind: string): unknow
   let best: unknown = null;
   const minmax = kind === 'min' || kind === 'max';
   for (const val of values) {
-    if (val === null || val === undefined || isAbsent(val)) continue;
+    if (val === null || val === undefined || val === MISSING) continue; // error / unknown values are counted as ignored below
     let used: boolean;
     if (minmax) {
-      used = toNumber(val) !== undefined || typeof val === 'string' || val instanceof EnumValue || hasOrdering(model, val);
+      used = !isAbsent(val) && (toNumber(val) !== undefined || typeof val === 'string' || val instanceof EnumValue || hasOrdering(model, val));
       if (used && best === null) best = val;
       else if (used) {
         const c = compare(model, val, best);

@@ -94,14 +94,23 @@ namespace Rql.Execution
         protected override bool? Equal(T value, object? other, RqlKernel kernel)
         {
             T o;
-            if (other is ObjectValue literal)
+            bool literal = other is ObjectValue;
+            if (literal)
             {
-                if (!TryApply(value, literal, kernel, out o)) return null;
+                if (!TryApply(value, (ObjectValue)other!, kernel, out o)) return null;
             }
             else if (!TryParse(other, kernel, out o)) return null;
             for (int i = 0; i < Width; i++)
             {
                 double a = Part(value, i), b = Part(o, i);
+                // A member the literal leaves out keeps the value's own bits: it is not compared (NaN / infinity included).
+                if (literal && BitConverter.DoubleToInt64Bits(a) == BitConverter.DoubleToInt64Bits(b)) continue;
+                // Infinities are equal only to themselves (a relative tolerance of infinity would match everything).
+                if (double.IsInfinity(a) || double.IsInfinity(b))
+                {
+                    if (a != b) return false;
+                    continue;
+                }
                 double tolerance = Math.Max(Tolerance, RelativeTolerance * Math.Max(Math.Abs(a), Math.Abs(b)));
                 // Written as !(d <= tol) so a NaN component is unequal to everything (NaN > tol is false).
                 if (!(Math.Abs(a - b) <= tolerance)) return false;

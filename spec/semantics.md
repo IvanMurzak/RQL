@@ -163,13 +163,15 @@ Collection **methods** (`list.method(args)`), args evaluated per element with `$
 | `all(pred)` | `true` if every element's pred is `true` (empty → `true`). |
 | `count([pred])` | number of elements (whose pred is `true`). |
 | `sum(e)`, `min(e)`, `max(e)`, `avg(e)` | aggregate of `e` over elements (non-numbers ignored; `min`/`max` also order strings). Empty: `sum` → `0`, others → `null`. |
+| `first([pred])` | first element (matching), or `missing`. |
+| `keys()`, `values()` | for maps. |
 
 Aggregates (methods and stages) skip `null` and `missing` silently. Any other value they skip — a non-number for
 `sum` / `avg`, a value that is not orderable against the others for `min` / `max` (e.g. a bool, an object, or a
-number among strings) — is counted, and the query gets one `type-mismatch` **warning** per aggregate naming how many
-values were ignored, so `sum Name` reports why its answer is `0`.
-| `first([pred])` | first element (matching), or `missing`. |
-| `keys()`, `values()` | for maps. |
+number among strings), an error value such as `Mass / 0` — is counted, and the query gets one `type-mismatch`
+**warning** per aggregate kind naming how many values were ignored (for a method evaluated per item: in the first item
+that ignored any), so `sum Name` reports why its answer is `0`. Values whose member read threw are reported by
+`getter-threw` instead.
 
 Methods/functions not in this table are **extensions** (§9).
 
@@ -339,7 +341,8 @@ Budgets (request-level, all optional, runtime may clamp to its own hard caps):
 | `maxMutationTargets` | 20 | `mutation-limit` |
 
 Diagnostics: `{severity: "error"|"warning", code, message, at?: {start, end}, hint?}`. Error codes
-are a closed set in v0.1: `syntax-error`, `invalid-plan`, `version-unsupported`, `unknown-source`,
+are a closed set per release (package 0.2.0 added `call-threw`, `function-threw`, `hook-threw`, `invalid-value` and
+`invalid-regex`, see `versioning.md`; clients should treat an unknown code as a generic error): `syntax-error`, `invalid-plan`, `version-unsupported`, `unknown-source`,
 `unknown-stage`, `unknown-function`, `unknown-member` (warning: no evaluated item had it),
 `unknown-meta`, `type-mismatch`, `arity`, `div-by-zero`, `getter-threw` (a member read threw), `call-threw` (a `call`ed
 method threw, §8), `function-threw` (an extension function threw, §9), `hook-threw` (warning: a host committed hook
@@ -399,6 +402,8 @@ Recorded from the TypeScript and C++ ports (`typescript/SPEC-QUESTIONS.md`, `cpp
 | List assignment | Uses the runtime's natural semantics (alias in .NET/JS, copy in C++). Portable callers must not rely on aliasing. |
 | Extension stages | SHOULD be lazy (pull-based) so `first` bounds work; a runtime whose extension contract materializes input must say so. |
 | `maxOutputBytes` | Advisory size budget in UTF-8 bytes of the compact JSON encoding; runtimes may approximate within ±10%. |
+| `pow` edge cases | The host math library's IEEE `pow`: `pow(1, NaN)` and `pow(-1, ±Infinity)` are `1` in .NET and C++, NaN in JS. Portable plans must not depend on them. |
+| Regex dialect | Only the §4.1 subset is portable; a pattern outside it may be valid in one runtime and `invalid-regex` in another (e.g. .NET inline options `(?i)`). |
 
 ## 13. Type adapters (host extension, normative behaviour)
 

@@ -105,7 +105,7 @@ class ListSlot extends Slot {
   get(container: object): unknown {
     const l = container as unknown[];
     const v = l[this.idx(l)];
-    return v === undefined ? null : v;
+    return v === undefined ? null : wrapEnum(v, this.type);
   }
   set(container: object, value: unknown): void {
     const l = container as unknown[];
@@ -125,7 +125,7 @@ class MapSlot extends Slot {
     const k = findMapKey(m, this.key);
     if (!k.found) return MISSING;
     const v = mapGet(m, k.key);
-    return v === undefined ? null : v;
+    return v === undefined ? null : wrapEnum(v, this.type);
   }
   set(container: object, value: unknown): void {
     const m = container as MapLike;
@@ -144,6 +144,15 @@ class MapSlot extends Slot {
     if (container instanceof VirtualMap && !container.has(k)) return `no entry '${k}'`;
     return container.validate(k, value);
   }
+}
+
+/**
+ * List / map elements hold raw enum values; slots read them as enum values, so receipts show `old` and the read-back
+ * `new` the same way (by name) as the planned value.
+ */
+function wrapEnum(v: unknown, type: TypeRef): unknown {
+  const et = unwrapNullable(type);
+  return et instanceof EnumType && (typeof v === 'number' || typeof v === 'string') ? et.wrap(v) : v;
 }
 
 const typeArgs = (r: TypeRef): { key: TypeRef; of: TypeRef } | undefined => {
@@ -324,11 +333,7 @@ export class Mutator {
       for (let i = 0; ; i++) {
         const slot = this.slotOf(cur, declared, w.segments[i]!, w.label);
         const v = slot.get(cur);
-        if (i === w.segments.length - 1) {
-          // List / map slots hold raw enum values; the receipt shows the enum like the planned value.
-          const et = unwrapNullable(slot.type);
-          return et instanceof EnumType && (typeof v === 'number' || typeof v === 'string') ? et.wrap(v) : v;
-        }
+        if (i === w.segments.length - 1) return v;
         if (v === null || v === undefined || v === MISSING || typeof v !== 'object') return w.new;
         cur = v;
         declared = slot.type;

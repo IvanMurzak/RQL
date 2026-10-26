@@ -599,6 +599,25 @@ namespace Rql.Tests
         }
 
         [Fact]
+        public void AggregatesReportErrorValuesTheyIgnore()
+        {
+            var e = Engine(out _, out _);
+            var r = e.Execute("lights | sum (Intensity / 0)");
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Contains(r.Diagnostics, d => d.Code == "type-mismatch" && d.Message.Contains("ignored 2"));
+        }
+
+        [Fact]
+        public void DottedColumnOnEmptyStreamIsNotAnUnknownMember()
+        {
+            var e = Engine(out _, out _);
+            e.AddSource("nothing", () => new List<Body>());
+            var r = e.Execute("nothing | select Owner.Label | sort Owner.Label");
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.DoesNotContain(r.Diagnostics, d => d.Code == "unknown-member");
+        }
+
+        [Fact]
         public void InvalidLiteralRegexFailsBeforeRunning()
         {
             var e = Engine(out _, out _);

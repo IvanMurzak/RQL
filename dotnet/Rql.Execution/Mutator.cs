@@ -165,7 +165,8 @@ namespace Rql.Execution
             }
             catch (Exception ex) when (!(ex is OutOfMemoryException))
             {
-                _x.WarnOnce("getter-threw", $"reading back '{w.Label}' after the write failed ({ex.GetType().Name}: {ex.Message}); the receipt shows the planned value", "read-back");
+                var inner = ex is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
+                _x.WarnOnce("getter-threw", $"reading back '{w.Label}' after the write failed ({inner.GetType().Name}: {inner.Message}); the receipt shows the planned value", "read-back");
                 return w.New;
             }
         }

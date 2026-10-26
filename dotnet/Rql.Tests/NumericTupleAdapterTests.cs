@@ -142,6 +142,20 @@ namespace Rql.Tests
         }
 
         [Fact]
+        public void InfinitiesEqualOnlyThemselves()
+        {
+            var (e, bodies) = Engine();
+            bodies[0].Position = new Vec3 { x = 1, y = 0, z = 0 };
+            bodies[1].Position = new Vec3 { x = float.PositiveInfinity, y = 0, z = 0 };
+            bodies[2].Position = new Vec3 { x = 1e30f, y = 0, z = 0 };
+            string Names(string q) => string.Join(",", Enumerable.Range(0, e.Execute(q).Rows!.Count).Select(i => Cell(e.Execute(q), i, 0)));
+            Assert.Equal("b", Names("bodies | where Position == \"(inf, 0, 0)\" | select Name"));
+            Assert.Equal("a,b,c", Names("bodies | where Position != \"(-inf, 0, 0)\" | select Name"));
+            Assert.Equal("a", Names("bodies | where Position == {x: 1} | select Name"));
+            Assert.Equal("a,b,c", Names("bodies | where Position == {y: 0} | select Name")); // b's infinite x is not compared
+        }
+
+        [Fact]
         public void ComparesWithObjectLiteralsByMemberName()
         {
             var (e, _) = Engine();

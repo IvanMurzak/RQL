@@ -310,12 +310,13 @@ Value reduce(Exec& x, const std::vector<Value>& values, const std::string& kind)
     int64_t ignored = 0;
     std::string first_ignored;
     for (auto& val : values) {
-        // null / missing are skipped silently; any other skipped value is counted (spec §4.3).
-        if (val.is_null() || val.is_absent()) continue;
+        // null / missing are skipped silently; any other skipped value (error / unknown included) is counted (spec §4.3).
+        if (val.is_null() || val.is_missing()) continue;
         bool used;
         if (minmax) {
             // Numbers, strings, enums — and any value whose type has an ordering adapter (spec §13).
-            used = val.is_number() || val.is_string() || val.is_enum() || !x.adapters_for(val, Capability::Compare).empty();
+            used = !val.is_absent() &&
+                   (val.is_number() || val.is_string() || val.is_enum() || !x.adapters_for(val, Capability::Compare).empty());
             if (used && !has_best) {
                 best = val;
                 has_best = true;
@@ -744,7 +745,10 @@ std::optional<bool> matches_op(Exec& x, const Value& a, const Value& b) {
     }
     try {
         return std::regex_search(a.as_string(), *re);
-    } catch (const std::regex_error&) {
+    } catch (const std::regex_error& ex) {
+        // std::regex has no time limit: complexity / stack exhaustion stands in for the .NET match timeout.
+        x.warn_once("timeout", "regex \"" + pattern + "\" failed on a value (" + ex.what() +
+                                   "); such values count as unknown (simplify the pattern)", "regex-timeout");
         return std::nullopt;
     }
 }

@@ -1210,11 +1210,11 @@ namespace Rql.Execution
             object? best = null;
             foreach (var val in values)
             {
-                if (val == null || V.IsAbsent(val)) continue;
+                if (val == null || val is Missing) continue; // error / unknown values are counted as ignored below
                 bool used;
                 if (kind == "min" || kind == "max")
                 {
-                    used = V.IsNumber(val) || V.IsString(val) || val is Enum || AdapterOrdered(model, val);
+                    used = !V.IsAbsent(val) && (V.IsNumber(val) || V.IsString(val) || val is Enum || AdapterOrdered(model, val));
                     if (used && best == null) best = val;
                     else if (used)
                     {

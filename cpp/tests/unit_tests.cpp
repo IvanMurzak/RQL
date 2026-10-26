@@ -1217,6 +1217,14 @@ struct PDoor {
     int Opened = 0;
     void Open(int force) { Opened += force; }
 };
+struct PPad {
+    virtual ~PPad() = default;
+    long long pad[4] = {111, 222, 333, 444};
+};
+struct PBigDoor : PPad, PDoor {};  // PDoor at a non-zero offset
+struct PBigWorld {
+    std::vector<std::unique_ptr<PBigDoor>> Doors;
+};
 struct PWorld {
     std::vector<std::unique_ptr<PBody>> Bodies;
     PWide Wide;
@@ -1313,7 +1321,7 @@ void port_tests() {
     }
 
     // a dotted path names a projected column of that name
-    r = run(e, R"J({"rql":"0.1","source":{"path":["w","Bodies"]},"stages":[{"op":"select","fields":[{"name":"Type.Label","expr":{"path":["Label"]}}]},{"op":"sort","keys":[{"expr":{"path":["Type","Label"]}}]}]})J");
+    r = run(e, R"J({"rql":"0.1","source":{"path":["w","Bodies"]},"stages":[{"op":"select","fields":[{"name":"Owner.Label","expr":{"path":["Label"]}}]},{"op":"sort","keys":[{"expr":{"path":["Owner","Label"]}}]}]})J");
     check(r.ok && r.diagnostics.empty() && (*r.rows)[0][0].as_string() == "alpha" && (*r.rows)[1][0].as_string() == "zeta",
           "select: dotted path resolves to the dotted column");
 
@@ -1366,6 +1374,40 @@ void port_tests() {
           "call validator: dry run reports the refusal (throwing check)");
     r = run(e, R"J({"rql":"0.1","source":{"path":["w","Doors"]},"stages":[{"op":"first","n":1},{"op":"call","method":"Open","args":[{"lit":2}]}]})J", true);
     check(r.ok && w.Doors[0]->Opened == 2, "call validator: accepted call runs");
+
+    // aggregates count error values as ignored (only null / missing are skipped silently)
+    r = run(e, R"J({"rql":"0.1","source":{"path":["w","Bodies"]},"stages":[{"op":"sum","expr":{"op":"/","args":[{"path":["Mass"]},{"lit":0}]}}]})J");
+    check(r.ok && r.value.as_number() == 0 && has_diag(r, "type-mismatch", rql::Severity::Warning, &n) && n == 1 &&
+              r.diagnostics[0].message.find("(first: error(div-by-zero))") != std::string::npos,
+          "aggregate: error values are counted as ignored");
+
+    // inherited methods keep their validator, upcast to a base at a non-zero offset
+    {
+        rql::TypeRegistry reg2;
+        reg2.object<PDoor>("PDoor")
+            .member("Id", &PDoor::Id)
+            .member("Locked", &PDoor::Locked)
+            .member("Opened", &PDoor::Opened)
+            .method("Open", &PDoor::Open, {"force"})
+            .validate_call([](PDoor& d, const std::vector<rql::Value>&) -> std::string { return d.Locked ? "locked" : ""; });
+        reg2.object<PBigDoor>("PBigDoor").base<PDoor>();
+        reg2.object<PBigWorld>("PBigWorld").member("Doors", &PBigWorld::Doors);
+        PBigWorld bw;
+        for (int i = 1; i <= 2; ++i) {
+            auto d = std::make_unique<PBigDoor>();
+            d->Id = i;
+            d->Locked = i == 2;
+            bw.Doors.push_back(std::move(d));
+        }
+        rql::Engine e2(reg2);
+        e2.add_object_source("w", &bw);
+        e2.mutations().enabled = true;
+        r = run(e2, R"J({"rql":"0.1","source":{"path":["w","Doors"]},"stages":[{"op":"call","method":"Open","args":[{"lit":1}]}]})J", true);
+        check(!r.ok && first_code(r) == "invalid-value" && bw.Doors[0]->Opened == 0 && bw.Doors[1]->Opened == 0,
+              "call validator: inherited through base<B>() at a non-zero offset");
+        r = run(e2, R"J({"rql":"0.1","source":{"path":["w","Doors"]},"stages":[{"op":"first","n":1},{"op":"call","method":"Open","args":[{"lit":3}]}]})J", true);
+        check(r.ok && bw.Doors[0]->Opened == 3, "call validator: inherited validator accepts the unlocked door");
+    }
 }
 
 }  // namespace

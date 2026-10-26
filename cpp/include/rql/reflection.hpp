@@ -644,6 +644,10 @@ public:
             MethodDescriptor c = m;
             auto inv = m.invoke;
             c.invoke = [inv, up](void* self, const std::vector<Value>& a) { return inv(up(self), a); };
+            if (m.validate) {
+                CallValidator val = m.validate;
+                c.validate = [val, up](void* self, const std::vector<Value>& a) { return val(up(self), a); };
+            }
             d_->methods.push_back(std::move(c));
         }
         if (!d_->id_explicit) { d_->id_name = b->id_name; d_->id_explicit = b->id_explicit; }

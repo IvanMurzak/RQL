@@ -11593,6 +11593,99 @@
           }
         ]
       }
+    },
+    {
+      "name": "warn-sum-error-values",
+      "rql": "g.Nodes | sum (Value / 0)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "sum",
+            "expr": {
+              "op": "/",
+              "args": [
+                {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                {
+                  "lit": 0
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 0,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "type-mismatch"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dotted-column-empty-stream",
+      "rql": "g.Empty | select Parent.Name | sort Parent.Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Empty"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Parent.Name",
+                "expr": {
+                  "path": [
+                    "Parent",
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "sort",
+            "keys": [
+              {
+                "expr": {
+                  "path": [
+                    "Parent",
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Parent.Name"
+        ],
+        "rows": [],
+        "total": 0
+      }
     }
   ]
 }

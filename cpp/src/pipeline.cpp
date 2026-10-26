@@ -946,7 +946,12 @@ void add_warnings(Exec& x, QueryResult& r, bool only_general) {
             }
             for (auto& st : x.plan.stages)
                 if (st.kind == StageKind::Select)
-                    for (auto& f : st.fields) known.push_back(f.name);
+                    for (auto& f : st.fields) {
+                        known.push_back(f.name);
+                        // select Owner.Label | sort Owner.Label navigates no Owner (the dotted path names the column)
+                        size_t dot = f.name.find('.');
+                        if (dot != std::string::npos && dot > 0) known.push_back(f.name.substr(0, dot));
+                    }
         }
         bool is_known = false;
         for (auto& k : known)
