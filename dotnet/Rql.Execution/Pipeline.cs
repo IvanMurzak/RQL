@@ -54,6 +54,8 @@ namespace Rql.Execution
                 result = QueryResult.Fail(_x.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error && d.Code != ex.Code));
                 result.Diagnostics.Insert(0, ex.ToDiagnostic());
                 AddWarnings(result, onlyGeneral: true);
+                // A warning that the failure repeats (a throwing source function warns, then fails with the same detail) is dropped.
+                result.Diagnostics.RemoveAll(d => d.Severity == DiagnosticSeverity.Warning && d.Code == ex.Code && ex.Message.Contains(d.Message));
                 return result;
             }
             if (_x.Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error))
@@ -113,7 +115,7 @@ namespace Rql.Execution
                 var close = Suggest.Closest(site.Name, candidates, 3);
                 string hint = close.Count > 0
                     ? "did you mean " + string.Join(" / ", close) + "?"
-                    : (candidates.Count > 0 ? "members: " + string.Join(" ", candidates.Take(24)) : "");
+                    : (candidates.Count > 0 ? Suggest.MemberList(candidates) : "");
                 if (close.Count == 0 && char.IsUpper(site.Name[0]))
                     hint += (hint.Length > 0 ? "; " : "") + $"if '{site.Name}' is a value, quote it: \"{site.Name}\"";
                 result.Diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, "unknown-member",
@@ -125,7 +127,13 @@ namespace Rql.Execution
         {
             var names = new HashSet<string>(_x.Engine.KnownMemberNames(), StringComparer.OrdinalIgnoreCase);
             foreach (var st in _x.Plan.Stages)
-                if (st is SelectStage sel) foreach (var f in sel.Fields) names.Add(f.Name);
+                if (st is SelectStage sel)
+                    foreach (var f in sel.Fields)
+                    {
+                        names.Add(f.Name);
+                        int dot = f.Name.IndexOf('.');
+                        if (dot > 0) names.Add(f.Name.Substring(0, dot)); // select Owner.Label | sort Owner.Label navigates no Owner
+                    }
             return names;
         }
 
@@ -207,6 +215,9 @@ namespace Rql.Execution
         private QueryResult RunCore()
         {
             var plan = _x.Plan;
+            if (_x.Options.AllowMutation && (plan.Stages.Count == 0 || !plan.Stages[plan.Stages.Count - 1].IsMutation))
+                throw new RqlException("invalid-plan", "a mutation request must end with a set or call stage; nothing was changed", null,
+                    "add '| set Member = value' or '| call Method(...)', or use the query tool to read");
             // Pre-compile all stages (binding errors surface before any traversal).
             var source = CompileSource(plan.Source);
             IEnumerable<Item> stream = source;
@@ -240,7 +251,7 @@ namespace Rql.Execution
                 {
                     var sel = _c.Compile(e.Expr!);
                     var values = Values(stream, sel);
-                    var r = Compiler.Reduce(_x.Types, values, e.Op);
+                    var r = Compiler.Reduce(_x, values, e.Op);
                     var res = new QueryResult { Ok = true, Kind = ResultKind.Scalar, HasValue = true, Value = encoder.Encode(r) };
                     return res;
                 }
@@ -818,7 +829,10 @@ namespace Rql.Execution
         }
     }
 
-    /// <summary>Equality for distinct/group-by: numbers numerically, strings ordinal, enums by name, objects by identity.</summary>
+    /// <summary>
+    /// Equality for distinct/group-by: numbers numerically, strings ordinal, enums by name, projected rows by their column
+    /// values, structs by value, objects by identity.
+    /// </summary>
     internal sealed class DistinctComparer : IEqualityComparer<object?>
     {
         public static readonly DistinctComparer Instance = new DistinctComparer();
@@ -830,6 +844,13 @@ namespace Rql.Execution
             if (a is Enum && b is Enum) return a.Equals(b);
             if (V.IsString(a) && V.IsString(b)) return V.AsString(a) == V.AsString(b);
             if (a is bool ba && b is bool bb) return ba == bb;
+            if (a is RowValue ra && b is RowValue rb)
+            {
+                if (ra.Values.Length != rb.Values.Length) return false;
+                for (int i = 0; i < ra.Values.Length; i++)
+                    if (!Equals(ra.Values[i], rb.Values[i])) return false;
+                return true;
+            }
             if (a.GetType().IsValueType && a.GetType() == b.GetType()) return a.Equals(b);
             return ReferenceEquals(a, b);
         }
@@ -839,31 +860,60 @@ namespace Rql.Execution
             if (o == null) return 0;
             if (V.TryNumber(o, out var d)) return d.GetHashCode();
             if (V.IsString(o)) return V.AsString(o).GetHashCode();
+            if (o is RowValue row)
+            {
+                int h = row.Values.Length;
+                foreach (var v in row.Values) h = unchecked(h * 31 + GetHashCode(v));
+                return h;
+            }
             if (o.GetType().IsValueType) return o.GetHashCode();
             return System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o);
         }
     }
 
+    /// <summary>"Did you mean" suggestions and capped member listings (spec §10).</summary>
     internal static class Suggest
     {
+        /// <summary>Members listed by a hint when no suggestion qualifies.</summary>
+        public const int MaxListed = 12;
+
         public static List<string> Closest(string name, IReadOnlyCollection<string> candidates, int max)
         {
             var lower = name.ToLowerInvariant();
+            int limit = Math.Max(1, name.Length / 3);
             return candidates
-                .Select(c => (c, d: Distance(lower, c.ToLowerInvariant()), sub: c.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf(c, StringComparison.OrdinalIgnoreCase) >= 0))
-                .Where(t => t.sub || t.d <= Math.Max(1, name.Length / 3))
+                .Select(c => (c, d: Distance(lower, c.ToLowerInvariant()), sub: Contains(name, c)))
+                .Where(t => t.sub || t.d <= limit)
                 .OrderBy(t => t.sub ? 0 : 1).ThenBy(t => t.d).ThenBy(t => t.c, StringComparer.Ordinal)
                 .Select(t => t.c).Distinct().Take(max).ToList();
         }
 
-        private static int Distance(string a, string b)
+        /// <summary>
+        /// Containment that signals a typo or a partial name: the candidate contains the name (at least 3 characters), or the
+        /// name contains a candidate at least half its length (so "NoSuchType" does not suggest "Type").
+        /// </summary>
+        private static bool Contains(string name, string candidate) =>
+            (name.Length >= 3 && candidate.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0)
+            || (candidate.Length * 2 >= name.Length && name.IndexOf(candidate, StringComparison.OrdinalIgnoreCase) >= 0);
+
+        /// <summary>"members: a b c … (N more)" with at most <see cref="MaxListed"/> names.</summary>
+        public static string MemberList(IReadOnlyCollection<string> names) =>
+            "members: " + string.Join(" ", names.Take(MaxListed)) + (names.Count > MaxListed ? $" … ({names.Count - MaxListed} more)" : "");
+
+        /// <summary>Optimal string alignment distance: Levenshtein plus adjacent transpositions at cost 1 ("Lable" → "Label" = 1).</summary>
+        internal static int Distance(string a, string b)
         {
             var d = new int[a.Length + 1, b.Length + 1];
             for (int i = 0; i <= a.Length; i++) d[i, 0] = i;
             for (int j = 0; j <= b.Length; j++) d[0, j] = j;
             for (int i = 1; i <= a.Length; i++)
             for (int j = 1; j <= b.Length; j++)
-                d[i, j] = Math.Min(Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1), d[i - 1, j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1));
+            {
+                int cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                int v = Math.Min(Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1), d[i - 1, j - 1] + cost);
+                if (i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1]) v = Math.Min(v, d[i - 2, j - 2] + 1);
+                d[i, j] = v;
+            }
             return d[a.Length, b.Length];
         }
     }

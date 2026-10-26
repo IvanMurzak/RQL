@@ -178,7 +178,7 @@ namespace Rql.Tests
             e.Mutations.Committed = recs => throw new InvalidOperationException("dirty failed");
             var warned = e.Execute("s.Renderers | set sharedMaterial.color = \"pink\"", options: Mutate);
             Assert.True(warned.Ok);
-            Assert.Contains(warned.Diagnostics, d => d.Code == "getter-threw" && d.Message.Contains("dirty failed"));
+            Assert.Contains(warned.Diagnostics, d => d.Code == "hook-threw" && d.Message.Contains("dirty failed"));
             Assert.Equal("pink", s.Renderers[0].First.color);
         }
 
@@ -217,7 +217,7 @@ namespace Rql.Tests
             e.Mutations.Enabled = true;
             e.AddAdapter(new ShaderMap());
             var r = e.Execute("sh | set Floats[\"_New\"] = 1", options: Mutate);
-            Assert.Equal("coercion-failed", r.Diagnostics[0].Code);
+            Assert.Equal("invalid-value", r.Diagnostics[0].Code);
             Assert.Contains("no entry '_New'", r.Diagnostics[0].Message);
         }
 

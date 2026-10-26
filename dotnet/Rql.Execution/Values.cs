@@ -172,17 +172,28 @@ namespace Rql.Execution
         /// </summary>
         public static string FormatNumber(double d)
         {
-            var s = d.ToString("G15", CultureInfo.InvariantCulture);
-            return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var back) && back.Equals(d)
-                ? s : d.ToString("G17", CultureInfo.InvariantCulture);
+            string s = "";
+            for (int p = 15; p <= 17; p++)
+            {
+                s = d.ToString("G" + p, CultureInfo.InvariantCulture);
+                if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var back) && back.Equals(d)) break;
+            }
+            return s;
         }
 
-        /// <summary>Shortest text that parses back to the same float (0.1f prints as 0.1, not 0.100000001).</summary>
+        /// <summary>
+        /// Shortest text that parses back to the same float: 0.1f prints as 0.1 (not 0.100000001) and (float)Math.PI / 2 as
+        /// 1.5707964 (not 1.57079637). Fewer than 6 digits never need a separate try: rounding to 6 digits already drops them.
+        /// </summary>
         public static string FormatNumber(float f)
         {
-            var s = f.ToString("G7", CultureInfo.InvariantCulture);
-            return float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var back) && back.Equals(f)
-                ? s : f.ToString("G9", CultureInfo.InvariantCulture);
+            string s = "";
+            for (int p = 6; p <= 9; p++)
+            {
+                s = f.ToString("G" + p, CultureInfo.InvariantCulture);
+                if (float.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var back) && back.Equals(f)) break;
+            }
+            return s;
         }
     }
 

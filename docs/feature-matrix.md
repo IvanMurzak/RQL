@@ -22,11 +22,13 @@ by design, ADR-0003). Details: [TypeScript](feature-matrix-typescript.md), [C++]
 | `describe` / schema | ✅ full | names differ (not in fixtures) | minimal |
 | Top-N `sort | first n` fusion, allocation-optimized recurse | ✅ | — (full sort, same results) | — |
 | Extension sources/functions/stages | ✅ (lazy) | ✅ | ✅ (stages materialize input) |
-| Host function as query source (`ns.fn(…) \| …`, spec §2) | ✅ | — pending | — pending |
+| Host function as query source (`ns.fn(…) \| …`, spec §2) | ✅ | — pending | ✅ (0.2.0) |
 | Adapter kernel, `IRqlModule` modules, module guides (`AddGuide`) | ✅ | — pending | — pending |
 | `TreatAsObject` (enumerable types read as objects) | ✅ | — pending (no enumerable ambiguity in TS) | — pending |
 | `MutationRecord.Owners` (enclosing-object chain for host undo) | ✅ | — pending | — pending |
 | Copy-on-read write-back through objects inside the copy | ✅ | — pending | — pending |
 | Error-cell messages in the agent table format (`CellErrors`, not in JSON) | ✅ | — pending | — pending |
-| `NumericTupleAdapter<T>` (vector-like struct literals) | ✅ | — pending | — pending |
+| `NumericTupleAdapter<T>` (vector-like struct literals; tidy display, `nan`/`inf` input, object-literal equality) | ✅ | — pending | — pending |
+| Agent table format (display numbers, raw-Unicode quoting; spec §6) | ✅ `AgentFormat` | — (JSON only) | — (JSON only; Unreal-MCP renders with the .NET sidecar) |
+| `sqrt` / `pow` / `min(a, b, …)` / `max(a, b, …)`, OSA suggestions, dotted projected columns, `invalid-regex`, aggregate warnings, row `distinct`, `call-threw` / `function-threw` / `hook-threw`, read-back receipts, mutation request needs `set`/`call`, `invalid-value` (0.2.0) | ✅ | ✅ (no regex timeout warning: JS regexes have no per-match timeout; `function-threw` as a query source pending with function sources) | ✅ |
 | AOT-safe accessor mode | ✅ `AccessorMode.Reflection` | n/a | n/a |

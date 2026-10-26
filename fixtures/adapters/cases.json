@@ -14,7 +14,7 @@
     "Node": {
       "members": "virtual member `childCount` (int, read-only) = Children count; virtual writable member `title` (string): get = Name upper-cased (ASCII), set = Name := value lower-cased (ASCII); validation rejects an empty string with reason \"title must not be empty\" (before any write); the setter itself THROWS \"node 3 is locked\" when the node's Id is 3 (exercises rollback); member `Note` is HIDDEN; member `Children` is EXPLICIT-ONLY (generic recurse does not follow it); virtual map `stats` (map<string, number>): keys = Props keys in order, get = Props[key], set = Props[key] := value, validation rejects a key not in Props with reason \"unknown stat '<key>'\" and a negative value with \"stats must be non-negative\"; read-only virtual map `labels` (map<string, string>): keys \"name\", \"kind\" -> Name, Kind (enum name); virtual member `tagsCopy` (list<string>): get = a NEW copy of Tags, set = Tags := value, marked COPY-ON-READ; mixed-type virtual map `fields`: keys \"Name\", \"Value\", \"Enabled\" with entry types string / double / bool, get/set the corresponding member",
       "describe": "Node: a conformance graph node",
-      "methods": "callable `bump(number by = 1)`: Value += by, returns the new Value; callable `greet(string who)`: returns \"hi <who>, I am <Name>\", no state change",
+      "methods": "callable `bump(number by = 1)`: Value += by, returns the new Value; its VALIDATOR rejects by < 0 with reason \"by must be non-negative\" and the node with Id 5 with \"node 5 is frozen\"; callable `greet(string who)`: returns \"hi <who>, I am <Name>\", no state change; callable `fail(string why)`: always THROWS with message <why> (call-threw)",
       "liveness": "IsAlive = Tags does not contain \"destroyed\" (destroyed nodes read as null)"
     },
     "Special": {
@@ -1101,7 +1101,7 @@
             "Node#5",
             "title",
             "ROOT-B",
-            "First Child"
+            "FIRST CHILD"
           ]
         ],
         "total": 1
@@ -1196,7 +1196,7 @@
         "diagnostics": [
           {
             "severity": "error",
-            "code": "coercion-failed"
+            "code": "invalid-value"
           }
         ]
       },
@@ -1872,6 +1872,7 @@
             ],
             "methods": [
               "bump(double by) — Value += by; returns the new Value",
+              "fail(string why) — always throws (call-threw)",
               "greet(string who) — a greeting (no state change)"
             ]
           }
@@ -2232,7 +2233,7 @@
         "diagnostics": [
           {
             "severity": "error",
-            "code": "coercion-failed"
+            "code": "invalid-value"
           }
         ]
       },
@@ -2322,7 +2323,7 @@
         "diagnostics": [
           {
             "severity": "error",
-            "code": "coercion-failed"
+            "code": "invalid-value"
           }
         ]
       },
@@ -2497,7 +2498,7 @@
         "diagnostics": [
           {
             "severity": "error",
-            "code": "coercion-failed"
+            "code": "invalid-value"
           }
         ]
       },
@@ -3975,6 +3976,163 @@
           ]
         ],
         "total": 2
+      }
+    },
+    {
+      "name": "adapt-err-call-threw",
+      "rql": "ref(\"Node#8\") | call fail(\"boom\")",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "fail",
+            "args": [
+              {
+                "lit": "boom"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "call-threw"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-call-validate-dry-run",
+      "rql": "ref(\"Node#8\") | call bump(-1)",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "args": [
+              {
+                "lit": -1
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-value"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-call-validate-atomic",
+      "rql": "g.Nodes | call bump(1)",
+      "then": "g.Nodes | select Value",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "args": [
+              {
+                "lit": 1
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-value"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Value"
+        ],
+        "rows": [
+          [
+            10
+          ],
+          [
+            7
+          ],
+          [
+            3
+          ]
+        ],
+        "total": 3
       }
     }
   ]

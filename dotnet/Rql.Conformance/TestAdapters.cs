@@ -112,6 +112,7 @@ namespace Rql.Conformance
                         description: "Props as a validated map")
                     .Map("labels", n => Labels, (n, k) => k == "name" ? n.Name : n.Kind.ToString(), description: "read-only labels")
                     .Function<string, string>("greet", (n, who) => "hi " + who + ", I am " + n.Name, "who", "a greeting (no state change)")
+                    .Function<string, string>("fail", (n, why) => throw new InvalidOperationException(why), "why", "always throws (call-threw)")
                     .Add("tagsCopy", n => new List<string>(n.Tags), (n, v) => n.Tags = v, description: "a copy of Tags (copy-on-read)")
                     .CopyOnRead("tagsCopy")
                     .Untyped.AddMixedMap("fields", n => FieldNames, (n, k) => FieldType(k),
@@ -119,7 +120,8 @@ namespace Rql.Conformance
                         (n, k, v) => { var node = (Node)n; if (k == "Name") node.Name = (string)v!; else if (k == "Value") node.Value = (double)v!; else node.Enabled = (bool)v!; },
                         description: "Name / Value / Enabled with per-key types")
                     .AddMethod("bump", new[] { new CallableParameter("by", typeof(double), true, 1.0) }, typeof(double),
-                        (o, args) => { var n = (Node)o; n.Value += (double)args[0]!; return n.Value; }, "Value += by; returns the new Value");
+                        (o, args) => { var n = (Node)o; n.Value += (double)args[0]!; return n.Value; }, "Value += by; returns the new Value",
+                        (o, args) => (double)args[0]! < 0 ? "by must be non-negative" : ((Node)o).Id == 5 ? "node 5 is frozen" : null);
 
             private static readonly string[] Labels = { "name", "kind" };
             private static readonly string[] FieldNames = { "Name", "Value", "Enabled" };

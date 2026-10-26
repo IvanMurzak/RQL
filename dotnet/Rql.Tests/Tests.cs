@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 using Rql.Conformance;
@@ -439,6 +440,191 @@ namespace Rql.Tests
             var r = Engine(new GuardHost()).Execute("h | select x=Free");
             Assert.True(r.Ok);
             Assert.NotNull(AgentFormat.Render(r, OutputFormat.Table));
+        }
+    }
+
+    // Live-battery findings (Unreal / Unity / Godot, 0.2.0).
+    public class BatteryFindingTests
+    {
+        public sealed class Light { public string Label { get; set; } = ""; public float Intensity { get; set; } public string Text { get; set; } = ""; public Light? Parent { get; set; } }
+
+        public sealed class Body
+        {
+            private float _mass = 1;
+            public string Name { get; set; } = "";
+            /// <summary>Clamps like Unity's Rigidbody.mass.</summary>
+            public float Mass { get => _mass; set => _mass = value < 1e-7f ? 1e-7f : value; }
+            public string Tag { get; set; } = "Player";
+        }
+
+        private static RqlEngine Engine(out List<Light> lights, out List<Body> bodies)
+        {
+            var ls = lights = new List<Light> { new Light { Label = "Lamp", Intensity = 2 }, new Light { Label = "Sun", Intensity = 10 } };
+            ls[0].Parent = ls[1];
+            ls[1].Parent = ls[0];
+            var bs = bodies = new List<Body> { new Body { Name = "Crate" } };
+            var e = new RqlEngine().AddSource("lights", () => ls).AddSource("bodies", () => bs);
+            e.Mutations.Enabled = true;
+            return e;
+        }
+
+        private static readonly QueryOptions Mutate = new QueryOptions { AllowMutation = true };
+
+        [Theory]
+        [InlineData("Lable", new[] { "Label", "Labels" }, "Label")]          // adjacent transposition costs 1
+        [InlineData("Intensty", new[] { "Intensity", "Label" }, "Intensity")]
+        [InlineData("LabelText", new[] { "Label" }, "Label")]                // contains a candidate at least half its length
+        public void SuggestionsFindTranspositions(string name, string[] candidates, string first)
+        {
+            var close = Suggest.Closest(name, candidates, 3);
+            Assert.Equal(first, close.First());
+        }
+
+        [Fact]
+        public void SuggestionsSkipFarCandidates()
+        {
+            Assert.DoesNotContain("Type", Suggest.Closest("NoSuchType", new[] { "Type", "Transform" }, 3));
+            Assert.Equal(1, Suggest.Distance("lable", "label"));
+            Assert.Equal(3, Suggest.Distance("ca", "abc")); // optimal string alignment (unrestricted Damerau would say 2)
+        }
+
+        [Fact]
+        public void UnknownMemberHintSuggestsTheTransposedName()
+        {
+            var e = Engine(out _, out _);
+            var r = e.Execute("lights | where Lable == \"Lamp\"");
+            var d = r.Diagnostics.Single(x => x.Code == "unknown-member");
+            Assert.Equal("did you mean Label?", d.Hint);
+        }
+
+        [Fact]
+        public void MemberListingsAreCapped()
+        {
+            var names = Enumerable.Range(0, 40).Select(i => "Member" + i).ToList();
+            var hint = Suggest.MemberList(names);
+            Assert.Equal(Suggest.MaxListed, hint.Substring("members: ".Length).Split(' ').TakeWhile(w => w != "…").Count());
+            Assert.EndsWith("… (28 more)", hint);
+        }
+
+        [Fact]
+        public void SortAfterSelectByDottedColumnHasNoWarning()
+        {
+            var e = Engine(out _, out _);
+            var r = e.Execute("lights | select Parent.Label Label | sort Parent.Label desc");
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Empty(r.Diagnostics);
+            Assert.Equal("Lamp", r.Rows![0][1]!.GetValue<string>());
+        }
+
+        [Fact]
+        public void MathFunctions()
+        {
+            var e = Engine(out _, out _);
+            var r = e.Execute("lights | select d=(sqrt(Intensity)) p=(pow(Intensity, 2)) m=(max(Intensity, 5)) n=(min(Intensity, 5, 3))");
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal("[[1.4142135623730951,4,5,2],[3.1622776601683795,100,10,3]]", new JsonArray(r.Rows!.Select(row => (JsonNode)new JsonArray(row.Select(c => c?.DeepClone()).ToArray())).ToArray()).ToJsonString());
+        }
+
+        [Fact]
+        public void ReceiptReportsTheValueReadBack()
+        {
+            var e = Engine(out _, out var bodies);
+            var r = e.Execute("bodies | set Mass = -1", options: Mutate);
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal(1e-7f, bodies[0].Mass);
+            Assert.Equal(1e-7, r.Rows![0][3]!.GetValue<double>(), 12);
+            var dry = e.Execute("bodies | set Mass = -5", options: new QueryOptions { AllowMutation = true, DryRun = true });
+            Assert.Equal("-5", dry.Rows![0][3]!.ToJsonString()); // dry run: the planned value
+        }
+
+        [Fact]
+        public void MutationRequestNeedsSetOrCall()
+        {
+            var e = Engine(out _, out _);
+            var r = e.Execute("bodies | select Name", options: Mutate);
+            Assert.False(r.Ok);
+            Assert.Equal("invalid-plan", r.Diagnostics[0].Code);
+        }
+
+        [Fact]
+        public void ThrowingExtensionFunctionIsFunctionThrew()
+        {
+            var e = Engine(out _, out _);
+            e.AddFunction("app.find", args => throw new System.ArgumentException("no such object"));
+            var r = e.Execute("lights | select f=(app.find(Label))");
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal("function-threw", r.Rows![0][0]!["$error"]!.GetValue<string>());
+            Assert.Single(r.Diagnostics, d => d.Code == "function-threw" && d.Message.Contains("no such object"));
+            var source = e.Execute("app.find(\"x\") | count");
+            Assert.False(source.Ok);
+            Assert.Equal("function-threw", source.Diagnostics.Single().Code);
+        }
+
+        [Fact]
+        public void TableShowsDisplayNumbersAndRawUnicode()
+        {
+            var e = Engine(out var lights, out _);
+            lights[0].Text = "Привет \"мир\" 🎮\nline2";
+            var r = e.Execute("lights | where Label == \"Lamp\" | select x=(0.1 + 0.2) Text");
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal("1 result\nx|Text\n0.3|\"Привет \\\"мир\\\" 🎮\\nline2\"", AgentFormat.Render(r, OutputFormat.Table));
+            Assert.Contains("0.30000000000000004", r.ToJson(includeStats: false)); // the JSON form stays exact
+        }
+
+        public sealed class Door
+        {
+            public string Name { get; set; } = "";
+            public bool Locked { get; set; }
+            public int Opened { get; private set; }
+            [RqlCallable] public void Open(int force) => Opened += force;
+            /// <summary>Companion validator of Open (spec §8): runs for every target before the first call.</summary>
+            public string? ValidateOpen(int force) => Locked ? $"{Name} is locked" : force > 10 ? "too much force" : null;
+        }
+
+        [Fact]
+        public void CallValidatorsMakeCallsAllOrNothing()
+        {
+            var doors = new List<Door> { new Door { Name = "front" }, new Door { Name = "back", Locked = true } };
+            var e = new RqlEngine().AddSource("doors", () => doors);
+            e.Mutations.Enabled = true;
+            var refused = e.Execute("doors | call Open(1)", options: Mutate);
+            Assert.False(refused.Ok);
+            Assert.Equal("invalid-value", refused.Diagnostics[0].Code);
+            Assert.Contains("back is locked", refused.Diagnostics[0].Message);
+            Assert.All(doors, d => Assert.Equal(0, d.Opened));   // nothing was called, not even the first door
+            var dry = e.Execute("doors | where Name == \"front\" | call Open(20)", options: new QueryOptions { AllowMutation = true, DryRun = true });
+            Assert.Equal("invalid-value", dry.Diagnostics[0].Code);           // a dry run reports the refusal
+            Assert.True(e.Execute("doors | where Name == \"front\" | call Open(2)", options: Mutate).Ok);
+            Assert.Equal(2, doors[0].Opened);
+        }
+
+        [Fact]
+        public void AggregatesReportErrorValuesTheyIgnore()
+        {
+            var e = Engine(out _, out _);
+            var r = e.Execute("lights | sum (Intensity / 0)");
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Contains(r.Diagnostics, d => d.Code == "type-mismatch" && d.Message.Contains("ignored 2"));
+        }
+
+        [Fact]
+        public void DottedColumnOnEmptyStreamIsNotAnUnknownMember()
+        {
+            var e = Engine(out _, out _);
+            e.AddSource("nothing", () => new List<Body>());
+            var r = e.Execute("nothing | select Owner.Label | sort Owner.Label");
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.DoesNotContain(r.Diagnostics, d => d.Code == "unknown-member");
+        }
+
+        [Fact]
+        public void InvalidLiteralRegexFailsBeforeRunning()
+        {
+            var e = Engine(out _, out _);
+            var r = e.Execute("lights | where Label matches \"([\" | count");
+            Assert.False(r.Ok);
+            Assert.Equal("invalid-regex", r.Diagnostics[0].Code);
+            Assert.Contains("([", r.Diagnostics[0].Message);
         }
     }
 }

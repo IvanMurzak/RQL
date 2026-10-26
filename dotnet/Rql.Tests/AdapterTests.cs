@@ -180,8 +180,9 @@ namespace Rql.Tests
             var (e, _, renderer) = Unity();
             var bad = e.Execute("scene.Objects | get Components | where $ is RendererLike | set SharedMaterial.glossiness = 2", options: new QueryOptions { AllowMutation = true });
             Assert.False(bad.Ok);
-            Assert.Equal("coercion-failed", bad.Diagnostics[0].Code);
+            Assert.Equal("invalid-value", bad.Diagnostics[0].Code);
             Assert.Contains("within [0, 1]", bad.Diagnostics[0].Message);
+            Assert.Contains("invalid value 2 for", bad.Diagnostics[0].Message); // the value as written, not its CLR type
             Assert.Equal(0.5, renderer.SharedMaterial.Floats["_Glossiness"]);
 
             var ok = e.Execute("scene.Objects | get Components | where $ is RendererLike | set SharedMaterial.glossiness = 0.25", options: new QueryOptions { AllowMutation = true });
@@ -414,7 +415,7 @@ namespace Rql.Tests
             Assert.Equal(0.25f, mat.GetFloat("_Glossiness"));
 
             var invalid = e.Execute("u.Materials | set floats[\"_Glossiness\"] = 3", options: new QueryOptions { AllowMutation = true });
-            Assert.Equal("coercion-failed", invalid.Diagnostics[0].Code);
+            Assert.Equal("invalid-value", invalid.Diagnostics[0].Code);
             Assert.Contains("within [0, 1]", invalid.Diagnostics[0].Message);
             var unknown = e.Execute("u.Materials | set floats[\"_Nope\"] = 0.1", options: new QueryOptions { AllowMutation = true });
             Assert.Contains("no entry '_Nope'", unknown.Diagnostics[0].Message); // virtual maps only take existing keys

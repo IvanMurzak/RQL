@@ -69,7 +69,32 @@ namespace Rql.Execution
         // Inside {…} / […] a string is also quoted when it holds a separator or a space, so the value reads back unambiguously
         // ({description:"List tools, filter by name"} rather than {description:List tools, filter by name}).
         // Agent-facing text, not HTML: '+', '<', '&' and non-ASCII stay as they are inside quotes.
-        private static readonly JsonSerializerOptions Readable = new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+        /// <summary>
+        /// A JSON string literal that escapes only what JSON requires (<c>"</c>, <c>\</c>, control characters) and keeps every
+        /// other character raw, emoji included (System.Text.Json's encoders escape non-BMP characters as surrogate pairs).
+        /// </summary>
+        internal static string Quote(string s)
+        {
+            var sb = new StringBuilder(s.Length + 2).Append('"');
+            foreach (var c in s)
+            {
+                switch (c)
+                {
+                    case '"': sb.Append("\\\""); break;
+                    case '\\': sb.Append("\\\\"); break;
+                    case '\n': sb.Append("\\n"); break;
+                    case '\r': sb.Append("\\r"); break;
+                    case '\t': sb.Append("\\t"); break;
+                    case '\b': sb.Append("\\b"); break;
+                    case '\f': sb.Append("\\f"); break;
+                    default:
+                        if (c < ' ') sb.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
+                        else sb.Append(c);
+                        break;
+                }
+            }
+            return sb.Append('"').ToString();
+        }
 
         private static readonly char[] NestedSeparators = { ',', ':', '{', '}', '[', ']', '"', ' ', '\t' };
 
@@ -82,8 +107,12 @@ namespace Rql.Execution
                     if (v.TryGetValue<string>(out var s))
                         return s.Length == 0 || s.IndexOfAny(new[] { '|', '\n', '\r' }) >= 0 || s == "null" || s.Trim() != s
                                || (nested && (s.IndexOfAny(NestedSeparators) >= 0 || s == "true" || s == "false" || LooksNumeric(s)))
-                            ? JsonSerializer.Serialize(s, Readable) : s;
-                    return v.ToJsonString();
+                            ? Quote(s) : s;
+                    var json = v.ToJsonString();
+                    // Display numbers (spec §6): fractional values with at most 15 significant digits (0.1 + 0.2 → 0.3).
+                    return json.Length > 0 && (json[0] == '-' || char.IsDigit(json[0])) && json.IndexOfAny(FractionMarks) >= 0
+                           && double.TryParse(json, NumberStyles.Float, CultureInfo.InvariantCulture, out var d)
+                        ? FormatNumber(d) : json;
                 case JsonObject o when o["$ref"] is JsonValue rv && rv.TryGetValue<string>(out var r):
                     return o.TryGetPropertyValue("name", out var name) && name is JsonValue nv && nv.TryGetValue<string>(out var ns) ? r + "(" + ns + ")" : r;
                 case JsonObject o when o["$error"] is JsonValue ev && ev.TryGetValue<string>(out var code):
@@ -102,7 +131,7 @@ namespace Rql.Execution
         {
             bool plain = key.Length > 0 && (char.IsLetter(key[0]) || key[0] == '_' || key[0] == '$');
             for (int i = 1; plain && i < key.Length; i++) plain = char.IsLetterOrDigit(key[i]) || key[i] == '_' || key[i] == '$';
-            return plain ? key : JsonSerializer.Serialize(key, Readable);
+            return plain ? key : Quote(key);
         }
 
         private static bool LooksNumeric(string s) =>
@@ -211,6 +240,9 @@ namespace Rql.Execution
         private static IEnumerable<string> AllMemberNames(JsonObject t) =>
             ((JsonArray)t["members"]!).Select(m => ((JsonObject)m!)["name"]!.GetValue<string>());
 
-        public static string FormatNumber(double d) => d.ToString("R", CultureInfo.InvariantCulture);
+        private static readonly char[] FractionMarks = { '.', 'e', 'E' };
+
+        /// <summary>A display number (spec §6): at most 15 significant digits; NaN / Infinity / -Infinity as such.</summary>
+        public static string FormatNumber(double d) => d.ToString("G15", CultureInfo.InvariantCulture);
     }
 }

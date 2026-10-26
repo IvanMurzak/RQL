@@ -29,10 +29,10 @@ namespace Rql.Execution
         private readonly Func<object, object?[], object?> _invoke;
 
         public CallableMethod(string name, IReadOnlyList<CallableParameter> parameters, Type returnType,
-            Func<object, object?[], object?> invoke, string? description = null)
+            Func<object, object?[], object?> invoke, string? description = null, Func<object, object?[], string?>? validate = null)
         {
             if (string.IsNullOrEmpty(name)) throw new ArgumentException("method name required", nameof(name));
-            Name = name; Parameters = parameters; ReturnType = returnType; _invoke = invoke; Description = description;
+            Name = name; Parameters = parameters; ReturnType = returnType; _invoke = invoke; Description = description; Validate = validate;
         }
 
         public string Name { get; }
@@ -40,6 +40,13 @@ namespace Rql.Execution
         /// <summary><c>typeof(void)</c> for methods without a result.</summary>
         public Type ReturnType { get; }
         public string? Description { get; }
+
+        /// <summary>
+        /// Optional check of a planned call (target, coerced arguments): the rejection reason, or null. The <c>call</c> stage runs
+        /// it for every target before the first call, on dry runs too, so a call that would fail is refused with nothing called
+        /// (spec §8).
+        /// </summary>
+        public Func<object, object?[], string?>? Validate { get; }
 
         public string Signature =>
             Name + "(" + string.Join(", ", Parameters.Select(p => TypeModel.FriendlyName(p.Type) + " " + p.Name)) + ")";
@@ -53,14 +60,23 @@ namespace Rql.Execution
 
         internal static CallableMethod FromReflection(MethodInfo m, string? description)
         {
-            var ps = m.GetParameters()
+            var pis = m.GetParameters();
+            var ps = pis
                 .Select(p => new CallableParameter(p.Name ?? "arg", p.ParameterType, p.HasDefaultValue, p.HasDefaultValue ? p.DefaultValue : null))
                 .ToArray();
-            return new CallableMethod(m.Name, ps, m.ReturnType, (target, args) =>
-            {
-                try { return m.Invoke(target, args); }
-                catch (TargetInvocationException ex) when (ex.InnerException != null) { throw ex.InnerException; }
-            }, description);
+            // Companion validator: a public instance method Validate<Name> with the same parameter types returning string.
+            var types = pis.Select(p => p.ParameterType).ToArray();
+            var companion = m.ReflectedType?.GetMethod("Validate" + m.Name, BindingFlags.Public | BindingFlags.Instance, null, types, null);
+            Func<object, object?[], string?>? validate = companion != null && companion.ReturnType == typeof(string)
+                ? (target, args) => (string?)InvokeUnwrapped(companion, target, args)
+                : (Func<object, object?[], string?>?)null;
+            return new CallableMethod(m.Name, ps, m.ReturnType, (target, args) => InvokeUnwrapped(m, target, args), description, validate);
+        }
+
+        private static object? InvokeUnwrapped(MethodInfo m, object target, object?[] args)
+        {
+            try { return m.Invoke(target, args); }
+            catch (TargetInvocationException ex) when (ex.InnerException != null) { throw ex.InnerException; }
         }
     }
 

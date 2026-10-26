@@ -8,10 +8,11 @@ using System.Text.RegularExpressions;
 namespace Rql.Execution
 {
     /// <summary>
-    /// Ready-made adapter (spec §13) for small numeric structs such as vectors, quaternions and colors: compact
-    /// <c>"(x, y, z)"</c> output; input as <c>"(x, y, z)"</c> or <c>[x, y, z]</c> (elements coerced by the kernel); object
-    /// literals <c>{x: 1, y: 2}</c> are left to the default construction; component-wise approximate equality.
-    /// Subclasses supply the components and the constructor.
+    /// Ready-made adapter (spec §13 "Numeric tuples") for small numeric structs such as vectors, quaternions and colors:
+    /// compact display text <c>"(x, y, z)"</c> (at most 6 significant digits, float noise below 1e-6 as 0); input as
+    /// <c>"(x, y, z)"</c> (also <c>nan</c> / <c>inf</c>) or <c>[x, y, z]</c> (elements coerced by the kernel); object literals
+    /// <c>{x: 1, y: 2}</c> are left to the default construction on writes; component-wise approximate equality with the
+    /// text, list and object-literal forms. Subclasses supply the components and the constructor.
     /// </summary>
     public abstract class NumericTupleAdapter<T> : RqlTypeAdapter<T> where T : struct
     {
@@ -42,8 +43,20 @@ namespace Rql.Execution
         /// <summary>Human text for "expected …" reasons.</summary>
         protected abstract string Expected { get; }
 
-        /// <summary>Largest per-component difference that still counts as equal.</summary>
+        /// <summary>
+        /// Largest per-component difference that still counts as equal near zero; for larger components the tolerance is
+        /// relative (<see cref="RelativeTolerance"/> of the larger magnitude), so a displayed value equals its source.
+        /// </summary>
         protected virtual float Tolerance => 1e-5f;
+
+        /// <summary>Relative per-component tolerance (spec §13: 1e-5).</summary>
+        protected const double RelativeTolerance = 1e-5;
+
+        /// <summary>Display format: 6 significant digits for single-precision components (spec §13).</summary>
+        private const string DisplayFormat = "G6";
+
+        /// <summary>Components smaller than this print as 0 (float noise such as cos(90°) = -4.371139E-08).</summary>
+        protected const double DisplayZero = 1e-6;
 
         /// <summary>Extra textual forms (e.g. "#rrggbb" for colors); null = not this form.</summary>
         protected virtual T? ParseExtra(string text) => null;
@@ -54,7 +67,7 @@ namespace Rql.Execution
             for (int i = 0; i < Width; i++)
             {
                 if (i > 0) sb.Append(", ");
-                sb.Append(V.FormatNumber(Part(value, i)));
+                sb.Append(FormatComponent(Part(value, i)));
             }
             return JsonValue.Create(sb.Append(')').ToString());
         }
@@ -69,12 +82,60 @@ namespace Rql.Execution
             return AdapterOutcome.Failed;
         }
 
+        /// <summary>One component of the display text (spec §13): NaN / Infinity / -Infinity, noise as 0, 6 significant digits.</summary>
+        public static string FormatComponent(float f)
+        {
+            if (float.IsNaN(f)) return "NaN";
+            if (float.IsInfinity(f)) return f > 0 ? "Infinity" : "-Infinity";
+            if (Math.Abs(f) < DisplayZero) return "0";
+            return ((double)f).ToString(DisplayFormat, CultureInfo.InvariantCulture);
+        }
+
         protected override bool? Equal(T value, object? other, RqlKernel kernel)
         {
-            if (!TryParse(other, kernel, out var o)) return null;
-            // Written as !(d <= tol) so a NaN component is unequal to everything (NaN > tol is false).
+            T o;
+            bool literal = other is ObjectValue;
+            if (literal)
+            {
+                if (!TryApply(value, (ObjectValue)other!, kernel, out o)) return null;
+            }
+            else if (!TryParse(other, kernel, out o)) return null;
             for (int i = 0; i < Width; i++)
-                if (!(Math.Abs(Part(value, i) - Part(o, i)) <= Tolerance)) return false;
+            {
+                double a = Part(value, i), b = Part(o, i);
+                // A member the literal leaves out keeps the value's own bits: it is not compared (NaN / infinity included).
+                if (literal && BitConverter.DoubleToInt64Bits(a) == BitConverter.DoubleToInt64Bits(b)) continue;
+                // Infinities are equal only to themselves (a relative tolerance of infinity would match everything).
+                if (double.IsInfinity(a) || double.IsInfinity(b))
+                {
+                    if (a != b) return false;
+                    continue;
+                }
+                double tolerance = Math.Max(Tolerance, RelativeTolerance * Math.Max(Math.Abs(a), Math.Abs(b)));
+                // Written as !(d <= tol) so a NaN component is unequal to everything (NaN > tol is false).
+                if (!(Math.Abs(a - b) <= tolerance)) return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// <paramref name="value"/> with the members an object literal names (case-insensitively) replaced by its values, so
+        /// <c>Position == {x: 0, y: 3}</c> tests x and y only. False when a key is not a writable member or a value does not
+        /// coerce to the member type (the comparison is then unknown).
+        /// </summary>
+        private static bool TryApply(T value, ObjectValue literal, RqlKernel kernel, out T result)
+        {
+            result = value;
+            object boxed = value;
+            var info = kernel.Types.Info(typeof(T));
+            foreach (var kv in literal)
+            {
+                var m = info.Find(kv.Key);
+                if (m == null || !m.CanWrite || !kernel.TryCoerce(kv.Value, m.Type, out var coerced, out _)) return false;
+                try { m.SetValue(boxed, coerced); }
+                catch (Exception ex) when (!(ex is OutOfMemoryException)) { return false; }
+            }
+            result = (T)boxed;
             return true;
         }
 
@@ -111,8 +172,24 @@ namespace Rql.Execution
             var parts = m.Groups[1].Value.Split(',');
             var numbers = new float[parts.Length];
             for (int i = 0; i < parts.Length; i++)
-                if (!float.TryParse(parts[i].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out numbers[i])) return false;
+                if (!TryParseComponent(parts[i].Trim(), out numbers[i])) return false;
             return Build(numbers, out result);
+        }
+
+        /// <summary>A number, or nan / inf / infinity with an optional sign in any letter case (every printed form parses back).</summary>
+        private static bool TryParseComponent(string text, out float value)
+        {
+            if (float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value)) return true;
+            bool signed = text.Length > 0 && (text[0] == '+' || text[0] == '-');
+            bool negative = signed && text[0] == '-';
+            var body = signed ? text.Substring(1) : text;
+            if (string.Equals(body, "nan", StringComparison.OrdinalIgnoreCase)) { value = float.NaN; return true; }
+            if (string.Equals(body, "inf", StringComparison.OrdinalIgnoreCase) || string.Equals(body, "infinity", StringComparison.OrdinalIgnoreCase))
+            {
+                value = negative ? float.NegativeInfinity : float.PositiveInfinity;
+                return true;
+            }
+            return false;
         }
 
         private bool TryParseList(IList<object?> list, RqlKernel kernel, out T result)

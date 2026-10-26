@@ -10794,6 +10794,898 @@
         ],
         "total": 1
       }
+    },
+    {
+      "name": "math-functions",
+      "rql": "g.Nodes | select Name s=(sqrt(Value)) p=(pow(Value, 2)) lo=(min(Value, 5)) hi=(max(Value, 5, 8))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "s",
+                "expr": {
+                  "call": "sqrt",
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "p",
+                "expr": {
+                  "call": "pow",
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "lo",
+                "expr": {
+                  "call": "min",
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    },
+                    {
+                      "lit": 5
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "hi",
+                "expr": {
+                  "call": "max",
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    },
+                    {
+                      "lit": 5
+                    },
+                    {
+                      "lit": 8
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "s",
+          "p",
+          "lo",
+          "hi"
+        ],
+        "rows": [
+          [
+            "root-a",
+            3.1622776601683795,
+            100,
+            5,
+            10
+          ],
+          [
+            "root-b",
+            2.6457513110645907,
+            49,
+            5,
+            8
+          ],
+          [
+            "lonely",
+            1.7320508075688772,
+            9,
+            3,
+            8
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "math-sqrt-negative-nan",
+      "rql": "g.Nodes[0].Children | select Name s=(sqrt(Value))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes",
+            {
+              "index": 0
+            },
+            "Children"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "s",
+                "expr": {
+                  "call": "sqrt",
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "s"
+        ],
+        "rows": [
+          [
+            "a-1",
+            1.5811388300841898
+          ],
+          [
+            "a-2",
+            "NaN"
+          ]
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "math-function-absent-and-errors",
+      "rql": "g | select a=(sqrt(Name)) b=(min(1, Nothing)) c=(pow(2, Nothing))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "call": "sqrt",
+                  "args": [
+                    {
+                      "path": [
+                        "Name"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "call": "min",
+                  "args": [
+                    {
+                      "lit": 1
+                    },
+                    {
+                      "path": [
+                        "Nothing"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "c",
+                "expr": {
+                  "call": "pow",
+                  "args": [
+                    {
+                      "lit": 2
+                    },
+                    {
+                      "path": [
+                        "Nothing"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "a",
+          "b",
+          "c"
+        ],
+        "rows": [
+          [
+            {
+              "$error": "type-mismatch"
+            },
+            null,
+            null
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "err-min-function-arity",
+      "rql": "g | select a=(min(1))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "call": "min",
+                  "args": [
+                    {
+                      "lit": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "arity"
+          }
+        ]
+      }
+    },
+    {
+      "name": "sort-dotted-column",
+      "rql": "g.Nodes | get Children | select Parent.Name Name | sort Parent.Name desc, Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Children"
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Parent.Name",
+                "expr": {
+                  "path": [
+                    "Parent",
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "sort",
+            "keys": [
+              {
+                "expr": {
+                  "path": [
+                    "Parent",
+                    "Name"
+                  ]
+                },
+                "desc": true
+              },
+              {
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Parent.Name",
+          "Name"
+        ],
+        "rows": [
+          [
+            "root-b",
+            "B-2"
+          ],
+          [
+            "root-b",
+            "b-1"
+          ],
+          [
+            "root-a",
+            "a-1"
+          ],
+          [
+            "root-a",
+            "a-2"
+          ]
+        ],
+        "total": 4
+      }
+    },
+    {
+      "name": "where-dotted-column",
+      "rql": "g.Nodes | get Children | select Parent.Name Name | where Parent.Name == \"root-b\"",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Children"
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Parent.Name",
+                "expr": {
+                  "path": [
+                    "Parent",
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Parent",
+                    "Name"
+                  ]
+                },
+                {
+                  "lit": "root-b"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Parent.Name",
+          "Name"
+        ],
+        "rows": [
+          [
+            "root-b",
+            "b-1"
+          ],
+          [
+            "root-b",
+            "B-2"
+          ]
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "distinct-rows",
+      "rql": "g.Nodes | recurse Children | select Kind | distinct",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Kind",
+                "expr": {
+                  "path": [
+                    "Kind"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "distinct"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Kind"
+        ],
+        "rows": [
+          [
+            "Alpha"
+          ],
+          [
+            "Beta"
+          ],
+          [
+            "Gamma"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "warn-sum-non-numeric",
+      "rql": "g.Nodes | sum Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "sum",
+            "expr": {
+              "path": [
+                "Name"
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 0,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "type-mismatch"
+          }
+        ]
+      }
+    },
+    {
+      "name": "warn-max-not-comparable",
+      "rql": "g.Nodes | max Enabled",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "max",
+            "expr": {
+              "path": [
+                "Enabled"
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": null,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "type-mismatch"
+          }
+        ]
+      }
+    },
+    {
+      "name": "warn-sum-method-non-numeric",
+      "rql": "g | select s=(Nodes.sum(Name))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "s",
+                "expr": {
+                  "call": "sum",
+                  "on": {
+                    "path": [
+                      "Nodes"
+                    ]
+                  },
+                  "args": [
+                    {
+                      "path": [
+                        "Name"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "s"
+        ],
+        "rows": [
+          [
+            0
+          ]
+        ],
+        "total": 1,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "type-mismatch"
+          }
+        ]
+      }
+    },
+    {
+      "name": "err-invalid-regex-literal",
+      "rql": "g.Nodes | where Name matches \"([\" | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "matches",
+              "args": [
+                {
+                  "path": [
+                    "Name"
+                  ]
+                },
+                {
+                  "lit": "(["
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-regex"
+          }
+        ]
+      }
+    },
+    {
+      "name": "warn-invalid-regex-computed",
+      "rql": "g.Nodes | where Name matches (Name + \"[\") | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "matches",
+              "args": [
+                {
+                  "path": [
+                    "Name"
+                  ]
+                },
+                {
+                  "op": "+",
+                  "args": [
+                    {
+                      "path": [
+                        "Name"
+                      ]
+                    },
+                    {
+                      "lit": "["
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 0,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "invalid-regex"
+          }
+        ]
+      }
+    },
+    {
+      "name": "err-mutation-request-without-mutation",
+      "rql": "g.Nodes | count",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-plan"
+          }
+        ]
+      }
+    },
+    {
+      "name": "warn-sum-error-values",
+      "rql": "g.Nodes | sum (Value / 0)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "sum",
+            "expr": {
+              "op": "/",
+              "args": [
+                {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                {
+                  "lit": 0
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 0,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "type-mismatch"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dotted-column-empty-stream",
+      "rql": "g.Empty | select Parent.Name | sort Parent.Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Empty"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Parent.Name",
+                "expr": {
+                  "path": [
+                    "Parent",
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "sort",
+            "keys": [
+              {
+                "expr": {
+                  "path": [
+                    "Parent",
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Parent.Name"
+        ],
+        "rows": [],
+        "total": 0
+      }
     }
   ]
 }

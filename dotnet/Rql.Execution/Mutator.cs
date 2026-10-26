@@ -75,7 +75,7 @@ namespace Rql.Execution
             catch (Exception ex) when (!(ex is OutOfMemoryException))
             {
                 if (veto) throw new RqlException("permission-denied", $"the host rejected the change before anything was written: {ex.Message}");
-                _x.Diagnostics.Add(Diagnostic.Warning("getter-threw", $"host commit hook threw {ex.GetType().Name}: {ex.Message}; the writes were applied"));
+                _x.Diagnostics.Add(Diagnostic.Warning("hook-threw", $"host commit hook threw {ex.GetType().Name}: {ex.Message}; the writes were applied"));
             }
         }
 
@@ -105,7 +105,7 @@ namespace Rql.Execution
                     if (!Coerce.TryTo(_x.Kernel, nv, slot.Type, out var coerced, out var why))
                         throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' ({TypeModel.FriendlyName(slot.Type)}): {why}");
                     if (slot.Validate(container, coerced) is string rejected)
-                        throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' on {_x.Engine.RefOf(item)}: {rejected}");
+                        throw new RqlException("invalid-value", $"invalid value {ValueText(nv)} for '{label}' on {_x.Engine.RefOf(item)}: {rejected}");
                     writes.Add(new PlannedWrite { Item = item, Segments = target.Segments, Label = label, Old = SafeGet(slot, container, label), New = coerced, Owner = owner, Owners = owners });
                 }
             }
@@ -136,6 +136,9 @@ namespace Rql.Execution
                     if (!selfRestored) rolled += $"; restoring '{writes[applied].Label}' itself also failed, so it may be partially modified";
                     throw new RqlException("coercion-failed", $"write '{writes[applied].Label}' failed ({inner.Message}); {rolled}");
                 }
+                // The receipt (and the committed hook) report what the host stored, which a setter may have clamped (spec §8).
+                foreach (var w in writes) w.New = ReadBack(w);
+                if (HooksOn) records = Records(writes);
             }
 
             RunHook(_x.Engine.Mutations.Committed, records, veto: false);
@@ -144,6 +147,39 @@ namespace Rql.Execution
             r.DryRun = _x.Options.DryRun;
             return r;
         }
+
+        /// <summary>The written member's value after the writes; the planned value (plus a warning) when it cannot be read.</summary>
+        private object? ReadBack(PlannedWrite w)
+        {
+            try
+            {
+                object cur = w.Item;
+                for (int i = 0; ; i++)
+                {
+                    var slot = SlotOf(cur, w.Segments[i], w.Label);
+                    var v = slot.Get(cur);
+                    if (i == w.Segments.Count - 1) return v;
+                    if (v == null || v is Missing) return w.New;
+                    cur = v;
+                }
+            }
+            catch (Exception ex) when (!(ex is OutOfMemoryException))
+            {
+                var inner = ex is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
+                _x.WarnOnce("getter-threw", $"reading back '{w.Label}' after the write failed ({inner.GetType().Name}: {inner.Message}); the receipt shows the planned value", "read-back");
+                return w.New;
+            }
+        }
+
+        /// <summary>A value as the query wrote it (99, "Tag", true), for invalid-value messages; other kinds by description.</summary>
+        private static string ValueText(object? v) => v switch
+        {
+            null => "null",
+            string s => "\"" + s + "\"",
+            bool b => b ? "true" : "false",
+            _ when V.TryNumber(v, out var d) => V.FormatNumber(d),
+            _ => V.Describe(v),
+        };
 
         private static string Label(PathExpr p) =>
             string.Concat(p.Segments.Select((s, i) => s.Kind == SegmentKind.Member ? (i == 0 ? "" : ".") + s.Name : s.ToString()));
@@ -251,7 +287,7 @@ namespace Rql.Execution
             {
                 var close = Suggest.Closest(name, info.Members.Select(mm => mm.Name).ToList(), 3);
                 throw new RqlException("unknown-member", $"no member '{name}' on {info.ShortName}", null,
-                    close.Count > 0 ? "did you mean " + string.Join(" / ", close) + "?" : "members: " + string.Join(" ", info.Members.Select(mm => mm.Name)));
+                    close.Count > 0 ? "did you mean " + string.Join(" / ", close) + "?" : Suggest.MemberList(info.Members.Select(mm => mm.Name).ToList()));
             }
             return new MemberSlot(container.GetType(), m);
         }
@@ -399,6 +435,15 @@ namespace Rql.Execution
                 if (chosen == null)
                     throw new RqlException("coercion-failed", $"cannot call {s.Method} on {_x.Engine.RefOf(item)}: {why}", null,
                         "signature: " + string.Join(", ", candidates.Select(m => m.Signature)));
+                // The method's own check, for every target before the first call (and on dry runs): all-or-nothing (spec §8).
+                if (chosen.Validate != null)
+                {
+                    string? rejected;
+                    try { rejected = chosen.Validate(item, coerced!); }
+                    catch (Exception ex) when (!(ex is OutOfMemoryException)) { rejected = $"its check threw {ex.GetType().Name}: {ex.Message}"; }
+                    if (rejected != null)
+                        throw new RqlException("invalid-value", $"cannot call {chosen.Signature} on {_x.Engine.RefOf(item)}: {rejected}; nothing was called");
+                }
                 planned.Add((item, chosen, coerced!));
             }
 
@@ -422,7 +467,7 @@ namespace Rql.Execution
                         // Completed calls are not rolled back, so the host still learns about them.
                         int completed = done;
                         RunHook(_x.Engine.Mutations.Committed, callRecords.Take(completed).ToList(), veto: false);
-                        throw new RqlException("getter-threw", $"{method.Name} on {_x.Engine.RefOf(item)} threw {ex.GetType().Name}: {ex.Message}; {done} earlier call(s) completed and are NOT rolled back");
+                        throw new RqlException("call-threw", $"{method.Name} on {_x.Engine.RefOf(item)} threw {ex.GetType().Name}: {ex.Message}; {done} earlier call(s) completed and are NOT rolled back");
                     }
                 }
                 done++;

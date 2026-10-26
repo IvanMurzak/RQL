@@ -35,8 +35,8 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
             "  get <path>                         replace each item by a member (lists are flattened)\n" +
             "  recurse children [max-depth=N] [include-self=false]   walk the hierarchy (input items included by default)\n" +
             "  distinct [expr] | group-by expr | sum expr | min expr | max expr | avg expr\n" +
-            "Expressions: == != < <= > >= and or not + - * / %; contains, starts-with, ends-with (case-insensitive); " +
-            "matches \"regex\"; x in [a, b]; x is null; x is not null; $ is Light (includes subclasses); has(member). " +
+            "Expressions: == != < <= > >= and or not + - * / %; contains, starts-with, ends-with, matches \"regex\" (all case-insensitive); " +
+            "x in [a, b]; x is null; x is not null; $ is Light (includes subclasses); has(member); functions abs round floor ceil sqrt pow min(a, b) max(a, b) len lower upper coalesce. " +
             "Literals: numbers, \"strings\", true/false/null, lists [a, b], objects {x: 1, y: 2}.\n" +
             "Paths: a.b.c, list[0], map[\"key\"]; .member on a list maps over its elements. List methods: .any(pred) .all(pred) " +
             ".count([pred]) .sum(e) .min(e) .max(e) .first([pred]); inside them bare names refer to the element, falling back to the outer item.\n" +

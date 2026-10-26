@@ -101,10 +101,10 @@ test('uniforms as a validated virtual map: read, filter, write, validate, read-o
   assert.deepEqual(meshes.map((m) => m.material.uniforms.uOpacity!.value), [0.25, 0.25]);
 
   const bad = e.execute('ref("ShaderMaterial#mat1") | set u["uOpacity"] = 2', {}, mut);
-  assert.equal(bad.diagnostics[0]?.code, 'coercion-failed');
+  assert.equal(bad.diagnostics[0]?.code, 'invalid-value');
   assert.ok(bad.diagnostics[0]!.message.includes('uOpacity must be in [0, 1]'));
   // uTime exists only on mat1: the whole set is rejected before any write.
-  assert.equal(e.execute('meshes | get material | set u["uTime"] = 5', {}, mut).diagnostics[0]?.code, 'coercion-failed');
+  assert.equal(e.execute('meshes | get material | set u["uTime"] = 5', {}, mut).diagnostics[0]?.code, 'invalid-value');
   assert.equal(meshes[0]!.material.uniforms.uTime!.value, 0);
   assert.equal(e.execute('meshes | get material | set u["uOpacity"] = "high"', {}, mut).diagnostics[0]?.code, 'coercion-failed');
   assert.equal(e.execute('ref("ShaderMaterial#mat1") | set info["uuid"] = "x"', {}, mut).diagnostics[0]?.code, 'readonly-member');

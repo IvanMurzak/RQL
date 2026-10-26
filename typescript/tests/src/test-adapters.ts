@@ -81,6 +81,15 @@ export const nodeAdapter: TypeAdapter<Node> = {
       .map<string>('labels', { keys: () => LABELS, get: (n, k) => (k === 'name' ? n.Name : NodeKind[n.Kind]) }, t.string, 'read-only labels')
       .method('greet', [{ name: 'who', type: t.string }], t.string, (n, who: string) => `hi ${who}, I am ${n.Name}`, 'a greeting (no state change)')
       .method(
+        'fail',
+        [{ name: 'why', type: t.string }],
+        t.string,
+        (_n, why: string): string => {
+          throw new Error(why);
+        },
+        'always throws (call-threw)',
+      )
+      .method(
         'bump',
         [{ name: 'by', type: t.number, default: 1 }],
         t.number,
@@ -89,6 +98,7 @@ export const nodeAdapter: TypeAdapter<Node> = {
           return n.Value;
         },
         'Value += by; returns the new Value',
+        (n, by: number) => (by < 0 ? 'by must be non-negative' : n.Id === 5 ? 'node 5 is frozen' : undefined),
       )
       .add<string[]>('tagsCopy', {
         type: t.list(t.string),

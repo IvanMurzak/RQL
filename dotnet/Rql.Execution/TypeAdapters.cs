@@ -181,8 +181,8 @@ namespace Rql.Execution
 
         /// <summary>Add a callable method from parts; parameters may carry defaults.</summary>
         public MemberTable AddMethod(string name, IReadOnlyList<CallableParameter> parameters, Type returnType,
-            Func<object, object?[], object?> invoke, string? description = null) =>
-            AddMethod(new CallableMethod(name, parameters, returnType, invoke, description));
+            Func<object, object?[], object?> invoke, string? description = null, Func<object, object?[], string?>? validate = null) =>
+            AddMethod(new CallableMethod(name, parameters, returnType, invoke, description, validate));
 
         /// <summary>
         /// Make existing public instance CLR methods callable by name (all non-generic overloads) without
@@ -382,29 +382,39 @@ namespace Rql.Execution
         public MemberTable<T> Expose(string name, string? description = null) { Untyped.Expose(name, description); return this; }
         public MemberTable<T> HideMethods(params string[] names) { Untyped.HideMethods(names); return this; }
 
+        // Every Method / Function takes an optional validate: the rejection reason for a planned call (target, arguments), or
+        // null. It runs for every target before the first call, on dry runs too (spec §8).
+
         /// <summary>A callable method without result.</summary>
-        public MemberTable<T> Method(string name, Action<T> body, string? description = null) =>
-            Add(name, typeof(void), (o, a) => { body((T)o); return null; }, description);
+        public MemberTable<T> Method(string name, Action<T> body, string? description = null, Func<T, string?>? validate = null) =>
+            Add(name, typeof(void), (o, a) => { body((T)o); return null; }, description,
+                validate == null ? null : (o, a) => validate((T)o));
 
-        public MemberTable<T> Method<A>(string name, Action<T, A> body, string p1, string? description = null) =>
-            Add(name, typeof(void), (o, a) => { body((T)o, (A)a[0]!); return null; }, description, (p1, typeof(A)));
+        public MemberTable<T> Method<A>(string name, Action<T, A> body, string p1, string? description = null, Func<T, A, string?>? validate = null) =>
+            Add(name, typeof(void), (o, a) => { body((T)o, (A)a[0]!); return null; }, description,
+                validate == null ? null : (o, a) => validate((T)o, (A)a[0]!), (p1, typeof(A)));
 
-        public MemberTable<T> Method<A, B>(string name, Action<T, A, B> body, string p1, string p2, string? description = null) =>
-            Add(name, typeof(void), (o, a) => { body((T)o, (A)a[0]!, (B)a[1]!); return null; }, description, (p1, typeof(A)), (p2, typeof(B)));
+        public MemberTable<T> Method<A, B>(string name, Action<T, A, B> body, string p1, string p2, string? description = null, Func<T, A, B, string?>? validate = null) =>
+            Add(name, typeof(void), (o, a) => { body((T)o, (A)a[0]!, (B)a[1]!); return null; }, description,
+                validate == null ? null : (o, a) => validate((T)o, (A)a[0]!, (B)a[1]!), (p1, typeof(A)), (p2, typeof(B)));
 
         /// <summary>A callable method with a result (returned in the <c>call</c> receipt).</summary>
-        public MemberTable<T> Function<R>(string name, Func<T, R> body, string? description = null) =>
-            Add(name, typeof(R), (o, a) => body((T)o), description);
+        public MemberTable<T> Function<R>(string name, Func<T, R> body, string? description = null, Func<T, string?>? validate = null) =>
+            Add(name, typeof(R), (o, a) => body((T)o), description,
+                validate == null ? null : (o, a) => validate((T)o));
 
-        public MemberTable<T> Function<A, R>(string name, Func<T, A, R> body, string p1, string? description = null) =>
-            Add(name, typeof(R), (o, a) => body((T)o, (A)a[0]!), description, (p1, typeof(A)));
+        public MemberTable<T> Function<A, R>(string name, Func<T, A, R> body, string p1, string? description = null, Func<T, A, string?>? validate = null) =>
+            Add(name, typeof(R), (o, a) => body((T)o, (A)a[0]!), description,
+                validate == null ? null : (o, a) => validate((T)o, (A)a[0]!), (p1, typeof(A)));
 
-        public MemberTable<T> Function<A, B, R>(string name, Func<T, A, B, R> body, string p1, string p2, string? description = null) =>
-            Add(name, typeof(R), (o, a) => body((T)o, (A)a[0]!, (B)a[1]!), description, (p1, typeof(A)), (p2, typeof(B)));
+        public MemberTable<T> Function<A, B, R>(string name, Func<T, A, B, R> body, string p1, string p2, string? description = null, Func<T, A, B, string?>? validate = null) =>
+            Add(name, typeof(R), (o, a) => body((T)o, (A)a[0]!, (B)a[1]!), description,
+                validate == null ? null : (o, a) => validate((T)o, (A)a[0]!, (B)a[1]!), (p1, typeof(A)), (p2, typeof(B)));
 
-        private MemberTable<T> Add(string name, Type returns, Func<object, object?[], object?> invoke, string? description, params (string name, Type type)[] ps)
+        private MemberTable<T> Add(string name, Type returns, Func<object, object?[], object?> invoke, string? description,
+            Func<object, object?[], string?>? validate, params (string name, Type type)[] ps)
         {
-            Untyped.AddMethod(name, ps.Select(p => new CallableParameter(p.name, p.type)).ToArray(), returns, invoke, description);
+            Untyped.AddMethod(name, ps.Select(p => new CallableParameter(p.name, p.type)).ToArray(), returns, invoke, description, validate);
             return this;
         }
 

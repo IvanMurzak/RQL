@@ -32,3 +32,12 @@
   Adapters (§13): methods, virtual (and mixed-type) maps, copy-on-read and writes-through write-back, predicate hiding
   and type exclusion, destroyed objects read as null, identity/display choice, literal schemas, host write hooks with
   owners — closing the ReflectorNet / Unity-MCP converter parity gaps (docs/type-adapters.md).
+* Live-battery fixes (Unreal / Unity / Godot; package 0.2.0, protocol stays `0.1`; additive or clarifying): functions
+  `sqrt`, `pow`, `min(a, b, …)`, `max(a, b, …)` (§4.3); suggestions use optimal-string-alignment distance and a tighter
+  containment rule, member listings are capped (§10); a dotted path naming a projected column resolves to it (§3); a
+  mutation request without `set` / `call` is `invalid-plan` (§8); receipts report the read-back `new` value (§8);
+  codes `call-threw`, `function-threw`, `hook-threw` (all formerly `getter-threw`), `invalid-value` (validator
+  rejections, formerly `coercion-failed`) and `invalid-regex` (§4.1, §10, §13) — **behaviour change for clients that
+  match on codes**: those cases no longer report `getter-threw` / `coercion-failed`; `call` validators checked for every target before the first call (§8);
+  aggregates warn about ignored values (§4.3); `distinct` compares projected rows by value (§5); display numbers and
+  non-finite encoding (§6); numeric tuple display, input and object-literal equality (§13).

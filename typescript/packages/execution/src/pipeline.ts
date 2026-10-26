@@ -26,7 +26,7 @@ import { Encoder } from './encoder.js';
 import type { ArgEvaluator, SourceRegistration } from './engine.js';
 import { PathNode, type Exec } from './exec.js';
 import { Mutator } from './mutator.js';
-import { closest } from './suggest.js';
+import { closest, memberList } from './suggest.js';
 import { EnumType, EnumValue, unwrapNullable, type TypeInfo } from './types.js';
 import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, isAbsent, toNumber } from './values.js';
 
@@ -57,6 +57,8 @@ export class Pipeline {
       const fail = failResult(x.diagnostics.filter((d) => d.severity === 'error' && d.code !== e.code));
       fail.diagnostics.unshift(e.toDiagnostic());
       this.addWarnings(fail, true);
+      // A warning that the failure repeats (a throwing source function warns, then fails with the same detail) is dropped.
+      fail.diagnostics = fail.diagnostics.filter((d) => d.severity !== 'warning' || d.code !== e.code || !e.message.includes(d.message));
       return fail;
     }
     const errors = x.diagnostics.filter((d) => d.severity === 'error');
@@ -126,7 +128,7 @@ export class Pipeline {
       const typeNames = [...new Set(types.map((t) => t.shortName))].slice(0, 4).join(', ');
       const candidates = [...new Set(types.flatMap((t) => t.members.map((m) => m.name)))];
       const close = closest(site.name, candidates, 3);
-      let hint = close.length > 0 ? `did you mean ${close.join(' / ')}?` : candidates.length > 0 ? 'members: ' + candidates.slice(0, 24).join(' ') : '';
+      let hint = close.length > 0 ? `did you mean ${close.join(' / ')}?` : candidates.length > 0 ? memberList(candidates) : '';
       if (close.length === 0 && /^\p{Lu}/u.test(site.name)) {
         hint += (hint.length > 0 ? '; ' : '') + `if '${site.name}' is a value, quote it: "${site.name}"`;
       }
@@ -138,7 +140,12 @@ export class Pipeline {
   private knownNames(): ReadonlyMap<string, string> {
     const names = new Map(this.x.engine.knownMemberNames());
     for (const st of this.x.plan.stages) {
-      if (st.kind === 'select') for (const f of st.fields) if (!names.has(f.name.toUpperCase())) names.set(f.name.toUpperCase(), f.name);
+      if (st.kind !== 'select') continue;
+      for (const f of st.fields) {
+        // `select Owner.Label | sort Owner.Label` names the column and navigates no Owner.
+        const dot = f.name.indexOf('.');
+        for (const n of dot > 0 ? [f.name, f.name.slice(0, dot)] : [f.name]) if (!names.has(n.toUpperCase())) names.set(n.toUpperCase(), n);
+      }
     }
     return names;
   }
@@ -179,6 +186,15 @@ export class Pipeline {
   private runCore(): QueryResult {
     const x = this.x;
     const plan = x.plan;
+    const last = plan.stages[plan.stages.length - 1];
+    if (x.options.allowMutation && last?.kind !== 'set' && last?.kind !== 'call') {
+      throw new RqlError(
+        'invalid-plan',
+        'a mutation request must end with a set or call stage; nothing was changed',
+        undefined,
+        "add '| set Member = value' or '| call Method(...)', or use the query tool to read",
+      );
+    }
     let stream: Iterable<Item> = this.compileSource(plan.source);
     let terminal: Stage | undefined;
     for (const st of plan.stages) {
@@ -201,7 +217,7 @@ export class Pipeline {
       }
       case 'expr': {
         const sel = this.c.compile(terminal.expr!);
-        const r = reduce(x.types, this.values(stream, sel), terminal.op);
+        const r = reduce(x, this.values(stream, sel), terminal.op);
         return { ok: true, kind: 'scalar', value: encoder.encode(r), diagnostics: [], stats: { visited: 0, membersRead: 0, elapsedMs: 0 } };
       }
       case 'set':
@@ -675,6 +691,30 @@ function compareSortKeys(x: Exec, a: unknown, b: unknown, desc: boolean): number
 const enumIds = new WeakMap<object, number>();
 let nextEnumId = 0;
 
+/** Stable identity numbers for values compared by identity inside composite (row / struct) keys. */
+const objectIds = new WeakMap<object, number>();
+const otherIds = new Map<unknown, number>(); // symbols and other non-object identities (rare)
+let nextObjectId = 0;
+function identityId(v: unknown): number {
+  const weak = (typeof v === 'object' && v !== null) || typeof v === 'function';
+  let id = weak ? objectIds.get(v as object) : otherIds.get(v);
+  if (id === undefined) {
+    id = nextObjectId++;
+    if (weak) objectIds.set(v as object, id);
+    else otherIds.set(v, id);
+  }
+  return id;
+}
+
+/**
+ * One component of a composite key: string keys quoted (so a separator inside a value cannot merge two keys),
+ * identity-compared values by a stable id.
+ */
+function keyPart(x: Exec, v: unknown): string {
+  const k = distinctKey(x, v);
+  return typeof k === 'string' ? JSON.stringify(k) : 'o:' + String(identityId(k));
+}
+
 /**
  * Key for distinct/group-by equality: numbers numerically, strings ordinally, enums by type+value,
  * structs member-wise, objects by identity (the object itself is the key).
@@ -691,15 +731,14 @@ export function distinctKey(x: Exec, v: unknown): unknown {
     return `e:${id}:${typeof v.value}:${String(v.value)}`;
   }
   if (v instanceof Date) return 't:' + String(v.getTime());
+  if (v instanceof RowValue) {
+    // Projected rows compare by their column values (spec §5), each with the same equality.
+    return `r:[${v.values.map((cv) => keyPart(x, cv)).join(',')}]`;
+  }
   if (typeof v === 'object') {
     const info = x.types.infoOf(v);
     if (info.kind === 'struct') {
-      const parts = info.implicitMembersOf(v).map((m) => {
-        const mv = m.get(v);
-        const k = distinctKey(x, mv);
-        return typeof k === 'string' ? k : '#';
-      });
-      return `v:${info.shortName}(${parts.join(',')})`;
+      return `v:${JSON.stringify(info.shortName)}(${info.implicitMembersOf(v).map((m) => keyPart(x, m.get(v))).join(',')})`;
     }
     return v;
   }
