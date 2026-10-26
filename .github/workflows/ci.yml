@@ -39,12 +39,13 @@ jobs:
       - run: echo "::error::PRs from forks are not tested here; push the change to a branch of this repo." && exit 1
 
   test-all:
-    # Capability labels only, no machine name; a runner-manager policy serving RQL must route self-hosted, linux, x64.
+    # Any self-hosted runner of this repo, no machine name: the job is portable (Linux x64 on ANASTASIIA's WSL, macOS
+    # arm64 on the Mac mini); every runner-manager policy serving RQL routes `self-hosted`.
     # Fork PRs skip cleanly here. This is NOT the security boundary (a fork PR runs its own copy of this file):
     # the repo setting "Require approval for all external contributors" is what keeps fork code off our runners
     # (settable only once the repo is public: set it right after the visibility flip).
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, linux, x64]
+    runs-on: [self-hosted]
     timeout-minutes: 30
     env:
       # runner-manager's sandboxed runners are root without CAP_CHOWN: tool archives must not restore owners.
