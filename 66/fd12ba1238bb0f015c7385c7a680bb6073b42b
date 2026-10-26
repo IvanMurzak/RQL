@@ -1,0 +1,188 @@
+docs/feature-matrix-cpp.md
+  s_7bc72ecaebd05d::t_b7f0c2e4a76c47 12,17
+cpp/src/exec.hpp
+  s_7bc72ecaebd05d::t_cb69b71b8b9d97 12,157-162,210-211,216,249-255,274
+typescript/packages/execution/src/pipeline.ts
+  s_7bc72ecaebd05d::t_d3558e03647261 689-697
+  s_7bc72ecaebd05d::t_11b7c9d424dfc1 718-719
+  s_7bc72ecaebd05d::t_aa0b23e95c9ba7 29,131,215
+  s_7bc72ecaebd05d::t_6d0a719d535923 60-61
+  s_7bc72ecaebd05d::t_d1450bb8de37ba 184-192
+  s_7bc72ecaebd05d::t_a3d85305d5baf5 714-717,720-722
+cpp/tests/conformance_graph.cpp
+  s_7bc72ecaebd05d::t_77a7d1dc3e23c4 180-184
+typescript/packages/execution/src/suggest.ts
+  s_7bc72ecaebd05d::t_456994e6968ff1 1-5,8,12-13,19-37,42-45,47
+typescript/packages/execution/src/mutator.ts
+  s_7bc72ecaebd05d::t_b87a8e2ae0bf60 141-145
+  s_7bc72ecaebd05d::t_3a26af479ed90a 542-550
+  s_7bc72ecaebd05d::t_bb2d80fc622ec2 271
+  s_7bc72ecaebd05d::t_aa0b23e95c9ba7 10,345-346,376
+  s_7bc72ecaebd05d::t_cd0094ef6a9a88 204,216,514
+  s_7bc72ecaebd05d::t_645586b53bf10a 327-331
+  s_7bc72ecaebd05d::t_88edfdea63cc15 276-277,307-309,319-326,332-344
+docs/type-adapters.md
+  s_7bc72ecaebd05d::t_2e7566d23644bb 56
+typescript/tests/src/unit.test.ts
+  s_7bc72ecaebd05d::t_24f1157cfe5512 17-19
+  s_7bc72ecaebd05d::t_ad127815f5c03d 172-321
+typescript/tests/src/three.test.ts
+  s_7bc72ecaebd05d::t_31fa8b81a42a0b 104,107
+cpp/src/pipeline.cpp
+  s_7bc72ecaebd05d::t_1f731465cada58 80-83,224-232,715-724,986,994-998,1057-1060
+cpp/include/rql/engine.hpp
+  s_7bc72ecaebd05d::t_764a83f6a9fba4 49,66-67
+dotnet/Rql.Tests/ParityTests.cs
+  s_7bc72ecaebd05d::t_f3f65c731134c2 220
+  s_7bc72ecaebd05d::t_433aae4451b53e 181
+fixtures/execution/cases.json
+  s_7bc72ecaebd05d::t_5d569a1313a128 10797-11595
+typescript/packages/execution/src/engine.ts
+  s_7bc72ecaebd05d::t_cd0094ef6a9a88 50
+typescript/packages/contracts/src/errors.ts
+  s_7bc72ecaebd05d::t_ec51fa0d333062 17-20
+  s_7bc72ecaebd05d::t_785f88d62bbc41 25
+cpp/tests/unit_tests.cpp
+  s_7bc72ecaebd05d::t_73f9ba714b5e6b 567,870,874,999,1004-1005,1024
+  s_7bc72ecaebd05d::t_6d49841061ff4e 1345
+  s_7bc72ecaebd05d::t_6c5220a0538d72 1203-1292,1294-1335
+  s_7bc72ecaebd05d::t_f19f981c89a608 1293
+  s_7bc72ecaebd05d::t_d63d5bae272f73 273,564-565
+typescript/tests/src/test-adapters.ts
+  s_7bc72ecaebd05d::t_01768ba549f3b3 83-91
+dotnet/Rql.Execution/Mutator.cs
+  s_7bc72ecaebd05d::t_5c4b223a7fc8f1 139-141
+  s_7bc72ecaebd05d::t_b9b0acd1fa0648 78,290,461-462
+  s_7bc72ecaebd05d::t_8a6d4e0422609f 108,173-182
+  s_7bc72ecaebd05d::t_1c93e82ea6174b 151-172,183
+spec/semantics.md
+  s_7bc72ecaebd05d::t_3488fc211279b1 248-250,252-255
+  s_7bc72ecaebd05d::t_92565215c3a708 282-284
+  s_7bc72ecaebd05d::t_d727fd72c20b37 305-309
+  s_7bc72ecaebd05d::t_35ceb94923cc34 119-122
+  s_7bc72ecaebd05d::t_31f963504915e0 217
+  s_7bc72ecaebd05d::t_7ed8db5de1fb6d 113-114
+  s_7bc72ecaebd05d::t_3fc09e7063fc77 297-299
+  s_7bc72ecaebd05d::t_c2312c354f5710 339-341
+  s_7bc72ecaebd05d::t_7c00fc6b5598e8 88
+  s_7bc72ecaebd05d::t_8ba228dc95e65a 351-358
+  s_7bc72ecaebd05d::t_08f5e2ee6d2e94 463
+  s_7bc72ecaebd05d::t_37788c4938cfac 318-320
+  s_7bc72ecaebd05d::t_bf99ac5c9fb5af 85-87
+  s_7bc72ecaebd05d::t_8443a55377ffb5 167-170
+  s_7bc72ecaebd05d::t_9f1c7d4b0b3808 428-430,432-444
+  s_7bc72ecaebd05d::t_4a06f3597f3344 144-145,152-154,166,251,342-343,350,417,431,445,451-452
+spec/versioning.md
+  s_7bc72ecaebd05d::t_15291c535de49a 35-38,41-42
+  s_7bc72ecaebd05d::t_4ff6dde87c53d2 39-40
+docs/agent-tool-contract.md
+  s_7bc72ecaebd05d::t_381e89fb9bbd5d 17-19
+cpp/src/compiler.cpp
+  s_7bc72ecaebd05d::t_75ae3fbe939e64 262-263,294-295,596,837,849,1129
+  s_7bc72ecaebd05d::t_96e5e60104c84d 838-842
+  s_7bc72ecaebd05d::t_cb63b2eaf71cc1 234-235
+  s_7bc72ecaebd05d::t_640097e0ff40fc 310-311,313-315,318-333,335-340
+  s_7bc72ecaebd05d::t_93d7483c624e32 54-69,71-77,85-88
+  s_7bc72ecaebd05d::t_47fd6bd0a2d586 597-610,1126,1128
+  s_7bc72ecaebd05d::t_15398641f263e6 718-730,732-734,739-743
+  s_7bc72ecaebd05d::t_482356b69a999b 6,70,78,256-261,290-293,731,735,901-902,928-940,1028-1037,1039-1043,1045-1053,1058,1061,1065,1069-1071,1073-1076,1103,1106,1108-1109,1112-1125,1127
+typescript/tests/src/parity.test.ts
+  s_7bc72ecaebd05d::t_df48a274b88569 99
+  s_7bc72ecaebd05d::t_979be601ae868d 378-379
+  s_7bc72ecaebd05d::t_b6e99061d7a6a1 124
+  s_7bc72ecaebd05d::t_253ad8e1ffc8c3 349
+dotnet/Rql.Execution/AgentFormat.cs
+  s_7bc72ecaebd05d::t_a453ac4c2beaa0 110
+  s_7bc72ecaebd05d::t_e184e054dae43d 111-112,114-115
+  s_7bc72ecaebd05d::t_81c8ec037615cd 72-97
+  s_7bc72ecaebd05d::t_f982e6823a6a3e 113
+  s_7bc72ecaebd05d::t_134b025e56f441 134
+  s_7bc72ecaebd05d::t_074dcc2cc61886 243-246
+typescript/packages/execution/src/compiler.ts
+  s_7bc72ecaebd05d::t_c00c0b930e1a81 105-117
+  s_7bc72ecaebd05d::t_cb35adcbcff795 741-742,744-748,750-752,754-771,773
+  s_7bc72ecaebd05d::t_065c701bcff296 17,363,1003,1007,1026
+  s_7bc72ecaebd05d::t_79a3efa8477bf6 337-338,341,344-362
+  s_7bc72ecaebd05d::t_83a17f7a098ac8 222,224
+  s_7bc72ecaebd05d::t_594902b98ca572 279
+  s_7bc72ecaebd05d::t_7b545349295d53 284,292-294
+  s_7bc72ecaebd05d::t_f23bf6bc80ef62 310
+  s_7bc72ecaebd05d::t_7adc2373c9739e 990,1004-1006,1008-1009,1012-1013,1017-1018,1020-1025,1027-1033,1035-1039
+dotnet/Rql.Tests/Tests.cs
+  s_7bc72ecaebd05d::t_e80742e78252b0 488
+  s_7bc72ecaebd05d::t_ea5d5142b053f2 1,445-487,489-536,538-583
+  s_7bc72ecaebd05d::t_ad5d92655ae3ed 537
+cpp/src/mutator.cpp
+  s_7bc72ecaebd05d::t_f4edf05c7bb615 172,312,315-329,331-339,623-627,732
+  s_7bc72ecaebd05d::t_f385f010b294f9 542-554,586-593,595
+  s_7bc72ecaebd05d::t_d0416b1c9953f8 330
+dotnet/Rql.Tests/AdapterTests.cs
+  s_7bc72ecaebd05d::t_f3f65c731134c2 418
+  s_7bc72ecaebd05d::t_b44796abeee547 183,185
+dotnet/Rql.Execution/Compiler.cs
+  s_7bc72ecaebd05d::t_a2a2f15e8d8174 748,767,775-781
+  s_7bc72ecaebd05d::t_6ca8bb14dba6e9 687,693
+  s_7bc72ecaebd05d::t_188cd762ca1d6d 22,135-149,447,450,658-659,661,665-686,688,691-692,694-695,828,832-838,841-866,1162,1199-1203,1205,1207-1208,1212-1213,1216-1228,1230-1235
+unity/com.ivanmurzak.unity.mcp.rql/Tests/Editor/Adapters/Asset/UnityEngine_Material_AdapterTests.cs
+  s_7bc72ecaebd05d::t_b5b76138c0b205 52,58
+dotnet/Rql.Execution/RqlEngine.cs
+  s_7bc72ecaebd05d::t_201afec229ddaa 642-650
+dotnet/Rql.Conformance/TestAdapters.cs
+  s_7bc72ecaebd05d::t_425ed25608bf06 115
+fixtures/adapters/cases.json
+  s_7bc72ecaebd05d::t_2e3959183e8178 17,1104,1875,3980-4017
+  s_7bc72ecaebd05d::t_fc2fa5f92a14ca 1199,2236,2326,2501
+dotnet/Rql.Execution/Values.cs
+  s_7bc72ecaebd05d::t_4bb985eff079cb 176-181,184-187,190-195,197-198
+  s_7bc72ecaebd05d::t_6870dffa9e38d2 5
+dotnet/Rql.Execution/NumericTupleAdapter.cs
+  s_7bc72ecaebd05d::t_df5c3f94963c82 11-15,46-49,52-60,70,85-93,96-101,103-129,166,170-183
+  s_7bc72ecaebd05d::t_5fb12a03d8a11e 184-185
+dotnet/Rql.Execution/Pipeline.cs
+  s_7bc72ecaebd05d::t_87f518d7f31934 212-214
+  s_7bc72ecaebd05d::t_188cd762ca1d6d 118,248,868,871-873,877,879-880,885-898,905-910
+  s_7bc72ecaebd05d::t_cac8c879014b04 57-58
+  s_7bc72ecaebd05d::t_cc9fa63b23e286 826-829,841-847,857-862
+unity/com.ivanmurzak.unity.mcp.rql/Editor/Scripts/RqlGuide.cs
+  s_7bc72ecaebd05d::t_2e7566d23644bb 38-39
+docs/feature-matrix.md
+  s_7bc72ecaebd05d::t_f2b120ed7897c2 31-32
+  s_7bc72ecaebd05d::t_d9a50d7a6349a1 33
+  s_7bc72ecaebd05d::t_6fe8139c1c30b9 25
+typescript/packages/contracts/src/numbers.ts
+  s_7bc72ecaebd05d::t_a3f58765c35f87 9-10
+typescript/packages/execution/src/exec.ts
+  s_7bc72ecaebd05d::t_0575ff8c589d52 142-152
+cpp/src/engine.cpp
+  s_7bc72ecaebd05d::t_28d60942513ba3 31-32
+dotnet/Directory.Build.props
+  s_7bc72ecaebd05d::t_b3950e0e20a2b7 10
+dotnet/Rql.Tests/NumericTupleAdapterTests.cs
+  s_7be60963fe3603::t_9af0f094aacc04 95-161
+spec/query-result.schema.json
+  s_7bc72ecaebd05d::t_ae7504ec4c1a6d 36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "66fd12ba1238bb0f015c7385c7a680bb6073b42b",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    },
+    "s_7be60963fe3603": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c306a43-6f1a-4fe9-9b57-09acf4bc1a65",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
