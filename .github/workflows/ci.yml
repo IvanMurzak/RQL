@@ -39,11 +39,9 @@ jobs:
       - run: echo "::error::PRs from forks are not tested here; push the change to a branch of this repo." && exit 1
 
   test-all:
-    # Any self-hosted Linux x64 runner of this repo (capability labels only, never a machine name, so another host
-    # can take over). runner-manager answers a job only when EVERY runs-on label is one of its policy's routing
-    # labels: a runner-manager policy serving RQL must carry self-hosted, linux and x64.
+    # Capability labels only, no machine name; a runner-manager policy serving RQL must route self-hosted, linux, x64.
     # Fork PRs skip cleanly here. This is NOT the security boundary (a fork PR runs its own copy of this file):
-    # the repo setting "Require approval for all external contributors" is what keeps fork code off this host
+    # the repo setting "Require approval for all external contributors" is what keeps fork code off our runners
     # (settable only once the repo is public: set it right after the visibility flip).
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64]
