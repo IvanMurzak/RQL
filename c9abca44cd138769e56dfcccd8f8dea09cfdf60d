@@ -1,0 +1,19 @@
+dotnet/Rql.Execution/Callables.cs
+  s_7bc72ecaebd05d::t_101c3682f6ce5a 63-64,68,71,73,76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c9abca44cd138769e56dfcccd8f8dea09cfdf60d",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}

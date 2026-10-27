@@ -1,0 +1,68 @@
+cpp/src/adapters.cpp
+  s_7bc72ecaebd05d::t_bfdf0d9766ad18 78-79,89-90,93
+cpp/src/mutator.cpp
+  s_7bc72ecaebd05d::t_bfdf0d9766ad18 717-725
+dotnet/Rql.Execution/Mutator.cs
+  s_7bc72ecaebd05d::t_87bb70ad192e7c 437-445
+spec/versioning.md
+  s_7bc72ecaebd05d::t_4efe38c5b7a11a 40
+cpp/README.md
+  s_7bc72ecaebd05d::t_1fc1d95150484d 106-111
+dotnet/Rql.Tests/Tests.cs
+  s_7bc72ecaebd05d::t_98341df6c032fa 574-600
+cpp/tests/conformance_graph.cpp
+  s_7bc72ecaebd05d::t_bfdf0d9766ad18 174-178
+typescript/packages/execution/src/adapters.ts
+  s_7bc72ecaebd05d::t_af8a5692627cc6 63-65,67-74
+dotnet/Rql.Execution/TypeAdapters.cs
+  s_7bc72ecaebd05d::t_87bb70ad192e7c 184-185,385-387,389-391,393-395,397-399,402-404,406-408,410-412,414-415,417
+spec/semantics.md
+  s_7bc72ecaebd05d::t_74089f9f077733 297-304
+  s_7bc72ecaebd05d::t_4efe38c5b7a11a 421
+typescript/packages/execution/src/types.ts
+  s_7bc72ecaebd05d::t_73f52fa49b42b5 1111-1112
+  s_7bc72ecaebd05d::t_996ac8f96017e9 1312-1315,1318-1319
+  s_7bc72ecaebd05d::t_f6f3348f0c36e8 469-470
+  s_7bc72ecaebd05d::t_dcbb46a43d5996 348-352
+dotnet/Rql.Execution/Callables.cs
+  s_7bc72ecaebd05d::t_87bb70ad192e7c 32,35,44-50,66-78
+typescript/packages/execution/src/mutator.ts
+  s_7bc72ecaebd05d::t_9a128eb734c3dd 494-506
+cpp/include/rql/reflection.hpp
+  s_7bc72ecaebd05d::t_bfdf0d9766ad18 90-92,100-102,777-781
+  s_7bc72ecaebd05d::t_b67072fda390b3 782
+typescript/tests/src/unit.test.ts
+  s_7bc72ecaebd05d::t_b7ddf11a90ebf9 314-350
+cpp/tests/unit_tests.cpp
+  s_7bc72ecaebd05d::t_9b19034890e404 1214-1219,1223,1257-1267,1269-1274,1357-1368
+cpp/include/rql/adapters.hpp
+  s_7bc72ecaebd05d::t_bfdf0d9766ad18 192-193,195-197,200-202,205
+docs/feature-matrix-cpp.md
+  s_7bc72ecaebd05d::t_1fc1d95150484d 22
+typescript/README.md
+  s_7bc72ecaebd05d::t_2ded1af4158826 110-113
+dotnet/Rql.Conformance/TestAdapters.cs
+  s_7bc72ecaebd05d::t_87bb70ad192e7c 123-124
+typescript/tests/src/test-adapters.ts
+  s_7bc72ecaebd05d::t_2b71a72e259aec 101
+docs/type-adapters.md
+  s_7bc72ecaebd05d::t_ebccdda063a0b0 46
+fixtures/adapters/cases.json
+  s_7bc72ecaebd05d::t_500b3fc7975887 17,4018-4136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7350866646e361cb6e5f915e1bd63c91a3c9232c",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
