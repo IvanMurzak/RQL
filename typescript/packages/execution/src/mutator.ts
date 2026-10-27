@@ -571,11 +571,13 @@ export class Mutator {
       const candidates = info.callable.filter((m) => m.name.toUpperCase() === wanted);
       if (candidates.length === 0) {
         const all = info.callable.map((m) => m.signature(x.types));
+        const exists = hasMethod(item, wanted);
         throw new RqlError(
-          hasMethod(item, wanted) ? 'permission-denied' : 'unknown-function',
+          exists ? 'permission-denied' : 'unknown-function',
           `no callable method '${s.method}' on ${info.shortName}`,
           undefined,
-          all.length > 0 ? 'callable: ' + all.join(', ') : `${info.shortName} has no callable methods`,
+          (all.length > 0 ? 'callable: ' + all.join(', ') : `${info.shortName} has no callable methods`) +
+            (exists ? '' : x.engine.sourcesWithCallable(s.method)),
         );
       }
       this.enterScope(t);

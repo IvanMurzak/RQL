@@ -29,6 +29,7 @@ namespace Rql.Sample
             Engine.Mutations.Enabled = allowMutations;
             Engine.IsAlive = IsAlive;
             Engine.ResolveStableRef = Resolve;
+            Engine.SchemaHint = "rql_schema"; // the evaluation agent's schema tool (docs/agent-tool-contract.md)
             BuildIndex();
         }
 

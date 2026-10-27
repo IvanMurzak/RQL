@@ -274,13 +274,15 @@ namespace Rql.Execution
             if (known != null) return known;
             known = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "key", "value", "count", "Count", "Length" };
             var roots = new List<Type>();
+            bool complete = true; // a source that is null or throws now may have a type later: do not cache without it
             foreach (var s in _sources.Values)
             {
-                try { var v = s.Getter(); if (v != null) roots.Add(v.GetType()); } catch { }
+                try { var v = s.Getter(); if (v != null) roots.Add(v.GetType()); else complete = false; } catch { complete = false; }
             }
             foreach (var t in Describe.Reachable(Types, roots, 1000))
                 foreach (var m in Types.Info(t).Members) known.Add(m.Name);
-            return _knownMembers = known;
+            if (complete) _knownMembers = known;
+            return known;
         }
 
         /// <summary>Register a namespaced host function (<c>ns.fn(args)</c>); it may also start a query (spec §2).</summary>
@@ -514,6 +516,46 @@ namespace Rql.Execution
         /// Null: the hints suggest a generic query.
         /// </summary>
         public string? FindHint { get; set; }
+
+        /// <summary>
+        /// How callers list types and their members on this host, e.g. <c>rql-schema</c> (a tool name); hints name it (spec §10).
+        /// Null: the hints say "the schema tool".
+        /// </summary>
+        public string? SchemaHint { get; set; }
+
+        internal string SchemaTool => string.IsNullOrEmpty(SchemaHint) ? "the schema tool" : SchemaHint!;
+
+        /// <summary>
+        /// Whether some type the host knows has a member of this name (case-insensitive), beyond the types statically reachable from
+        /// the sources, e.g. every component type of an engine. A name known here is never reported as a certain typo: neither by
+        /// the static unknown-member check nor as the cause of an empty mutation (spec §8). Null: only the reachable types count.
+        /// </summary>
+        public Func<string, bool>? IsKnownMember { get; set; }
+
+        /// <summary>The first registered source, shown as an example in hints (never an invented name).</summary>
+        internal string? ExampleSource => _sources.Keys.FirstOrDefault();
+
+        /// <summary>
+        /// Sources whose value is a single object with a callable method of this name, as hint text
+        /// ("; the source 'editor' has it: editor | call M(…)"), or "" (spec §10).
+        /// </summary>
+        internal string SourcesWithCallable(string method)
+        {
+            var names = new List<string>();
+            foreach (var s in _sources.Values)
+            {
+                object? v;
+                try { v = Types.Live(s.Getter()); } catch { continue; }
+                if (v == null) continue;
+                var info = Types.Info(v.GetType());
+                if (info.IsList || info.IsMap) continue;
+                if (info.Callable.Any(m => string.Equals(m.Name, method, StringComparison.OrdinalIgnoreCase))) names.Add(s.Name);
+            }
+            if (names.Count == 0) return "";
+            return names.Count == 1
+                ? $"; the source '{names[0]}' has {method}: {names[0]} | call {method}(…)"
+                : $"; sources with {method}: {string.Join(", ", names)} (e.g. {names[0]} | call {method}(…))";
+        }
 
         /// <summary>The hint of a ref() that did not resolve: malformed text is usually a name, not a $ref.</summary>
         internal string RefHint(string reference)
@@ -799,6 +841,8 @@ namespace Rql.Execution
         public string[]? RowColumns;
         /// <summary>First segment of a relative bare path (eligible for the static never-evaluated check).</summary>
         public bool Bare;
+        /// <summary>Read inside has(): a miss is the guard's answer, never the cause of an empty mutation (spec §8).</summary>
+        public bool Guarded;
         public Type? CachedType;
         public MemberAccessor? CachedMember;
     }

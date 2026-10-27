@@ -1603,6 +1603,68 @@ void wave3_tests() {
     check(enc.ok && (*enc.rows)[0][0].as_string() == "Center", "enum alias: encoding keeps the entry name");
 }
 
+struct W3Door {
+    std::string Name;
+    int Opened = 0;
+    void Open(int force) { Opened += force; }
+};
+struct W3Editor {
+    std::string CreateThing(std::string name) { return name; }
+};
+
+void wave3b_tests() {
+    rql::TypeRegistry reg;
+    reg.object<W3Door>("W3Door").member("Name", &W3Door::Name).member("Opened", &W3Door::Opened).method("Open", &W3Door::Open, {"force"});
+    reg.object<W3Editor>("W3Editor").method("CreateThing", &W3Editor::CreateThing, {"name"});
+    W3Door door;
+    door.Name = "X";
+    W3Editor editor;
+    rql::Engine e(reg);
+    e.add_object_source("door", &door);
+    e.add_object_source("editor", &editor);
+    e.mutations().enabled = true;
+    auto has = [](const std::string& s, const std::string& part) { return s.find(part) != std::string::npos; };
+    // Unknown source: the example is a registered source, never an invented one.
+    auto src = arun(e, R"J({"rql":"0.1","source":{"list":[{"lit":0}]},"stages":[]})J");
+    check(first_code(src) == "unknown-source" && has(src.diagnostics[0].message, "(e.g. door)") && !has(src.diagnostics[0].message, "world") &&
+              has(src.diagnostics[0].hint, "sources: door editor"),
+          "unknown-source example names a registered source");
+    // no-match: the host's schema tool, neutral by default.
+    const std::string is_window = R"J({"rql":"0.1","source":{"path":["door"]},"stages":[{"op":"where","pred":{"op":"is","args":[{"path":[]},{"lit":"Window"}]}}]})J";
+    auto no_match_hint = [&]() {
+        auto r = arun(e, is_window);
+        for (auto& d : r.diagnostics)
+            if (d.code == "no-match") return d.hint;
+        return std::string();
+    };
+    check(has(no_match_hint(), "list the types with the schema tool"), "no-match hint: neutral schema tool");
+    e.schema_hint = "rql-schema";
+    check(has(no_match_hint(), "list the types with rql-schema") && !has(no_match_hint(), "rql_schema"), "no-match hint: host schema tool");
+    // A mutation emptied by a typo fails; a name the host knows keeps it ok.
+    const std::string typo = R"J({"rql":"0.1","source":{"path":["door"]},"stages":[{"op":"get","expr":{"path":["Nmae"]}},{"op":"set","assign":[{"target":{"path":["Name"]},"value":{"lit":"Y"}}]}]})J";
+    auto r = arun(e, typo, true);
+    check(!r.ok && first_code(r) == "unknown-member" && r.diagnostics[0].severity == rql::Severity::Error &&
+              has(r.diagnostics[0].message, "nothing was changed") && door.Name == "X",
+          "a mutation emptied by a typo fails");
+    const std::string known = R"J({"rql":"0.1","source":{"path":["door"]},"stages":[{"op":"where","pred":{"op":">","args":[{"path":["intensity"]},{"lit":1}]}},{"op":"set","assign":[{"target":{"path":["Name"]},"value":{"lit":"Y"}}]}]})J";
+    check(!arun(e, known, true).ok, "an unknown name nobody declares fails the empty mutation");
+    e.is_known_member = [](const std::string&) -> bool { throw std::runtime_error("boom"); };
+    check(!arun(e, known, true).ok, "a throwing known-member hook counts as not known");
+    const std::string guard = R"J({"rql":"0.1","source":{"path":["door"]},"stages":[{"op":"where","pred":{"call":"has","args":[{"path":["glow"]}]}},{"op":"set","assign":[{"target":{"path":["Name"]},"value":{"lit":"Y"}}]}]})J";
+    check(arun(e, guard, true).ok, "has() is a guard, not a typo");
+    e.is_known_member = [](const std::string& n) { return n == "intensity"; };
+    auto ok = arun(e, known, true);
+    check(ok.ok && ok.rows && ok.rows->empty(), "a member the host knows keeps an empty mutation ok");
+    // Unknown callable: a source that has the method is named.
+    auto call = arun(e, R"J({"rql":"0.1","source":{"path":["door"]},"stages":[{"op":"call","method":"CreateThing","args":[{"lit":"a"}]}]})J", true);
+    check(first_code(call) == "unknown-function" && has(call.diagnostics[0].hint, "callable: Open(") &&
+              has(call.diagnostics[0].hint, "the source 'editor' has CreateThing: editor | call CreateThing(\xE2\x80\xA6)"),
+          "unknown-callable hint names a source that has it");
+    // if(): lazy, the untaken branch is never evaluated.
+    auto lazy = arun(e, R"J({"rql":"0.1","source":{"path":["door"]},"stages":[{"op":"select","fields":[{"name":"v","expr":{"call":"if","args":[{"lit":true},{"path":["Name"]},{"call":"ref","args":[{"lit":"W3Door#99"}]}]}}]}]})J");
+    check(lazy.ok && (*lazy.rows)[0][0].as_string() == "X", "if() is lazy");
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) repo_root = argv[1];
     try {
@@ -1613,6 +1675,7 @@ int main(int argc, char** argv) {
         port_tests();
         wave2_tests();
         wave3_tests();
+        wave3b_tests();
     } catch (const std::exception& ex) {
         std::cout << "FATAL " << ex.what() << "\n";
         return 2;

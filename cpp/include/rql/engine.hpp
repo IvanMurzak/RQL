@@ -131,6 +131,13 @@ public:
     /// How callers find an object by name on this host, e.g. unreal.find("Floor"); ref() hints name it (spec §7).
     /// Empty: the hints suggest a generic query.
     std::string find_hint;
+    /// How callers list types and their members on this host, e.g. "rql-schema" (a tool name); hints name it (spec §10).
+    /// Empty: the hints say "the schema tool".
+    std::string schema_hint;
+    /// Whether some type the host knows has a member of this name (case-insensitive), beyond the types reachable from the
+    /// sources. A name known here is never reported as a certain typo: neither by the static unknown-member check nor as
+    /// the cause of an empty mutation (spec §8). Unset: only the reachable types count. A throwing hook counts as false.
+    std::function<bool(const std::string& name)> is_known_member;
 
     // Every Engine member function is noexcept: exceptions used internally never cross this API.
     // Registration with an invalid name is ignored and reported through last_error().

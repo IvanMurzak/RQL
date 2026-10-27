@@ -10,6 +10,7 @@ import {
   failResult,
   isTerminal as isTerminalStage,
   segmentToString,
+  type Diagnostic,
   type Expr,
   type GenericStage,
   type PathExpr,
@@ -39,6 +40,9 @@ export interface Item {
 }
 
 const NULL_GROUP = Symbol('null');
+
+const ROW_COLUMN_HINT =
+  'select produces rows with only the listed columns; to navigate into objects select the full path (select Path.Member) or put `get Path` before the select';
 
 const item = (value: unknown, path: PathNode | null, depth = -1): Item => ({ value, path, depth });
 
@@ -70,7 +74,7 @@ export class Pipeline {
       return failResult(errors.filter((d) => !seen.has(d.message) && seen.add(d.message) !== undefined));
     }
     this.addWarnings(result, false);
-    return result;
+    return this.emptyMutation(result) ?? result;
   }
 
   private addWarnings(result: QueryResult, onlyGeneral: boolean): void {
@@ -86,7 +90,7 @@ export class Pipeline {
       const hint =
         holders.length > 0
           ? `${site.typeName} objects are reached via ${holders.join(', ')}`
-          : `no reachable type is named '${site.typeName}'; use rql_schema / describe to list types`;
+          : `no reachable type is named '${site.typeName}'; list the types with ${x.engine.schemaTool}`;
       const seen = [...site.seen].map((t) => t.shortName).join(', ');
       result.diagnostics.push(
         diagnostic('warning', 'no-match', `none of the ${site.evaluated} tested item(s) is a ${site.typeName} (saw ${seen})`, hint, site.span),
@@ -98,19 +102,21 @@ export class Pipeline {
     let known: ReadonlyMap<string, string> | undefined;
     for (const site of x.sites) {
       if (!site.bare || site.hits > 0 || site.misses > 0 || reported.has(site.name)) continue;
+      // Another read of the name found it (e.g. `where X > n | set X = X + 1` on an emptied stream).
+      const upper = site.name.toUpperCase();
+      if (x.sites.some((o) => o.hits > 0 && o.name.toUpperCase() === upper)) continue;
       known ??= this.knownNames();
-      if (known.has(site.name.toUpperCase())) continue;
+      if (known.has(site.name.toUpperCase()) || x.engine.hostKnowsMember(site.name)) continue;
       reported.add(site.name);
       const close = closest(site.name, known.values(), 3);
-      result.diagnostics.push(
-        diagnostic(
-          'warning',
-          'unknown-member',
-          `no type reachable from the sources has a member '${site.name}' (not evaluated)`,
-          close.length > 0 ? `did you mean ${close.join(' / ')}?` : `if '${site.name}' is a value, quote it: "${site.name}"`,
-          site.span,
-        ),
+      const typo = diagnostic(
+        'warning',
+        'unknown-member',
+        `no type reachable from the sources has a member '${site.name}' (not evaluated)`,
+        close.length > 0 ? `did you mean ${close.join(' / ')}?` : `if '${site.name}' is a value, quote it: "${site.name}"`,
+        site.span,
       );
+      result.diagnostics.push(typo);
     }
     for (const site of x.sites) {
       if (site.hits > 0 || site.misses === 0 || reported.has(site.name)) continue;
@@ -121,7 +127,7 @@ export class Pipeline {
             'warning',
             'unknown-member',
             `no column '${site.name}' in the projected rows (columns: ${site.rowColumns.join(', ')})`,
-            'select produces rows with only the listed columns; to navigate into objects use the path in the source or `get Path` (e.g. world.LocalPlayer.Inventory.Slots | select Item.Name)',
+            ROW_COLUMN_HINT,
             site.span,
           ),
         );
@@ -135,8 +141,36 @@ export class Pipeline {
       if (close.length === 0 && /^\p{Lu}/u.test(site.name)) {
         hint += (hint.length > 0 ? '; ' : '') + `if '${site.name}' is a value, quote it: "${site.name}"`;
       }
-      result.diagnostics.push(diagnostic('warning', 'unknown-member', `no member '${site.name}' on ${typeNames}`, hint, site.span));
+      const diag = diagnostic('warning', 'unknown-member', `no member '${site.name}' on ${typeNames}`, hint, site.span);
+      result.diagnostics.push(diag);
+      // Misses on undeclared (dynamic) objects prove nothing about other instances.
+      if (!site.guarded && types.length > 0 && types.every((t) => t.dynamic === undefined)) this.unknownMembers.push({ name: site.name, warning: diag });
     }
+  }
+
+  /**
+   * The unknown-member warnings of member reads that missed on every item they were tested on (not projected-row columns,
+   * not has() guards, not never-evaluated names: a filter that matched nothing leaves those unevaluated), see emptyMutation.
+   */
+  private readonly unknownMembers: { name: string; warning: Diagnostic }[] = [];
+
+  /**
+   * A mutation that reached no target because a misspelt member emptied its stream is an error, not "0 changes" (spec §8):
+   * the unknown-member warnings for names that no known type declares become errors. A name some known type declares
+   * stays a warning: in a polymorphic stream the items may just not be of that type.
+   */
+  private emptyMutation(result: QueryResult): QueryResult | undefined {
+    const x = this.x;
+    const stages = x.plan.stages;
+    if (this.unknownMembers.length === 0 || !x.options.allowMutation || stages.length === 0 || (result.rows?.length ?? 0) > 0) return undefined;
+    const known = new Map(this.knownNames());
+    for (const s of x.sites) if (s.hits > 0) known.set(s.name.toUpperCase(), s.name); // another read found it
+    const typos = this.unknownMembers.filter((u) => !known.has(u.name.toUpperCase()) && !x.engine.hostKnowsMember(u.name));
+    if (typos.length === 0) return undefined;
+    const op = stages[stages.length - 1]!.op;
+    return failResult(
+      typos.map(({ warning: d }) => ({ ...d, severity: 'error' as const, message: `${d.message}; no item reached '${op}', nothing was changed` })),
+    );
   }
 
   /** Known member names (keyed upper-cased) plus the plan's select field names. */
@@ -268,7 +302,8 @@ export class Pipeline {
     if (src.kind === 'call' && src.on === undefined && src.name.toLowerCase() === 'ref') {
       return this.refItems(this.c.compile(src));
     }
-    throw new RqlError('unknown-source', 'query must start with a source name (e.g. world) or ref("Type#id")', src.span, 'sources: ' + [...x.engine.sources.keys()].join(' '));
+    const example = x.engine.exampleSource;
+    throw new RqlError('unknown-source', `query must start with a source name${example !== undefined ? ` (e.g. ${example})` : ''} or ref("Type#id")`, src.span, 'sources: ' + [...x.engine.sources.keys()].join(' '));
   }
 
   private findSource(name: string): SourceRegistration | undefined {

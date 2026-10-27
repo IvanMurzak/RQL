@@ -158,6 +158,58 @@ export class RqlEngine {
    * Undefined: the hints suggest a generic query.
    */
   findHint: string | undefined;
+  /**
+   * How callers list types and their members on this host, e.g. `rql-schema` (a tool name); hints name it (spec §10).
+   * Undefined: the hints say "the schema tool".
+   */
+  schemaHint: string | undefined;
+  /**
+   * Whether some type the host knows has a member of this name (case-insensitive), beyond the types reachable from the
+   * sources. A name known here is never reported as a certain typo: neither by the static unknown-member check nor as the
+   * cause of an empty mutation (spec §8). Undefined: only the reachable types count.
+   */
+  isKnownMember: ((name: string) => boolean) | undefined;
+
+  /** The schema tool as hint text. */
+  get schemaTool(): string {
+    return this.schemaHint !== undefined && this.schemaHint !== '' ? this.schemaHint : 'the schema tool';
+  }
+
+  /** Whether the host hook knows the member name (a throwing hook counts as no). */
+  hostKnowsMember(name: string): boolean {
+    try {
+      return this.isKnownMember?.(name) === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The first registered source, shown as an example in hints (never an invented name). */
+  get exampleSource(): string | undefined {
+    return this.sourceMap.keys().next().value;
+  }
+
+  /** Sources whose value is a single object with a callable method of this name, as hint text, or '' (spec §10). */
+  sourcesWithCallable(method: string): string {
+    const wanted = method.toUpperCase();
+    const names: string[] = [];
+    for (const s of this.sourceMap.values()) {
+      let v: unknown;
+      try {
+        v = s.getter();
+      } catch {
+        continue;
+      }
+      if (typeof v !== 'object' || v === null || !this.alive(v)) continue;
+      const info = this.types.infoOf(v);
+      if (info.isList || info.isMap) continue;
+      if (info.callable.some((m) => m.name.toUpperCase() === wanted)) names.push(s.name);
+    }
+    if (names.length === 0) return '';
+    return names.length === 1
+      ? `; the source '${names[0]}' has ${method}: ${names[0]} | call ${method}(…)`
+      : `; sources with ${method}: ${names.join(', ')} (e.g. ${names[0]} | call ${method}(…))`;
+  }
 
   /** The hint of a ref() that did not resolve: malformed text is usually a name, not a $ref. */
   refHint(reference: string): string {

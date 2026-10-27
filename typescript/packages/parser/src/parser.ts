@@ -119,7 +119,7 @@ class Parser {
 
   parseQuery(): QueryPlan {
     if (this.peek().kind === 'end') {
-      throw this.error("empty query; expected a source such as 'world' or 'ref(\"Type#1\")'", this.peek());
+      throw this.error("empty query; expected a source name, ref(\"Type#id\") or a host function", this.peek());
     }
     const source = this.parsePostfix();
     const stages: Stage[] = [];
@@ -379,7 +379,29 @@ class Parser {
   // ---------------------------------------------------------------- expressions
 
   parseExpr(): Expr {
-    return this.parseOr();
+    return this.parseConditional();
+  }
+
+  /** `cond ? a : b` (lowest precedence, right-associative), canonicalized to the core function `if(cond, a, b)`. */
+  private parseConditional(): Expr {
+    const start = this.peek().start;
+    const cond = this.parseOr();
+    if (!isPunct(this.peek(), '?')) return cond;
+    this.next();
+    this.countOperator();
+    return this.nested(() => {
+      const then = this.parseExpr();
+      if (!isPunct(this.peek(), ':')) {
+        throw this.error(
+          `expected ':' after the then-branch of '?', found ${describeToken(this.peek())}`,
+          this.peek(),
+          'a conditional is cond ? then : else (or if(cond, then, else))',
+        );
+      }
+      this.next();
+      const otherwise = this.parseExpr();
+      return at({ kind: 'call', name: 'if', args: [cond, then, otherwise] }, start, this.prevEnd);
+    });
   }
 
   /** Counts a binary operator: left-deep chains (a+a+a…) would otherwise build arbitrarily deep trees. */

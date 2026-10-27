@@ -523,7 +523,8 @@ namespace Rql.Execution
                         .Any(m => string.Equals(m.Name, s.Method, StringComparison.OrdinalIgnoreCase));
                     throw new RqlException(exists ? "permission-denied" : "unknown-function",
                         $"no callable method '{s.Method}' on {info.ShortName}", null,
-                        all.Count > 0 ? "callable: " + string.Join(", ", all) : $"{info.ShortName} has no callable methods");
+                        (all.Count > 0 ? "callable: " + string.Join(", ", all) : $"{info.ShortName} has no callable methods")
+                        + (exists ? "" : _x.Engine.SourcesWithCallable(s.Method)));
                 }
                 EnterScope(t);
                 var vals = args.Select(a => a(_x)).ToArray();

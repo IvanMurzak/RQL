@@ -17661,6 +17661,1920 @@
         ],
         "total": 1
       }
+    },
+    {
+      "name": "if-function",
+      "rql": "g.Nodes | recurse Children include-self=true | select Name, size = if(Value > 5, \"big\", \"small\")",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "size",
+                "expr": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "op": ">",
+                      "args": [
+                        {
+                          "path": [
+                            "Value"
+                          ]
+                        },
+                        {
+                          "lit": 5
+                        }
+                      ]
+                    },
+                    {
+                      "lit": "big"
+                    },
+                    {
+                      "lit": "small"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "size"
+        ],
+        "rows": [
+          [
+            "root-a",
+            "big"
+          ],
+          [
+            "a-1",
+            "small"
+          ],
+          [
+            "a-2",
+            "small"
+          ],
+          [
+            "a-2-x",
+            "small"
+          ],
+          [
+            "root-b",
+            "big"
+          ],
+          [
+            "b-1",
+            "big"
+          ],
+          [
+            "B-2",
+            "big"
+          ],
+          [
+            "lonely",
+            "small"
+          ]
+        ],
+        "total": 8
+      }
+    },
+    {
+      "name": "conditional-operator",
+      "rql": "g.Nodes | recurse Children include-self=true | select Name, k = ($ is Special ? \"special\" : \"node\")",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "k",
+                "expr": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "op": "is",
+                      "args": [
+                        {
+                          "path": []
+                        },
+                        {
+                          "lit": "Special"
+                        }
+                      ]
+                    },
+                    {
+                      "lit": "special"
+                    },
+                    {
+                      "lit": "node"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "k"
+        ],
+        "rows": [
+          [
+            "root-a",
+            "node"
+          ],
+          [
+            "a-1",
+            "node"
+          ],
+          [
+            "a-2",
+            "special"
+          ],
+          [
+            "a-2-x",
+            "node"
+          ],
+          [
+            "root-b",
+            "node"
+          ],
+          [
+            "b-1",
+            "special"
+          ],
+          [
+            "B-2",
+            "node"
+          ],
+          [
+            "lonely",
+            "node"
+          ]
+        ],
+        "total": 8
+      }
+    },
+    {
+      "name": "conditional-right-assoc",
+      "rql": "g.Nodes | recurse Children include-self=true | select Name, band = (Value > 8 ? \"high\" : Value > 2 ? \"mid\" : \"low\")",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "band",
+                "expr": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "op": ">",
+                      "args": [
+                        {
+                          "path": [
+                            "Value"
+                          ]
+                        },
+                        {
+                          "lit": 8
+                        }
+                      ]
+                    },
+                    {
+                      "lit": "high"
+                    },
+                    {
+                      "call": "if",
+                      "args": [
+                        {
+                          "op": ">",
+                          "args": [
+                            {
+                              "path": [
+                                "Value"
+                              ]
+                            },
+                            {
+                              "lit": 2
+                            }
+                          ]
+                        },
+                        {
+                          "lit": "mid"
+                        },
+                        {
+                          "lit": "low"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "band"
+        ],
+        "rows": [
+          [
+            "root-a",
+            "high"
+          ],
+          [
+            "a-1",
+            "mid"
+          ],
+          [
+            "a-2",
+            "low"
+          ],
+          [
+            "a-2-x",
+            "low"
+          ],
+          [
+            "root-b",
+            "mid"
+          ],
+          [
+            "b-1",
+            "mid"
+          ],
+          [
+            "B-2",
+            "high"
+          ],
+          [
+            "lonely",
+            "mid"
+          ]
+        ],
+        "total": 8
+      }
+    },
+    {
+      "name": "conditional-lazy",
+      "rql": "g.Nodes | select Name, v = (Id > 0 ? Name : ref(\"Node#999\"))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "v",
+                "expr": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "op": ">",
+                      "args": [
+                        {
+                          "path": [
+                            "Id"
+                          ]
+                        },
+                        {
+                          "lit": 0
+                        }
+                      ]
+                    },
+                    {
+                      "path": [
+                        "Name"
+                      ]
+                    },
+                    {
+                      "call": "ref",
+                      "args": [
+                        {
+                          "lit": "Node#999"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "v"
+        ],
+        "rows": [
+          [
+            "root-a",
+            "root-a"
+          ],
+          [
+            "root-b",
+            "root-b"
+          ],
+          [
+            "lonely",
+            "lonely"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "conditional-unknown-takes-else",
+      "rql": "g.Nodes | select v = if(Power > 1, \"yes\", \"no\")",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "v",
+                "expr": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "op": ">",
+                      "args": [
+                        {
+                          "path": [
+                            "Power"
+                          ]
+                        },
+                        {
+                          "lit": 1
+                        }
+                      ]
+                    },
+                    {
+                      "lit": "yes"
+                    },
+                    {
+                      "lit": "no"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "v"
+        ],
+        "rows": [
+          [
+            "no"
+          ],
+          [
+            "no"
+          ],
+          [
+            "no"
+          ]
+        ],
+        "total": 3,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "conditional-in-where",
+      "rql": "g.Nodes | recurse Children include-self=true | where (Enabled ? Value > 5 : Value < 0) | select Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "call": "if",
+              "args": [
+                {
+                  "path": [
+                    "Enabled"
+                  ]
+                },
+                {
+                  "op": ">",
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    },
+                    {
+                      "lit": 5
+                    }
+                  ]
+                },
+                {
+                  "op": "<",
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    },
+                    {
+                      "lit": 0
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "root-a"
+          ],
+          [
+            "a-2"
+          ],
+          [
+            "root-b"
+          ],
+          [
+            "b-1"
+          ]
+        ],
+        "total": 4
+      }
+    },
+    {
+      "name": "conditional-arity",
+      "rql": "g.Nodes | select v = if(true, 1)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "v",
+                "expr": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "lit": true
+                    },
+                    {
+                      "lit": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "arity"
+          }
+        ]
+      }
+    },
+    {
+      "name": "conditional-set",
+      "rql": "g.Nodes | set Note = (Value > 5 ? \"big\" : \"small\")",
+      "options": {
+        "allowMutation": true
+      },
+      "then": "g.Nodes | select Name Note",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Note"
+                  ]
+                },
+                "value": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "op": ">",
+                      "args": [
+                        {
+                          "path": [
+                            "Value"
+                          ]
+                        },
+                        {
+                          "lit": 5
+                        }
+                      ]
+                    },
+                    {
+                      "lit": "big"
+                    },
+                    {
+                      "lit": "small"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "Note",
+            "first",
+            "big"
+          ],
+          [
+            "Node#5",
+            "Note",
+            "Second",
+            "big"
+          ],
+          [
+            "Node#8",
+            "Note",
+            null,
+            "small"
+          ]
+        ],
+        "total": 3
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Note",
+                "expr": {
+                  "path": [
+                    "Note"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "Note"
+        ],
+        "rows": [
+          [
+            "root-a",
+            "big"
+          ],
+          [
+            "root-b",
+            "big"
+          ],
+          [
+            "lonely",
+            "small"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "mut-err-unknown-member-empties-stream",
+      "rql": "g.Nodes | where Name == \"root-a\" | get Pear | set Value = 1",
+      "options": {
+        "allowMutation": true
+      },
+      "then": "g.Nodes | select Name Value",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Name"
+                  ]
+                },
+                {
+                  "lit": "root-a"
+                }
+              ]
+            }
+          },
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Pear"
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "unknown-member"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "Value"
+        ],
+        "rows": [
+          [
+            "root-a",
+            10
+          ],
+          [
+            "root-b",
+            7
+          ],
+          [
+            "lonely",
+            3
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "mut-err-unknown-member-in-where",
+      "rql": "g.Nodes | where Nmae == \"root-a\" | set Value = 1",
+      "options": {
+        "allowMutation": true
+      },
+      "then": "g.Nodes | select Name Value",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Nmae"
+                  ]
+                },
+                {
+                  "lit": "root-a"
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "unknown-member"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "Value"
+        ],
+        "rows": [
+          [
+            "root-a",
+            10
+          ],
+          [
+            "root-b",
+            7
+          ],
+          [
+            "lonely",
+            3
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "mut-err-unknown-member-call",
+      "rql": "g.Nodes | get Pear | call Touch()",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Pear"
+              ]
+            }
+          },
+          {
+            "op": "call",
+            "method": "Touch",
+            "args": []
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mut-unknown-member-dry-run",
+      "rql": "g.Nodes | get Pear | set Value = 1",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Pear"
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mut-polymorphic-member-empty-ok",
+      "rql": "g.Nodes | where Power > 1 | set Value = 1",
+      "options": {
+        "allowMutation": true
+      },
+      "then": "g.Nodes | select Name Value",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": ">",
+              "args": [
+                {
+                  "path": [
+                    "Power"
+                  ]
+                },
+                {
+                  "lit": 1
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [],
+        "total": 0,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "Value"
+        ],
+        "rows": [
+          [
+            "root-a",
+            10
+          ],
+          [
+            "root-b",
+            7
+          ],
+          [
+            "lonely",
+            3
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "query-unknown-member-stays-warning",
+      "rql": "g.Nodes | get Pear",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Pear"
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "items",
+        "items": [],
+        "total": 0,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "conditional-unaliased",
+      "rql": "g.Nodes | recurse Children include-self=true | where Id < 4 | select ($ is Special ? \"special\" : \"node\")",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "<",
+              "args": [
+                {
+                  "path": [
+                    "Id"
+                  ]
+                },
+                {
+                  "lit": 4
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "($ is Special ? \"special\" : \"node\")",
+                "expr": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "op": "is",
+                      "args": [
+                        {
+                          "path": []
+                        },
+                        {
+                          "lit": "Special"
+                        }
+                      ]
+                    },
+                    {
+                      "lit": "special"
+                    },
+                    {
+                      "lit": "node"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "($ is Special ? \"special\" : \"node\")"
+        ],
+        "rows": [
+          [
+            "node"
+          ],
+          [
+            "node"
+          ],
+          [
+            "special"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "conditional-lazy-then",
+      "rql": "g.Nodes | select v = if(Id > 100, ref(\"Node#999\"), 0)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "v",
+                "expr": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "op": ">",
+                      "args": [
+                        {
+                          "path": [
+                            "Id"
+                          ]
+                        },
+                        {
+                          "lit": 100
+                        }
+                      ]
+                    },
+                    {
+                      "call": "ref",
+                      "args": [
+                        {
+                          "lit": "Node#999"
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "v"
+        ],
+        "rows": [
+          [
+            0
+          ],
+          [
+            0
+          ],
+          [
+            0
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "conditional-guard-division",
+      "rql": "g.Nodes | recurse Children include-self=true | where Id < 5 | select Name, r = if(Value == 0, 0, 10 / Value)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "<",
+              "args": [
+                {
+                  "path": [
+                    "Id"
+                  ]
+                },
+                {
+                  "lit": 5
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "r",
+                "expr": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "op": "==",
+                      "args": [
+                        {
+                          "path": [
+                            "Value"
+                          ]
+                        },
+                        {
+                          "lit": 0
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 0
+                    },
+                    {
+                      "op": "/",
+                      "args": [
+                        {
+                          "lit": 10
+                        },
+                        {
+                          "path": [
+                            "Value"
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "r"
+        ],
+        "rows": [
+          [
+            "root-a",
+            1
+          ],
+          [
+            "a-1",
+            4
+          ],
+          [
+            "a-2",
+            -2.5
+          ],
+          [
+            "a-2-x",
+            0
+          ]
+        ],
+        "total": 4
+      }
+    },
+    {
+      "name": "conditional-error-condition-takes-else",
+      "rql": "g.Nodes | select v = if(Value / 0 > 1, \"a\", \"b\")",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "v",
+                "expr": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "op": ">",
+                      "args": [
+                        {
+                          "op": "/",
+                          "args": [
+                            {
+                              "path": [
+                                "Value"
+                              ]
+                            },
+                            {
+                              "lit": 0
+                            }
+                          ]
+                        },
+                        {
+                          "lit": 1
+                        }
+                      ]
+                    },
+                    {
+                      "lit": "a"
+                    },
+                    {
+                      "lit": "b"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "v"
+        ],
+        "rows": [
+          [
+            "b"
+          ],
+          [
+            "b"
+          ],
+          [
+            "b"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "mut-not-evaluated-typo-stays-warning",
+      "rql": "g.Nodes | where Name == \"zzz\" | get Pear | set Value = 1",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Name"
+                  ]
+                },
+                {
+                  "lit": "zzz"
+                }
+              ]
+            }
+          },
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Pear"
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [],
+        "total": 0,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mut-has-guard-empty-ok",
+      "rql": "g.Nodes | where has(Intensity) | set Value = 1",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "call": "has",
+              "args": [
+                {
+                  "path": [
+                    "Intensity"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [],
+        "total": 0,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mut-typo-but-targets-reached",
+      "rql": "g.Nodes | where Nmae == \"x\" or Value > 5 | set Note = \"n\"",
+      "options": {
+        "allowMutation": true
+      },
+      "then": "g.Nodes | select Name Note",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "or",
+              "args": [
+                {
+                  "op": "==",
+                  "args": [
+                    {
+                      "path": [
+                        "Nmae"
+                      ]
+                    },
+                    {
+                      "lit": "x"
+                    }
+                  ]
+                },
+                {
+                  "op": ">",
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    },
+                    {
+                      "lit": 5
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Note"
+                  ]
+                },
+                "value": {
+                  "lit": "n"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "Note",
+            "first",
+            "n"
+          ],
+          [
+            "Node#5",
+            "Note",
+            "Second",
+            "n"
+          ]
+        ],
+        "total": 2,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Note",
+                "expr": {
+                  "path": [
+                    "Note"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "Note"
+        ],
+        "rows": [
+          [
+            "root-a",
+            "n"
+          ],
+          [
+            "root-b",
+            "n"
+          ],
+          [
+            "lonely",
+            null
+          ]
+        ],
+        "total": 3
+      }
     }
   ]
 }

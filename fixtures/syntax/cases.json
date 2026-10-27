@@ -6422,6 +6422,194 @@
           }
         ]
       }
+    },
+    {
+      "rql": "g | select v = (a ? b : c ? d : e)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "v",
+                "expr": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "path": [
+                        "a"
+                      ]
+                    },
+                    {
+                      "path": [
+                        "b"
+                      ]
+                    },
+                    {
+                      "call": "if",
+                      "args": [
+                        {
+                          "path": [
+                            "c"
+                          ]
+                        },
+                        {
+                          "path": [
+                            "d"
+                          ]
+                        },
+                        {
+                          "path": [
+                            "e"
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "rql": "g | where a or b ? c and d : not e",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "call": "if",
+              "args": [
+                {
+                  "op": "or",
+                  "args": [
+                    {
+                      "path": [
+                        "a"
+                      ]
+                    },
+                    {
+                      "path": [
+                        "b"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "op": "and",
+                  "args": [
+                    {
+                      "path": [
+                        "c"
+                      ]
+                    },
+                    {
+                      "path": [
+                        "d"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "op": "not",
+                  "args": [
+                    {
+                      "path": [
+                        "e"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "rql": "g | select v = if(a > 1, \"x\", \"y\"), w = {k: a ? 1 : 2}",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "v",
+                "expr": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "op": ">",
+                      "args": [
+                        {
+                          "path": [
+                            "a"
+                          ]
+                        },
+                        {
+                          "lit": 1
+                        }
+                      ]
+                    },
+                    {
+                      "lit": "x"
+                    },
+                    {
+                      "lit": "y"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "w",
+                "expr": {
+                  "object": [
+                    {
+                      "key": "k",
+                      "value": {
+                        "call": "if",
+                        "args": [
+                          {
+                            "path": [
+                              "a"
+                            ]
+                          },
+                          {
+                            "lit": 1
+                          },
+                          {
+                            "lit": 2
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }

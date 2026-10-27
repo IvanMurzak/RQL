@@ -118,7 +118,7 @@ namespace Rql
 
         private QueryPlan ParseQuery()
         {
-            if (Peek().Kind == TokenKind.End) throw Error("empty query; expected a source such as 'world' or 'ref(\"Type#1\")'", Peek());
+            if (Peek().Kind == TokenKind.End) throw Error("empty query; expected a source name, ref(\"Type#id\") or a host function", Peek());
             var source = ParsePostfix();
             var stages = new List<Stage>();
             while (true)
@@ -377,7 +377,31 @@ namespace Rql
 
         // ------------------------------------------------------------ expressions
 
-        public Expr ParseExpr() => ParseOr();
+        public Expr ParseExpr() => ParseConditional();
+
+        /// <summary>
+        /// <c>cond ? a : b</c> (lowest precedence, right-associative), canonicalized to the core function <c>if(cond, a, b)</c>.
+        /// </summary>
+        private Expr ParseConditional()
+        {
+            int start = Peek().Start;
+            var cond = ParseOr();
+            if (!Peek().Is("?")) return cond;
+            Next();
+            CountOperator();
+            Enter();
+            try
+            {
+                var then = ParseExpr();
+                if (!Peek().Is(":"))
+                    throw Error($"expected ':' after the then-branch of '?', found {Peek().Describe()}", Peek(),
+                        "a conditional is cond ? then : else (or if(cond, then, else))");
+                Next();
+                var otherwise = ParseExpr();
+                return At(new CallExpr("if", new[] { cond, then, otherwise }), start, PrevEnd);
+            }
+            finally { _nesting--; }
+        }
 
         /// <summary>Maximum expression nesting; deeper input is rejected instead of overflowing the stack.</summary>
         public const int MaxNesting = 100;
