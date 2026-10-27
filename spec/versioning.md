@@ -85,3 +85,8 @@
   accepted). Hints: the host's mutation tool in `permission-denied` (no `options.allowMutation`), mixed-stream
   `unknown-member` hints and member lists ranked by similarity (§10), type display names (§13), and the parser hints
   "comparisons do not chain" and "one query per call" (§11).
+* Wave-4 features (unreleased; protocol stays `0.1`, no new error code): **group items** — group-by rows have the member
+  `items` (the group's items), so `group-by Kind | select key, avg = items.avg(Weight)` aggregates per group (§5);
+  **no-op assignments** — a `set` receipt omits assignments whose value stayed the same and counts them in the new
+  optional result field `unchanged` (§6, §8; **behaviour change**: such rows were listed); engines list their adapters
+  (§13).

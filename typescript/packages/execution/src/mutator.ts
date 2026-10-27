@@ -1,7 +1,7 @@
 /** Permissioned, all-or-nothing `set` / `call` (spec §8). Port of dotnet/Rql.Execution/Mutator.cs. */
 import { RqlError, formatNumber, segmentToString, type CallStage, type PathExpr, type QueryResult, type Segment, type SetStage } from '@rql/contracts';
 import { findMapKey, isMapLike, mapGet, type MapLike } from './collections.js';
-import { describeValue, type Compiler, type Eval } from './compiler.js';
+import { describeValue, equal, type Compiler, type Eval } from './compiler.js';
 import type { Encoder } from './encoder.js';
 import { errorMessage, type Exec } from './exec.js';
 import type { MutationRecord, TextCoercion } from './engine.js';
@@ -462,9 +462,12 @@ export class Mutator {
     }
 
     this.runHook('committed', records);
-    const rows = writes.map((w) => [w.ref, w.label, w.old, w.new]);
+    // No-op assignments (the value read back equals the old one) are counted, not listed (spec §8 receipt).
+    const changed = writes.filter((w) => equal(x, w.old, w.new) !== true);
+    const rows = changed.map((w) => [w.ref, w.label, w.old, w.new]);
     const r = this.enc.rows(['$ref', 'member', 'old', 'new'], rows);
     if (x.options.dryRun) r.dryRun = true;
+    if (changed.length < writes.length) r.unchanged = writes.length - changed.length;
     return r;
   }
 

@@ -446,6 +446,9 @@ namespace Rql.Execution
 
         public bool Any => _adapters.Count > 0;
 
+        /// <summary>The registered adapters in registration order.</summary>
+        public IReadOnlyList<RqlTypeAdapter> All => _adapters;
+
         /// <summary>Union of the registered adapters' capabilities.</summary>
         public AdapterCaps Caps { get; private set; }
 

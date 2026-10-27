@@ -58,6 +58,8 @@ export interface QueryResult {
   total?: number;
   truncated?: boolean;
   dryRun?: boolean;
+  /** A `set` receipt: how many assignments left the value as it was (old == new), omitted from the rows. */
+  unchanged?: number;
   diagnostics: Diagnostic[];
   stats: Stats;
 }
@@ -78,6 +80,7 @@ export function resultToJson(r: QueryResult, includeStats = true): JsonObject {
   if (r.total !== undefined) o.total = r.total;
   if (r.truncated) o.truncated = true;
   if (r.dryRun) o.dryRun = true;
+  if (r.unchanged !== undefined && r.unchanged > 0) o.unchanged = r.unchanged;
   if (r.diagnostics.length > 0) {
     o.diagnostics = r.diagnostics.map((d) => {
       const dj: JsonObject = { severity: d.severity, code: d.code, message: d.message };

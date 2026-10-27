@@ -213,6 +213,12 @@ namespace Rql.Execution
             return this;
         }
 
+        /// <summary>
+        /// Every type adapter registered on this engine, in registration order (modules' adapters included), e.g. for a host
+        /// known-member hook that also accepts adapter-defined members. Per-type order: <see cref="TypeInfo.Adapters"/>.
+        /// </summary>
+        public IReadOnlyList<RqlTypeAdapter> Adapters => Types.Adapters;
+
         public EngineDefaults Defaults { get; } = new EngineDefaults();
         public MutationPolicy Mutations { get; } = new MutationPolicy();
         public string RuntimeName { get; set; } = "dotnet";
@@ -943,6 +949,8 @@ namespace Rql.Execution
         public long Misses;
         public readonly HashSet<TypeInfo> MissTypes = new HashSet<TypeInfo>();
         public string[]? RowColumns;
+        /// <summary>The rows that lacked the member were group-by rows (hint: aggregate their items).</summary>
+        public bool GroupRows;
         /// <summary>First segment of a relative bare path (eligible for the static never-evaluated check).</summary>
         public bool Bare;
         /// <summary>Read inside has(): a miss is the guard's answer, never the cause of an empty mutation (spec §8).</summary>

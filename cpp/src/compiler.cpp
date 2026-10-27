@@ -576,10 +576,16 @@ Value member_of(Exec& x, const Value& v, MemberSite& site) {
                 ++site.hits;
                 return row.values[static_cast<size_t>(i)];
             }
+            // A group row's items (spec §5): a column of that name takes precedence.
+            if (row.items.is_list() && iequals(site.name, "items")) {
+                ++site.hits;
+                return row.items;
+            }
             // A single-column row stands for its value.
             if (row.values.size() == 1) return member_of(x, row.values[0], site);
             ++site.misses;
             if (site.row_columns.empty()) site.row_columns = *row.columns;
+            if (row.group) site.group_rows = true;
             return Value::missing();
         }
         case Value::Kind::Object:

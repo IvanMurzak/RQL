@@ -98,6 +98,8 @@ namespace Rql
         public long? Total { get; set; }
         public bool Truncated { get; set; }
         public bool DryRun { get; set; }
+        /// <summary>A <c>set</c> receipt: how many assignments left the value as it was (old == new), omitted from the rows.</summary>
+        public long? Unchanged { get; set; }
         public List<Diagnostic> Diagnostics { get; } = new List<Diagnostic>();
         public Stats Stats { get; } = new Stats();
 
@@ -162,6 +164,7 @@ namespace Rql
             if (Total.HasValue) w.WriteNumber("total", Total.Value);
             if (Truncated) w.WriteBoolean("truncated", true);
             if (DryRun) w.WriteBoolean("dryRun", true);
+            if (Unchanged > 0) w.WriteNumber("unchanged", Unchanged.Value);
             if (Diagnostics.Count > 0)
             {
                 w.WriteStartArray("diagnostics");

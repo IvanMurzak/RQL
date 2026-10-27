@@ -268,9 +268,12 @@ namespace Rql.Execution
             }
 
             RunHook(_x.Engine.Mutations.Committed, records, veto: false);
-            var rows = writes.Select(w => new object?[] { w.Ref, w.Label, w.Old, w.New }).ToList();
+            // No-op assignments (the value read back equals the old one) are counted, not listed (spec §8 receipt).
+            var changed = writes.Where(w => Compiler.Equal(_x.Types, w.Old, w.New) != true).ToList();
+            var rows = changed.Select(w => new object?[] { w.Ref, w.Label, w.Old, w.New }).ToList();
             var r = _enc.Rows(new[] { "$ref", "member", "old", "new" }, rows);
             r.DryRun = _x.Options.DryRun;
+            if (changed.Count < writes.Count) r.Unchanged = writes.Count - changed.Count;
             return r;
         }
 

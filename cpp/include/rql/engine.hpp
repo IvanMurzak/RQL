@@ -162,6 +162,13 @@ public:
     /// Ordered adapters applying to a type, most specific first: "name (target T, rank r, priority p)".
     std::vector<std::string> explain(const TypeDescriptor& type) const noexcept;
     bool has_adapters() const noexcept { return !adapters_.empty(); }
+    /// Every registered type adapter in registration order, e.g. for a host known-member hook that also accepts
+    /// adapter-defined members (spec §13).
+    std::vector<const TypeAdapter*> adapters() const noexcept {
+        std::vector<const TypeAdapter*> out;
+        for (auto& a : adapters_) out.push_back(a.get());
+        return out;
+    }
     /// Never expose members whose type (or element / key type) matches (spec §13 Exclusion). Configure
     /// before queries run; several predicates combine with "or".
     Engine& exclude_types(TypeExclusion excluded) noexcept;

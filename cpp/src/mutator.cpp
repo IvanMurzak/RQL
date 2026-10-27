@@ -810,10 +810,19 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
     }
     committed(x, records);
 
+    // No-op assignments (the value read back equals the old one) are counted, not listed (spec §8 receipt).
     std::vector<std::vector<Value>> rows;
-    for (auto& w : writes) rows.push_back({Value::string(w.ref), Value::string(w.label), w.old_value, w.new_value});
+    int64_t unchanged = 0;
+    for (auto& w : writes) {
+        if (rql_equal(x, w.old_value, w.new_value) == std::optional<bool>(true)) {
+            ++unchanged;
+            continue;
+        }
+        rows.push_back({Value::string(w.ref), Value::string(w.label), w.old_value, w.new_value});
+    }
     QueryResult r = enc.rows({"$ref", "member", "old", "new"}, rows);
     r.dry_run = x.options.dry_run;
+    r.unchanged = unchanged;
     return r;
 }
 

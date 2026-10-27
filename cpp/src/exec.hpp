@@ -122,6 +122,7 @@ struct MemberSite {
     int64_t misses = 0;
     std::vector<const TypeDescriptor*> miss_types;
     std::vector<std::string> row_columns;  // columns of a multi-column row that lacked the member
+    bool group_rows = false;               // those rows were group-by rows (hint: aggregate their items)
     bool bare = false;                     // first segment of a relative path (no `on`)
     bool guarded = false;                  // read inside has(): never the cause of an empty mutation (spec §8)
     const TypeDescriptor* cached_type = nullptr;

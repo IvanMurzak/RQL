@@ -152,6 +152,44 @@ bool uses_meta(const Expr& e, const std::string& meta) {
     }
 }
 
+bool uses_member(const Expr& e, const std::string& name) {
+    switch (e.kind) {
+        case ExprKind::Path:
+            for (auto& s : e.segments)
+                if (s.kind == SegmentKind::Member && iequals(s.name, name)) return true;
+            return e.on && uses_member(*e.on, name);
+        case ExprKind::Call:
+            if (e.on && uses_member(*e.on, name)) return true;
+            [[fallthrough]];
+        case ExprKind::Op:
+        case ExprKind::List:
+        case ExprKind::Object:
+            for (auto& a : e.args)
+                if (uses_member(*a, name)) return true;
+            return false;
+        default: return false;
+    }
+}
+
+/// Whether any expression of the plan passes `test`.
+template <class F>
+bool plan_uses(const QueryPlan& p, F test) {
+    if (test(*p.source)) return true;
+    for (auto& st : p.stages) {
+        std::vector<ExprPtr> all;
+        if (st.expr) all.push_back(st.expr);
+        for (auto& f : st.fields) all.push_back(f.expr);
+        for (auto& k : st.keys) all.push_back(k.expr);
+        for (auto& v : st.via) all.push_back(v);
+        for (auto& a : st.assign) { all.push_back(a.target); all.push_back(a.value); }
+        for (auto& a : st.args) all.push_back(a);
+        for (auto& n : st.named) all.push_back(n.second);
+        for (auto& e : all)
+            if (test(*e)) return true;
+    }
+    return false;
+}
+
 bool plan_uses_meta(const QueryPlan& p, const std::string& meta) {
     if (uses_meta(*p.source, meta)) return true;
     for (auto& st : p.stages) {
@@ -554,6 +592,9 @@ public:
             auto key_cols = std::make_shared<const std::vector<std::string>>(key_columns_);
             std::unordered_map<Value, size_t, ValueHash, ValueEq> index(16, ValueHash{&x_}, ValueEq{&x_});
             std::vector<std::pair<Value, double>> groups;  // key row, count
+            // Per-group aggregates read the group's items: items.avg(Weight) (spec §5).
+            const bool keep_items = plan_uses(x_.plan, [](const Expr& e) { return uses_member(e, "items"); });
+            std::vector<std::vector<Value>> items;
             Item it;
             int64_t i = 0;
             while (in_->next(it)) {
@@ -566,20 +607,25 @@ public:
                 }
                 Value row = Value::row(key_cols, std::move(tuple));
                 auto f = index.find(row);
+                size_t g;
                 if (f != index.end()) {
-                    groups[f->second].second += 1;
+                    g = f->second;
+                    groups[g].second += 1;
                 } else {
-                    index.emplace(row, groups.size());
+                    g = groups.size();
+                    index.emplace(row, g);
                     groups.emplace_back(std::move(row), 1.0);
+                    if (keep_items) items.emplace_back();
                 }
+                if (keep_items) items[g].push_back(it.value);
             }
             std::vector<std::string> names = key_columns_;
             names.push_back("count");
             auto cols = std::make_shared<const std::vector<std::string>>(std::move(names));
-            for (auto& g : groups) {
-                std::vector<Value> values = g.first.row().values;
-                values.push_back(Value::number(g.second));
-                rows_.push_back(Value::row(cols, std::move(values)));
+            for (size_t g = 0; g < groups.size(); ++g) {
+                std::vector<Value> values = groups[g].first.row().values;
+                values.push_back(Value::number(groups[g].second));
+                rows_.push_back(Value::group_row(cols, std::move(values), keep_items ? Value::list_of(std::move(items[g])) : Value::missing()));
             }
         }
         if (pos_ >= rows_.size()) return false;
@@ -1076,6 +1122,8 @@ std::vector<Diagnostic> add_warnings(Exec& x, QueryResult& r, bool only_general)
                 for (auto& m : view.members()) known.push_back(m.name);
             }
             for (auto& st : x.plan.stages)
+                if (st.kind == StageKind::GroupBy) known.push_back("items");  // group rows have their items (spec §5)
+            for (auto& st : x.plan.stages)
                 if (st.kind == StageKind::Select || st.kind == StageKind::GroupBy)
                     for (auto& f : st.fields) {
                         known.push_back(f.name);
@@ -1114,8 +1162,11 @@ std::vector<Diagnostic> add_warnings(Exec& x, QueryResult& r, bool only_general)
         if (!site.row_columns.empty() && site.miss_types.empty()) {
             r.diagnostics.push_back(Diagnostic::warning(
                 "unknown-member", "no column '" + site.name + "' in the projected rows (columns: " + join(site.row_columns, ", ") + ")",
-                "select produces rows with only the listed columns; to navigate into objects select the full path (select "
-                "Path.Member) or put `get Path` before the select"));
+                site.group_rows
+                    ? "group-by rows have their key column(s), count and the group's items: aggregate per group with items, e.g. select key, "
+                      "count, avg = items.avg(" + site.name + ") (also items.sum(\xE2\x80\xA6), items.min(\xE2\x80\xA6), items.max(\xE2\x80\xA6), items.count(\xE2\x80\xA6), items.first()." + site.name + ")"
+                    : std::string("select produces rows with only the listed columns; to navigate into objects select the full path (select "
+                                  "Path.Member) or put `get Path` before the select")));
             continue;
         }
         std::vector<std::string> type_names, candidates;
@@ -1269,7 +1320,7 @@ QueryResult run_pipeline(Exec& x) {
     auto typos = add_warnings(x, result, false);
     // A mutation that reached no target because a misspelt member emptied its stream is an error, not "0 changes"
     // (spec §8): the unknown-member warnings for names no known type declares become errors.
-    if (!typos.empty() && x.options.allow_mutation && !x.plan.stages.empty() && (!result.rows || result.rows->empty())) {
+    if (!typos.empty() && x.options.allow_mutation && !x.plan.stages.empty() && (!result.rows || result.rows->empty()) && result.unchanged == 0) {
         std::string op = x.plan.stages.back().kind == StageKind::Call ? "call" : "set";
         for (auto& d : typos) {
             d.severity = Severity::Error;

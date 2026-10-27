@@ -8,6 +8,20 @@ namespace Rql.Execution
     {
         public static bool UsesMeta(QueryPlan plan, string meta) => AllExprs(plan).Any(e => UsesMeta(e, meta));
 
+        /// <summary>Whether any path of the plan names a member <paramref name="name"/> (case-insensitive).</summary>
+        public static bool UsesMember(QueryPlan plan, string name) => AllExprs(plan).Any(e => UsesMember(e, name));
+
+        private static bool UsesMember(Expr e, string name) => e switch
+        {
+            PathExpr p => p.Segments.Any(s => s.Kind == SegmentKind.Member && string.Equals(s.Name, name, System.StringComparison.OrdinalIgnoreCase))
+                          || (p.On != null && UsesMember(p.On, name)),
+            OpExpr o => o.Args.Any(a => UsesMember(a, name)),
+            CallExpr c => c.Args.Any(a => UsesMember(a, name)) || (c.On != null && UsesMember(c.On, name)),
+            ListExpr l => l.Items.Any(a => UsesMember(a, name)),
+            ObjectExpr o => o.Entries.Any(kv => UsesMember(kv.Value, name)),
+            _ => false,
+        };
+
         private static bool UsesMeta(Expr e, string meta) => e switch
         {
             PathExpr p => p.Segments.Any(s => s.Kind == SegmentKind.Meta && s.Name == meta) || (p.On != null && UsesMeta(p.On, meta)),

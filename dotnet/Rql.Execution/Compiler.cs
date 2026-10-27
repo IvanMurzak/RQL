@@ -275,10 +275,13 @@ namespace Rql.Execution
                 {
                     int ci = row.IndexOf(site.Name);
                     if (ci >= 0) { site.Hits++; return row.Values[ci]; }
+                    // A group row's items (spec §5): a column of that name takes precedence.
+                    if (row.Items != null && string.Equals(site.Name, Pipeline.GroupItems, StringComparison.OrdinalIgnoreCase)) { site.Hits++; return row.Items; }
                     // A single-column row stands for its value (`select A.B | get Item` style navigation).
                     if (row.Columns.Length == 1) return Member(x, row.Values[0], site);
                     site.Misses++;
                     site.RowColumns ??= row.Columns;
+                    if (row.Group) site.GroupRows = true;
                     return Missing.Value;
                 }
                 m = info.Find(site.Name);
