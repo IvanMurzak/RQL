@@ -70,5 +70,4 @@ scripts/rql-eval report evaluation/runs/A evaluation/runs/B             # paired
 dotnet run -c Release --project dotnet/Rql.Bench -- --size large        # Tier A benchmarks
 ```
 
-Every run is recorded in `evaluation/baselines/spend-ledger.json`, which also enforces a global cap.
 Raw traces stay in the gitignored `evaluation/runs/`.

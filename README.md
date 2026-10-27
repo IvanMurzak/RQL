@@ -20,8 +20,6 @@
 
 <p align="center">
   <a href="https://ai-game.dev/docs/rql"><b>Documentation</b></a> ·
-  <a href="#quick-start">Quick start</a> ·
-  <a href="#the-language-at-a-glance">Language</a> ·
   <a href="spec/semantics.md">Spec</a> ·
   <a href="RESULTS.md">Results</a>
 </p>
@@ -61,7 +59,7 @@ Enemy#490|Zombie_0489|0
   never a serialized copy of the world.
 - **Built for agents.** Compact `|`-separated rows, stable `Type#id` references, and diagnostics with hints
   (`did you mean Health?`) that let the model correct itself.
-- **Safe writes.** `set` and `call` are off unless the host enables them, and are all-or-nothing with dry-run receipts.
+- **Safe writes.** `set` and `call` are opt-in and all-or-nothing, with dry-run receipts ([details](#safe-mutations)).
 - **Measured.** With a DeepSeek V4.1-Flash agent, a task set written after tuning was frozen (n=90) scores **100%**,
   while a conventional reflection-tool baseline (find / dump-object-as-JSON / set / call) scores 66.7% at **40× the
   cost per success**. Method, held-out numbers and caveats: [`RESULTS.md`](RESULTS.md).
@@ -240,11 +238,11 @@ Enemy#233|Transform.Position.y|25.52|27.52
 | Executor, mutations, budgets, diagnostics | ✅ | ✅ | ✅ |
 | Reflection model | `System.Reflection` + attributes | descriptors + dynamic fallback | `TypeRegistry` descriptors, no RTTI |
 | Agent table format | ✅ | JSON only | JSON only |
-| Golden vectors | 496 / 496 | 496 / 496 | 322 passed, 33 text-only skipped |
-| Distribution | NuGet `com.IvanMurzak.Rql` 0.2.0 | source | source (CMake) |
+| Golden vectors | all | all | all plan cases (text-only cases skipped) |
+| Distribution | NuGet `com.IvanMurzak.Rql` | source | source (CMake) |
 
 The QueryPlan protocol version is `0.1` ([spec/versioning.md](spec/versioning.md)); packages version independently.
-Every gap between runtimes is listed in [docs/feature-matrix.md](docs/feature-matrix.md).
+Conformance counts and every gap between runtimes: [docs/feature-matrix.md](docs/feature-matrix.md).
 
 RQL powers the query tools of [AI Game Dev](https://ai-game.dev) for Unity, Unreal Engine and Godot. The library itself
 has no dependency on any engine, MCP or hosted service.
