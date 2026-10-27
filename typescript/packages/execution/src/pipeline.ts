@@ -114,7 +114,7 @@ export class Pipeline {
         site.span,
       );
       result.diagnostics.push(typo);
-      this.typos.push(typo);
+      this.unknownMembers.push({ name: site.name, warning: typo });
     }
     for (const site of x.sites) {
       if (site.hits > 0 || site.misses === 0 || reported.has(site.name)) continue;
@@ -141,27 +141,28 @@ export class Pipeline {
       }
       const diag = diagnostic('warning', 'unknown-member', `no member '${site.name}' on ${typeNames}`, hint, site.span);
       result.diagnostics.push(diag);
-      // Missing on every evaluated item, yet another type may have it (polymorphic streams): only a name no known type
-      // declares is a certain typo.
-      known ??= this.knownNames();
-      if (!known.has(site.name.toUpperCase()) && !x.engine.hostKnowsMember(site.name)) this.typos.push(diag);
+      this.unknownMembers.push({ name: site.name, warning: diag });
     }
   }
 
-  /** unknown-member warnings for names no known type declares (certain typos), see emptyMutation. */
-  private readonly typos: Diagnostic[] = [];
+  /** The unknown-member warnings of member sites (not of projected-row columns), see emptyMutation. */
+  private readonly unknownMembers: { name: string; warning: Diagnostic }[] = [];
 
   /**
    * A mutation that reached no target because a misspelt member emptied its stream is an error, not "0 changes" (spec §8):
-   * the unknown-member warnings for names that no known type declares become errors.
+   * the unknown-member warnings for names that no known type declares become errors. A name some known type declares
+   * stays a warning: in a polymorphic stream the items may just not be of that type.
    */
   private emptyMutation(result: QueryResult): QueryResult | undefined {
     const x = this.x;
     const stages = x.plan.stages;
-    if (this.typos.length === 0 || !x.options.allowMutation || stages.length === 0 || (result.rows?.length ?? 0) > 0) return undefined;
+    if (this.unknownMembers.length === 0 || !x.options.allowMutation || stages.length === 0 || (result.rows?.length ?? 0) > 0) return undefined;
+    const known = this.knownNames();
+    const typos = this.unknownMembers.filter((u) => !known.has(u.name.toUpperCase()) && !x.engine.hostKnowsMember(u.name));
+    if (typos.length === 0) return undefined;
     const op = stages[stages.length - 1]!.op;
     return failResult(
-      this.typos.map((d) => ({ ...d, severity: 'error' as const, message: `${d.message}; no item reached '${op}', nothing was changed` })),
+      typos.map(({ warning: d }) => ({ ...d, severity: 'error' as const, message: `${d.message}; no item reached '${op}', nothing was changed` })),
     );
   }
 

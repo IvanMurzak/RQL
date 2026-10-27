@@ -1081,8 +1081,8 @@ std::vector<Diagnostic> add_warnings(Exec& x, QueryResult& r, bool only_general)
             hint += (hint.empty() ? "" : "; ") + std::string("if '") + site.name + "' is a value, quote it: \"" + site.name + "\"";
         r.diagnostics.push_back(Diagnostic::warning("unknown-member", "no member '" + site.name + "' on " + join(type_names, ", "), hint));
         // Missing on every evaluated item, yet another type may have it (polymorphic streams): only a name no known
-        // type declares is a certain typo.
-        if (!is_known(site.name)) typos.push_back(r.diagnostics.back());
+        // type declares is a certain typo. Only a mutation needs to know (see run_pipeline).
+        if (x.options.allow_mutation && !is_known(site.name)) typos.push_back(r.diagnostics.back());
     }
     return typos;
 }

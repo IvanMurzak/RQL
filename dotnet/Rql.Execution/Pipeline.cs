@@ -99,7 +99,7 @@ namespace Rql.Execution
                     $"no type reachable from the sources has a member '{site.Name}' (not evaluated)", site.Span,
                     close.Count > 0 ? "did you mean " + string.Join(" / ", close) + "?" : $"if '{site.Name}' is a value, quote it: \"{site.Name}\"");
                 result.Diagnostics.Add(typo);
-                _typos.Add(typo);
+                _unknownMembers.Add((site.Name, typo));
             }
             foreach (var site in _x.Sites)
             {
@@ -122,18 +122,15 @@ namespace Rql.Execution
                     hint += (hint.Length > 0 ? "; " : "") + $"if '{site.Name}' is a value, quote it: \"{site.Name}\"";
                 var diag = new Diagnostic(DiagnosticSeverity.Warning, "unknown-member", $"no member '{site.Name}' on {typeNames}", site.Span, hint);
                 result.Diagnostics.Add(diag);
-                // Missing on every evaluated item, yet another type may have it (polymorphic streams): only a name no known type
-                // declares is a certain typo.
-                known ??= KnownNames();
-                if (!known.Contains(site.Name) && !HostKnows(site.Name)) _typos.Add(diag);
+                _unknownMembers.Add((site.Name, diag));
             }
         }
 
         internal const string RowColumnHint =
             "select produces rows with only the listed columns; to navigate into objects select the full path (select Path.Member) or put `get Path` before the select";
 
-        /// <summary>unknown-member warnings for names no known type declares (certain typos), see <see cref="EmptyMutation"/>.</summary>
-        private readonly List<Diagnostic> _typos = new List<Diagnostic>();
+        /// <summary>The unknown-member warnings of member sites (not of projected-row columns), see <see cref="EmptyMutation"/>.</summary>
+        private readonly List<(string Name, Diagnostic Warning)> _unknownMembers = new List<(string, Diagnostic)>();
 
         private bool HostKnows(string name)
         {
@@ -145,14 +142,18 @@ namespace Rql.Execution
 
         /// <summary>
         /// A mutation that reached no target because a misspelt member emptied its stream is an error, not "0 changes" (spec §8):
-        /// the unknown-member warnings for names that no known type declares become errors.
+        /// the unknown-member warnings for names that no known type declares become errors. A name some known type declares
+        /// stays a warning: in a polymorphic stream the items may just not be of that type.
         /// </summary>
         private QueryResult? EmptyMutation(QueryResult result)
         {
             var plan = _x.Plan;
-            if (_typos.Count == 0 || !_x.Options.AllowMutation || plan.Stages.Count == 0 || (result.Rows?.Count ?? 0) > 0) return null;
+            if (_unknownMembers.Count == 0 || !_x.Options.AllowMutation || plan.Stages.Count == 0 || (result.Rows?.Count ?? 0) > 0) return null;
+            var known = KnownNames();
+            var typos = _unknownMembers.Where(u => !known.Contains(u.Name) && !HostKnows(u.Name)).Select(u => u.Warning).ToList();
+            if (typos.Count == 0) return null;
             var op = plan.Stages[plan.Stages.Count - 1].Op;
-            return QueryResult.Fail(_typos.Select(d => new Diagnostic(DiagnosticSeverity.Error, d.Code,
+            return QueryResult.Fail(typos.Select(d => new Diagnostic(DiagnosticSeverity.Error, d.Code,
                 $"{d.Message}; no item reached '{op}', nothing was changed", d.At, d.Hint)));
         }
 
