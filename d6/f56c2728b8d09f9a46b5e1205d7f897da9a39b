@@ -1,0 +1,31 @@
+cpp/src/pipeline.cpp
+  s_7be60963fe3603::t_8338c659818e4a 1084-1085
+dotnet/Rql.Execution/Pipeline.cs
+  s_7bc72ecaebd05d::t_06723338ff0136 102,125,132-133,145-146,151-154,156
+typescript/packages/execution/src/pipeline.ts
+  s_7bc72ecaebd05d::t_adf4a90483375a 117,144,148-149,153-154,159-162,165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d6f56c2728b8d09f9a46b5e1205d7f897da9a39b",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    },
+    "s_7be60963fe3603": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c306a43-6f1a-4fe9-9b57-09acf4bc1a65",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
