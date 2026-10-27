@@ -271,6 +271,8 @@ size_t distinct_hash(Exec& x, const Value& v);
 bool elements(const Value& v, std::vector<Value>& out);
 size_t collection_size(const Value& v);
 std::vector<std::string> suggest_closest(const std::string& name, const std::vector<std::string>& candidates, size_t max);
+/// Names ordered by their distance to `name` (then ordinal), duplicates dropped: the nearest come first in a capped list.
+std::vector<std::string> by_similarity(const std::string& name, const std::vector<std::string>& names);
 /// Optimal string alignment distance (Levenshtein plus adjacent transposition, each cost 1).
 size_t osa_distance(const std::string& a, const std::string& b);
 /// "members: a b c … (N more)" with at most 12 names (spec §10).

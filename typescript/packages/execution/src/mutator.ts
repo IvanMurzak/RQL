@@ -381,7 +381,7 @@ export class Mutator {
         'unknown-member',
         `no member '${name}' on ${lacking.map((i) => i.shortName).slice(0, 4).join(', ')} (${n} of ${targets.length} targets); nothing was changed`,
         undefined,
-        `only ${having.join(', ')} ${having.length === 1 ? 'has' : 'have'} '${name}': filter first, e.g. … | where $ is ${having[0]} | set …, or … | where has(${name}) | set …`,
+        filterHint(having, `'${name}'`, 'set …') + `, or … | where has(${name}) | set …`,
       );
     }
   }
@@ -603,7 +603,7 @@ export class Mutator {
           .filter((o) => o.callable.some((m) => m.name.toUpperCase() === wanted))
           .map((o) => o.shortName)
           .slice(0, 3);
-        const filter = having.length > 0 ? `only ${having.join(', ')} ${having.length === 1 ? 'has' : 'have'} ${s.method}: filter first, e.g. … | where $ is ${having[0]} | call ${s.method}(…); ` : '';
+        const filter = having.length > 0 ? filterHint(having, s.method, `call ${s.method}(…)`) + '; ' : '';
         throw new RqlError(
           exists ? 'permission-denied' : 'unknown-function',
           `no callable method '${s.method}' on ${info.shortName}`,
@@ -957,4 +957,9 @@ function construct(model: TypeModel, literal: ObjectValue, ctor: Ctor, ti: TypeI
     }
   }
   return { ok: true, value: instance };
+}
+
+/** "only A, B have X: filter first, e.g. … | where $ is A | stage" (spec §10 mixed streams). */
+function filterHint(having: readonly string[], what: string, stage: string): string {
+  return `only ${having.join(', ')} ${having.length === 1 ? 'has' : 'have'} ${what}: filter first, e.g. … | where $ is ${having[0]} | ${stage}`;
 }

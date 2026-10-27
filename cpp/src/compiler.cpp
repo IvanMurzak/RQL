@@ -154,19 +154,20 @@ std::string member_hint(const std::string& name, const std::vector<std::string>&
     if (!close.empty()) {
         parts.push_back("did you mean " + join(close, " / ") + "?");
     } else if (declaring.empty() && !members.empty()) {
-        // Ranked by similarity to the name (then ordinal), not declaration order.
-        std::vector<std::string> uniq;
-        for (auto& m : members)
-            if (std::find(uniq.begin(), uniq.end(), m) == uniq.end()) uniq.push_back(m);
-        const std::string lower = ascii_lower(name);
-        std::vector<std::pair<size_t, std::string>> ranked;
-        for (auto& m : uniq) ranked.emplace_back(osa_distance(lower, ascii_lower(m)), m);
-        std::stable_sort(ranked.begin(), ranked.end());
-        std::vector<std::string> sorted;
-        for (auto& r : ranked) sorted.push_back(r.second);
-        parts.push_back(member_list_hint(sorted));
+        parts.push_back(member_list_hint(by_similarity(name, members)));
     }
     return join(parts, "; ");
+}
+
+std::vector<std::string> by_similarity(const std::string& name, const std::vector<std::string>& names) {
+    const std::string lower = ascii_lower(name);
+    std::vector<std::pair<size_t, std::string>> ranked;
+    for (auto& n : names) ranked.emplace_back(osa_distance(lower, ascii_lower(n)), n);
+    std::sort(ranked.begin(), ranked.end());
+    ranked.erase(std::unique(ranked.begin(), ranked.end()), ranked.end());
+    std::vector<std::string> out;
+    for (auto& r : ranked) out.push_back(std::move(r.second));
+    return out;
 }
 
 namespace {
@@ -898,6 +899,7 @@ Eval Compiler::compile_condition(const Expr& e) {
     const Expr* ep = &e;
     return [ev, ep](Exec& x) {
         Value v = ev(x);
+        if (v.is_bool()) return v;
         if (v.is_row() && v.row().values.size() == 1) v = v.row().values[0];  // a one-column row stands for its value (spec §3)
         if (v.is_null() || v.is_bool() || v.is_absent()) return v;
         throw not_a_condition(*ep, v);
@@ -906,8 +908,9 @@ Eval Compiler::compile_condition(const Expr& e) {
 
 Eval Compiler::compile_op_args(const std::string& op, const ExprPtr& ae, const ExprPtr& be) {
     const bool logical = op == "and" || op == "or" || op == "not";
-    Eval a = logical ? compile_condition(*ae) : compile(*ae);
-    Eval b = be ? (logical ? compile_condition(*be) : compile(*be)) : Eval();
+    auto operand = [&](const Expr& e) { return logical ? compile_condition(e) : compile(e); };
+    Eval a = operand(*ae);
+    Eval b = be ? operand(*be) : Eval();
     if (op == "and")
         return [a, b](Exec& x) {
             auto l = truth(a(x));

@@ -118,15 +118,18 @@ double widen_single(float f) {
     static const double kPow10[] = {1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11,
                                     1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
     const int e = static_cast<int>(std::floor(std::log10(std::fabs(d))));
-    // 6 to 9 significant digits (rounding to 6 already drops trailing zeros). An integer divided (or multiplied) by an
-    // exact power of ten is the correctly rounded double of that decimal.
+    // Allocation-free fast path for the formatter's answer (the fallback below): 6 to 9 significant digits (rounding to 6
+    // already drops trailing zeros). An integer divided (or multiplied) by an exact power of ten is the correctly rounded
+    // double of that decimal.
     for (int p = 6; p <= 9; ++p) {
         const int k = p - 1 - e;
         if (k > 22 || k < -22) break;
         const double c = k >= 0 ? std::round(d * kPow10[k]) / kPow10[k] : std::round(d / kPow10[-k]) * kPow10[-k];
         if (static_cast<float>(c) == f) return c;
     }
-    return std::strtod(format_float(f).c_str(), nullptr);
+    double parsed = d;
+    parse_double(format_float(f), parsed);
+    return parsed;
 }
 
 const std::string& Value::error_code() const {

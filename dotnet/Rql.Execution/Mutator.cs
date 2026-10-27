@@ -180,9 +180,13 @@ namespace Rql.Execution
                 int n = targets.Count(t => !(t.Value is MapEntry) && lacking.Contains(_x.Types.Info(t.Value.GetType())));
                 throw new RqlException("unknown-member",
                     $"no member '{name}' on {string.Join(", ", lacking.Select(i => i.ShortName).Take(4))} ({n} of {targets.Count} targets); nothing was changed", null,
-                    $"only {string.Join(", ", having)} {(having.Count == 1 ? "has" : "have")} '{name}': filter first, e.g. … | where $ is {having[0]} | set …, or … | where has({name}) | set …");
+                    FilterHint(having, $"'{name}'", "set …") + $", or … | where has({name}) | set …");
             }
         }
+
+        /// <summary>"only A, B have X: filter first, e.g. … | where $ is A | stage" (spec §10 mixed streams).</summary>
+        private static string FilterHint(IReadOnlyList<string> having, string what, string stage) =>
+            $"only {string.Join(", ", having)} {(having.Count == 1 ? "has" : "have")} {what}: filter first, e.g. … | where $ is {having[0]} | {stage}";
 
         public QueryResult Set(IEnumerable<Item> stream, SetStage s)
         {
@@ -544,9 +548,7 @@ namespace Rql.Execution
                     // In a mixed stream, name the targets' types that do have the method (filter to them first).
                     var having = targets.Select(o => _x.Types.Info(o.Value.GetType())).Distinct()
                         .Where(o => o.Callable.Any(m => string.Equals(m.Name, s.Method, StringComparison.OrdinalIgnoreCase))).Select(o => o.ShortName).Take(3).ToList();
-                    var filter = having.Count > 0
-                        ? $"only {string.Join(", ", having)} {(having.Count == 1 ? "has" : "have")} {s.Method}: filter first, e.g. … | where $ is {having[0]} | call {s.Method}(…); "
-                        : "";
+                    var filter = having.Count > 0 ? FilterHint(having, s.Method, $"call {s.Method}(…)") + "; " : "";
                     throw new RqlException(exists ? "permission-denied" : "unknown-function",
                         $"no callable method '{s.Method}' on {info.ShortName}", null,
                         filter + (all.Count > 0 ? "callable: " + string.Join(", ", all) : $"{info.ShortName} has no callable methods")
@@ -680,7 +682,7 @@ namespace Rql.Execution
                     : Array.Empty<Type>();
                 // The host's display name of a type (spec §13) names it too.
                 if (found.Length == 0 && model.TypeDisplayName != null)
-                    found = entry.index.Values.SelectMany(v => v).Distinct().Where(t => !model.IsExcludedType(t) && model.NameOf(t) == tn).ToArray();
+                    found = entry.index.Values.SelectMany(v => v).Distinct().Where(t => !model.IsExcludedType(t) && model.Info(t).ShortName == tn).ToArray();
                 if (found.Length == 0) { why = $"no concrete type named '{tn}' derives from {TypeModel.FriendlyName(target)}"; return false; }
                 if (found.Length > 1) { why = $"'{tn}' is ambiguous: " + string.Join(", ", found.Select(t => t.FullName)); return false; }
                 concrete = found[0];

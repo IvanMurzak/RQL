@@ -256,17 +256,7 @@ namespace Rql.Execution
         }
 
         /// <summary><see cref="FriendlyName(Type)"/> with the host's display names: List&lt;GPUParticles3D&gt;.</summary>
-        public string FriendlyNameOf(Type t)
-        {
-            if (_displayName == null || Aliases.ContainsKey(t)) return FriendlyName(t);
-            var u = Nullable.GetUnderlyingType(t);
-            if (u != null) return FriendlyNameOf(u) + "?";
-            if (t.IsArray) return FriendlyNameOf(t.GetElementType()!) + "[]";
-            if (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(VirtualMap<>))
-                return "Dictionary<string, " + FriendlyNameOf(t.GetGenericArguments()[0]) + ">";
-            if (t.IsGenericType) return ShortName(t) + "<" + string.Join(", ", t.GetGenericArguments().Select(FriendlyNameOf)) + ">";
-            return NameOf(t);
-        }
+        public string FriendlyNameOf(Type t) => _displayName == null ? FriendlyName(t) : Friendly(t, NameOf);
 
         private Func<object, bool>? _hostAlive;
 
@@ -641,21 +631,21 @@ namespace Rql.Execution
         };
 
         /// <summary>C#-like readable type name: List&lt;Component&gt;, int?, Vector3.</summary>
-        public static string FriendlyName(Type t)
+        public static string FriendlyName(Type t) => Friendly(t, n => n.Name);
+
+        /// <summary>The readable name with <paramref name="leaf"/> naming the non-generic, non-alias types.</summary>
+        private static string Friendly(Type t, Func<Type, string> leaf)
         {
             if (Aliases.TryGetValue(t, out var a)) return a;
             var u = Nullable.GetUnderlyingType(t);
-            if (u != null) return FriendlyName(u) + "?";
-            if (t.IsArray) return FriendlyName(t.GetElementType()!) + "[]";
+            if (u != null) return Friendly(u, leaf) + "?";
+            if (t.IsArray) return Friendly(t.GetElementType()!, leaf) + "[]";
             // Virtual maps read like any other string-keyed map in schemas (spec §13).
             if (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(VirtualMap<>))
-                return "Dictionary<string, " + FriendlyName(t.GetGenericArguments()[0]) + ">";
+                return "Dictionary<string, " + Friendly(t.GetGenericArguments()[0], leaf) + ">";
             if (t.IsGenericType)
-            {
-                var args = string.Join(", ", t.GetGenericArguments().Select(FriendlyName));
-                return ShortName(t) + "<" + args + ">";
-            }
-            return t.Name;
+                return ShortName(t) + "<" + string.Join(", ", t.GetGenericArguments().Select(g => Friendly(g, leaf))) + ">";
+            return leaf(t);
         }
     }
 }

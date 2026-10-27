@@ -293,7 +293,7 @@ namespace Rql.Execution
 
         private void InvalidateKnownMembers()
         {
-            lock (_sourceTypes) { _knownMembers = null; _knownVersion++; }
+            lock (_sourceTypes) { _knownMembers = null; _knownTypes = null; _knownVersion++; }
         }
 
         /// <summary>Records the type of a source's value (queries call it as they read a source); a new type clears the known names.</summary>
@@ -335,11 +335,11 @@ namespace Rql.Execution
             foreach (var t in reachable)
                 foreach (var m in Types.Info(t).Members) known.Add(m.Name);
             lock (_sourceTypes)
-                if (version == _knownVersion) _knownMembers = known; // something changed meanwhile: the next call walks again
-            _knownTypes = reachable;
+                if (version == _knownVersion) { _knownMembers = known; _knownTypes = reachable; } // changed meanwhile: walk again next time
             return known;
         }
 
+        // The reachable types the cached names came from (set and cleared together with _knownMembers).
         private List<Type>? _knownTypes;
 
         /// <summary>

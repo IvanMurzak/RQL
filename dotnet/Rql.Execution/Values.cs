@@ -88,7 +88,10 @@ namespace Rql.Execution
             }
         }
 
-        /// <summary>Numeric value; <paramref name="single"/> is true when the source was a float (compare in float precision).</summary>
+        /// <summary>
+        /// Numeric value; <paramref name="single"/> is true when the source was a float (compare in float precision). The float
+        /// is not widened: comparisons cast it back anyway, so only the two-argument overload (arithmetic, aggregates) pays for it.
+        /// </summary>
         public static bool TryNumber(object? v, out double d, out bool single)
         {
             single = false;
@@ -96,7 +99,7 @@ namespace Rql.Execution
             {
                 case double x: d = x; return true;
                 case int x: d = x; return true;
-                case float x: d = Widen(x); single = true; return true;
+                case float x: d = x; single = true; return true;
                 case long x: d = x; return true;
                 case decimal x: d = (double)x; return true;
                 case short x: d = x; return true;
@@ -109,7 +112,13 @@ namespace Rql.Execution
             }
         }
 
-        public static bool TryNumber(object? v, out double d) => TryNumber(v, out d, out _);
+        /// <summary>Numeric value as computations see it: a float is widened to its shortest decimal (<see cref="Widen"/>).</summary>
+        public static bool TryNumber(object? v, out double d)
+        {
+            if (!TryNumber(v, out d, out var single)) return false;
+            if (single) d = Widen((float)d);
+            return true;
+        }
 
         private static readonly double[] Pow10 =
         {
@@ -126,8 +135,9 @@ namespace Rql.Execution
             double d = f;
             if (float.IsNaN(f) || float.IsInfinity(f) || d == Math.Floor(d)) return d;
             int e = (int)Math.Floor(Math.Log10(Math.Abs(d)));
-            // 6 to 9 significant digits (fewer never need a separate try: rounding to 6 already drops trailing zeros). An integer
-            // divided (or multiplied) by an exact power of ten is the correctly rounded double of that decimal.
+            // Allocation-free fast path for the formatter's answer (the fallback below): 6 to 9 significant digits (fewer never need
+            // a separate try: rounding to 6 already drops trailing zeros). An integer divided (or multiplied) by an exact power of
+            // ten is the correctly rounded double of that decimal.
             for (int p = 6; p <= 9; p++)
             {
                 int k = p - 1 - e;

@@ -415,6 +415,7 @@ namespace Rql.Execution
             return x =>
             {
                 var v = ev(x);
+                if (v is bool) return v;
                 if (v is RowValue row && row.Columns.Length == 1) v = row.Values[0]; // a one-column row stands for its value (spec §3)
                 if (v == null || v is bool || V.IsAbsent(v)) return v;
                 throw NotACondition(x, e, v);
@@ -451,9 +452,9 @@ namespace Rql.Execution
 
         private Eval CompileOp(OpExpr o)
         {
-            bool logical = o.Op == "and" || o.Op == "or" || o.Op == "not";
-            var a = logical ? CompileCondition(o.Args[0]) : Compile(o.Args[0]);
-            Eval? b = o.Args.Count > 1 ? (logical ? CompileCondition(o.Args[1]) : Compile(o.Args[1])) : null;
+            Func<Expr, Eval> operand = o.Op == "and" || o.Op == "or" || o.Op == "not" ? CompileCondition : Compile;
+            var a = operand(o.Args[0]);
+            Eval? b = o.Args.Count > 1 ? operand(o.Args[1]) : null;
             switch (o.Op)
             {
                 case "and":

@@ -193,9 +193,9 @@ export class Compiler {
   }
 
   private compileOp(o: OpExpr): Eval {
-    const logical = o.op === 'and' || o.op === 'or' || o.op === 'not';
-    const a = logical ? this.compileCondition(o.args[0]!) : this.compile(o.args[0]!);
-    const b: Eval = o.args.length > 1 ? (logical ? this.compileCondition(o.args[1]!) : this.compile(o.args[1]!)) : () => null;
+    const operand = (e: Expr): Eval => (o.op === 'and' || o.op === 'or' || o.op === 'not' ? this.compileCondition(e) : this.compile(e));
+    const a = operand(o.args[0]!);
+    const b: Eval = o.args.length > 1 ? operand(o.args[1]!) : () => null;
     switch (o.op) {
       case 'and':
         return (x) => {
@@ -448,8 +448,9 @@ export class Compiler {
         // Lazy: only the taken branch runs; a condition that is not true (false or unknown) takes the else branch.
         this.arity(c, 3, 3);
         const cond = this.compileCondition(c.args[0]!);
-        const [then, otherwise] = c.args.slice(1).map((e) => this.compile(e));
-        return (x) => (truth(cond(x)) === true ? then!(x) : otherwise!(x));
+        const then = this.compile(c.args[1]!);
+        const otherwise = this.compile(c.args[2]!);
+        return (x) => (truth(cond(x)) === true ? then(x) : otherwise(x));
       }
       case 'ref': {
         this.arity(c, 1, 64);
@@ -727,9 +728,8 @@ export function truth(v: unknown): Truth {
 
 const tri = (b: Truth): unknown => (b === undefined ? UNKNOWN : b);
 
-function isStructOrCollection(x: Exec, v: object): boolean {
-  const k = x.types.infoOf(v).kind;
-  return k === 'struct' || k === 'list' || k === 'map';
+function valueLike(info: TypeInfo): boolean {
+  return info.kind === 'struct' || info.kind === 'list' || info.kind === 'map';
 }
 
 /** Equality per spec §4.1; undefined = unknown. */
@@ -757,7 +757,7 @@ export function equal(x: Exec, a: unknown, b: unknown): Truth {
   const ib = x.types.infoOf(b);
   if (ia.isList && ib.isList) return listEqual(x, a, ia, b, ib);
   // Structs and maps are not comparable in v0 (spec §4.1); objects by identity.
-  if (isStructOrCollection(x, a) || isStructOrCollection(x, b)) return undefined;
+  if (valueLike(ia) || valueLike(ib)) return undefined;
   return a === b;
 }
 

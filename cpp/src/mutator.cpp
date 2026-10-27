@@ -676,6 +676,12 @@ std::string value_text(const Value& v) {
 
 }  // namespace
 
+/// "only A, B have X: filter first, e.g. ... | where $ is A | stage" (spec §10 mixed streams).
+std::string filter_hint(const std::vector<std::string>& having, const std::string& what, const std::string& stage) {
+    return "only " + join(having, ", ") + (having.size() == 1 ? " has " : " have ") + what + ": filter first, e.g. \xE2\x80\xA6 | where $ is " +
+           having[0] + " | " + stage;
+}
+
 /// A set target member that some targets lack while others have it (a mixed stream): unknown-member naming the types that
 /// have it, so the agent filters to them (spec §10). All other cases are reported per target by the slot resolution.
 void check_mixed_targets(Exec& x, const std::vector<Target>& items, const std::vector<Assignment>& assign) {
@@ -705,8 +711,7 @@ void check_mixed_targets(Exec& x, const std::vector<Target>& items, const std::v
         throw RqlException("unknown-member",
                            "no member '" + name + "' on " + join(lacking_names, ", ") + " (" + std::to_string(n) + " of " + std::to_string(items.size()) +
                                " targets); nothing was changed",
-                           "only " + join(having, ", ") + (having.size() == 1 ? " has '" : " have '") + name + "': filter first, e.g. \xE2\x80\xA6 | where $ is " +
-                               having[0] + " | set \xE2\x80\xA6, or \xE2\x80\xA6 | where has(" + name + ") | set \xE2\x80\xA6");
+                           filter_hint(having, "'" + name + "'", "set \xE2\x80\xA6") + ", or \xE2\x80\xA6 | where has(" + name + ") | set \xE2\x80\xA6");
     }
 }
 
@@ -881,9 +886,7 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
                         break;
                     }
             }
-            std::string filter = having.empty() ? std::string()
-                                                : "only " + join(having, ", ") + (having.size() == 1 ? " has " : " have ") + s.method +
-                                                      ": filter first, e.g. \xE2\x80\xA6 | where $ is " + having[0] + " | call " + s.method + "(\xE2\x80\xA6); ";
+            std::string filter = having.empty() ? std::string() : filter_hint(having, s.method, "call " + s.method + "(\xE2\x80\xA6)") + "; ";
             throw RqlException(exists ? "permission-denied" : "unknown-function", "no callable method '" + s.method + "' on " + tn,
                                filter + (!sigs.empty() ? "callable: " + join(sigs, ", ") : tn + " has no callable methods") +
                                    (exists ? std::string() : sources_with_callable(x, s.method)));
