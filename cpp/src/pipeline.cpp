@@ -65,6 +65,21 @@ std::string Exec::limit_argument() const {
     return engine.defaults().budgets_adjustable ? std::string("budgets.maxMutationTargets") : std::string();
 }
 
+void Exec::note_source_type(const std::string& source, const Value& v) {
+    if (!v.type() || v.is_null()) return;
+    std::lock_guard<std::mutex> lock(engine.source_types_mutex_);
+    auto& seen = engine.source_types_[source];
+    if (std::find(seen.begin(), seen.end(), v.type()) == seen.end()) seen.push_back(v.type());
+}
+
+std::vector<std::pair<std::string, const TypeDescriptor*>> Exec::source_type_history() {
+    std::vector<std::pair<std::string, const TypeDescriptor*>> out;
+    std::lock_guard<std::mutex> lock(engine.source_types_mutex_);
+    for (auto& kv : engine.source_types_)
+        for (auto* t : kv.second) out.emplace_back(kv.first, t);
+    return out;
+}
+
 void Exec::check_target_limit() const {
     if (!requested_max_targets) return;
     const int n = *requested_max_targets;
@@ -262,6 +277,7 @@ public:
                 inner_ = std::make_unique<ExpandStream>(x_, v, x_.track_paths ? path_text(nullptr, text_ + "(\xE2\x80\xA6)") : nullptr, true);
             } else {
                 Value root = reg_->getter();
+                x_.note_source_type(reg_->name, root);
                 Value value = root;
                 if (nav_) {
                     x_.current = root;
@@ -947,6 +963,12 @@ std::vector<const TypeDescriptor*> reachable_types(Exec& x, std::vector<std::pai
             continue;
         }
         if (v.type()) roots.emplace_back(s.name, v.type());
+        x.note_source_type(s.name, v);
+    }
+    // A source that is null right now keeps the types it produced before (spec §8 known names).
+    for (auto& h : x.source_type_history()) {
+        bool registered = std::any_of(x.engine.sources().begin(), x.engine.sources().end(), [&](const auto& s) { return s.name == h.first; });
+        if (registered && std::find(roots.begin(), roots.end(), h) == roots.end()) roots.push_back(h);
     }
     std::vector<const TypeDescriptor*> types;
     std::vector<const TypeDescriptor*> queue;
@@ -970,6 +992,12 @@ std::vector<const TypeDescriptor*> reachable_types(Exec& x, std::vector<std::pai
     }
     if (roots_out) *roots_out = std::move(roots);
     return types;
+}
+
+/// reachable_types without roots, computed once per query.
+const std::vector<const TypeDescriptor*>& known_types(Exec& x) {
+    if (!x.reachable_cache) x.reachable_cache = reachable_types(x, nullptr);
+    return *x.reachable_cache;
 }
 
 std::vector<std::string> holders(Exec& x, const std::string& type_name) {
@@ -1042,7 +1070,7 @@ std::vector<Diagnostic> add_warnings(Exec& x, QueryResult& r, bool only_general)
         if (!known_ready) {
             known_ready = true;
             known = {"key", "value", "count", "Count", "Length"};
-            for (auto* t : reachable_types(x, nullptr))
+            for (auto* t : known_types(x))
             {
                 const TypeView view = x.view(t);
                 for (auto& m : view.members()) known.push_back(m.name);
@@ -1099,8 +1127,9 @@ std::vector<Diagnostic> add_warnings(Exec& x, QueryResult& r, bool only_general)
                 if (std::find(candidates.begin(), candidates.end(), m.name) == candidates.end()) candidates.push_back(m.name);
         }
         auto close = suggest_closest(site.name, candidates, 3);
-        std::string hint = member_hint(site.name, candidates, types_declaring(x, site.name, site.miss_types));
-        if (close.empty() && !site.name.empty() && site.name[0] >= 'A' && site.name[0] <= 'Z')
+        auto declaring = types_declaring(x, site.name, site.miss_types);
+        std::string hint = member_hint(site.name, candidates, declaring);
+        if (close.empty() && declaring.empty() && !site.name.empty() && site.name[0] >= 'A' && site.name[0] <= 'Z')
             hint += (hint.empty() ? "" : "; ") + std::string("if '") + site.name + "' is a value, quote it: \"" + site.name + "\"";
         r.diagnostics.push_back(Diagnostic::warning("unknown-member", "no member '" + site.name + "' on " + join(type_names, ", "), hint));
         // Missing on every evaluated item, yet another type may have it (polymorphic streams): only a name no known
@@ -1194,7 +1223,7 @@ QueryResult fail_with(Exec& x, const RqlException& ex) {
 
 std::vector<std::string> types_declaring(Exec& x, const std::string& member, const std::vector<const TypeDescriptor*>& except, size_t max) {
     std::vector<const TypeDescriptor*> hits;
-    for (auto* t : reachable_types(x, nullptr)) {
+    for (auto* t : known_types(x)) {
         if (t->kind != TypeKind::Object && t->kind != TypeKind::Struct) continue;
         if (std::find(except.begin(), except.end(), t) != except.end()) continue;
         if (x.view(t).find(member)) hits.push_back(t);

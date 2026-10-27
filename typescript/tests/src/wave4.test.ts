@@ -95,12 +95,53 @@ test('unknown members are listed by similarity, and known types that have one ar
   assert.ok(d2.hint!.includes("'Energy' is a member of Light"), d2.hint);
 });
 
+test('known types stay known after their source turns null', () => {
+  class Lamp {
+    Glow = 1;
+  }
+  let sel: object | null = null;
+  const e = new RqlEngine({ types: model().register(Lamp, { members: [{ name: 'Glow', type: t.number }] }) })
+    .addSource('items', () => [one()])
+    .addSource('sel', () => sel);
+  const hint = (): string => e.execute('items | where Glow > 0').diagnostics.find((x) => x.code === 'unknown-member')!.hint ?? '';
+  assert.ok(!hint().includes('Lamp'), hint());
+  sel = new Lamp();
+  assert.equal(e.execute('sel | count').value, 1);
+  sel = null;
+  assert.ok(hint().includes("'Glow' is a member of Lamp"), hint());
+});
+
+test('a nested set path does not suggest filtering the stream', () => {
+  const e = new RqlEngine({ types: model() }).addSource('items', () => [one()]).addSource('lights', () => [new Light()]);
+  e.mutations.enabled = true;
+  const d = e.execute('items | set Other.Energy = 2', {}, { allowMutation: true }).diagnostics[0]!;
+  assert.equal(d.code, 'unknown-member');
+  assert.ok(!(d.hint ?? '').includes('where $ is'), d.hint);
+});
+
+test('self-containing lists do not overflow', () => {
+  const a: unknown[] = [1];
+  a.push(a);
+  const b: unknown[] = [1];
+  b.push(b);
+  const e = new RqlEngine().addSource('ls', () => [a, b]);
+  assert.equal(e.execute('ls | where $ == $ | count').ok, true);
+  assert.equal(e.execute('ls | group-by $ | count').ok, true);
+});
+
 test('a second query on a new line hints one query per call', () => {
   assert.throws(
     () => parse('items | where Name == "a" | set Name = "b"\nitems | where Name == "c" | count'),
     (e: unknown) => e instanceof RqlError && e.code === 'syntax-error' && (e.hint ?? '').includes('one query per call: line 2'),
   );
-  for (const q of ['items\n| where Name == "a" foo', 'items |\n  where x | y\nfoo', 'items | where x\n  and y z']) {
+  for (const q of [
+    'items\n| where Name == "a" foo',
+    'items |\n  where x | y\nfoo',
+    'items | where x\n  and y z',
+    'items | where x > 1\ndistinct | count',
+    'items | select Name,\n  Tags | sort Name +',
+    'items | where Name == "a" or\n  Name | first 2 )',
+  ]) {
     assert.throws(() => parse(q), (e: unknown) => e instanceof RqlError && !(e.hint ?? '').includes('one query per call'));
   }
 });

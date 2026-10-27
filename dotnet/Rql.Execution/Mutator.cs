@@ -384,7 +384,8 @@ namespace Rql.Execution
                    + $"set {list} = insert({list}, {seg.Index}, value) or set {list} = [ ... ]";
         }
 
-        private Slot SlotOf(object container, Segment seg, string label)
+        /// <param name="top">The segment is read on the target itself: its unknown-member hint may suggest filtering the stream.</param>
+        private Slot SlotOf(object container, Segment seg, string label, bool top = false)
         {
             var info = _x.Types.Info(container.GetType());
             if (info.IsMap)
@@ -423,7 +424,7 @@ namespace Rql.Execution
             var m = info.Find(name);
             if (m == null)
                 throw new RqlException("unknown-member", $"no member '{name}' on {info.ShortName}", null,
-                    Suggest.MemberHint(name, info.Members.Select(mm => mm.Name).ToList(), _x.Engine.TypesDeclaring(name, new[] { info })));
+                    Suggest.MemberHint(name, info.Members.Select(mm => mm.Name).ToList(), top ? _x.Engine.TypesDeclaring(name, new[] { info }) : new List<string>()));
             return new MemberSlot(container.GetType(), m);
         }
 
@@ -434,7 +435,7 @@ namespace Rql.Execution
             var chain = new List<(Slot slot, object value)>();
             for (int i = 0; i < segs.Count; i++)
             {
-                var slot = SlotOf(cur, segs[i], label);
+                var slot = SlotOf(cur, segs[i], label, top: i == 0);
                 if (i == segs.Count - 1)
                 {
                     // Every copy on the way (value type or copy-on-read member) is written back into its parent: those parent

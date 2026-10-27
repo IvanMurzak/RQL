@@ -312,7 +312,10 @@ namespace Rql.Execution
         /// Every member name of every type statically reachable from the types the sources have produced (case-insensitive),
         /// cached by those types. Only sources that never produced a value are read again.
         /// </summary>
-        internal HashSet<string> KnownMemberNames()
+        internal HashSet<string> KnownMemberNames() => Known().names;
+
+        /// <summary>The known names and the reachable types they came from, as one consistent pair.</summary>
+        private (HashSet<string> names, List<Type> types) Known()
         {
             foreach (var s in _sources.Values)
             {
@@ -321,8 +324,8 @@ namespace Rql.Execution
                 if (seen) continue;
                 try { NoteSourceType(s.Name, s.Getter()); } catch { /* no type yet */ }
             }
-            var known = _knownMembers;
-            if (known != null) return known;
+            lock (_sourceTypes)
+                if (_knownMembers != null && _knownTypes != null) return (_knownMembers, _knownTypes);
             List<Type> roots;
             int version;
             lock (_sourceTypes)
@@ -330,13 +333,13 @@ namespace Rql.Execution
                 version = _knownVersion;
                 roots = _sourceTypes.Where(kv => _sources.ContainsKey(kv.Key)).SelectMany(kv => kv.Value).Distinct().ToList();
             }
-            known = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "key", "value", "count", "Count", "Length" };
+            var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "key", "value", "count", "Count", "Length" };
             var reachable = Describe.Reachable(Types, roots, 1000);
             foreach (var t in reachable)
                 foreach (var m in Types.Info(t).Members) known.Add(m.Name);
             lock (_sourceTypes)
                 if (version == _knownVersion) { _knownMembers = known; _knownTypes = reachable; } // changed meanwhile: walk again next time
-            return known;
+            return (known, reachable);
         }
 
         // The reachable types the cached names came from (set and cleared together with _knownMembers).
@@ -349,8 +352,7 @@ namespace Rql.Execution
         /// </summary>
         internal List<string> TypesDeclaring(string member, IEnumerable<TypeInfo>? except = null, int max = 3)
         {
-            KnownMemberNames();
-            var types = _knownTypes ?? new List<Type>();
+            var types = Known().types;
             var skip = new HashSet<TypeInfo>(except ?? Array.Empty<TypeInfo>());
             var hits = types.Select(t => Types.Info(t)).Where(i => i.IsObject || i.IsStruct).Where(i => !skip.Contains(i) && i.Find(member) != null).ToList();
             // A base type that has the member covers its subclasses: name the declaring (least derived) types.

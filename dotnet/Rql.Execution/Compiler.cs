@@ -564,7 +564,10 @@ namespace Rql.Execution
 
         internal static bool? Equal(RqlKernel kernel, object? a, object? b) => Equal(kernel.Types, kernel, a, b);
 
-        private static bool? Equal(TypeModel? model, RqlKernel? kernel, object? a, object? b)
+        /// <summary>Nesting of lists compared by value (spec §4.1): deeper (or self-containing) lists compare as unknown.</summary>
+        internal const int MaxCompareDepth = 32;
+
+        private static bool? Equal(TypeModel? model, RqlKernel? kernel, object? a, object? b, int depth = 0)
         {
             if (V.IsAbsent(a) || V.IsAbsent(b)) return null;
             if (a == null || b == null) return a == null && b == null;
@@ -584,6 +587,8 @@ namespace Rql.Execution
             if (V.IsString(a)) return V.IsString(b) ? string.Equals(V.AsString(a), V.AsString(b), StringComparison.Ordinal) : (bool?)null;
             if (a is bool ba) return b is bool bb ? ba == bb : (bool?)null;
             var ta = a.GetType();
+            bool la = V.IsList(a), lb = V.IsList(b);
+            if (la && lb) return ListEqual(model, kernel, a, b, depth);
             if (ta.IsValueType || b.GetType().IsValueType)
             {
                 // DateTime / Guid etc: same-type equality; other structs are not comparable in v0.
@@ -591,8 +596,6 @@ namespace Rql.Execution
                 return null;
             }
             if (b is string) return null;
-            bool la = V.IsList(a), lb = V.IsList(b);
-            if (la && lb) return ListEqual(model, kernel, a, b);
             if (la || lb || TypeModel.Get(ta).IsMap || TypeModel.Get(b.GetType()).IsMap) return null;
             return ReferenceEquals(a, b);
         }
@@ -601,16 +604,17 @@ namespace Rql.Execution
         /// Lists compare by value (spec §4.1): the same length and pairwise equal elements; false as soon as a pair differs,
         /// unknown when no pair differs but one is unknown.
         /// </summary>
-        private static bool? ListEqual(TypeModel? model, RqlKernel? kernel, object a, object b)
+        private static bool? ListEqual(TypeModel? model, RqlKernel? kernel, object a, object b, int depth)
         {
             if (ReferenceEquals(a, b)) return true;
+            if (depth >= MaxCompareDepth) return null; // a list nested this deep (or containing itself) is not compared
             var ea = V.Iterate(a).ToList();
             var eb = V.Iterate(b).ToList();
             if (ea.Count != eb.Count) return false;
             bool unknown = false;
             for (int i = 0; i < ea.Count; i++)
             {
-                var r = Equal(model, kernel, model != null ? model.Live(ea[i]) : ea[i], model != null ? model.Live(eb[i]) : eb[i]);
+                var r = Equal(model, kernel, model != null ? model.Live(ea[i]) : ea[i], model != null ? model.Live(eb[i]) : eb[i], depth + 1);
                 if (r == false) return false;
                 if (r == null) unknown = true;
             }

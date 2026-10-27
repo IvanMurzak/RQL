@@ -126,7 +126,8 @@ path; the same object reached by another query has another `$path`. Hosts expose
   several is not equal) or number; objects by identity; `null == null` is `true`;
   `null` vs non-null is `false` for `==` and `true` for `!=`. **Lists by value**: two lists are equal when they have the
   same length and their elements are pairwise equal by these rules (`Tags == ["root", "red"]`; order matters); `false` as
-  soon as one pair is not equal, `unknown` when no pair differs but one is `unknown`. A list against a non-list, structs
+  soon as one pair is not equal, `unknown` when no pair differs but one is `unknown` (lists nested more than 32 deep, or
+  containing themselves, compare as `unknown`; `distinct` / `group-by` then key them by identity). A list against a non-list, structs
   and maps: `unknown` — including a struct against an object literal (§4.5), unless a type adapter's comparison answers
   (§13). `in` / `contains` use the same equality, so `Tags in [["root"], []]` works.
 * `<`, `<=`, `>`, `>=`: numbers, strings (ordinal), enums (underlying value). Otherwise `unknown`.
@@ -341,8 +342,8 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   are rejected with `invalid-plan` because a change to a copy would be lost.
 * Writing through value types requires every value-type parent member on the path to be writable and
   allowed by policy, since the modified copy is written back into it.
-* A request's `maxMutationTargets` must be an integer from 1 to the host's hard ceiling (target limit, below). A value
-  outside that range (`0`, `1001` with the default ceiling) is refused with `invalid-value` before anything runs, naming
+* A request's `maxMutationTargets` (in any request that passes it, read-only ones included) must be an integer from 1 to
+  the host's hard ceiling (target limit, below). A value outside that range (`0`, `1001` with the default ceiling) is refused with `invalid-value` before anything runs, naming
   the limit argument (§10) and the range — never clamped, so a caller never believes it raised the limit when it did not.
 * `set p = e`: for each item, evaluate `e` against the item, coerce to the member type of `p`
   (number→integral only if integral and in range; string→enum by enum name resolution, below; null only for nullable /

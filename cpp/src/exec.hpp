@@ -155,6 +155,13 @@ public:
     std::string limit_argument() const;
     /// A request target limit outside 1 ... the host ceiling is refused, never clamped (spec §8).
     void check_target_limit() const;
+    /// Records the type of a source's value; with it, the types sources produced before (spec §8 known names).
+    void note_source_type(const std::string& source, const Value& v);
+    std::vector<std::pair<std::string, const TypeDescriptor*>> source_type_history();
+    /// The types statically reachable from the sources, computed once per query (unknown-member checks and hints).
+    std::optional<std::vector<const TypeDescriptor*>> reachable_cache;
+    /// Nesting of lists being compared by value (rql_equal / distinct_equal / distinct_hash).
+    int compare_depth = 0;
     bool track_paths = false;
 
     // evaluation scope

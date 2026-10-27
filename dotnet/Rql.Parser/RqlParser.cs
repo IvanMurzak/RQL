@@ -49,11 +49,23 @@ namespace Rql
         }
 
         private static readonly System.Text.RegularExpressions.Regex QueryStart =
-            new System.Text.RegularExpressions.Regex(@"^\s*[A-Za-z_][\w.\-]*\s*(\(.*\))?\s*\|", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+            new System.Text.RegularExpressions.Regex(@"^\s*([A-Za-z_][\w.\-]*)\s*(\(.*\))?\s*\|", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        // A line ending like this continues an expression on the next line.
+        private static readonly System.Text.RegularExpressions.Regex Continues =
+            new System.Text.RegularExpressions.Regex(@"([|,(\[{+\-*/%=<>!?:&]|\b(and|or|not|in|is)\s*)$",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        private static readonly HashSet<string> StageNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "where", "select", "sort", "first", "limit", "skip", "count", "get", "recurse", "distinct", "sum", "min", "max", "avg",
+            "group-by", "describe", "set", "call",
+        };
 
         /// <summary>
         /// The 1-based number of the first line, starting at or before <paramref name="errorAt"/>, that starts a new query (a
-        /// name, optionally a call, then '|') after a non-blank line that does not end in '|'; null when there is none.
+        /// name that is not a stage, optionally a call, then '|') after a non-blank line that does not end like a continued
+        /// expression ('|', ',', an operator, an open bracket, and / or / not / in / is); null when there is none.
         /// </summary>
         internal static int? SecondQueryLine(string text, int errorAt)
         {
@@ -63,7 +75,8 @@ namespace Rql
             for (int i = 0; i < lines.Length && offset <= errorAt; i++)
             {
                 var line = lines[i];
-                if (prev != null && !prev.TrimEnd().EndsWith("|", StringComparison.Ordinal) && QueryStart.IsMatch(line)) return i + 1;
+                var m = QueryStart.Match(line);
+                if (prev != null && m.Success && !StageNames.Contains(m.Groups[1].Value) && !Continues.IsMatch(prev.TrimEnd())) return i + 1;
                 if (line.Trim().Length > 0) prev = line;
                 offset += line.Length + 1;
             }

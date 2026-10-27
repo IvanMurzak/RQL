@@ -188,7 +188,8 @@ struct Slot {
     }
 };
 
-Slot slot_of(Exec& x, const Value& container, const Segment& seg, const std::string& label) {
+/// top: the segment is read on the target itself, so its unknown-member hint may suggest filtering the stream.
+Slot slot_of(Exec& x, const Value& container, const Segment& seg, const std::string& label, bool top = false) {
     Slot s;
     if (container.is_map()) {
         if (!container.map().writable()) throw RqlException("readonly-member", "'" + label + "': map " + friendly_type_of(container) + " is read-only");
@@ -251,7 +252,8 @@ Slot slot_of(Exec& x, const Value& container, const Segment& seg, const std::str
             for (auto& mm : tv->members()) names.push_back(mm.name);
         std::vector<const TypeDescriptor*> except;
         if (t) except.push_back(t);
-        throw RqlException("unknown-member", "no member '" + name + "' on " + type_name, member_hint(name, names, types_declaring(x, name, except)));
+        throw RqlException("unknown-member", "no member '" + name + "' on " + type_name,
+                           member_hint(name, names, top ? types_declaring(x, name, except) : std::vector<std::string>()));
     }
     s.kind = Slot::Member;
     s.member = m;
@@ -303,7 +305,7 @@ Slot resolve(Exec& x, const Value& root, const std::vector<Segment>& segs, Value
     Value cur = root;
     std::vector<std::pair<Slot, Value>> chain;
     for (size_t i = 0; i < segs.size(); ++i) {
-        Slot slot = slot_of(x, cur, segs[i], label);
+        Slot slot = slot_of(x, cur, segs[i], label, i == 0);
         if (i + 1 == segs.size()) {
             // Every copy on the way (value type or copy-on-read member) is written back into its parent:
             // those parent slots must be writable and allowed too.
@@ -595,7 +597,7 @@ std::optional<Value> coerce(Exec& x, const Value& v, const TypeDescriptor* targe
                             return std::nullopt;
                         }
                     }
-                    if (target->scalar == ScalarKind::Single) d = static_cast<float>(d);
+                    if (target->scalar == ScalarKind::Single) d = to_single(d);
                     return Value::number(d, target);
                 }
                 default: return v;

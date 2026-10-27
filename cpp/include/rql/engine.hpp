@@ -232,6 +232,10 @@ private:
     std::string last_error_;
     std::vector<std::unique_ptr<TypeAdapter>> adapters_;
     std::array<bool, 6> caps_{};  // some adapter implements the capability (detail::Capability order)
+    // Every type each source has produced (by source name): a source that is null right now keeps the types it had for the
+    // known member names and hints (spec §8). Guarded by source_types_mutex_.
+    std::map<std::string, std::vector<const TypeDescriptor*>> source_types_;
+    std::mutex source_types_mutex_;
     TypeExclusion excluded_;
     // Objects the engine constructed from object literals (spec §4.5) for non-dry-run queries. They may be
     // linked from anywhere (raw pointers, host undo stacks holding hook records), so the engine never frees

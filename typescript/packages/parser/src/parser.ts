@@ -52,11 +52,15 @@ export function parse(text: string): QueryPlan {
   return plan;
 }
 
-const QUERY_START = /^\s*[A-Za-z_][\w.-]*\s*(\(.*\))?\s*\|/;
+const QUERY_START = /^\s*([A-Za-z_][\w.-]*)\s*(\(.*\))?\s*\|/;
+/** A line ending like this continues an expression on the next line. */
+const CONTINUES = /([|,(\[{+\-*/%=<>!?:&]|\b(and|or|not|in|is)\s*)$/i;
+const STAGE_NAMES = new Set(['where', 'select', 'sort', 'first', 'limit', 'skip', 'count', 'get', 'recurse', 'distinct', 'sum', 'min', 'max', 'avg', 'group-by', 'describe', 'set', 'call']);
 
 /**
- * The 1-based number of the first line, starting at or before `errorAt`, that starts a new query (a name, optionally a
- * call, then '|') after a non-blank line that does not end in '|'; undefined when there is none.
+ * The 1-based number of the first line, starting at or before `errorAt`, that starts a new query (a name that is not a
+ * stage, optionally a call, then '|') after a non-blank line that does not end like a continued expression ('|', ',', an
+ * operator, an open bracket, and / or / not / in / is); undefined when there is none.
  */
 export function secondQueryLine(text: string, errorAt: number): number | undefined {
   const lines = text.split('\n');
@@ -64,7 +68,8 @@ export function secondQueryLine(text: string, errorAt: number): number | undefin
   let prev: string | undefined;
   for (let i = 0; i < lines.length && offset <= errorAt; i++) {
     const line = lines[i]!;
-    if (prev !== undefined && !prev.trimEnd().endsWith('|') && QUERY_START.test(line)) return i + 1;
+    const m = QUERY_START.exec(line);
+    if (prev !== undefined && m !== null && !STAGE_NAMES.has(m[1]!.toLowerCase()) && !CONTINUES.test(prev.trimEnd())) return i + 1;
     if (line.trim().length > 0) prev = line;
     offset += line.length + 1;
   }

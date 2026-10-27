@@ -90,6 +90,7 @@ namespace Rql.Tests
         [InlineData(123456.79f, 123456.79)]
         [InlineData(-2.5f, -2.5)]
         [InlineData(16777216f, 16777216)]
+        [InlineData(123456789f, 123456790)]
         public void WidenRoundTrips(float f, double expected)
         {
             var d = V.Widen(f);
@@ -190,6 +191,32 @@ namespace Rql.Tests
         }
 
         [Fact]
+        public void NestedSetPathDoesNotSuggestFilteringTheStream()
+        {
+            var e = new RqlEngine().AddSource("items", () => new List<Item> { new Item { Name = "a", Other = new Item() } })
+                .AddSource("lights", () => new List<OmniLight3D>());
+            e.Mutations.Enabled = true;
+            var d = e.Execute("items | set Other.Energy = 2", options: Mutate).Diagnostics[0];
+            Assert.Equal("unknown-member", d.Code);
+            Assert.DoesNotContain("where $ is", d.Hint ?? "");
+            var top = e.Execute("items | set Energy = 2", options: Mutate).Diagnostics[0];
+            Assert.Contains("'Energy' is a member of OmniLight3D", top.Hint);
+        }
+
+        [Fact]
+        public void SelfContainingListsDoNotOverflow()
+        {
+            var loop = new List<object?> { 1 };
+            loop.Add(loop);
+            var loop2 = new List<object?> { 1 };
+            loop2.Add(loop2);
+            var e = new RqlEngine().AddSource("ls", () => new List<object> { loop, loop2 });
+            Assert.True(e.Execute("ls | where $ == $ | count").Ok);
+            var g = e.Execute("ls | group-by $ | count"); // (encoding a self-containing list is a separate, pre-existing limit)
+            Assert.True(g.Ok, g.ToJson(includeStats: false));
+        }
+
+        [Fact]
         public void UnknownMemberListsMembersBySimilarity()
         {
             var e = Engine(new object[] { new Item { Name = "a" } });
@@ -215,7 +242,11 @@ namespace Rql.Tests
             Assert.Equal("syntax-error", ex.Code);
             Assert.Contains("one query per call: line 2", ex.Hint);
             // A query continued on the next line is not a second query.
-            foreach (var q in new[] { "items\n| where Name == \"a\" foo", "items |\n  where x | y\nfoo", "items | where x\n  and y z" })
+            foreach (var q in new[]
+                     {
+                         "items\n| where Name == \"a\" foo", "items |\n  where x | y\nfoo", "items | where x\n  and y z",
+                         "items | where x > 1\ndistinct | count", "items | select Name,\n  Tags | sort Name +", "items | where Name == \"a\" or\n  Name | first 2 )",
+                     })
             {
                 var other = Assert.Throws<RqlException>(() => RqlParser.Parse(q));
                 Assert.DoesNotContain("one query per call", other.Hint ?? "");

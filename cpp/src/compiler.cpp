@@ -230,6 +230,21 @@ bool same_identity(const Value& a, const Value& b) {
 
 }  // namespace
 
+namespace {
+
+/// Nesting of lists compared by value (spec §4.1).
+constexpr int kMaxCompareDepth = 32;
+
+struct DepthGuard {
+    int& depth;
+    explicit DepthGuard(int& d) : depth(d) { ++depth; }
+    ~DepthGuard() { --depth; }
+    DepthGuard(const DepthGuard&) = delete;
+    DepthGuard& operator=(const DepthGuard&) = delete;
+};
+
+}  // namespace
+
 std::optional<bool> rql_equal(Exec& x, const Value& a, const Value& b) {
     // Destroyed objects arrive here as null already: values are normalized where they enter expressions.
     if (a.is_absent() || b.is_absent()) return std::nullopt;
@@ -256,8 +271,10 @@ std::optional<bool> rql_equal(Exec& x, const Value& a, const Value& b) {
     if (a.is_struct() || b.is_struct() || b.is_number() || b.is_bool() || b.is_string()) return std::nullopt;
     if (a.is_list() && b.is_list()) {
         // Lists compare by value (spec §4.1): the same length and pairwise equal elements; false as soon as a pair differs,
-        // unknown when no pair differs but one is unknown.
+        // unknown when no pair differs but one is unknown. Self-containing or very deep lists are not compared.
         if (same_identity(a, b)) return true;
+        if (x.compare_depth >= kMaxCompareDepth) return std::nullopt;
+        DepthGuard guard(x.compare_depth);
         const size_t n = a.list().size();
         if (n != b.list().size()) return false;
         bool unknown = false;
@@ -341,6 +358,8 @@ bool distinct_equal(Exec& x, const Value& a, const Value& b) {
     }
     if (a.is_list() && b.is_list()) {  // lists by their elements (spec §5): group-by Tags merges equal tag lists
         if (same_identity(a, b)) return true;
+        if (x.compare_depth >= kMaxCompareDepth) return false;
+        DepthGuard guard(x.compare_depth);
         const size_t n = a.list().size();
         if (n != b.list().size()) return false;
         for (size_t i = 0; i < n; ++i)
@@ -382,6 +401,8 @@ size_t distinct_hash(Exec& x, const Value& v) {
         case Value::Kind::List: {
             const size_t n = v.list().size();
             size_t h = 17 + n;
+            if (x.compare_depth >= kMaxCompareDepth) return h;
+            DepthGuard guard(x.compare_depth);
             for (size_t i = 0; i < n; ++i) h = h * 31 + distinct_hash(x, x.live(v.list().at(i)));
             return h;
         }

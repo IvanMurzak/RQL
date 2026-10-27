@@ -492,7 +492,8 @@ export class Mutator {
     }
   }
 
-  private slotOf(container: object, declared: TypeRef, seg: Segment, lbl: string): Slot {
+  /** `top`: the segment is read on the target itself, so its unknown-member hint may suggest filtering the stream. */
+  private slotOf(container: object, declared: TypeRef, seg: Segment, lbl: string, top = false): Slot {
     const x = this.x;
     const info = x.types.infoOf(container);
     const args = typeArgs(declared);
@@ -522,7 +523,7 @@ export class Mutator {
     const m = info.find(name, container);
     if (m === undefined) {
       const names = info.membersOf(container).map((mm) => mm.name);
-      throw new RqlError('unknown-member', `no member '${name}' on ${info.shortName}`, undefined, memberHint(name, names, this.x.engine.typesDeclaring(name, [info])));
+      throw new RqlError('unknown-member', `no member '${name}' on ${info.shortName}`, undefined, memberHint(name, names, top ? this.x.engine.typesDeclaring(name, [info]) : []));
     }
     return new MemberSlot(info, m);
   }
@@ -533,7 +534,7 @@ export class Mutator {
     let declared: TypeRef = 'any';
     const chain: { slot: Slot; value: object }[] = [];
     for (let i = 0; i < segs.length; i++) {
-      const slot = this.slotOf(cur, declared, segs[i]!, lbl);
+      const slot = this.slotOf(cur, declared, segs[i]!, lbl, i === 0);
       if (i === segs.length - 1) {
         // Every copy on the way (struct or copy-on-read member) is written back into its parent: those
         // parent slots must be writable and allowed too.

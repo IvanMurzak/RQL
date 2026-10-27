@@ -767,17 +767,27 @@ export function equal(x: Exec, a: unknown, b: unknown): Truth {
  */
 function listEqual(x: Exec, a: object, ia: TypeInfo, b: object, ib: TypeInfo): Truth {
   if (a === b) return true;
+  if (listDepth >= MAX_COMPARE_DEPTH) return undefined; // a list nested this deep (or containing itself) is not compared
   const ea = [...elements(a, ia)];
   const eb = [...elements(b, ib)];
   if (ea.length !== eb.length) return false;
   let unknown = false;
-  for (let i = 0; i < ea.length; i++) {
-    const r = equal(x, x.live(ea[i] ?? null), x.live(eb[i] ?? null));
-    if (r === false) return false;
-    if (r === undefined) unknown = true;
+  listDepth++;
+  try {
+    for (let i = 0; i < ea.length; i++) {
+      const r = equal(x, x.live(ea[i] ?? null), x.live(eb[i] ?? null));
+      if (r === false) return false;
+      if (r === undefined) unknown = true;
+    }
+  } finally {
+    listDepth--;
   }
   return unknown ? undefined : true;
 }
+
+/** Nesting of lists compared by value (spec §4.1): deeper (or self-containing) lists compare as unknown. */
+export const MAX_COMPARE_DEPTH = 32;
+let listDepth = 0;
 
 function enumEqual(e: EnumValue, other: unknown): Truth {
   // The entry the string resolves to (spec §8 enum name resolution); unresolved or ambiguous is not equal.

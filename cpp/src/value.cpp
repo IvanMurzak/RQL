@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <stdexcept>
 
 #include "rql/json.hpp"
@@ -107,14 +108,22 @@ bool Value::is_single() const { return kind_ == Kind::Number && type_ && type_->
 Value Value::number(double d, const TypeDescriptor* type) {
     Value v;
     v.kind_ = Kind::Number;
-    v.num_ = type && type->scalar == ScalarKind::Single ? widen_single(static_cast<float>(d)) : d;
+    v.num_ = type && type->scalar == ScalarKind::Single ? widen_single(to_single(d)) : d;
     v.type_ = type;
     return v;
 }
 
+float to_single(double d) {
+    // A double beyond the float range is undefined behaviour to cast; .NET gives infinity.
+    if (d > static_cast<double>(std::numeric_limits<float>::max())) return std::numeric_limits<float>::infinity();
+    if (d < -static_cast<double>(std::numeric_limits<float>::max())) return -std::numeric_limits<float>::infinity();
+    return static_cast<float>(d);
+}
+
 double widen_single(float f) {
     const double d = f;
-    if (std::isnan(f) || std::isinf(f) || d == std::floor(d)) return d;
+    // Integers below 2^24 are exact; larger floats are spaced wider than 1, so their shortest decimal may differ.
+    if (std::isnan(f) || std::isinf(f) || (std::fabs(d) < 16777216.0 && d == std::floor(d))) return d;
     static const double kPow10[] = {1e0,  1e1,  1e2,  1e3,  1e4,  1e5,  1e6,  1e7,  1e8,  1e9,  1e10, 1e11,
                                     1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
     const int e = static_cast<int>(std::floor(std::log10(std::fabs(d))));

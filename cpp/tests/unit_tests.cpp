@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -1680,6 +1681,7 @@ void wave4_tests() {
     // Float members widen to the shortest decimal: arithmetic and aggregates show 4.2, not 4.19999980926514.
     check(rql::widen_single(4.2f) == 4.2 && rql::widen_single(0.1f) == 0.1 && rql::widen_single(1.5707964f) == 1.5707964 &&
               rql::widen_single(1e-30f) == 1e-30 && rql::widen_single(123456.79f) == 123456.79 && rql::widen_single(-2.5f) == -2.5 &&
+              rql::widen_single(123456789.0f) == 123456790.0 && rql::to_single(1e300) == std::numeric_limits<float>::infinity() &&
               static_cast<float>(rql::widen_single(3.14159274f)) == 3.14159274f,
           "widen_single: shortest round-trip decimal");
     rql::TypeRegistry reg;

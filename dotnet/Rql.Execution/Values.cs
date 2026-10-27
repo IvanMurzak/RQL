@@ -133,7 +133,8 @@ namespace Rql.Execution
         public static double Widen(float f)
         {
             double d = f;
-            if (float.IsNaN(f) || float.IsInfinity(f) || d == Math.Floor(d)) return d;
+            // Integers below 2^24 are exact; larger floats are spaced wider than 1, so their shortest decimal may differ.
+            if (float.IsNaN(f) || float.IsInfinity(f) || (Math.Abs(d) < 16777216 && d == Math.Floor(d))) return d;
             int e = (int)Math.Floor(Math.Log10(Math.Abs(d)));
             // Allocation-free fast path for the formatter's answer (the fallback below): 6 to 9 significant digits (fewer never need
             // a separate try: rounding to 6 already drops trailing zeros). An integer divided (or multiplied) by an exact power of

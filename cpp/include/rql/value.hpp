@@ -207,6 +207,8 @@ private:
 
 /// A float as the double of its shortest round-trip decimal (4.2f -> 4.2, not 4.19999980926514); converts back to the same float.
 double widen_single(float f);
+/// double -> float as .NET converts (beyond the float range: +-infinity, never undefined behaviour).
+float to_single(double d);
 /// Text form used for string concatenation, map keys and ids (.NET-compatible number formatting).
 std::string to_text(const Value& v);
 /// Short human description for messages: null, missing, "str", type name...
