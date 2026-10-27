@@ -41,6 +41,18 @@ export interface MutationPolicy {
   /** Host ceiling no request can exceed. */
   hardMaxTargets: number;
   /**
+   * Batch validation (spec §8): sees every planned change of a set / call stage at once (targets, members or methods,
+   * coerced values or arguments) after each target passed its own checks and before anything is written or called,
+   * on dry runs too. Return a reason to refuse the whole stage (→ invalid-value, nothing changed), or undefined/null.
+   * A throw counts as a refusal.
+   */
+  validateBatch?: (records: readonly MutationRecord[]) => string | null | undefined;
+  /**
+   * Replaces the mutation-limit hint (spec §10): receives the stage (`set` / `call`) and the target limit; returning
+   * undefined/null keeps the built-in hint. Hosts whose tools take their own limit argument name it here.
+   */
+  limitHint?: (op: string, limit: number) => string | null | undefined;
+  /**
    * Runs after planning and before anything is written (not on dry-run), e.g. to record undo state of the
    * owners. Throwing vetoes the whole mutation (→ permission-denied, nothing changed).
    */
@@ -64,6 +76,8 @@ export interface MutationRecord {
   readonly new: unknown;
   /** The invoked method for `call`. */
   readonly method?: MethodAccessor;
+  /** The coerced arguments of a `call` (defaults filled in); empty for `set`. */
+  readonly args: readonly unknown[];
 }
 
 export interface EngineDefaults {
@@ -78,6 +92,11 @@ export interface EngineDefaults {
   hardMaxVisited: number;
   hardMaxRows: number;
   hardTimeoutMs: number;
+  /**
+   * Whether the host's callers can pass request budgets (`budgets.*`). Hosts whose tools expose no budgets argument
+   * set it to false, so error hints never advise raising a budget the caller cannot reach (spec §10).
+   */
+  budgetsAdjustable: boolean;
 }
 
 export type RefResolution = { ok: true; value: object } | { ok: false; error: string };
@@ -103,6 +122,7 @@ export class RqlEngine {
     hardMaxVisited: 5_000_000,
     hardMaxRows: 10_000,
     hardTimeoutMs: 30_000,
+    budgetsAdjustable: true,
   };
   readonly mutations: MutationPolicy = { enabled: false, maxTargets: 20, hardMaxTargets: 1000 };
   runtimeName = 'typescript';
@@ -112,6 +132,21 @@ export class RqlEngine {
   resolveStableRef: ((type: string, id: string) => unknown) | undefined;
   /** When false, `$path` tracking is computed only for plans that reference `$path`. */
   alwaysTrackPaths = false;
+  /**
+   * How callers find an object by name on this host, e.g. `unity.find("Floor")`; ref() hints name it (spec §7).
+   * Undefined: the hints suggest a generic query.
+   */
+  findHint: string | undefined;
+
+  /** The hint of a ref() that did not resolve: malformed text is usually a name, not a $ref. */
+  refHint(reference: string): string {
+    const t = reference.trim();
+    const i = t.search(/[#@]/);
+    const find = this.findHint !== undefined ? `look it up with ${this.findHint}` : 'look it up by name: … | where Name == "…"';
+    return i <= 0 || i === t.length - 1
+      ? `ref() takes a $ref from a query result (Type#id), not a name; ${find}`
+      : `the object may be gone or its $ref stale; re-query it (${find}) to get a fresh $ref`;
+  }
 
   private readonly sourceMap = new Map<string, SourceRegistration>();
   private readonly functionMap = new Map<string, ExtensionFunction>();

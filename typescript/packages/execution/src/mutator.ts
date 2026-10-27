@@ -163,6 +163,24 @@ const typeArgs = (r: TypeRef): { key: TypeRef; of: TypeRef } | undefined => {
   return undefined;
 };
 
+/** A target with the scope its expressions see: its path, depth and position in the stage's input (spec §8). */
+interface Target {
+  readonly item: Item;
+  readonly index: number;
+}
+
+/**
+ * The mutation-limit hint (spec §10): split the change into batches of `limit`; mention raising
+ * budgets.maxMutationTargets only when the host lets callers pass budgets (`ceiling` defined).
+ */
+export function mutationLimitHint(op: string, limit: number, ceiling: number | undefined): string {
+  return (
+    `narrow the query (where / ref(...)) or split the change into batches of ${limit}: … | first ${limit} | ${op} …, ` +
+    `then … | skip ${limit} | first ${limit} | ${op} … (repeat plain first ${limit} instead when the change removes the items from your where)` +
+    (ceiling !== undefined && ceiling > limit ? `; or raise budgets.maxMutationTargets (host ceiling ${ceiling})` : '')
+  );
+}
+
 export class Mutator {
   constructor(
     private readonly x: Exec,
@@ -175,9 +193,37 @@ export class Mutator {
     if (!this.x.options.allowMutation) throw new RqlError('permission-denied', `'${op}' requires a mutation request (use the mutate tool / options.allowMutation)`);
   }
 
-  private targets(stream: Iterable<Item>, op: string): Item[] {
-    const list: Item[] = [];
+  /** `$`, `$index`, `$path` and `$depth` in a set value / call argument are the target's (spec §8). */
+  private enterScope(t: Target): void {
+    const x = this.x;
+    x.current = t.item.value;
+    x.currentPath = t.item.path;
+    x.currentDepth = t.item.depth;
+    x.index = t.index;
+  }
+
+  /** The host's batch validation (spec §8): every planned change at once, before any write or call, dry runs too. */
+  private validateBatch(op: string, records: () => readonly MutationRecord[]): void {
+    const validate = this.x.engine.mutations.validateBatch;
+    if (validate === undefined) return;
+    const batch = records();
+    if (batch.length === 0) return;
+    let rejected: string | null | undefined;
+    try {
+      rejected = validate(batch);
+    } catch (e) {
+      rejected = `the batch check threw ${e instanceof Error ? e.name : typeof e}: ${errorMessage(e)}`;
+    }
+    if (rejected !== undefined && rejected !== null) {
+      throw new RqlError('invalid-value', `the host refused this '${op}' of ${batch.length} change(s): ${rejected}; nothing was changed`);
+    }
+  }
+
+  private targets(stream: Iterable<Item>, op: string): Target[] {
+    const list: Target[] = [];
+    let index = -1;
     for (const it of stream) {
+      index++; // skipped null/destroyed items keep their positions: $index is the position in the stage's input
       // Null and destroyed items are skipped (a destroyed object reads as null, spec §13).
       if (it.value === null || it.value === undefined || this.x.dead(it.value)) continue;
       if (it.value instanceof RowValue) throw new RqlError('invalid-plan', `'${op}' needs objects, not projected rows; remove 'select' before '${op}'`);
@@ -194,13 +240,15 @@ export class Mutator {
           'set the member from its owner instead, e.g. objects | where … | set Transform.Position.x = 0',
         );
       }
-      list.push(it);
-      if (list.length > this.x.maxMutationTargets) {
+      list.push({ item: it, index });
+      const limit = this.x.maxMutationTargets;
+      if (list.length > limit) {
+        const m = this.x.engine.mutations;
         throw new RqlError(
           'mutation-limit',
-          `more than ${this.x.maxMutationTargets} objects matched '${op}'; nothing was changed`,
+          `more than ${limit} objects matched '${op}'; nothing was changed`,
           undefined,
-          'narrow the query (where / first / ref(...)) or raise budgets.maxMutationTargets if the bulk change is intended',
+          m.limitHint?.(op, limit) ?? mutationLimitHint(op, limit, this.x.budgetsAdjustable ? m.hardMaxTargets : undefined),
         );
       }
     }
@@ -260,11 +308,10 @@ export class Mutator {
     const assigns = s.assign.map((a) => ({ target: a.target, value: this.c.compile(a.value), label: label(a.target) }));
     const targets = this.targets(stream, 'set');
     const writes: PlannedWrite[] = [];
-    for (const it of targets) {
+    for (const t of targets) {
+      const it = t.item;
       for (const { target, value, label: lbl } of assigns) {
-        x.current = it.value;
-        x.currentPath = null;
-        x.currentDepth = it.depth;
+        this.enterScope(t);
         const nv = value(x);
         if (nv === MISSING || nv === UNKNOWN) throw new RqlError('coercion-failed', `value for '${lbl}' on ${this.refOf(it.value)} is missing`);
         if (nv instanceof ErrorValue) {
@@ -282,7 +329,9 @@ export class Mutator {
       }
     }
 
-    const toRecords = (): MutationRecord[] => writes.map((w): MutationRecord => ({ item: w.item, owner: w.owner, member: w.label, old: w.old, new: w.new }));
+    const toRecords = (): MutationRecord[] =>
+      writes.map((w): MutationRecord => ({ item: w.item, owner: w.owner, member: w.label, old: w.old, new: w.new, args: [] }));
+    this.validateBatch('set', toRecords);
     let records = once(toRecords);
     this.runHook('beforeWrite', records);
     if (!x.options.dryRun) {
@@ -369,7 +418,9 @@ export class Mutator {
       if (seg.kind !== 'index') throw new RqlError('invalid-plan', `'${lbl}': lists can only be indexed ([i]) in set targets`);
       if (!Array.isArray(container) || Object.isFrozen(container)) throw new RqlError('readonly-member', `'${lbl}': collection is not writable by index`);
       const i = seg.index < 0 ? container.length + seg.index : seg.index;
-      if (i < 0 || i >= container.length) throw new RqlError('invalid-plan', `'${lbl}': index ${seg.index} out of range (count ${container.length})`);
+      if (i < 0 || i >= container.length) {
+        throw new RqlError('invalid-plan', `'${lbl}': index ${seg.index} out of range (count ${container.length})`, undefined, listGrowHint(lbl, seg));
+      }
       return new ListSlot(seg.index, args?.of ?? 'any');
     }
     const name = seg.kind === 'member' ? seg.name : seg.kind === 'key' && typeof seg.key === 'string' ? seg.key : undefined;
@@ -384,7 +435,7 @@ export class Mutator {
   }
 
   private resolve(root: object, segs: readonly Segment[]): { slot: Slot; container: object; owner: object } {
-    const lbl = segs.map(segmentToString).join('');
+    const lbl = segmentsLabel(segs);
     let cur: object = root;
     let declared: TypeRef = 'any';
     const chain: { slot: Slot; value: object }[] = [];
@@ -417,7 +468,7 @@ export class Mutator {
 
   /** Navigate fresh, write, then write back value-like (struct) containers up the chain. */
   private assign(root: object, segs: readonly Segment[], value: unknown): void {
-    const lbl = segs.map(segmentToString).join('');
+    const lbl = segmentsLabel(segs);
     const containers: object[] = [root];
     const slots: Slot[] = [];
     let cur: object = root;
@@ -447,8 +498,8 @@ export class Mutator {
     const targets = this.targets(stream, 'call');
     const planned: { item: object; method: MethodAccessor; args: unknown[] }[] = [];
     const wanted = s.method.toUpperCase();
-    for (const it of targets) {
-      const item = it.value as object;
+    for (const t of targets) {
+      const item = t.item.value as object;
       const info = x.types.infoOf(item);
       const candidates = info.callable.filter((m) => m.name.toUpperCase() === wanted);
       if (candidates.length === 0) {
@@ -460,8 +511,7 @@ export class Mutator {
           all.length > 0 ? 'callable: ' + all.join(', ') : `${info.shortName} has no callable methods`,
         );
       }
-      x.current = item;
-      x.currentDepth = it.depth;
+      this.enterScope(t);
       const vals = args.map((a) => a(x));
       let chosen: { method: MethodAccessor; args: unknown[] } | undefined;
       let why = '';
@@ -513,8 +563,11 @@ export class Mutator {
     }
 
     const callRecords = once(() =>
-      planned.map((p): MutationRecord => ({ item: p.item, owner: p.item, member: p.method.signature(x.types), old: undefined, new: undefined, method: p.method })),
+      planned.map(
+        (p): MutationRecord => ({ item: p.item, owner: p.item, member: p.method.signature(x.types), old: undefined, new: undefined, method: p.method, args: p.args }),
+      ),
     );
+    this.validateBatch('call', callRecords);
     this.runHook('beforeWrite', callRecords);
     const rows: unknown[][] = [];
     let done = 0;
@@ -567,7 +620,21 @@ function valueText(v: unknown): string {
 }
 
 function label(p: PathExpr): string {
-  return p.segments.map((s, i) => (s.kind === 'member' ? (i === 0 ? '' : '.') + s.name : segmentToString(s))).join('');
+  return segmentsLabel(p.segments);
+}
+
+/** A set target only replaces an existing element; adding one means assigning the whole list. */
+export function listGrowHint(lbl: string, seg: Segment & { kind: 'index' }): string {
+  const at = lbl.lastIndexOf(segmentToString(seg));
+  const list = at > 0 ? lbl.slice(0, at) : 'List';
+  return (
+    `an indexed set replaces an existing element only; to add elements assign the whole list: set ${list} = append(${list}, value), ` +
+    `set ${list} = insert(${list}, ${seg.index}, value) or set ${list} = [ ... ]`
+  );
+}
+
+function segmentsLabel(segments: readonly Segment[]): string {
+  return segments.map((s, i) => (s.kind === 'member' ? (i === 0 ? '' : '.') + s.name : segmentToString(s))).join('');
 }
 
 function hasMethod(o: object, upperName: string): boolean {

@@ -171,9 +171,12 @@ namespace Rql
                 case "min":
                 case "max":
                 case "avg":
-                case "group-by":
                     if (AtStageEnd) throw Error($"expected an expression after '{op}'", Peek());
                     stage = new ExprStage(op, ParsePostfix());
+                    break;
+                case "group-by":
+                    if (AtStageEnd) throw Error($"expected an expression after '{op}'", Peek(), "example: group-by Kind, or group-by Folder, $type");
+                    stage = ParseGroupBy(t);
                     break;
                 case "distinct":
                     stage = new ExprStage(op, AtStageEnd ? null : ParsePostfix());
@@ -200,7 +203,8 @@ namespace Rql
         private static string? StageHint(string op) => op switch
         {
             "select" => "select takes paths/aliases: select $ref Name hp=(Health / MaxHealth); wrap complex expressions in parentheses",
-            "sort" => "sort Key [asc|desc], Key2 ...",
+            "sort" => "sort Key [asc|desc], Key2 ...; wrap computed keys in parentheses: sort (Mass * Speed) desc",
+            "group-by" => "group-by Key[, Key2 ...]; name keys with alias=expr, wrap computed keys in parentheses",
             "first" => "first N",
             "count" => "count takes no arguments; filter first: | where ... | count",
             _ => null,
@@ -215,16 +219,38 @@ namespace Rql
             return (int)d;
         }
 
+        /// <summary>
+        /// group-by keys, written like select fields (spec §5). One unnamed key keeps the {key, count} form (ExprStage);
+        /// several keys or a named key give one column per key, then count.
+        /// </summary>
+        private Stage ParseGroupBy(Token stageToken)
+        {
+            var keys = ParseFields("group-by", out bool named);
+            if (keys.Count == 1 && !named) return new ExprStage("group-by", keys[0].Expr);
+            if (GroupByStage.Problem(keys) is string problem) throw Error(problem, stageToken);
+            return new GroupByStage(keys);
+        }
+
         private Stage ParseSelect()
         {
+            var fields = ParseFields("select", out _);
+            if (fields.Count == 0) throw Error("expected at least one field after 'select'", Peek(), "example: select $ref Name Health");
+            return new SelectStage(fields);
+        }
+
+        private List<SelectField> ParseFields(string op, out bool named)
+        {
             var fields = new List<SelectField>();
+            named = false;
             while (!AtStageEnd)
             {
                 if (fields.Count > 0) Accept(",");
                 if (AtStageEnd) break;
                 var ft = Peek();
                 if (ft.Kind == TokenKind.Punct && !ft.Is("(") && !ft.Is("[") && !ft.Is("-"))
-                    throw Error($"unexpected {ft.Describe()} in select", ft, "wrap computed columns in parentheses: select Name ratio=(Health / MaxHealth)");
+                    throw Error($"unexpected {ft.Describe()} in {op}", ft, op == "select"
+                        ? "wrap computed columns in parentheses: select Name ratio=(Health / MaxHealth)"
+                        : "wrap computed keys in parentheses: group-by Folder, big=(Mass > 10)");
                 string? alias = null;
                 if (IsName(Peek()) && Peek(1).Is("="))
                 {
@@ -239,11 +265,11 @@ namespace Rql
                     Next();
                     alias = Next().Text;
                 }
+                if (alias != null) named = true;
                 var name = alias ?? Slice(expr.Span!.Value.Start, expr.Span!.Value.End);
                 fields.Add(new SelectField(name, expr));
             }
-            if (fields.Count == 0) throw Error("expected at least one field after 'select'", Peek(), "example: select $ref Name Health");
-            return new SelectStage(fields);
+            return fields;
         }
 
         private Stage ParseSort()
@@ -253,6 +279,9 @@ namespace Rql
             {
                 if (keys.Count > 0) Accept(",");
                 if (AtStageEnd) break;
+                var kt = Peek();
+                if (kt.Kind == TokenKind.Punct && !kt.Is("(") && !kt.Is("[") && !kt.Is("-"))
+                    throw Error($"unexpected {kt.Describe()} in sort", kt, "wrap computed sort keys in parentheses: sort (Mass * Speed) desc");
                 var e = ParsePostfix();
                 bool desc = false;
                 if (AcceptWord("desc")) desc = true;

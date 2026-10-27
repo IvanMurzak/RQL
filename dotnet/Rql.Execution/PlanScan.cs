@@ -27,6 +27,7 @@ namespace Rql.Execution
                 {
                     case WhereStage w: yield return w.Pred; break;
                     case SelectStage s: foreach (var f in s.Fields) yield return f.Expr; break;
+                    case GroupByStage g: foreach (var k in g.Keys) yield return k.Expr; break;
                     case SortStage s: foreach (var k in s.Keys) yield return k.Expr; break;
                     case ExprStage e when e.Expr != null: yield return e.Expr; break;
                     case RecurseStage r when r.Via != null: foreach (var v in r.Via) yield return v; break;

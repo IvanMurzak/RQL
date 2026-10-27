@@ -28,11 +28,15 @@ namespace Rql.Execution
     public sealed class MutationRecord
     {
         internal MutationRecord(object item, object owner, string member, object? oldValue, object? newValue, CallableMethod? method,
-                                IReadOnlyList<object>? owners = null)
+                                IReadOnlyList<object>? owners = null, IReadOnlyList<object?>? args = null)
         {
             Item = item; Owner = owner; Member = member; Old = oldValue; New = newValue; Method = method;
             Owners = owners ?? new[] { owner };
+            Args = args ?? Array.Empty<object?>();
         }
+
+        /// <summary>The coerced arguments of a <c>call</c> (defaults filled in); empty for <c>set</c>.</summary>
+        public IReadOnlyList<object?> Args { get; }
 
         /// <summary>
         /// Every object enclosing the change, nearest first, ending with the stream item — e.g. a plain view object, then the
@@ -58,6 +62,21 @@ namespace Rql.Execution
 
     public sealed class MutationPolicy
     {
+        /// <summary>
+        /// Batch validation (spec §8): sees every planned change of a set / call stage at once (targets, members or methods,
+        /// coerced values or arguments) after each target passed its own checks and before anything is written or called,
+        /// <b>on dry runs too</b>. Return a reason to refuse the whole stage (→ invalid-value, nothing changed), or null.
+        /// A throw counts as a refusal. Use it for rules that span targets (two calls saving to the same file; a component
+        /// whose dependency is removed in the same call).
+        /// </summary>
+        public Func<IReadOnlyList<MutationRecord>, string?>? ValidateBatch { get; set; }
+
+        /// <summary>
+        /// Replaces the mutation-limit hint (spec §10): receives the stage (<c>set</c> / <c>call</c>) and the target limit;
+        /// null keeps the built-in hint. Hosts whose tools take their own limit argument name it here.
+        /// </summary>
+        public Func<string, int, string?>? LimitHint { get; set; }
+
         /// <summary>
         /// Runs after planning and before anything is written (not on dry-run): e.g. Undo.RecordObjects on the owners.
         /// Throwing vetoes the whole mutation (→ permission-denied, nothing changed).
@@ -93,6 +112,11 @@ namespace Rql.Execution
         public int HardMaxVisited { get; set; } = 5_000_000;
         public int HardMaxRows { get; set; } = 10_000;
         public int HardTimeoutMs { get; set; } = 30_000;
+        /// <summary>
+        /// Whether the host's callers can pass request budgets (`budgets.*`). Hosts whose tools expose no budgets argument set
+        /// it to false, so error hints never advise raising a budget the caller cannot reach (spec §10).
+        /// </summary>
+        public bool BudgetsAdjustable { get; set; } = true;
     }
 
     /// <summary>
@@ -450,6 +474,23 @@ namespace Rql.Execution
             return Describe.Reachable(Types, roots).Select(t => Describe.TypeDescriptor(Types, t, Mutations.Enabled)).ToList();
         }
 
+        /// <summary>
+        /// How callers find an object by name on this host, e.g. <c>unity.find("Floor")</c>; ref() hints name it (spec §7).
+        /// Null: the hints suggest a generic query.
+        /// </summary>
+        public string? FindHint { get; set; }
+
+        /// <summary>The hint of a ref() that did not resolve: malformed text is usually a name, not a $ref.</summary>
+        internal string RefHint(string reference)
+        {
+            var t = reference.Trim();
+            int i = t.IndexOfAny(new[] { '#', '@' });
+            var find = FindHint != null ? $"look it up with {FindHint}" : "look it up by name: … | where Name == \"…\"";
+            return i <= 0 || i == t.Length - 1
+                ? $"ref() takes a $ref from a query result (Type#id), not a name; {find}"
+                : $"the object may be gone or its $ref stale; re-query it ({find}) to get a fresh $ref";
+        }
+
         internal object? ResolveRef(string reference, out string? error, Exec? x = null)
         {
             error = null;
@@ -621,18 +662,31 @@ namespace Rql.Execution
 
         public TimeSpan Elapsed => _sw.Elapsed;
 
+        public bool BudgetsAdjustable => Engine.Defaults.BudgetsAdjustable;
+
+        /// <summary>
+        /// The mutation-limit hint (spec §10): split the change into batches of <paramref name="limit"/>; mention raising
+        /// budgets.maxMutationTargets only when the host lets callers pass budgets (<paramref name="ceiling"/> non-null).
+        /// </summary>
+        public static string MutationLimitHint(string op, int limit, int? ceiling) =>
+            $"narrow the query (where / ref(...)) or split the change into batches of {limit}: … | first {limit} | {op} …, "
+            + $"then … | skip {limit} | first {limit} | {op} … (repeat plain first {limit} instead when the change removes the items from your where)"
+            + (ceiling is int c && c > limit ? $"; or raise budgets.maxMutationTargets (host ceiling {c})" : "");
+
         public void Visit()
         {
             if (++Visited > MaxVisited)
                 throw new RqlException("budget-exceeded", $"visited more than {MaxVisited} objects", null,
-                    "narrow the source (e.g. a specific scene), filter earlier, lower recurse max-depth, or raise budgets.maxVisited");
+                    "narrow the source (e.g. a specific scene), filter earlier or lower recurse max-depth"
+                    + (BudgetsAdjustable ? ", or raise budgets.maxVisited" : ""));
             if ((Visited & 1023) == 0) CheckTime();
         }
 
         public void CheckTime()
         {
             if (_sw.ElapsedMilliseconds > TimeoutMs)
-                throw new RqlException("timeout", $"query exceeded {TimeoutMs} ms", null, "narrow the query or raise budgets.timeoutMs");
+                throw new RqlException("timeout", $"query exceeded {TimeoutMs} ms", null,
+                    "narrow the query" + (BudgetsAdjustable ? " or raise budgets.timeoutMs" : ""));
         }
 
         public void GetterThrew(string member, Exception ex)

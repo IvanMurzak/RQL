@@ -19,6 +19,9 @@
     },
     "Special": {
       "members": "virtual read-only member `powerLevel` (number) = Power / 1000 (applies IN ADDITION to the Node adapter: composition); display member is `title` (summaries show it as name)"
+    },
+    "engine": {
+      "validateBatch": "batch validator on every set / call stage (dry runs too): refuses a batch in which two `set` changes of member `Name` write the same string, reason \"duplicate Name '<v>'\"; refuses a batch whose `bump` calls' `by` arguments sum to more than 100, reason \"bump total <sum> exceeds 100\"; otherwise accepts"
     }
   },
   "cases": [
@@ -4130,6 +4133,780 @@
           ],
           [
             3
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "adapt-call-index-arg",
+      "rql": "g.Nodes | where Id != 1 | call greet(\"#\" + $index)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "!=",
+              "args": [
+                {
+                  "path": [
+                    "Id"
+                  ]
+                },
+                {
+                  "lit": 1
+                }
+              ]
+            }
+          },
+          {
+            "op": "call",
+            "method": "greet",
+            "args": [
+              {
+                "op": "+",
+                "args": [
+                  {
+                    "lit": "#"
+                  },
+                  {
+                    "path": [
+                      {
+                        "meta": "index"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#5",
+            "greet(string who)",
+            "hi #0, I am root-b"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi #1, I am lonely"
+          ]
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "adapt-call-index-arg-bump",
+      "rql": "g.Nodes | where Id != 5 | call bump($index + 1)",
+      "then": "g.Nodes | select Value",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "!=",
+              "args": [
+                {
+                  "path": [
+                    "Id"
+                  ]
+                },
+                {
+                  "lit": 5
+                }
+              ]
+            }
+          },
+          {
+            "op": "call",
+            "method": "bump",
+            "args": [
+              {
+                "op": "+",
+                "args": [
+                  {
+                    "path": [
+                      {
+                        "meta": "index"
+                      }
+                    ]
+                  },
+                  {
+                    "lit": 1
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "bump(double by)",
+            11
+          ],
+          [
+            "Node#8",
+            "bump(double by)",
+            5
+          ]
+        ],
+        "total": 2
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Value"
+        ],
+        "rows": [
+          [
+            11
+          ],
+          [
+            7
+          ],
+          [
+            5
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "adapt-batch-set-refused-dry-run",
+      "rql": "g.Nodes | set Name = \"same\"",
+      "then": "g.Nodes | select Name",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Name"
+                  ]
+                },
+                "value": {
+                  "lit": "same"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-value"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "root-a"
+          ],
+          [
+            "root-b"
+          ],
+          [
+            "lonely"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "adapt-batch-set-refused",
+      "rql": "g.Nodes | set Name = \"same\"",
+      "then": "g.Nodes | select Name",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Name"
+                  ]
+                },
+                "value": {
+                  "lit": "same"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-value"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "root-a"
+          ],
+          [
+            "root-b"
+          ],
+          [
+            "lonely"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "adapt-batch-set-accepted",
+      "rql": "g.Nodes | set Name = \"n\" + $index",
+      "then": "g.Nodes | select Name",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Name"
+                  ]
+                },
+                "value": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "lit": "n"
+                    },
+                    {
+                      "path": [
+                        {
+                          "meta": "index"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "Name",
+            "root-a",
+            "n0"
+          ],
+          [
+            "Node#5",
+            "Name",
+            "root-b",
+            "n1"
+          ],
+          [
+            "Node#8",
+            "Name",
+            "lonely",
+            "n2"
+          ]
+        ],
+        "total": 3
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "n0"
+          ],
+          [
+            "n1"
+          ],
+          [
+            "n2"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "adapt-batch-call-refused-dry-run",
+      "rql": "g.Nodes | where Id != 5 | call bump(60)",
+      "then": "g.Nodes | select Value",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "!=",
+              "args": [
+                {
+                  "path": [
+                    "Id"
+                  ]
+                },
+                {
+                  "lit": 5
+                }
+              ]
+            }
+          },
+          {
+            "op": "call",
+            "method": "bump",
+            "args": [
+              {
+                "lit": 60
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-value"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Value"
+        ],
+        "rows": [
+          [
+            10
+          ],
+          [
+            7
+          ],
+          [
+            3
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "adapt-batch-call-refused",
+      "rql": "g.Nodes | where Id != 5 | call bump(60)",
+      "then": "g.Nodes | select Value",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "!=",
+              "args": [
+                {
+                  "path": [
+                    "Id"
+                  ]
+                },
+                {
+                  "lit": 5
+                }
+              ]
+            }
+          },
+          {
+            "op": "call",
+            "method": "bump",
+            "args": [
+              {
+                "lit": 60
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-value"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Value"
+        ],
+        "rows": [
+          [
+            10
+          ],
+          [
+            7
+          ],
+          [
+            3
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "adapt-batch-call-accepted",
+      "rql": "ref(\"Node#8\") | call bump(60)",
+      "then": "g.Nodes | select Value",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "args": [
+              {
+                "lit": 60
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "bump(double by)",
+            63
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Value"
+        ],
+        "rows": [
+          [
+            10
+          ],
+          [
+            7
+          ],
+          [
+            63
           ]
         ],
         "total": 3

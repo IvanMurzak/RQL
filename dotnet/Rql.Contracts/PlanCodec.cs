@@ -148,6 +148,19 @@ namespace Rql
             }
         }
 
+        private static void WriteFields(Utf8JsonWriter w, IReadOnlyList<SelectField> fields)
+        {
+            w.WriteStartArray("fields");
+            foreach (var f in fields)
+            {
+                w.WriteStartObject();
+                w.WriteString("name", f.Name);
+                w.WritePropertyName("expr"); WriteExpr(w, f.Expr);
+                w.WriteEndObject();
+            }
+            w.WriteEndArray();
+        }
+
         private static void WriteStage(Utf8JsonWriter w, Stage s)
         {
             w.WriteStartObject();
@@ -158,15 +171,10 @@ namespace Rql
                     w.WritePropertyName("pred"); WriteExpr(w, x.Pred);
                     break;
                 case SelectStage x:
-                    w.WriteStartArray("fields");
-                    foreach (var f in x.Fields)
-                    {
-                        w.WriteStartObject();
-                        w.WriteString("name", f.Name);
-                        w.WritePropertyName("expr"); WriteExpr(w, f.Expr);
-                        w.WriteEndObject();
-                    }
-                    w.WriteEndArray();
+                    WriteFields(w, x.Fields);
+                    break;
+                case GroupByStage x:
+                    WriteFields(w, x.Keys);
                     break;
                 case SortStage x:
                     w.WriteStartArray("keys");
@@ -269,6 +277,21 @@ namespace Rql
         }
 
         private static RqlException Invalid(string message) => new RqlException("invalid-plan", message);
+
+        /// <summary>select fields / group-by keys: a non-empty array of {name, expr}.</summary>
+        private static List<SelectField> ReadFields(JsonElement arr, string op)
+        {
+            if (arr.ValueKind != JsonValueKind.Array || arr.GetArrayLength() == 0) throw Invalid(op + ".fields must be a non-empty array");
+            var fields = new List<SelectField>();
+            foreach (var f in arr.EnumerateArray())
+            {
+                AllowOnly(f, op + " field", "name", "expr");
+                var name = Required(f, "name", "field");
+                if (name.ValueKind != JsonValueKind.String) throw Invalid("field.name must be a string");
+                fields.Add(new SelectField(name.GetString()!, ReadExpr(Required(f, "expr", "field"))));
+            }
+            return fields;
+        }
 
         private static JsonElement Required(JsonElement obj, string name, string ctx)
         {
@@ -451,17 +474,7 @@ namespace Rql
                 case "select":
                 {
                     AllowOnly(s, ctx, "op", "fields");
-                    var fields = new List<SelectField>();
-                    var arr = Required(s, "fields", ctx);
-                    if (arr.ValueKind != JsonValueKind.Array || arr.GetArrayLength() == 0) throw Invalid("select.fields must be a non-empty array");
-                    foreach (var f in arr.EnumerateArray())
-                    {
-                        AllowOnly(f, "select field", "name", "expr");
-                        var name = Required(f, "name", "field");
-                        if (name.ValueKind != JsonValueKind.String) throw Invalid("field.name must be a string");
-                        fields.Add(new SelectField(name.GetString()!, ReadExpr(Required(f, "expr", "field"))));
-                    }
-                    return new SelectStage(fields);
+                    return new SelectStage(ReadFields(Required(s, "fields", ctx), op));
                 }
                 case "sort":
                 {
@@ -489,9 +502,18 @@ namespace Rql
                 case "min":
                 case "max":
                 case "avg":
-                case "group-by":
                     AllowOnly(s, ctx, "op", "expr");
                     return new ExprStage(op, ReadExpr(Required(s, "expr", ctx)));
+                case "group-by":
+                {
+                    AllowOnly(s, ctx, "op", "expr", "fields");
+                    bool hasFields = s.TryGetProperty("fields", out var gf);
+                    if (hasFields == s.TryGetProperty("expr", out _)) throw Invalid("group-by needs exactly one of 'expr' (one key) or 'fields' (named keys)");
+                    if (!hasFields) return new ExprStage(op, ReadExpr(Required(s, "expr", ctx)));
+                    var keys = ReadFields(gf, op);
+                    if (GroupByStage.Problem(keys) is string problem) throw Invalid(problem);
+                    return new GroupByStage(keys);
+                }
                 case "distinct":
                     AllowOnly(s, ctx, "op", "expr");
                     return new ExprStage(op, s.TryGetProperty("expr", out var de) ? ReadExpr(de) : null);

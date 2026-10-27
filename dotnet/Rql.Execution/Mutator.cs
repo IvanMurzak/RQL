@@ -24,11 +24,31 @@ namespace Rql.Execution
                 throw new RqlException("permission-denied", $"'{op}' requires a mutation request (use the mutate tool / options.allowMutation)");
         }
 
-        private List<object> Targets(IEnumerable<Item> stream, string op)
+        /// <summary>A target with the scope its expressions see: its path, depth and position in the stage's input (spec §8).</summary>
+        private readonly struct Target
         {
-            var list = new List<object>();
+            public Target(Item item, long index) { Item = item; Index = index; }
+            public Item Item { get; }
+            public long Index { get; }
+            public object Value => Item.Value!;
+        }
+
+        /// <summary>`$`, `$index`, `$path` and `$depth` in a set value / call argument are the target's (spec §8).</summary>
+        private void EnterScope(Target t)
+        {
+            _x.Current = t.Item.Value;
+            _x.CurrentPath = t.Item.Path;
+            _x.CurrentDepth = t.Item.Depth;
+            _x.Index = t.Index;
+        }
+
+        private List<Target> Targets(IEnumerable<Item> stream, string op)
+        {
+            var list = new List<Target>();
+            long index = -1;
             foreach (var it in stream)
             {
+                index++; // skipped null/destroyed items keep their positions: $index is the position in the stage's input
                 if (it.Value == null) continue;
                 if (it.Value is RowValue)
                     throw new RqlException("invalid-plan", $"'{op}' needs objects, not projected rows; remove 'select' before '{op}'");
@@ -38,11 +58,12 @@ namespace Rql.Execution
                 if ((it.Value.GetType().IsValueType && !_x.Types.Info(it.Value.GetType()).WritesThrough) || TypeModel.IsScalarType(it.Value.GetType()))
                     throw new RqlException("invalid-plan", $"'{op}' needs objects with identity; '{_x.Types.Info(it.Value.GetType()).ShortName}' items are value copies, so the change would be lost",
                         null, "set the member from its owner instead, e.g. objects | where … | set Transform.Position.x = 0");
-                list.Add(it.Value);
+                list.Add(new Target(it, index));
                 if (list.Count > _x.MaxMutationTargets)
                 {
                     throw new RqlException("mutation-limit", $"more than {_x.MaxMutationTargets} objects matched '{op}'; nothing was changed",
-                        null, "narrow the query (where / first / ref(...)) or raise budgets.maxMutationTargets if the bulk change is intended");
+                        null, _x.Engine.Mutations.LimitHint?.Invoke(op, _x.MaxMutationTargets)
+                              ?? Exec.MutationLimitHint(op, _x.MaxMutationTargets, _x.BudgetsAdjustable ? _x.Engine.Mutations.HardMaxTargets : (int?)null));
                 }
             }
             return list;
@@ -81,19 +102,32 @@ namespace Rql.Execution
 
         private bool HooksOn => !_x.Options.DryRun && (_x.Engine.Mutations.BeforeWrite != null || _x.Engine.Mutations.Committed != null);
 
+        /// <summary>The host's batch validation (spec §8): every planned change at once, before any write or call, dry runs too.</summary>
+        private void ValidateBatch(string op, Func<IReadOnlyList<MutationRecord>> records)
+        {
+            var validate = _x.Engine.Mutations.ValidateBatch;
+            if (validate == null) return;
+            var batch = records();
+            if (batch.Count == 0) return;
+            string? rejected;
+            try { rejected = validate(batch); }
+            catch (Exception ex) when (!(ex is OutOfMemoryException)) { rejected = $"the batch check threw {ex.GetType().Name}: {ex.Message}"; }
+            if (rejected != null)
+                throw new RqlException("invalid-value", $"the host refused this '{op}' of {batch.Count} change(s): {rejected}; nothing was changed");
+        }
+
         public QueryResult Set(IEnumerable<Item> stream, SetStage s)
         {
             CheckPolicy("set");
             var assigns = s.Assignments.Select(a => (target: a.Target, value: _c.Compile(a.Value), label: Label(a.Target))).ToList();
             var targets = Targets(stream, "set");
             var writes = new List<PlannedWrite>();
-            foreach (var item in targets)
+            foreach (var t in targets)
             {
+                var item = t.Value;
                 foreach (var (target, value, label) in assigns)
                 {
-                    _x.Current = item;
-                    _x.CurrentDepth = -1;
-                    _x.CurrentPath = null;
+                    EnterScope(t);
                     var nv = value(_x);
                     if (nv is Missing || nv is Unknown)
                         throw new RqlException("coercion-failed", $"value for '{label}' on {_x.Engine.RefOf(item)} is missing");
@@ -110,6 +144,7 @@ namespace Rql.Execution
                 }
             }
 
+            ValidateBatch("set", () => Records(writes));
             var records = HooksOn ? Records(writes) : Array.Empty<MutationRecord>();
             RunHook(_x.Engine.Mutations.BeforeWrite, records, veto: true);
             if (!_x.Options.DryRun)
@@ -181,8 +216,10 @@ namespace Rql.Execution
             _ => V.Describe(v),
         };
 
-        private static string Label(PathExpr p) =>
-            string.Concat(p.Segments.Select((s, i) => s.Kind == SegmentKind.Member ? (i == 0 ? "" : ".") + s.Name : s.ToString()));
+        private static string Label(PathExpr p) => Label(p.Segments);
+
+        private static string Label(IReadOnlyList<Segment> segs) =>
+            string.Concat(segs.Select((s, i) => s.Kind == SegmentKind.Member ? (i == 0 ? "" : ".") + s.Name : s.ToString()));
 
         private abstract class Slot
         {
@@ -247,6 +284,15 @@ namespace Rql.Execution
             }
         }
 
+        /// <summary>A set target only replaces an existing element; adding one means assigning the whole list.</summary>
+        internal static string ListGrowHint(string label, Segment seg)
+        {
+            int at = label.LastIndexOf(seg.ToString(), StringComparison.Ordinal);
+            var list = at > 0 ? label.Substring(0, at) : "List";
+            return $"an indexed set replaces an existing element only; to add elements assign the whole list: set {list} = append({list}, value), "
+                   + $"set {list} = insert({list}, {seg.Index}, value) or set {list} = [ ... ]";
+        }
+
         private Slot SlotOf(object container, Segment seg, string label)
         {
             var info = _x.Types.Info(container.GetType());
@@ -277,7 +323,8 @@ namespace Rql.Execution
                 if (!(container is IList list) || list.IsReadOnly)
                     throw new RqlException("readonly-member", $"'{label}': collection is not writable by index");
                 long i = seg.Index < 0 ? list.Count + seg.Index : seg.Index;
-                if (i < 0 || i >= list.Count) throw new RqlException("invalid-plan", $"'{label}': index {seg.Index} out of range (count {list.Count})");
+                if (i < 0 || i >= list.Count)
+                    throw new RqlException("invalid-plan", $"'{label}': index {seg.Index} out of range (count {list.Count})", null, ListGrowHint(label, seg));
                 return new ListSlot(seg.Index, info.ElementType ?? typeof(object));
             }
             string? name = seg.Kind == SegmentKind.Member ? seg.Name : seg.Kind == SegmentKind.Key ? seg.Key as string : null;
@@ -294,7 +341,7 @@ namespace Rql.Execution
 
         private Slot Resolve(object root, IReadOnlyList<Segment> segs, out object container, out object owner, out IReadOnlyList<object> owners)
         {
-            string label = string.Concat(segs.Select(s => s.ToString()));
+            string label = Label(segs);
             object cur = root;
             var chain = new List<(Slot slot, object value)>();
             for (int i = 0; i < segs.Count; i++)
@@ -352,7 +399,7 @@ namespace Rql.Execution
         /// <summary>Navigate fresh, write, then write back modified value-type copies up the chain.</summary>
         private void Assign(object root, IReadOnlyList<Segment> segs, object? value)
         {
-            string label = string.Concat(segs.Select(s => s.ToString()));
+            string label = Label(segs);
             var containers = new List<object> { root };
             var slots = new List<Slot>();
             object cur = root;
@@ -400,8 +447,9 @@ namespace Rql.Execution
             var args = s.Args.Select(_c.Compile).ToArray();
             var targets = Targets(stream, "call");
             var planned = new List<(object item, CallableMethod method, object?[] args)>();
-            foreach (var item in targets)
+            foreach (var t in targets)
             {
+                var item = t.Value;
                 var info = _x.Types.Info(item.GetType());
                 var candidates = info.Callable.Where(m => string.Equals(m.Name, s.Method, StringComparison.OrdinalIgnoreCase)).ToList();
                 if (candidates.Count == 0)
@@ -413,8 +461,7 @@ namespace Rql.Execution
                         $"no callable method '{s.Method}' on {info.ShortName}", null,
                         all.Count > 0 ? "callable: " + string.Join(", ", all) : $"{info.ShortName} has no callable methods");
                 }
-                _x.Current = item;
-                    _x.CurrentDepth = -1;
+                EnterScope(t);
                 var vals = args.Select(a => a(_x)).ToArray();
                 CallableMethod? chosen = null;
                 object?[]? coerced = null;
@@ -447,9 +494,10 @@ namespace Rql.Execution
                 planned.Add((item, chosen, coerced!));
             }
 
-            var callRecords = HooksOn
-                ? planned.Select(p => new MutationRecord(p.item, p.item, p.method.Signature, null, null, p.method)).ToList()
-                : new List<MutationRecord>();
+            List<MutationRecord> CallRecords() =>
+                planned.Select(p => new MutationRecord(p.item, p.item, p.method.Signature, null, null, p.method, null, p.args)).ToList();
+            ValidateBatch("call", CallRecords);
+            var callRecords = HooksOn ? CallRecords() : new List<MutationRecord>();
             RunHook(_x.Engine.Mutations.BeforeWrite, callRecords, veto: true);
             var rows = new List<object?[]>();
             int done = 0;

@@ -411,6 +411,88 @@ namespace Rql.Tests
         }
 
         [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void MutationLimitHintSuggestsBatchesAndRaisesOnlyAdjustableBudgets(bool adjustable)
+        {
+            var e = Engine(new GuardHost());
+            e.Defaults.BudgetsAdjustable = adjustable;
+            var d = Mut(e, "many | set Free.x = 1").Diagnostics[0];
+            Assert.Equal("mutation-limit", d.Code);
+            Assert.Contains("first 20 | set", d.Hint);
+            Assert.Contains("skip 20 | first 20 | set", d.Hint);
+            Assert.Equal(adjustable, d.Hint!.Contains("budgets.maxMutationTargets (host ceiling 30)"));
+            if (!adjustable) Assert.DoesNotContain("budgets", d.Hint);
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void VisitedBudgetHintMentionsBudgetsOnlyWhenAdjustable(bool adjustable)
+        {
+            var e = Engine(new GuardHost());
+            e.Defaults.BudgetsAdjustable = adjustable;
+            var r = e.Execute("many | count", new Budgets { MaxVisited = 3 });
+            Assert.Equal("budget-exceeded", r.Diagnostics[0].Code);
+            Assert.Equal(adjustable, r.Diagnostics[0].Hint!.Contains("budgets.maxVisited"));
+        }
+
+        [Fact]
+        public void HostReplacesTheMutationLimitHint()
+        {
+            var e = Engine(new GuardHost());
+            e.Mutations.LimitHint = (op, limit) => $"pass max_targets (now {limit}) to change more than {limit} objects per {op}";
+            var d = Mut(e, "many | set Free.x = 1").Diagnostics[0];
+            Assert.Equal("mutation-limit", d.Code);
+            Assert.Equal("pass max_targets (now 20) to change more than 20 objects per set", d.Hint);
+        }
+
+        [Fact]
+        public void BatchValidatorSeesEveryCallWithArgumentsAndAThrowRefuses()
+        {
+            var e = Engine(new GuardHost());
+            IReadOnlyList<MutationRecord>? seen = null;
+            e.Mutations.ValidateBatch = b => { seen = b; throw new InvalidOperationException("nope"); };
+            var r = e.Execute("h | set Free.x = $index + 5", null, new QueryOptions { AllowMutation = true, DryRun = true });
+            Assert.Equal("invalid-value", r.Diagnostics[0].Code);
+            Assert.Contains("nope", r.Diagnostics[0].Message);
+            Assert.Single(seen!);
+            Assert.Equal("Free.x", seen![0].Member);
+            Assert.Equal(5f, seen[0].New);
+            Assert.Empty(seen[0].Args);
+        }
+
+        [Theory]
+        [InlineData(null, "look it up by name")]
+        [InlineData("unity.find(\"Floor\")", "look it up with unity.find(\"Floor\")")]
+        public void RefOfANameHintsAtFindingByName(string? find, string expected)
+        {
+            var e = Engine(new GuardHost());
+            e.FindHint = find;
+            var r = e.Execute("ref(\"Floor\")");
+            var d = r.Diagnostics.First(x => x.Code == "stale-ref");
+            Assert.Contains("not a name", d.Hint);
+            Assert.Contains(expected, d.Hint);
+        }
+
+        [Fact]
+        public void UnparenthesizedComputedSortKeyHintsAtParentheses()
+        {
+            var r = Engine(new GuardHost()).Execute("many | sort Free.x * 2 desc");
+            Assert.Equal("syntax-error", r.Diagnostics[0].Code);
+            Assert.Contains("sort (Mass * Speed) desc", r.Diagnostics[0].Hint);
+        }
+
+        [Fact]
+        public void ListIndexOutOfRangeHintsAtAssigningTheWholeList()
+        {
+            var r = Mut(Engine(new GuardHost()), "h | set Kids[0] = null");
+            Assert.Equal("invalid-plan", r.Diagnostics[0].Code);
+            Assert.Contains("index 0 out of range (count 0)", r.Diagnostics[0].Message);
+            Assert.Contains("set Kids = append(Kids, value)", r.Diagnostics[0].Hint);
+        }
+
+        [Theory]
         [InlineData(200)]
         [InlineData(20000)]
         public void DeepNestingIsASyntaxErrorNotACrash(int depth)

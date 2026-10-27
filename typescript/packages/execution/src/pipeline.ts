@@ -37,6 +37,7 @@ export interface Item {
   readonly depth: number;
 }
 
+const NULL_GROUP = Symbol('null');
 const item = (value: unknown, path: PathNode | null, depth = -1): Item => ({ value, path, depth });
 
 export class Pipeline {
@@ -140,8 +141,8 @@ export class Pipeline {
   private knownNames(): ReadonlyMap<string, string> {
     const names = new Map(this.x.engine.knownMemberNames());
     for (const st of this.x.plan.stages) {
-      if (st.kind !== 'select') continue;
-      for (const f of st.fields) {
+      if (st.kind !== 'select' && st.kind !== 'group-by') continue;
+      for (const f of st.kind === 'select' ? st.fields : st.keys) {
         // `select Owner.Label | sort Owner.Label` names the column and navigates no Owner.
         const dot = f.name.indexOf('.');
         for (const n of dot > 0 ? [f.name, f.name.slice(0, dot)] : [f.name]) if (!names.has(n.toUpperCase())) names.set(n.toUpperCase(), n);
@@ -338,6 +339,8 @@ export class Pipeline {
         return this.where(input, this.c.compile(st.pred));
       case 'select':
         return this.select(input, st);
+      case 'group-by':
+        return this.groupBy(input, st.keys.map((k) => this.c.compile(k.expr)), st.keys.map((k) => k.name));
       case 'sort':
         return this.sort(input, st);
       case 'limit':
@@ -345,7 +348,7 @@ export class Pipeline {
       case 'expr':
         if (st.op === 'get') return this.get(input, st.expr!);
         if (st.op === 'distinct') return this.distinct(input, st.expr !== undefined ? this.c.compile(st.expr) : undefined);
-        if (st.op === 'group-by') return this.groupBy(input, this.c.compile(st.expr!));
+        if (st.op === 'group-by') return this.groupBy(input, [this.c.compile(st.expr!)], ['key']);
         break;
       case 'recurse':
         return this.recurse(input, st);
@@ -451,19 +454,30 @@ export class Pipeline {
     }
   }
 
-  /** group-by: rows {key, count} in order of first appearance (null/missing keys grouped as null). */
-  private *groupBy(input: Iterable<Item>, key: Eval): Generator<Item> {
-    const groups = new Map<unknown, { key: unknown; count: number }>();
-    const NULL_GROUP = Symbol('null');
-    for (const v of this.values(input, key)) {
-      const k = v === MISSING || v === UNKNOWN ? null : v;
-      const dk = k === null ? NULL_GROUP : distinctKey(this.x, k);
+  /**
+   * group-by: one row per distinct key tuple, in order of first appearance: the key columns, then count
+   * (null/missing key values group as null).
+   */
+  private *groupBy(input: Iterable<Item>, keys: readonly Eval[], keyColumns: readonly string[]): Generator<Item> {
+    const x = this.x;
+    const groups = new Map<unknown, { tuple: unknown[]; count: number }>();
+    let i = 0;
+    for (const it of input) {
+      x.current = it.value;
+      x.currentPath = it.path;
+      x.currentDepth = it.depth;
+      x.index = i++;
+      const tuple = keys.map((k) => {
+        const v = normalize(k(x));
+        return v === MISSING || v === UNKNOWN ? null : v;
+      });
+      const dk = tuple.length === 1 ? (tuple[0] === null ? NULL_GROUP : distinctKey(x, tuple[0])) : distinctKey(x, new RowValue([...keyColumns], tuple));
       const g = groups.get(dk);
       if (g !== undefined) g.count++;
-      else groups.set(dk, { key: k, count: 1 });
+      else groups.set(dk, { tuple, count: 1 });
     }
-    const cols = ['key', 'count'];
-    for (const g of groups.values()) yield item(new RowValue(cols, [g.key, g.count]), null);
+    const cols = [...keyColumns, 'count'];
+    for (const g of groups.values()) yield item(new RowValue(cols, [...g.tuple, g.count]), null);
   }
 
   private recurse(input: Iterable<Item>, r: RecurseStage): Iterable<Item> {
@@ -610,19 +624,23 @@ export class Pipeline {
   private lastIsRows(): boolean {
     let rows = false;
     for (const st of this.x.plan.stages) {
-      if (st.kind === 'select' || (st.kind === 'expr' && st.op === 'group-by')) rows = true;
+      if (projects(st)) rows = true;
       else if ((st.kind === 'expr' && st.op !== 'distinct') || st.kind === 'recurse' || st.kind === 'generic') rows = false;
     }
     return rows;
   }
 
   private lastColumns(): string[] {
-    const st = [...this.x.plan.stages].reverse().find((s) => s.kind === 'select' || (s.kind === 'expr' && s.op === 'group-by'));
-    return st?.kind === 'select' ? st.fields.map((f) => f.name) : ['key', 'count'];
+    const st = [...this.x.plan.stages].reverse().find(projects);
+    if (st?.kind === 'select') return st.fields.map((f) => f.name);
+    return st?.kind === 'group-by' ? [...st.keys.map((k) => k.name), 'count'] : ['key', 'count'];
   }
 }
 
 // ------------------------------------------------------------------ helpers
+
+/** Stages whose output is projected rows. */
+const projects = (s: Stage): boolean => s.kind === 'select' || s.kind === 'group-by' || (s.kind === 'expr' && s.op === 'group-by');
 
 function normalize(v: unknown): unknown {
   return v === undefined ? null : v;
@@ -771,6 +789,9 @@ function usesMeta(plan: Exec['plan'], meta: string): boolean {
         break;
       case 'select':
         if (st.fields.some((f) => inExpr(f.expr))) return true;
+        break;
+      case 'group-by':
+        if (st.keys.some((k) => inExpr(k.expr))) return true;
         break;
       case 'sort':
         if (st.keys.some((k) => inExpr(k.expr))) return true;

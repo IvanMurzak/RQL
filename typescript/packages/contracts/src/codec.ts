@@ -6,6 +6,7 @@ import { RqlError } from './errors.js';
 import { formatNumber } from './numbers.js';
 import {
   RQL_VERSION,
+  groupByProblem,
   isExprOp,
   isTerminal,
   type Assignment,
@@ -93,6 +94,9 @@ function stageToJson(s: Stage): JsonObject {
       break;
     case 'select':
       o.fields = s.fields.map((f) => ({ name: f.name, expr: exprToJson(f.expr) }));
+      break;
+    case 'group-by':
+      o.fields = s.keys.map((f) => ({ name: f.name, expr: exprToJson(f.expr) }));
       break;
     case 'sort':
       o.keys = s.keys.map((k) => {
@@ -365,6 +369,16 @@ function nonEmptyArray(v: Json, message: string): Json[] {
   return v as Json[];
 }
 
+/** select fields / group-by keys: a non-empty array of {name, expr}. */
+function readFields(v: Json | undefined, op: string): SelectField[] {
+  return nonEmptyArray(v as Json, op + '.fields must be a non-empty array').map((f) => {
+    allowOnly(f, op + ' field', 'name', 'expr');
+    const name = required(f, 'name', 'field');
+    if (typeof name !== 'string') throw invalid('field.name must be a string');
+    return { name, expr: readExpr(required(f, 'expr', 'field')) };
+  });
+}
+
 export function readStage(s: Json): Stage {
   if (!isObject(s)) throw invalid('stage must be an object');
   const opEl = required(s, 'op', 'stage');
@@ -377,14 +391,7 @@ export function readStage(s: Json): Stage {
       return { kind: 'where', op, pred: readExpr(required(s, 'pred', ctx)) };
     case 'select': {
       allowOnly(s, ctx, 'op', 'fields');
-      const arr = nonEmptyArray(required(s, 'fields', ctx), 'select.fields must be a non-empty array');
-      const fields: SelectField[] = arr.map((f) => {
-        allowOnly(f, 'select field', 'name', 'expr');
-        const name = required(f, 'name', 'field');
-        if (typeof name !== 'string') throw invalid('field.name must be a string');
-        return { name, expr: readExpr(required(f, 'expr', 'field')) };
-      });
-      return { kind: 'select', op, fields };
+      return { kind: 'select', op, fields: readFields(required(s, 'fields', ctx), op) };
     }
     case 'sort': {
       allowOnly(s, ctx, 'op', 'keys');
@@ -408,9 +415,17 @@ export function readStage(s: Json): Stage {
     case 'min':
     case 'max':
     case 'avg':
-    case 'group-by':
       allowOnly(s, ctx, 'op', 'expr');
       return { kind: 'expr', op, expr: readExpr(required(s, 'expr', ctx)) };
+    case 'group-by': {
+      allowOnly(s, ctx, 'op', 'expr', 'fields');
+      if (has(s, 'fields') === has(s, 'expr')) throw invalid("group-by needs exactly one of 'expr' (one key) or 'fields' (named keys)");
+      if (!has(s, 'fields')) return { kind: 'expr', op, expr: readExpr(required(s, 'expr', ctx)) };
+      const keys = readFields(s['fields'], op);
+      const problem = groupByProblem(keys);
+      if (problem !== undefined) throw invalid(problem);
+      return { kind: 'group-by', op, keys };
+    }
     case 'distinct':
       allowOnly(s, ctx, 'op', 'expr');
       return has(s, 'expr') ? { kind: 'expr', op, expr: readExpr(s['expr']) } : { kind: 'expr', op };

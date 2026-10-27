@@ -4,6 +4,7 @@
  */
 import {
   RqlError,
+  groupByProblem,
   validateStructure,
   type Assignment,
   type Diagnostic,
@@ -172,9 +173,12 @@ class Parser {
       case 'min':
       case 'max':
       case 'avg':
-      case 'group-by':
         if (this.atStageEnd) throw this.error(`expected an expression after '${op}'`, this.peek());
         stage = { kind: 'expr', op, expr: this.parsePostfix() };
+        break;
+      case 'group-by':
+        if (this.atStageEnd) throw this.error(`expected an expression after '${op}'`, this.peek(), 'example: group-by Kind, or group-by Folder, $type');
+        stage = this.parseGroupBy(t);
         break;
       case 'distinct':
         stage = this.atStageEnd ? { kind: 'expr', op } : { kind: 'expr', op, expr: this.parsePostfix() };
@@ -218,14 +222,37 @@ class Parser {
     return d;
   }
 
+  /**
+   * group-by keys, written like select fields (spec §5). One unnamed key keeps the {key, count} form (ExprStage);
+   * several keys or a named key give one column per key, then count.
+   */
+  private parseGroupBy(stageToken: Token): Stage {
+    const { fields: keys, named } = this.parseFields('group-by');
+    if (keys.length === 1 && !named) return { kind: 'expr', op: 'group-by', expr: keys[0]!.expr };
+    const problem = groupByProblem(keys);
+    if (problem !== undefined) throw this.error(problem, stageToken);
+    return { kind: 'group-by', op: 'group-by', keys };
+  }
+
   private parseSelect(): Stage {
+    const { fields } = this.parseFields('select');
+    if (fields.length === 0) throw this.error("expected at least one field after 'select'", this.peek(), 'example: select $ref Name Health');
+    return { kind: 'select', op: 'select', fields };
+  }
+
+  private parseFields(op: string): { fields: SelectField[]; named: boolean } {
     const fields: SelectField[] = [];
+    let named = false;
     while (!this.atStageEnd) {
       if (fields.length > 0) this.accept(',');
       if (this.atStageEnd) break;
       const ft = this.peek();
       if (ft.kind === 'punct' && !isPunct(ft, '(') && !isPunct(ft, '[') && !isPunct(ft, '-')) {
-        throw this.error(`unexpected ${describeToken(ft)} in select`, ft, 'wrap computed columns in parentheses: select Name ratio=(Health / MaxHealth)');
+        throw this.error(
+          `unexpected ${describeToken(ft)} in ${op}`,
+          ft,
+          op === 'select' ? 'wrap computed columns in parentheses: select Name ratio=(Health / MaxHealth)' : 'wrap computed keys in parentheses: group-by Folder, big=(Mass > 10)',
+        );
       }
       let alias: string | undefined;
       if (this.isName(this.peek()) && isPunct(this.peek(1), '=')) {
@@ -238,11 +265,11 @@ class Parser {
         this.next();
         alias = this.next().text;
       }
+      if (alias !== undefined) named = true;
       const span = expr.span!;
       fields.push({ name: alias ?? trimDotnet(this.text.slice(span.start, span.end)), expr });
     }
-    if (fields.length === 0) throw this.error("expected at least one field after 'select'", this.peek(), 'example: select $ref Name Health');
-    return { kind: 'select', op: 'select', fields };
+    return { fields, named };
   }
 
   private parseSort(): Stage {
@@ -250,6 +277,10 @@ class Parser {
     while (!this.atStageEnd) {
       if (keys.length > 0) this.accept(',');
       if (this.atStageEnd) break;
+      const kt = this.peek();
+      if (kt.kind === 'punct' && !isPunct(kt, '(') && !isPunct(kt, '[') && !isPunct(kt, '-')) {
+        throw this.error(`unexpected ${describeToken(kt)} in sort`, kt, 'wrap computed sort keys in parentheses: sort (Mass * Speed) desc');
+      }
       const expr = this.parsePostfix();
       let desc = false;
       if (this.acceptWord('desc')) desc = true;
@@ -631,7 +662,9 @@ function stageHint(op: string): string | undefined {
     case 'select':
       return 'select takes paths/aliases: select $ref Name hp=(Health / MaxHealth); wrap complex expressions in parentheses';
     case 'sort':
-      return 'sort Key [asc|desc], Key2 ...';
+      return 'sort Key [asc|desc], Key2 ...; wrap computed keys in parentheses: sort (Mass * Speed) desc';
+    case 'group-by':
+      return 'group-by Key[, Key2 ...]; name keys with alias=expr, wrap computed keys in parentheses';
     case 'first':
       return 'first N';
     case 'count':

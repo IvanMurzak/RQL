@@ -93,7 +93,8 @@ If the source value is a `list` its elements become the item stream; a `map` yie
 * **Meta members** (portable): `$type` — runtime short type name (no namespace / generic arity);
   `$ref` — stable reference string (§7); `$path` — the navigation path by which the item was
   reached (§3.1); `$index` — zero-based position of the item in the stream entering the current
-  stage; `$depth` — inside/after a `recurse` stage, the item's depth relative to the item the
+  stage (in a `set` value or `call` argument: the target's position in the stream entering the `set` / `call` stage,
+  §8); `$depth` — inside/after a `recurse` stage, the item's depth relative to the item the
   recursion started from (0 = start item), otherwise `missing`. Unknown meta → `missing` +
   warning `unknown-meta`. On projected rows a column literally named `$name` (from
   `select $path`) shadows the meta member, so `select $path Name | where $path contains "x"` works.
@@ -103,6 +104,10 @@ If the source value is a `list` its elements become the item stream; a `map` yie
 Canonical form: source text, then `.Member`, `[i]` for list positions, `["key"]` for map keys,
 e.g. `world.scenes[0].objects[3].Children[1]`. Stages that create new items (`get`, `recurse`)
 extend the path. Projection/aggregation results have no `$path`.
+
+`$path` is the **query path**: how this query reached the item, starting from its source (`objects[5]`,
+`unity.find("Crate").Children[0]`). It is not a host location such as a scene-hierarchy path, a node path or an asset
+path; the same object reached by another query has another `$path`. Hosts expose their own locations as members.
 
 ## 4. Operators and functions
 
@@ -148,12 +153,28 @@ modulo by zero → `error(div-by-zero)`. Other operand kinds → `error(type-mis
 | `insert(list, i, v)` | a new list with `v` inserted before index `i` (negative `i` counts from the end, `-1` appends). |
 | `remove-at(list, i)` | a new list without the element at `i` (negative from the end). |
 | `without(list, v)` | a new list without the elements equal to `v` (§4.1). |
+| `replace(s, from, to)` | `s` with every occurrence of `from` replaced by `to`, left to right, non-overlapping. `from` matches **ordinal case-insensitive** (like `contains`); an empty `from` returns `s`. |
+| `replace-regex(s, pattern, repl)` | `s` with every match of `pattern` (the `matches` dialect and case-insensitivity, §4.1) replaced by `repl`, in which `$0`–`$9` insert the match / group text (empty when the group did not take part or does not exist), `$$` inserts `$`, and any other `$` is literal. |
+| `substring(s, start[, length])` | the part of `s` from `start` (negative counts from the end), at most `length` characters (default: to the end). `start` and the end are clamped to the string, so out-of-range positions give a shorter or empty string; a negative `length` is a `type-mismatch` error value. |
+| `split(s, sep)` | the list of the parts of `s` between occurrences of `sep` (ordinal case-insensitive; empty parts kept: `split("a,,b", ",")` → `["a", "", "b"]`). An empty `sep` is a `type-mismatch` error value. |
+| `trim(s)` | `s` without leading and trailing whitespace (space, tab, LF, CR, vertical tab, form feed). |
+| `pad(v, width[, fill])` | the text of `v` (a string, or a number written as `+` concatenation writes it) left-padded with `fill` (a one-character string, default `"0"`) to at least `width` characters (an integer from 0 to 1024): `pad(3, 2)` → `"03"`, `pad("ab", 4, " ")` → `"  ab"`. Text already that long is returned unchanged. |
 
 Numeric functions return `null` / `missing` / an error value unchanged when an argument is one (the first such argument),
 and a `type-mismatch` error value for any other non-number argument.
 
 List functions never modify their argument; assign the result (`set Tags = append(Tags, "x")`). A first argument that is
 not a list, a non-integral index or an index out of range yields a `type-mismatch` error value.
+
+**String functions** (`replace`, `replace-regex`, `substring`, `split`, `trim`, `pad`) also return the first `null` /
+`missing` / error argument unchanged; any other argument of the wrong kind (a non-string text argument, a non-integral
+position) yields a `type-mismatch` error value. Positions and lengths count UTF-16 code units, like `len` (a cut
+inside a surrogate pair is not portable). They are also methods on the string: `Name.replace("Pillar_", "Column_")`,
+`Name.substring(0, 4)`, `Label.trim()`, `Index.pad(3)`. `replace-regex` with a literal pattern that does not compile
+fails the query (`invalid-regex`) before it runs; a computed one yields an `invalid-regex` error value plus one warning,
+and a match over the regex time limit a `timeout` error value plus one warning. Renaming by pattern:
+`… | set Name = replace-regex(Name, " \((\d+)\)$", "") + "_" + pad(replace-regex(Name, "^.*\((\d+)\)$", "$1"), 2)` turns
+`Tree (3)` into `Tree_03`.
 
 Collection **methods** (`list.method(args)`), args evaluated per element with `$` = element:
 
@@ -216,9 +237,10 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
 | `count` | terminal: number of items. |
 | `get e` | replace each item by `e`; `list` results are flattened into separate items; `missing`/`null` dropped. |
 | `recurse [via...] [max-depth=N] [include-self=false]` | depth-first pre-order expansion of each item into **itself (depth 0) and** its descendants; `include-self=false` emits descendants only. With `via` members (e.g. `recurse Children`) only those members are followed; without, every **owning** object-valued member and list/map element of objects is followed (runtime member order). Members the descriptor marks as non-owning references (parent links, targets, shared assets) are not followed by generic recursion. Cycle-safe: each object identity is emitted at most once per stage. `max-depth` default 8, hard cap per budget. |
-| `distinct [e]` | keep the first item for each distinct value of `e` (default `$`; objects by identity; projected rows by their column values, so `select Tag \| distinct` keeps one row per tag; structs and other values by value). |
+| `distinct [e]` | keep the first item for each distinct value of `e` (default `$`; objects by identity; projected rows by their column values, so `select Tag \| distinct` keeps one row per tag; structs and other values by value). It keeps **items**, not the values of `e`: `distinct Tag` returns one whole item per tag; to list the values project first (`select Tag \| distinct`) or count them (`group-by Tag`). |
 | `sum/min/max/avg e` | terminal aggregate, same rules as the collection methods (`sum` of nothing → `0`). |
 | `group-by e` | replaces the stream by rows `{key, count}` (members `key`, `count`) in order of first appearance of the key; `null`/`missing` keys form one `null` group. Can be followed by `sort count desc`, `where count > 1`, etc. |
+| `group-by [n=]e, [n=]e ...` | several keys, or a named key: one row per distinct **combination** of key values, in order of first appearance, with one column per key — named like `select` columns (alias, or the key's source text: `group-by Folder, $type` → columns `Folder`, `$type`, `count`) — then `count`. Key values compare like `distinct`; `null`/`missing` values group as `null` per column. Keys are separated by commas or whitespace like `select` fields; computed keys need parentheses (`group-by Kind, big=(Mass > 10)`). Column names must be distinct (case-insensitive) and none may be `count` (`syntax-error` / `invalid-plan`). A single key without a name keeps the `{key, count}` form above. |
 | `describe` | terminal: schema of the distinct runtime types of the items (members, kinds, writability). |
 | `set p = e, ...` | mutation (§8). |
 | `call m(args)` | mutation: invoke an allowlisted method (§8). |
@@ -275,6 +297,9 @@ conformance form.
 * `ref("...")` resolves a reference. If the object no longer exists (destroyed/collected/removed
   from every registered source) → `error(stale-ref)` and diagnostic `stale-ref`. Runtimes with
   explicit destruction (Unity/Unreal) MUST check liveness, not just a cached pointer.
+* A `ref()` text that is not a reference (no `Type#id` / `Type@n` form, typically an object name) is `stale-ref` too;
+  its hint says that `ref()` takes a `$ref`, not a name, and how to find the object by name — the host's finder when
+  the host names one (e.g. `unity.find("Floor")`), otherwise a `where Name == "…"` query.
 * Object identity (for cycles, `distinct`, `==`) is reference identity in the owning runtime.
 * The identity member that backs `$ref` is always read-only through RQL (`readonly-member`).
 
@@ -295,7 +320,9 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   reference types; list literal → list/array type; object literal → map / constructed object, §4.5), then write. Writing through value types
   (`Transform.Position.x = 1`) MUST write back the modified copy to every enclosing value-type
   member up to the first reference object. Target member must be writable and allowed by
-  policy (`readonly-member`, `permission-denied`).
+  policy (`readonly-member`, `permission-denied`). An indexed target (`set Tags[1] = "x"`) replaces an existing
+  element; an index out of range is `invalid-plan`, with a hint to assign the whole list instead
+  (`set Tags = append(Tags, "x")`, `insert(…)` or a list literal).
 * `call m(args)`: only methods allowlisted by the runtime policy; arguments coerced as above. A method MAY declare a
   **validator** (target, coerced arguments → rejection reason or none; .NET: the `validate` of an adapter method, or a
   public companion `string Validate<Name>(same parameters)` next to an `[RqlCallable]` method). Every target's call is
@@ -303,7 +330,17 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   refused — and a rejection fails the stage with `invalid-value` (naming the method, the target and the reason) with
   nothing called. Methods without a validator behave as before. A method that throws stops the stage with error
   `call-threw` (naming the method and the exception); calls completed before it are not rolled back (calls cannot be
-  undone generically: hosts make them safe through validators).
+  undone generically: hosts make them safe through validators and batch validation, below).
+* **Scope of values and arguments**: a `set` value and a `call` argument are evaluated per target with `$` = the
+  target, and `$index`, `$path` and `$depth` are the target's as it entered the stage: `$index` is its position in the
+  stream entering `set` / `call` (null and destroyed items, which are skipped, keep their positions), so
+  `nodes | where class == "RigidBody3D" | set Position.X = $index * 2` spreads the matches 0, 2, 4, ….
+* **Batch validation**: a host MAY register a batch validator that receives every planned change of the stage at
+  once (`set`: target, owner, member, old and coerced new value; `call`: target, method and coerced arguments) after
+  every target passed its own checks and before the first write or call — **on dry runs too**. A reason it returns
+  (or an exception it throws) refuses the whole stage with `invalid-value` (naming the reason), nothing written or
+  called. It serves rules that span targets: two calls saving to the same file, a component whose dependency is
+  removed by the same `call`. Per-target validators (§13) still run first.
 * **All-or-nothing**: every target and assignment is resolved and coerced before any write. If
   more than `budgets.maxMutationTargets` (default 20) items reach the stage → `mutation-limit`,
   nothing written. If a write fails midway the runtime MUST restore already-written values.
@@ -339,6 +376,13 @@ Budgets (request-level, all optional, runtime may clamp to its own hard caps):
 | `timeoutMs` | 2 000 | `timeout` |
 | `maxOutputBytes` | 65 536 | truncation of rows + warning `output-truncated` |
 | `maxMutationTargets` | 20 | `mutation-limit` |
+
+Budget hints: the hints of `budget-exceeded`, `timeout` and `mutation-limit` advise raising a budget (`budgets.*`)
+only when the host declares that its callers can pass request budgets (default: they can); hosts whose tools take no
+budgets argument turn that off, so no hint names a setting the caller cannot reach. The `mutation-limit` hint always
+suggests narrowing the query or splitting the change into batches of the limit (`… | first 20 | set …`, then
+`… | skip 20 | first 20 | set …`, or `first 20` again when the change removes the items from the filter); a host MAY
+replace the whole hint (e.g. to name its own limit argument).
 
 Diagnostics: `{severity: "error"|"warning", code, message, at?: {start, end}, hint?}`. Error codes
 are a closed set per release (package 0.2.0 added `call-threw`, `function-threw`, `hook-threw`, `invalid-value` and

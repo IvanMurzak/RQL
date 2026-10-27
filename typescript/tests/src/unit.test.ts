@@ -170,6 +170,74 @@ test('request maxMutationTargets is capped by the host ceiling', () => {
   assert.ok(xs.every((x) => x.v === 0));
 });
 
+// ---------------------------------------------------------------- wave-2 findings (hints, batch validation)
+
+const hintEngine = (count: number): { e: RqlEngine; xs: { Id: number; v: number; kids: unknown[] }[] } => {
+  const xs = Array.from({ length: count }, (_, i) => ({ Id: i, v: 0, kids: [] as unknown[] }));
+  const e = new RqlEngine().addSource('xs', () => xs);
+  e.mutations.enabled = true;
+  e.mutations.hardMaxTargets = 30;
+  return { e, xs };
+};
+
+for (const adjustable of [true, false]) {
+  test(`mutation-limit hint suggests batches; budgets only when adjustable (${adjustable})`, () => {
+    const { e } = hintEngine(25);
+    e.defaults.budgetsAdjustable = adjustable;
+    const d = e.execute('xs | set v = 1', undefined, { allowMutation: true }).diagnostics[0]!;
+    assert.equal(d.code, 'mutation-limit');
+    assert.ok(d.hint!.includes('first 20 | set'));
+    assert.ok(d.hint!.includes('skip 20 | first 20 | set'));
+    assert.equal(d.hint!.includes('budgets.maxMutationTargets (host ceiling 30)'), adjustable);
+    if (!adjustable) assert.ok(!d.hint!.includes('budgets'));
+    const v = e.execute('xs | count', { maxVisited: 3 }).diagnostics[0]!;
+    assert.equal(v.code, 'budget-exceeded');
+    assert.equal(v.hint!.includes('budgets.maxVisited'), adjustable);
+  });
+}
+
+test('a host replaces the mutation-limit hint', () => {
+  const { e } = hintEngine(25);
+  e.mutations.limitHint = (op, limit) => `pass max_targets (now ${limit}) to change more than ${limit} objects per ${op}`;
+  const d = e.execute('xs | set v = 1', undefined, { allowMutation: true }).diagnostics[0]!;
+  assert.equal(d.hint, 'pass max_targets (now 20) to change more than 20 objects per set');
+});
+
+test('the batch validator sees every change with its value, on dry runs, and a throw refuses', () => {
+  const { e, xs } = hintEngine(3);
+  let seen: readonly { member: string; new: unknown; args: readonly unknown[] }[] = [];
+  e.mutations.validateBatch = (b) => {
+    seen = b;
+    throw new Error('nope');
+  };
+  const r = e.execute('xs | set v = $index + 5', undefined, { allowMutation: true, dryRun: true });
+  assert.equal(r.diagnostics[0]?.code, 'invalid-value');
+  assert.ok(r.diagnostics[0]!.message.includes('nope'));
+  assert.deepEqual(seen.map((s) => [s.member, s.new, s.args.length]), [['v', 5, 0], ['v', 6, 0], ['v', 7, 0]]);
+  assert.ok(xs.every((x) => x.v === 0));
+});
+
+test('ref() of a name hints at finding it by name, naming the host finder', () => {
+  const { e } = hintEngine(1);
+  assert.ok(e.execute('ref("Floor")').diagnostics.find((d) => d.code === 'stale-ref')!.hint!.includes('look it up by name'));
+  e.findHint = 'unity.find("Floor")';
+  const d = e.execute('ref("Floor")').diagnostics.find((x) => x.code === 'stale-ref')!;
+  assert.ok(d.hint!.includes('not a name') && d.hint!.includes('look it up with unity.find("Floor")'));
+});
+
+test('an unparenthesized computed sort key hints at parentheses', () => {
+  const r = hintEngine(1).e.execute('xs | sort v * 2 desc');
+  assert.equal(r.diagnostics[0]?.code, 'syntax-error');
+  assert.ok(r.diagnostics[0]!.hint!.includes('sort (Mass * Speed) desc'));
+});
+
+test('an out-of-range list index in a set target hints at assigning the whole list', () => {
+  const r = hintEngine(1).e.execute('xs | set kids[0] = 1', undefined, { allowMutation: true });
+  assert.equal(r.diagnostics[0]?.code, 'invalid-plan');
+  assert.ok(r.diagnostics[0]!.message.includes('index 0 out of range (count 0)'));
+  assert.ok(r.diagnostics[0]!.hint!.includes('set kids = append(kids, value)'));
+});
+
 // ---------------------------------------------------------------- live-battery findings (0.2.0)
 
 class Light {

@@ -11686,6 +11686,3368 @@
         "rows": [],
         "total": 0
       }
+    },
+    {
+      "name": "mut-set-index-after-where",
+      "rql": "g.Nodes | where Name != \"root-a\" | set Value = $index * 2",
+      "then": "g.Nodes | select Name Value",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "!=",
+              "args": [
+                {
+                  "path": [
+                    "Name"
+                  ]
+                },
+                {
+                  "lit": "root-a"
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "path": [
+                        {
+                          "meta": "index"
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#5",
+            "Value",
+            7,
+            0
+          ],
+          [
+            "Node#8",
+            "Value",
+            3,
+            2
+          ]
+        ],
+        "total": 2
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "Value"
+        ],
+        "rows": [
+          [
+            "root-a",
+            10
+          ],
+          [
+            "root-b",
+            0
+          ],
+          [
+            "lonely",
+            2
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "mut-set-index-dry-run",
+      "rql": "g.Nodes | recurse Children | where Enabled | set Value = $index",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "path": [
+                "Enabled"
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "path": [
+                    {
+                      "meta": "index"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "Value",
+            10,
+            0
+          ],
+          [
+            "Node#2",
+            "Value",
+            2.5,
+            1
+          ],
+          [
+            "Node#4",
+            "Value",
+            0,
+            2
+          ],
+          [
+            "Node#5",
+            "Value",
+            7,
+            3
+          ],
+          [
+            "Special#6",
+            "Value",
+            7,
+            4
+          ],
+          [
+            "Node#8",
+            "Value",
+            3,
+            5
+          ]
+        ],
+        "total": 6,
+        "dryRun": true
+      }
+    },
+    {
+      "name": "mut-set-index-after-get",
+      "rql": "g.Nodes | get Peer | set Value = $index",
+      "then": "g.Nodes | select Name Value",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Peer"
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "path": [
+                    {
+                      "meta": "index"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#5",
+            "Value",
+            7,
+            0
+          ],
+          [
+            "Node#1",
+            "Value",
+            10,
+            1
+          ]
+        ],
+        "total": 2,
+        "dryRun": true
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "Value"
+        ],
+        "rows": [
+          [
+            "root-a",
+            10
+          ],
+          [
+            "root-b",
+            7
+          ],
+          [
+            "lonely",
+            3
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "mut-set-depth",
+      "rql": "g.Nodes | recurse Children | where Id == 4 or Id == 6 | set Note = \"depth \" + $depth",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "or",
+              "args": [
+                {
+                  "op": "==",
+                  "args": [
+                    {
+                      "path": [
+                        "Id"
+                      ]
+                    },
+                    {
+                      "lit": 4
+                    }
+                  ]
+                },
+                {
+                  "op": "==",
+                  "args": [
+                    {
+                      "path": [
+                        "Id"
+                      ]
+                    },
+                    {
+                      "lit": 6
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Note"
+                  ]
+                },
+                "value": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "lit": "depth "
+                    },
+                    {
+                      "path": [
+                        {
+                          "meta": "depth"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#4",
+            "Note",
+            "",
+            "depth 2"
+          ],
+          [
+            "Special#6",
+            "Note",
+            null,
+            "depth 1"
+          ]
+        ],
+        "total": 2,
+        "dryRun": true
+      }
+    },
+    {
+      "name": "mut-set-path",
+      "rql": "g.Nodes | recurse Children | where Id == 4 | set Note = $path",
+      "then": "ref(\"Node#4\") | select Note",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Id"
+                  ]
+                },
+                {
+                  "lit": 4
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Note"
+                  ]
+                },
+                "value": {
+                  "path": [
+                    {
+                      "meta": "path"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#4",
+            "Note",
+            "",
+            "g.Nodes[0].Children[1].Children[0]"
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#4"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Note",
+                "expr": {
+                  "path": [
+                    "Note"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Note"
+        ],
+        "rows": [
+          [
+            "g.Nodes[0].Children[1].Children[0]"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "mut-set-index-two-assignments",
+      "rql": "g.Nodes | skip 1 | set Value = $index, Note = \"n\" + $index",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "skip",
+            "n": 1
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "path": [
+                    {
+                      "meta": "index"
+                    }
+                  ]
+                }
+              },
+              {
+                "target": {
+                  "path": [
+                    "Note"
+                  ]
+                },
+                "value": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "lit": "n"
+                    },
+                    {
+                      "path": [
+                        {
+                          "meta": "index"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#5",
+            "Value",
+            7,
+            0
+          ],
+          [
+            "Node#5",
+            "Note",
+            "Second",
+            "n0"
+          ],
+          [
+            "Node#8",
+            "Value",
+            3,
+            1
+          ],
+          [
+            "Node#8",
+            "Note",
+            null,
+            "n1"
+          ]
+        ],
+        "total": 4,
+        "dryRun": true
+      }
+    },
+    {
+      "name": "str-replace",
+      "rql": "g.Nodes | select r=(replace(Name, \"root-\", \"top_\"))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "r",
+                "expr": {
+                  "call": "replace",
+                  "args": [
+                    {
+                      "path": [
+                        "Name"
+                      ]
+                    },
+                    {
+                      "lit": "root-"
+                    },
+                    {
+                      "lit": "top_"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "r"
+        ],
+        "rows": [
+          [
+            "top_a"
+          ],
+          [
+            "top_b"
+          ],
+          [
+            "lonely"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "str-replace-case-insensitive",
+      "rql": "g.Nodes | recurse Children include-self=true | where Id == 7 | select r=(replace(Name, \"b-\", \"x.\"))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Id"
+                  ]
+                },
+                {
+                  "lit": 7
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "r",
+                "expr": {
+                  "call": "replace",
+                  "args": [
+                    {
+                      "path": [
+                        "Name"
+                      ]
+                    },
+                    {
+                      "lit": "b-"
+                    },
+                    {
+                      "lit": "x."
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "r"
+        ],
+        "rows": [
+          [
+            "x.2"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "str-replace-all-occurrences",
+      "rql": "g | select r=(replace(\"a-b-c\", \"-\", \"+\"))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "r",
+                "expr": {
+                  "call": "replace",
+                  "args": [
+                    {
+                      "lit": "a-b-c"
+                    },
+                    {
+                      "lit": "-"
+                    },
+                    {
+                      "lit": "+"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "r"
+        ],
+        "rows": [
+          [
+            "a+b+c"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "str-replace-empty-from",
+      "rql": "g | select r=(replace(\"abc\", \"\", \"x\"))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "r",
+                "expr": {
+                  "call": "replace",
+                  "args": [
+                    {
+                      "lit": "abc"
+                    },
+                    {
+                      "lit": ""
+                    },
+                    {
+                      "lit": "x"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "r"
+        ],
+        "rows": [
+          [
+            "abc"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "str-replace-method",
+      "rql": "g.Nodes | select r=(Name.replace(\"o\", \"0\"))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "r",
+                "expr": {
+                  "call": "replace",
+                  "on": {
+                    "path": [
+                      "Name"
+                    ]
+                  },
+                  "args": [
+                    {
+                      "lit": "o"
+                    },
+                    {
+                      "lit": "0"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "r"
+        ],
+        "rows": [
+          [
+            "r00t-a"
+          ],
+          [
+            "r00t-b"
+          ],
+          [
+            "l0nely"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "str-replace-regex-groups",
+      "rql": "g.Nodes | recurse Children include-self=true | where Id < 5 | select r=(replace-regex(Name, \"([a-z])-(\\d)\", \"$2:$1$$\"))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "<",
+              "args": [
+                {
+                  "path": [
+                    "Id"
+                  ]
+                },
+                {
+                  "lit": 5
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "r",
+                "expr": {
+                  "call": "replace-regex",
+                  "args": [
+                    {
+                      "path": [
+                        "Name"
+                      ]
+                    },
+                    {
+                      "lit": "([a-z])-(\\d)"
+                    },
+                    {
+                      "lit": "$2:$1$$"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "r"
+        ],
+        "rows": [
+          [
+            "root-a"
+          ],
+          [
+            "1:a$"
+          ],
+          [
+            "2:a$"
+          ],
+          [
+            "2:a$-x"
+          ]
+        ],
+        "total": 4
+      }
+    },
+    {
+      "name": "str-replace-regex-whole-match",
+      "rql": "g | select r=(replace-regex(\"a1b22\", \"\\d+\", \"<$0>\"))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "r",
+                "expr": {
+                  "call": "replace-regex",
+                  "args": [
+                    {
+                      "lit": "a1b22"
+                    },
+                    {
+                      "lit": "\\d+"
+                    },
+                    {
+                      "lit": "<$0>"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "r"
+        ],
+        "rows": [
+          [
+            "a<1>b<22>"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "str-replace-regex-case-insensitive",
+      "rql": "g | select r=(Name.replace-regex(\"CON\", \"k\"))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "r",
+                "expr": {
+                  "call": "replace-regex",
+                  "on": {
+                    "path": [
+                      "Name"
+                    ]
+                  },
+                  "args": [
+                    {
+                      "lit": "CON"
+                    },
+                    {
+                      "lit": "k"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "r"
+        ],
+        "rows": [
+          [
+            "kformance"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "str-replace-regex-missing-group",
+      "rql": "g | select r=(replace-regex(\"ab\", \"(a)|(z)\", \"[$2$9]\"))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "r",
+                "expr": {
+                  "call": "replace-regex",
+                  "args": [
+                    {
+                      "lit": "ab"
+                    },
+                    {
+                      "lit": "(a)|(z)"
+                    },
+                    {
+                      "lit": "[$2$9]"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "r"
+        ],
+        "rows": [
+          [
+            "[]b"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "str-err-replace-regex-invalid",
+      "rql": "g | select r=(replace-regex(Name, \"(\", \"x\"))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "r",
+                "expr": {
+                  "call": "replace-regex",
+                  "args": [
+                    {
+                      "path": [
+                        "Name"
+                      ]
+                    },
+                    {
+                      "lit": "("
+                    },
+                    {
+                      "lit": "x"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-regex"
+          }
+        ]
+      }
+    },
+    {
+      "name": "str-substring",
+      "rql": "g | select a=(substring(\"conformance\", 3)) b=(substring(\"conformance\", 3, 4)) c=(substring(\"conformance\", -4)) d=(substring(\"conformance\", 8, 100)) e=(substring(\"abc\", 5)) f=(substring(\"abc\", -10, 2))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "call": "substring",
+                  "args": [
+                    {
+                      "lit": "conformance"
+                    },
+                    {
+                      "lit": 3
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "call": "substring",
+                  "args": [
+                    {
+                      "lit": "conformance"
+                    },
+                    {
+                      "lit": 3
+                    },
+                    {
+                      "lit": 4
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "c",
+                "expr": {
+                  "call": "substring",
+                  "args": [
+                    {
+                      "lit": "conformance"
+                    },
+                    {
+                      "lit": -4
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "d",
+                "expr": {
+                  "call": "substring",
+                  "args": [
+                    {
+                      "lit": "conformance"
+                    },
+                    {
+                      "lit": 8
+                    },
+                    {
+                      "lit": 100
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "e",
+                "expr": {
+                  "call": "substring",
+                  "args": [
+                    {
+                      "lit": "abc"
+                    },
+                    {
+                      "lit": 5
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "f",
+                "expr": {
+                  "call": "substring",
+                  "args": [
+                    {
+                      "lit": "abc"
+                    },
+                    {
+                      "lit": -10
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e",
+          "f"
+        ],
+        "rows": [
+          [
+            "formance",
+            "form",
+            "ance",
+            "nce",
+            "",
+            "ab"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "str-substring-method",
+      "rql": "g.Nodes | select r=(Name.substring(0, 4))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "r",
+                "expr": {
+                  "call": "substring",
+                  "on": {
+                    "path": [
+                      "Name"
+                    ]
+                  },
+                  "args": [
+                    {
+                      "lit": 0
+                    },
+                    {
+                      "lit": 4
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "r"
+        ],
+        "rows": [
+          [
+            "root"
+          ],
+          [
+            "root"
+          ],
+          [
+            "lone"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "str-err-substring-negative-length",
+      "rql": "g | select r=(substring(\"abc\", 0, -1))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "r",
+                "expr": {
+                  "call": "substring",
+                  "args": [
+                    {
+                      "lit": "abc"
+                    },
+                    {
+                      "lit": 0
+                    },
+                    {
+                      "lit": -1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "r"
+        ],
+        "rows": [
+          [
+            {
+              "$error": "type-mismatch"
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "str-err-substring-fraction",
+      "rql": "g | select r=(substring(\"abc\", 1.5))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "r",
+                "expr": {
+                  "call": "substring",
+                  "args": [
+                    {
+                      "lit": "abc"
+                    },
+                    {
+                      "lit": 1.5
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "r"
+        ],
+        "rows": [
+          [
+            {
+              "$error": "type-mismatch"
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "str-split",
+      "rql": "g | select a=(split(\"a,b,,c\", \",\")) b=(split(\"aXbxc\", \"x\")) c=(split(\"abc\", \";\")) d=(Name.split(\"form\"))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "call": "split",
+                  "args": [
+                    {
+                      "lit": "a,b,,c"
+                    },
+                    {
+                      "lit": ","
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "call": "split",
+                  "args": [
+                    {
+                      "lit": "aXbxc"
+                    },
+                    {
+                      "lit": "x"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "c",
+                "expr": {
+                  "call": "split",
+                  "args": [
+                    {
+                      "lit": "abc"
+                    },
+                    {
+                      "lit": ";"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "d",
+                "expr": {
+                  "call": "split",
+                  "on": {
+                    "path": [
+                      "Name"
+                    ]
+                  },
+                  "args": [
+                    {
+                      "lit": "form"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "a",
+          "b",
+          "c",
+          "d"
+        ],
+        "rows": [
+          [
+            [
+              "a",
+              "b",
+              "",
+              "c"
+            ],
+            [
+              "a",
+              "b",
+              "c"
+            ],
+            [
+              "abc"
+            ],
+            [
+              "con",
+              "ance"
+            ]
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "str-split-index",
+      "rql": "g.Nodes | recurse Children include-self=true | select first=(split(Name, \"-\")[0])",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "first",
+                "expr": {
+                  "path": [
+                    {
+                      "index": 0
+                    }
+                  ],
+                  "on": {
+                    "call": "split",
+                    "args": [
+                      {
+                        "path": [
+                          "Name"
+                        ]
+                      },
+                      {
+                        "lit": "-"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "first"
+        ],
+        "rows": [
+          [
+            "root"
+          ],
+          [
+            "a"
+          ],
+          [
+            "a"
+          ],
+          [
+            "a"
+          ],
+          [
+            "root"
+          ],
+          [
+            "b"
+          ],
+          [
+            "B"
+          ],
+          [
+            "lonely"
+          ]
+        ],
+        "total": 8
+      }
+    },
+    {
+      "name": "str-err-split-empty-separator",
+      "rql": "g | select r=(split(\"abc\", \"\"))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "r",
+                "expr": {
+                  "call": "split",
+                  "args": [
+                    {
+                      "lit": "abc"
+                    },
+                    {
+                      "lit": ""
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "r"
+        ],
+        "rows": [
+          [
+            {
+              "$error": "type-mismatch"
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "str-trim",
+      "rql": "g | select a=(trim(\"  pad\\t \")) b=(\"  x \".trim()) c=(trim(\"\"))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "call": "trim",
+                  "args": [
+                    {
+                      "lit": "  pad\t "
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "call": "trim",
+                  "on": {
+                    "lit": "  x "
+                  },
+                  "args": []
+                }
+              },
+              {
+                "name": "c",
+                "expr": {
+                  "call": "trim",
+                  "args": [
+                    {
+                      "lit": ""
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "a",
+          "b",
+          "c"
+        ],
+        "rows": [
+          [
+            "pad",
+            "x",
+            ""
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "str-null-propagates",
+      "rql": "g.Nodes | recurse Children include-self=true | where Id < 4 | select r=(replace(Note, \"e\", \"E\")) t=(trim(Note))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "<",
+              "args": [
+                {
+                  "path": [
+                    "Id"
+                  ]
+                },
+                {
+                  "lit": 4
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "r",
+                "expr": {
+                  "call": "replace",
+                  "args": [
+                    {
+                      "path": [
+                        "Note"
+                      ]
+                    },
+                    {
+                      "lit": "e"
+                    },
+                    {
+                      "lit": "E"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "t",
+                "expr": {
+                  "call": "trim",
+                  "args": [
+                    {
+                      "path": [
+                        "Note"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "r",
+          "t"
+        ],
+        "rows": [
+          [
+            "first",
+            "first"
+          ],
+          [
+            null,
+            null
+          ],
+          [
+            "spEcial onE",
+            "special one"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "str-err-type-mismatch",
+      "rql": "g | select a=(replace(Version, \"3\", \"4\")) b=(Version.trim()) c=(split(Name, 1))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "call": "replace",
+                  "args": [
+                    {
+                      "path": [
+                        "Version"
+                      ]
+                    },
+                    {
+                      "lit": "3"
+                    },
+                    {
+                      "lit": "4"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "call": "trim",
+                  "on": {
+                    "path": [
+                      "Version"
+                    ]
+                  },
+                  "args": []
+                }
+              },
+              {
+                "name": "c",
+                "expr": {
+                  "call": "split",
+                  "args": [
+                    {
+                      "path": [
+                        "Name"
+                      ]
+                    },
+                    {
+                      "lit": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "a",
+          "b",
+          "c"
+        ],
+        "rows": [
+          [
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "str-err-arity",
+      "rql": "g | select r=(replace(Name, \"a\"))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "r",
+                "expr": {
+                  "call": "replace",
+                  "args": [
+                    {
+                      "path": [
+                        "Name"
+                      ]
+                    },
+                    {
+                      "lit": "a"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "arity"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mut-set-replace-rename",
+      "rql": "g.Nodes | recurse Children include-self=true | where Name starts-with \"a-\" | set Name = replace(Name, \"a-\", \"alpha_\")",
+      "then": "g.Nodes | recurse Children include-self=true | select Name",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "starts-with",
+              "args": [
+                {
+                  "path": [
+                    "Name"
+                  ]
+                },
+                {
+                  "lit": "a-"
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Name"
+                  ]
+                },
+                "value": {
+                  "call": "replace",
+                  "args": [
+                    {
+                      "path": [
+                        "Name"
+                      ]
+                    },
+                    {
+                      "lit": "a-"
+                    },
+                    {
+                      "lit": "alpha_"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#2",
+            "Name",
+            "a-1",
+            "alpha_1"
+          ],
+          [
+            "Special#3",
+            "Name",
+            "a-2",
+            "alpha_2"
+          ],
+          [
+            "Node#4",
+            "Name",
+            "a-2-x",
+            "alpha_2-x"
+          ]
+        ],
+        "total": 3
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "root-a"
+          ],
+          [
+            "alpha_1"
+          ],
+          [
+            "alpha_2"
+          ],
+          [
+            "alpha_2-x"
+          ],
+          [
+            "root-b"
+          ],
+          [
+            "b-1"
+          ],
+          [
+            "B-2"
+          ],
+          [
+            "lonely"
+          ]
+        ],
+        "total": 8
+      }
+    },
+    {
+      "name": "group-by-two-keys",
+      "rql": "g.Nodes | recurse Children include-self=true | group-by Kind, Enabled",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "group-by",
+            "fields": [
+              {
+                "name": "Kind",
+                "expr": {
+                  "path": [
+                    "Kind"
+                  ]
+                }
+              },
+              {
+                "name": "Enabled",
+                "expr": {
+                  "path": [
+                    "Enabled"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Kind",
+          "Enabled",
+          "count"
+        ],
+        "rows": [
+          [
+            "Alpha",
+            true,
+            3
+          ],
+          [
+            "Beta",
+            true,
+            2
+          ],
+          [
+            "Gamma",
+            false,
+            2
+          ],
+          [
+            "Gamma",
+            true,
+            1
+          ]
+        ],
+        "total": 4
+      }
+    },
+    {
+      "name": "group-by-two-keys-no-comma",
+      "rql": "g.Nodes | recurse Children include-self=true | group-by Kind $type | sort count desc",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "group-by",
+            "fields": [
+              {
+                "name": "Kind",
+                "expr": {
+                  "path": [
+                    "Kind"
+                  ]
+                }
+              },
+              {
+                "name": "$type",
+                "expr": {
+                  "path": [
+                    {
+                      "meta": "type"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "sort",
+            "keys": [
+              {
+                "expr": {
+                  "path": [
+                    "count"
+                  ]
+                },
+                "desc": true
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Kind",
+          "$type",
+          "count"
+        ],
+        "rows": [
+          [
+            "Alpha",
+            "Node",
+            2
+          ],
+          [
+            "Beta",
+            "Node",
+            2
+          ],
+          [
+            "Gamma",
+            "Node",
+            2
+          ],
+          [
+            "Gamma",
+            "Special",
+            1
+          ],
+          [
+            "Alpha",
+            "Special",
+            1
+          ]
+        ],
+        "total": 5
+      }
+    },
+    {
+      "name": "group-by-named-key",
+      "rql": "g.Nodes | recurse Children include-self=true | group-by k=Kind | where count > 2",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "group-by",
+            "fields": [
+              {
+                "name": "k",
+                "expr": {
+                  "path": [
+                    "Kind"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": ">",
+              "args": [
+                {
+                  "path": [
+                    "count"
+                  ]
+                },
+                {
+                  "lit": 2
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "k",
+          "count"
+        ],
+        "rows": [
+          [
+            "Alpha",
+            3
+          ],
+          [
+            "Gamma",
+            3
+          ]
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "group-by-keys-then-filter",
+      "rql": "g.Nodes | recurse Children include-self=true | group-by Kind, on=Enabled | where on == false | select Kind count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "group-by",
+            "fields": [
+              {
+                "name": "Kind",
+                "expr": {
+                  "path": [
+                    "Kind"
+                  ]
+                }
+              },
+              {
+                "name": "on",
+                "expr": {
+                  "path": [
+                    "Enabled"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "on"
+                  ]
+                },
+                {
+                  "lit": false
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Kind",
+                "expr": {
+                  "path": [
+                    "Kind"
+                  ]
+                }
+              },
+              {
+                "name": "count",
+                "expr": {
+                  "path": [
+                    "count"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Kind",
+          "count"
+        ],
+        "rows": [
+          [
+            "Gamma",
+            2
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "group-by-keys-null",
+      "rql": "g.Nodes | recurse Children include-self=true | group-by Note, Enabled | where Note is null",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "group-by",
+            "fields": [
+              {
+                "name": "Note",
+                "expr": {
+                  "path": [
+                    "Note"
+                  ]
+                }
+              },
+              {
+                "name": "Enabled",
+                "expr": {
+                  "path": [
+                    "Enabled"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Note"
+                  ]
+                },
+                {
+                  "lit": null
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Note",
+          "Enabled",
+          "count"
+        ],
+        "rows": [
+          [
+            null,
+            true,
+            3
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "group-by-keys-empty",
+      "rql": "g.Empty | group-by Kind, Enabled",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Empty"
+          ]
+        },
+        "stages": [
+          {
+            "op": "group-by",
+            "fields": [
+              {
+                "name": "Kind",
+                "expr": {
+                  "path": [
+                    "Kind"
+                  ]
+                }
+              },
+              {
+                "name": "Enabled",
+                "expr": {
+                  "path": [
+                    "Enabled"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Kind",
+          "Enabled",
+          "count"
+        ],
+        "rows": [],
+        "total": 0
+      }
+    },
+    {
+      "name": "group-by-key-computed",
+      "rql": "g.Nodes | recurse Children include-self=true | group-by Kind, big=(Value > 5)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "group-by",
+            "fields": [
+              {
+                "name": "Kind",
+                "expr": {
+                  "path": [
+                    "Kind"
+                  ]
+                }
+              },
+              {
+                "name": "big",
+                "expr": {
+                  "op": ">",
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    },
+                    {
+                      "lit": 5
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Kind",
+          "big",
+          "count"
+        ],
+        "rows": [
+          [
+            "Alpha",
+            true,
+            2
+          ],
+          [
+            "Beta",
+            false,
+            1
+          ],
+          [
+            "Gamma",
+            false,
+            2
+          ],
+          [
+            "Alpha",
+            false,
+            1
+          ],
+          [
+            "Beta",
+            true,
+            1
+          ],
+          [
+            "Gamma",
+            true,
+            1
+          ]
+        ],
+        "total": 6
+      }
+    },
+    {
+      "name": "group-by-single-key-unchanged",
+      "rql": "g.Nodes | group-by Kind",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "group-by",
+            "expr": {
+              "path": [
+                "Kind"
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "key",
+          "count"
+        ],
+        "rows": [
+          [
+            "Alpha",
+            1
+          ],
+          [
+            "Beta",
+            1
+          ],
+          [
+            "Gamma",
+            1
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "group-by-err-duplicate-key",
+      "rql": "g.Nodes | group-by Kind, Kind",
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "syntax-error"
+          }
+        ]
+      }
+    },
+    {
+      "name": "group-by-err-count-key",
+      "rql": "g.Nodes | group-by Kind, count=Value",
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "syntax-error"
+          }
+        ]
+      }
+    },
+    {
+      "name": "str-pad",
+      "rql": "g | select a=(pad(3, 2)) b=(pad(\"ab\", 4, \" \")) c=(pad(\"abcdef\", 3)) d=(pad(12.5, 6)) e=(Version.pad(3)) f=(pad(\"x\", 0))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "call": "pad",
+                  "args": [
+                    {
+                      "lit": 3
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "call": "pad",
+                  "args": [
+                    {
+                      "lit": "ab"
+                    },
+                    {
+                      "lit": 4
+                    },
+                    {
+                      "lit": " "
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "c",
+                "expr": {
+                  "call": "pad",
+                  "args": [
+                    {
+                      "lit": "abcdef"
+                    },
+                    {
+                      "lit": 3
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "d",
+                "expr": {
+                  "call": "pad",
+                  "args": [
+                    {
+                      "lit": 12.5
+                    },
+                    {
+                      "lit": 6
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "e",
+                "expr": {
+                  "call": "pad",
+                  "on": {
+                    "path": [
+                      "Version"
+                    ]
+                  },
+                  "args": [
+                    {
+                      "lit": 3
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "f",
+                "expr": {
+                  "call": "pad",
+                  "args": [
+                    {
+                      "lit": "x"
+                    },
+                    {
+                      "lit": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e",
+          "f"
+        ],
+        "rows": [
+          [
+            "03",
+            "  ab",
+            "abcdef",
+            "0012.5",
+            "003",
+            "x"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "str-err-pad",
+      "rql": "g | select a=(pad(\"x\", -1)) b=(pad(\"x\", 2000)) c=(pad(\"x\", 3, \"ab\")) d=(pad(true, 2)) e=(pad(\"x\", 2.5))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "call": "pad",
+                  "args": [
+                    {
+                      "lit": "x"
+                    },
+                    {
+                      "lit": -1
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "call": "pad",
+                  "args": [
+                    {
+                      "lit": "x"
+                    },
+                    {
+                      "lit": 2000
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "c",
+                "expr": {
+                  "call": "pad",
+                  "args": [
+                    {
+                      "lit": "x"
+                    },
+                    {
+                      "lit": 3
+                    },
+                    {
+                      "lit": "ab"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "d",
+                "expr": {
+                  "call": "pad",
+                  "args": [
+                    {
+                      "lit": true
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "e",
+                "expr": {
+                  "call": "pad",
+                  "args": [
+                    {
+                      "lit": "x"
+                    },
+                    {
+                      "lit": 2.5
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e"
+        ],
+        "rows": [
+          [
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "str-rename-pad",
+      "rql": "g | select r=(replace-regex(\"Tree (3)\", \" \\((\\d+)\\)$\", \"\") + \"_\" + pad(replace-regex(\"Tree (3)\", \"^.*\\((\\d+)\\)$\", \"$1\"), 2))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "r",
+                "expr": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "op": "+",
+                      "args": [
+                        {
+                          "call": "replace-regex",
+                          "args": [
+                            {
+                              "lit": "Tree (3)"
+                            },
+                            {
+                              "lit": " \\((\\d+)\\)$"
+                            },
+                            {
+                              "lit": ""
+                            }
+                          ]
+                        },
+                        {
+                          "lit": "_"
+                        }
+                      ]
+                    },
+                    {
+                      "call": "pad",
+                      "args": [
+                        {
+                          "call": "replace-regex",
+                          "args": [
+                            {
+                              "lit": "Tree (3)"
+                            },
+                            {
+                              "lit": "^.*\\((\\d+)\\)$"
+                            },
+                            {
+                              "lit": "$1"
+                            }
+                          ]
+                        },
+                        {
+                          "lit": 2
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "r"
+        ],
+        "rows": [
+          [
+            "Tree_03"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "sort-err-computed-key-unparenthesized",
+      "rql": "g.Nodes | sort Value * 2 desc",
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "syntax-error"
+          }
+        ]
+      }
+    },
+    {
+      "name": "sort-computed-key-parenthesized",
+      "rql": "g.Nodes | sort (Value * -1) desc | select Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "sort",
+            "keys": [
+              {
+                "expr": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    },
+                    {
+                      "lit": -1
+                    }
+                  ]
+                },
+                "desc": true
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "lonely"
+          ],
+          [
+            "root-b"
+          ],
+          [
+            "root-a"
+          ]
+        ],
+        "total": 3
+      }
     }
   ]
 }

@@ -1,6 +1,6 @@
 /** The test adapter set specified in fixtures/adapters/cases.json ("adapters" section). */
 import { formatNumber } from '@rql/contracts';
-import { ObjectValue, t, type RqlEngine, type TypeAdapter } from '@rql/execution';
+import { ObjectValue, t, type MutationRecord, type RqlEngine, type TypeAdapter } from '@rql/execution';
 import { Node, NodeKind, Special, Vec2 } from './graph.js';
 
 const asciiCase = (s: string, upper: boolean): string => (upper ? s.replace(/[a-z]+/g, (m) => m.toUpperCase()) : s.replace(/[A-Z]+/g, (m) => m.toLowerCase()));
@@ -134,6 +134,21 @@ export const specialAdapter: TypeAdapter<Special> = {
   members: (m) => m.add('powerLevel', { type: t.number, get: (s) => s.Power / 1000, description: 'Power / 1000' }).display('title'),
 };
 
+/** The fixture's batch validator ("engine" in fixtures/adapters/cases.json). */
+const validateBatch = (batch: readonly MutationRecord[]): string | undefined => {
+  const names = new Set<string>();
+  let bump = 0;
+  for (const r of batch) {
+    if (r.method === undefined && r.member === 'Name' && typeof r.new === 'string') {
+      if (names.has(r.new)) return `duplicate Name '${r.new}'`;
+      names.add(r.new);
+    }
+    if (r.method !== undefined && r.method.name === 'bump') bump += r.args[0] as number;
+  }
+  return bump > 100 ? `bump total ${formatNumber(bump)} exceeds 100` : undefined;
+};
+
 export function registerTestAdapters(engine: RqlEngine): RqlEngine {
+  engine.mutations.validateBatch = validateBatch;
   return engine.addAdapter(vec2Adapter).addAdapter(nodeAdapter).addAdapter(specialAdapter);
 }
