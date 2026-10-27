@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace Rql
@@ -143,6 +144,28 @@ namespace Rql
     {
         public SelectStage(IReadOnlyList<SelectField> fields) : base("select") { Fields = fields; }
         public IReadOnlyList<SelectField> Fields { get; }
+    }
+
+    /// <summary>
+    /// group-by with several keys or named keys (spec §5): rows with one column per key, then <c>count</c>. A single unnamed key
+    /// stays an <see cref="ExprStage"/> (columns <c>key</c>, <c>count</c>).
+    /// </summary>
+    public sealed class GroupByStage : Stage
+    {
+        public GroupByStage(IReadOnlyList<SelectField> keys) : base("group-by") { Keys = keys; }
+        public IReadOnlyList<SelectField> Keys { get; }
+
+        /// <summary>Why these keys cannot form group-by columns (duplicate names, or a key named <c>count</c>), or null.</summary>
+        public static string? Problem(IReadOnlyList<SelectField> keys)
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "count" };
+            foreach (var k in keys)
+                if (!seen.Add(k.Name))
+                    return string.Equals(k.Name, "count", StringComparison.OrdinalIgnoreCase)
+                        ? "group-by key column 'count' clashes with the count column; name the key: group-by n=count"
+                        : $"group-by key column '{k.Name}' appears twice; name the keys: group-by a=..., b=...";
+            return null;
+        }
     }
 
     public sealed class SortKey

@@ -120,6 +120,16 @@ read as null, and `MutationPolicy::before_write` / `committed` hooks whose recor
 **owner** (the nearest enclosing object on the written path — never a list, map, virtual-map view or
 struct handle — e.g. the material when setting through a mesh component) for undo / dirty marking.
 
+Host controls for agent-facing tools (spec §8, §10): `MutationPolicy::validate_batch` sees every planned
+change of a `set` / `call` stage (call records carry the coerced `args`) before anything runs, dry runs
+included, and refuses the stage by returning a reason; `MutationPolicy::coerce_text` converts a string
+written to a struct / object type that no adapter coerces (e.g. `ExportText` forms);
+`MutationPolicy::limit_hint` replaces the `mutation-limit` hint; `EngineDefaults::budgets_adjustable =
+false` keeps hints from advising `budgets.*` when the host's tool takes no budgets; `Engine::find_hint`
+(e.g. `unreal.find("Floor")`) is named by the hint of a `ref()` given a name. A `set` on map entries
+streamed by `get` (`get Rows | where Value.IsElite | set Value.Health = …`) writes through the map; the
+write is the key path from the item `get` read the map from (`Rows["Orc"].Health`), so owners and write-back match a direct key-path `set`.
+
 **Object literals and ownership** (spec §4.5): `ClassBuilder::constructible()` lets literals build a
 type with `std::make_shared<T>()`; the engine then retains every object it built (set values and
 call arguments) and never frees them automatically — raw pointers in the graph or in host state

@@ -16,12 +16,14 @@ type Truth = boolean | undefined;
 export const CORE_FUNCTIONS = [
   'has', 'is-null', 'len', 'lower', 'upper', 'abs', 'round', 'floor', 'ceil', 'sqrt', 'pow', 'min', 'max', 'coalesce', 'ref',
   'append', 'insert', 'remove-at', 'without',
+  'replace', 'replace-regex', 'substring', 'split', 'trim', 'pad',
   'contains', 'starts-with', 'ends-with', 'matches',
 ];
 
 export const CORE_METHODS = [
   'any', 'all', 'count', 'sum', 'min', 'max', 'avg', 'first', 'keys', 'values',
   'contains', 'starts-with', 'ends-with', 'matches', 'lower', 'upper', 'len',
+  'replace', 'replace-regex', 'substring', 'split', 'trim', 'pad',
 ];
 
 const isList = (x: Exec, v: unknown): v is object => typeof v === 'object' && v !== null && x.types.infoOf(v).isList;
@@ -429,7 +431,7 @@ export class Compiler {
               if (typeof r !== 'string') return new ErrorValue('type-mismatch', 'ref() expects reference strings');
               const res = x.engine.resolveRef(r, x);
               if (!res.ok) {
-                x.diagnostics.push(diagnostic('error', 'stale-ref', res.error, 're-query to obtain a fresh $ref'));
+                x.diagnostics.push(diagnostic('error', 'stale-ref', res.error, x.engine.refHint(r)));
                 return new ErrorValue('stale-ref', res.error);
               }
               found.push(res.value);
@@ -444,6 +446,13 @@ export class Compiler {
       case 'matches':
         this.arity(c, 2, 2);
         return this.compileOp({ kind: 'op', op: name, args: c.args, ...(c.span !== undefined ? { span: c.span } : {}) });
+      case 'replace':
+      case 'replace-regex':
+      case 'substring':
+      case 'split':
+      case 'trim':
+      case 'pad':
+        return this.compileStringFunction(c, name, c.args, 0);
       default: {
         const known = [...CORE_FUNCTIONS, ...this.x.engine.functions.keys()];
         throw new RqlError('unknown-function', `unknown function '${c.name}'`, c.span, `functions: ${known.join(' ')}; collection methods: list.any(pred) list.count() ...`);
@@ -496,9 +505,38 @@ export class Compiler {
       case 'len':
         this.arity(c, 0, 0);
         return (x) => len(x, on(x));
+      case 'replace':
+      case 'replace-regex':
+      case 'substring':
+      case 'split':
+      case 'trim':
+      case 'pad':
+        return this.compileStringFunction(c, name, [onExpr, ...c.args], 1);
       default:
         throw new RqlError('unknown-function', `unknown method '${c.name}'`, c.span, 'methods: ' + CORE_METHODS.join(' '));
     }
+  }
+
+  /**
+   * String functions (spec §4.3), as functions (`replace(s, a, b)`) or methods on the string (`s.replace(a, b)`,
+   * `receiver` = 1: the first argument is the receiver and the arity excludes it).
+   */
+  private compileStringFunction(c: CallExpr, name: string, argExprs: readonly Expr[], receiver: number): Eval {
+    const [min, max] = STRING_ARITY[name]!;
+    this.arity(c, min - receiver, max - receiver);
+    if (name === 'replace-regex') checkLiteralRegex(argExprs[1]);
+    const args = argExprs.map((e) => this.compile(e));
+    return (x) => {
+      const vals: unknown[] = [];
+      for (const a of args) {
+        const v = a(x);
+        if (v === null || v === undefined || isAbsent(v)) return v ?? null; // null / missing / error propagate (first one)
+        vals.push(v);
+      }
+      const r = stringFunction(x, name, vals);
+      if (name === 'replace-regex') x.checkTime();
+      return r;
+    };
   }
 }
 
@@ -857,6 +895,136 @@ function caseOf(v: unknown, upper: boolean): unknown {
   if (v === null || isAbsent(v)) return v;
   if (typeof v !== 'string') return new ErrorValue('type-mismatch');
   return upper ? v.toUpperCase() : v.toLowerCase();
+}
+
+// ------------------------------------------------------------------ string functions (spec §4.3)
+
+const STRING_ARITY: Record<string, [number, number]> = {
+  replace: [3, 3],
+  'replace-regex': [3, 3],
+  substring: [2, 3],
+  pad: [2, 3],
+  split: [2, 2],
+  trim: [1, 1],
+};
+
+/** The widest result `pad` builds. */
+export const MAX_PAD_WIDTH = 1024;
+
+const TRIM_CHARS = ' \t\n\r\v\f';
+
+/** An integral number a double holds exactly (up to 2^53), or undefined. */
+function integral(v: unknown): number | undefined {
+  const d = toNumber(v);
+  return d !== undefined && Number.isInteger(d) && Math.abs(d) <= 9007199254740992 ? d : undefined; // beyond the text: clamped
+}
+
+const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const literalRegexes = new Map<string, RegExp>();
+const globalRegexes = new Map<string, RegExp>();
+
+/** A compiled regex from a bounded cache (like `getRegex`). Global regexes are safe to share: replace / split / matchAll reset or copy `lastIndex`. */
+function cachedRegex(cache: Map<string, RegExp>, key: string, make: () => RegExp): RegExp {
+  let re = cache.get(key);
+  if (re === undefined) {
+    re = make();
+    if (cache.size < 256) cache.set(key, re);
+  }
+  return re;
+}
+
+/** Every occurrence of `needle` (ordinal case-insensitive, like `contains`), left to right, non-overlapping. */
+function literalPattern(needle: string): RegExp {
+  return cachedRegex(literalRegexes, needle, () => new RegExp(escapeRegex(needle), 'gi'));
+}
+
+function stringFunction(x: Exec, name: string, vals: unknown[]): unknown {
+  if (name === 'pad') {
+    // A number pads its text form: pad(3, 2) → "03".
+    const v = vals[0];
+    const text = typeof v === 'string' ? v : toNumber(v) !== undefined ? formatNumber(toNumber(v)!) : undefined;
+    if (text === undefined) return new ErrorValue('type-mismatch', `pad() needs a string or a number, got ${describeValue(v)}`);
+    const width = integral(vals[1]);
+    if (width === undefined || width < 0 || width > MAX_PAD_WIDTH) return new ErrorValue('type-mismatch', `pad() width must be an integer from 0 to ${MAX_PAD_WIDTH}`);
+    const fill = vals.length > 2 ? vals[2] : '0';
+    if (typeof fill !== 'string' || fill.length !== 1) return new ErrorValue('type-mismatch', 'pad() fill must be a one-character string');
+    return text.padStart(width, fill);
+  }
+  const s = vals[0];
+  if (typeof s !== 'string') return new ErrorValue('type-mismatch', `${name}() needs a string, got ${describeValue(s)}`);
+  switch (name) {
+    case 'trim': {
+      let a = 0;
+      let b = s.length;
+      while (a < b && TRIM_CHARS.includes(s[a]!)) a++;
+      while (b > a && TRIM_CHARS.includes(s[b - 1]!)) b--;
+      return s.slice(a, b);
+    }
+    case 'replace':
+    case 'split': {
+      const from = vals[1];
+      const to = vals[2];
+      if (typeof from !== 'string' || (name === 'replace' && typeof to !== 'string')) return new ErrorValue('type-mismatch', `${name}() needs string arguments`);
+      if (name === 'split') return from.length === 0 ? new ErrorValue('type-mismatch', 'split() needs a non-empty separator') : s.split(literalPattern(from));
+      return from.length === 0 ? s : s.replace(literalPattern(from), () => to as string);
+    }
+    case 'substring': {
+      let start = integral(vals[1]);
+      const want = vals.length > 2 ? integral(vals[2]) : undefined;
+      if (start === undefined || (vals.length > 2 && want === undefined)) return new ErrorValue('type-mismatch', 'substring() needs integral start and length');
+      if (want !== undefined && want < 0) return new ErrorValue('type-mismatch', 'substring() length must not be negative');
+      const n = s.length;
+      if (start < 0) start += n;
+      start = Math.max(0, Math.min(n, start));
+      const count = want === undefined ? n - start : Math.min(n - start, want);
+      return s.substring(start, start + count);
+    }
+    default: {
+      // replace-regex
+      const pattern = vals[1];
+      const repl = vals[2];
+      if (typeof pattern !== 'string' || typeof repl !== 'string') return new ErrorValue('type-mismatch', 'replace-regex() needs string arguments');
+      const { re, error } = getRegex(pattern);
+      if (re === undefined) {
+        const detail = `invalid regex "${pattern}": ${error}`;
+        x.warnOnce('invalid-regex', detail, 'invalid-regex');
+        return new ErrorValue('invalid-regex', detail);
+      }
+      const global = cachedRegex(globalRegexes, pattern, () => new RegExp(re.source, re.flags + 'g'));
+      let out = '';
+      let last = 0;
+      for (const m of s.matchAll(global)) {
+        out += s.slice(last, m.index) + expandReplacement(m, repl);
+        last = m.index + m[0].length;
+      }
+      return out + s.slice(last);
+    }
+  }
+}
+
+/** Portable replacement text (spec §4.3): `$0`–`$9` insert a group (empty when absent), `$$` a dollar. */
+function expandReplacement(m: RegExpMatchArray, repl: string): string {
+  if (!repl.includes('$')) return repl;
+  let out = '';
+  for (let i = 0; i < repl.length; i++) {
+    const ch = repl[i]!;
+    const next = repl[i + 1];
+    if (ch === '$' && next !== undefined) {
+      if (next === '$') {
+        out += '$';
+        i++;
+        continue;
+      }
+      if (next >= '0' && next <= '9') {
+        out += m[next.charCodeAt(0) - 48] ?? '';
+        i++;
+        continue;
+      }
+    }
+    out += ch;
+  }
+  return out;
 }
 
 function num(v: unknown, f: (d: number) => number): unknown {

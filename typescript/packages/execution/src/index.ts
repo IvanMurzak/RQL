@@ -6,6 +6,7 @@ export {
   type ExtensionFunction,
   type MutationPolicy,
   type MutationRecord,
+  type TextCoercion,
   type RefResolution,
   type SourceRegistration,
   type StageHandler,

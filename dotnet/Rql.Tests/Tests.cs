@@ -276,6 +276,77 @@ namespace Rql.Tests
         public sealed class Inner { public int A { get; set; } }
     }
 
+    /// <summary>Wave-2 findings: writes through streamed map entries (U5) and host text coercion (U6).</summary>
+    public class MapEntryWriteTests
+    {
+        public struct Row { public float Health; public bool IsElite; }
+        public struct Anchors { public float Min, Max; }
+        public sealed class Table
+        {
+            public Dictionary<string, Row> Rows { get; } = new Dictionary<string, Row>
+            {
+                ["Orc"] = new Row { Health = 100, IsElite = true },
+                ["Rat"] = new Row { Health = 10, IsElite = false },
+                ["Troll"] = new Row { Health = 300, IsElite = true },
+            };
+            public Anchors Slot { get; set; }
+        }
+
+        private static RqlEngine Engine(Table t, out List<MutationRecord> before)
+        {
+            var e = new RqlEngine().AddSource("table", () => t);
+            e.Mutations.Enabled = true;
+            var seen = before = new List<MutationRecord>();
+            e.Mutations.BeforeWrite = records => seen.AddRange(records);
+            return e;
+        }
+
+        private static readonly QueryOptions Mutate = new QueryOptions { AllowMutation = true };
+
+        [Fact]
+        public void SetThroughStreamedEntriesWritesBackStructValuesAndNamesTheHolderAsOwner()
+        {
+            var t = new Table();
+            var r = Engine(t, out var before).Execute("table | get Rows | where Value.IsElite | set Value.Health = Value.Health * 1.1", null, Mutate);
+            Assert.True(r.Ok, string.Join("; ", r.Diagnostics.Select(d => d.Message)));
+            Assert.Equal(110f, t.Rows["Orc"].Health, 3);
+            Assert.Equal(330f, t.Rows["Troll"].Health, 3);
+            Assert.Equal(10f, t.Rows["Rat"].Health);
+            Assert.Equal(new[] { "Rows[\"Orc\"].Health", "Rows[\"Troll\"].Health" }, before.Select(b => b.Member));
+            Assert.All(before, b => Assert.Same(t, b.Owner));
+            Assert.All(before, b => Assert.Same(t, b.Owners[b.Owners.Count - 1]));
+        }
+
+        [Fact]
+        public void HostTextCoercionConvertsStringsForStructsNoAdapterHandles()
+        {
+            var t = new Table();
+            var e = Engine(t, out _);
+            Assert.Equal("coercion-failed", e.Execute("table | set Slot = \"(Min=0.5,Max=1)\"", null, Mutate).Diagnostics[0].Code);
+            e.Mutations.CoerceText = (type, text) =>
+            {
+                if (type != typeof(Anchors)) return null;
+                var m = System.Text.RegularExpressions.Regex.Match(text, @"^\(Min=([\d.]+),Max=([\d.]+)\)$");
+                if (!m.Success) throw new FormatException("expected (Min=…,Max=…)");
+                return new Anchors { Min = float.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture), Max = float.Parse(m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture) };
+            };
+            Assert.True(e.Execute("table | set Slot = \"(Min=0.5,Max=1)\"", null, Mutate).Ok);
+            Assert.Equal(0.5f, t.Slot.Min);
+            Assert.Equal(1f, t.Slot.Max);
+            var bad = e.Execute("table | set Slot = \"nope\"", null, Mutate).Diagnostics[0];
+            Assert.Equal("coercion-failed", bad.Code);
+            Assert.Contains("expected (Min=…,Max=…)", bad.Message);
+        }
+
+        [Fact]
+        public void ParenthesizedTupleHintsAtObjectLiterals()
+        {
+            var r = Engine(new Table(), out _).Execute("table | set Slot = {Min: (0, 0)}", null, Mutate);
+            Assert.Equal("syntax-error", r.Diagnostics[0].Code);
+            Assert.Contains("object literal {X: 0, Y: 0}", r.Diagnostics[0].Hint);
+        }
+    }
+
     /// <summary>Regression tests for the independent review findings (security + robustness).</summary>
     public class HostValueApiTests
     {
@@ -408,6 +479,88 @@ namespace Rql.Tests
             var r = Mut(e, "many | set Free.x = 1", new Budgets { MaxMutationTargets = 1000 });
             Assert.False(r.Ok);
             Assert.Equal("mutation-limit", r.Diagnostics[0].Code);
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void MutationLimitHintSuggestsBatchesAndRaisesOnlyAdjustableBudgets(bool adjustable)
+        {
+            var e = Engine(new GuardHost());
+            e.Defaults.BudgetsAdjustable = adjustable;
+            var d = Mut(e, "many | set Free.x = 1").Diagnostics[0];
+            Assert.Equal("mutation-limit", d.Code);
+            Assert.Contains("first 20 | set", d.Hint);
+            Assert.Contains("skip 20 | first 20 | set", d.Hint);
+            Assert.Equal(adjustable, d.Hint!.Contains("budgets.maxMutationTargets (host ceiling 30)"));
+            if (!adjustable) Assert.DoesNotContain("budgets", d.Hint);
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void VisitedBudgetHintMentionsBudgetsOnlyWhenAdjustable(bool adjustable)
+        {
+            var e = Engine(new GuardHost());
+            e.Defaults.BudgetsAdjustable = adjustable;
+            var r = e.Execute("many | count", new Budgets { MaxVisited = 3 });
+            Assert.Equal("budget-exceeded", r.Diagnostics[0].Code);
+            Assert.Equal(adjustable, r.Diagnostics[0].Hint!.Contains("budgets.maxVisited"));
+        }
+
+        [Fact]
+        public void HostReplacesTheMutationLimitHint()
+        {
+            var e = Engine(new GuardHost());
+            e.Mutations.LimitHint = (op, limit) => $"pass max_targets (now {limit}) to change more than {limit} objects per {op}";
+            var d = Mut(e, "many | set Free.x = 1").Diagnostics[0];
+            Assert.Equal("mutation-limit", d.Code);
+            Assert.Equal("pass max_targets (now 20) to change more than 20 objects per set", d.Hint);
+        }
+
+        [Fact]
+        public void BatchValidatorSeesEveryCallWithArgumentsAndAThrowRefuses()
+        {
+            var e = Engine(new GuardHost());
+            IReadOnlyList<MutationRecord>? seen = null;
+            e.Mutations.ValidateBatch = b => { seen = b; throw new InvalidOperationException("nope"); };
+            var r = e.Execute("h | set Free.x = $index + 5", null, new QueryOptions { AllowMutation = true, DryRun = true });
+            Assert.Equal("invalid-value", r.Diagnostics[0].Code);
+            Assert.Contains("nope", r.Diagnostics[0].Message);
+            Assert.Single(seen!);
+            Assert.Equal("Free.x", seen![0].Member);
+            Assert.Equal(5f, seen[0].New);
+            Assert.Empty(seen[0].Args);
+        }
+
+        [Theory]
+        [InlineData(null, "look it up by name")]
+        [InlineData("unity.find(\"Floor\")", "look it up with unity.find(\"Floor\")")]
+        public void RefOfANameHintsAtFindingByName(string? find, string expected)
+        {
+            var e = Engine(new GuardHost());
+            e.FindHint = find;
+            var r = e.Execute("ref(\"Floor\")");
+            var d = r.Diagnostics.First(x => x.Code == "stale-ref");
+            Assert.Contains("not a name", d.Hint);
+            Assert.Contains(expected, d.Hint);
+        }
+
+        [Fact]
+        public void UnparenthesizedComputedSortKeyHintsAtParentheses()
+        {
+            var r = Engine(new GuardHost()).Execute("many | sort Free.x * 2 desc");
+            Assert.Equal("syntax-error", r.Diagnostics[0].Code);
+            Assert.Contains("sort (Mass * Speed) desc", r.Diagnostics[0].Hint);
+        }
+
+        [Fact]
+        public void ListIndexOutOfRangeHintsAtAssigningTheWholeList()
+        {
+            var r = Mut(Engine(new GuardHost()), "h | set Kids[0] = null");
+            Assert.Equal("invalid-plan", r.Diagnostics[0].Code);
+            Assert.Contains("index 0 out of range (count 0)", r.Diagnostics[0].Message);
+            Assert.Contains("set Kids = append(Kids, value)", r.Diagnostics[0].Hint);
         }
 
         [Theory]

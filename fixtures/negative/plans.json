@@ -693,6 +693,198 @@
     ]
    },
    "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g",
+      "Nodes"
+     ]
+    },
+    "stages": [
+     {
+      "op": "group-by",
+      "expr": {
+       "path": [
+        "Kind"
+       ]
+      },
+      "fields": [
+       {
+        "name": "Kind",
+        "expr": {
+         "path": [
+          "Kind"
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g",
+      "Nodes"
+     ]
+    },
+    "stages": [
+     {
+      "op": "group-by"
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g",
+      "Nodes"
+     ]
+    },
+    "stages": [
+     {
+      "op": "group-by",
+      "fields": []
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g",
+      "Nodes"
+     ]
+    },
+    "stages": [
+     {
+      "op": "group-by",
+      "fields": [
+       {
+        "name": "k",
+        "expr": {
+         "path": [
+          "Kind"
+         ]
+        }
+       },
+       {
+        "name": "K",
+        "expr": {
+         "path": [
+          "Id"
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g",
+      "Nodes"
+     ]
+    },
+    "stages": [
+     {
+      "op": "group-by",
+      "fields": [
+       {
+        "name": "k",
+        "expr": {
+         "path": [
+          "Kind"
+         ]
+        }
+       },
+       {
+        "name": "Count",
+        "expr": {
+         "path": [
+          "Id"
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g",
+      "Nodes"
+     ]
+    },
+    "stages": [
+     {
+      "op": "group-by",
+      "fields": [
+       {
+        "name": "k",
+        "expr": {
+         "path": [
+          "Kind"
+         ]
+        },
+        "desc": true
+       }
+      ]
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g",
+      "Nodes"
+     ]
+    },
+    "stages": [
+     {
+      "op": "group-by",
+      "fields": [
+       {
+        "name": "k",
+        "expr": {
+         "path": [
+          "Kind"
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "code": null
   }
  ]
 }

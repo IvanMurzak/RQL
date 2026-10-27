@@ -15,6 +15,20 @@ namespace Rql.Conformance
             engine.AddAdapter(new Vec2Adapter());
             engine.AddAdapter(new NodeAdapter());
             engine.AddAdapter(new SpecialAdapter());
+            engine.Mutations.ValidateBatch = ValidateBatch;
+        }
+
+        /// <summary>The fixture's batch validator ("engine" in fixtures/adapters/cases.json).</summary>
+        private static string? ValidateBatch(IReadOnlyList<MutationRecord> batch)
+        {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            double bump = 0;
+            foreach (var r in batch)
+            {
+                if (r.Method == null && r.Member == "Name" && r.New is string n && !names.Add(n)) return $"duplicate Name '{n}'";
+                if (r.Method != null && r.Method.Name == "bump") bump += (double)r.Args[0]!;
+            }
+            return bump > 100 ? $"bump total {Num(bump)} exceeds 100" : null;
         }
 
         private static string Num(double d) => d.ToString("R", CultureInfo.InvariantCulture);

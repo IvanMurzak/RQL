@@ -1,6 +1,7 @@
 // Unit tests: JSON edge cases, number formatting, and engine features the golden vectors do not
 // cover (call stage, extensions, session handles, liveness, unordered maps, shared_ptr, rollback).
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -1412,6 +1413,115 @@ void port_tests() {
 
 }  // namespace
 
+/// Wave-2 findings: budget hints, host hint overrides, batch validation, ref() and list-index hints.
+void wave2_tests() {
+    rql::TypeRegistry reg;
+    conformance::register_types(reg);
+    auto g = conformance::load_graph(repo_root + "/fixtures/cross-runtime/graph.json");
+    auto engine = [&](rql::Engine& e) {
+        e.add_object_source("g", g.get());
+        e.mutations().enabled = true;
+        e.mutations().max_targets = 2;
+        e.mutations().hard_max_targets = 30;
+    };
+    const std::string set_all = R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"set","assign":[{"target":{"path":["Value"]},"value":{"lit":1}}]}]})J";
+    auto hint = [](const rql::QueryResult& r) { return r.diagnostics.empty() ? std::string() : r.diagnostics[0].hint; };
+    auto has = [](const std::string& s, const std::string& part) { return s.find(part) != std::string::npos; };
+    for (bool adjustable : {true, false}) {
+        rql::Engine e(reg);
+        engine(e);
+        e.defaults().budgets_adjustable = adjustable;
+        auto r = arun(e, set_all, true);
+        std::string h = hint(r);
+        check(first_code(r) == "mutation-limit" && has(h, "first 2 | set") && has(h, "skip 2 | first 2 | set") &&
+                  has(h, "budgets.maxMutationTargets (host ceiling 30)") == adjustable && (adjustable || !has(h, "budgets")),
+              adjustable ? "mutation-limit hint: batches + budgets when adjustable" : "mutation-limit hint: no budgets when not adjustable");
+        rql::Budgets b;
+        b.max_visited = 2;
+        auto v = e.execute_json(R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"count"}]})J", b, {});
+        check(first_code(v) == "budget-exceeded" && has(hint(v), "budgets.maxVisited") == adjustable, "budget-exceeded hint follows budgets_adjustable");
+    }
+    {
+        rql::Engine e(reg);
+        engine(e);
+        e.mutations().limit_hint = [](const std::string& op, int limit) { return "pass max_targets (now " + std::to_string(limit) + ") per " + op; };
+        check(hint(arun(e, set_all, true)) == "pass max_targets (now 2) per set", "host replaces the mutation-limit hint");
+    }
+    {
+        rql::Engine e(reg);
+        engine(e);
+        e.mutations().max_targets = 20;
+        std::vector<rql::MutationRecord> seen;
+        e.mutations().validate_batch = [&](const std::vector<rql::MutationRecord>& b) -> std::string {
+            seen = b;
+            throw std::runtime_error("nope");
+        };
+        rql::QueryOptions o;
+        o.allow_mutation = true;
+        o.dry_run = true;
+        auto r = e.execute_json(R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"set","assign":[{"target":{"path":["Value"]},"value":{"op":"+","args":[{"path":[{"meta":"index"}]},{"lit":5}]}}]}]})J", {}, o);
+        check(first_code(r) == "invalid-value" && has(r.diagnostics[0].message, "nope") && seen.size() == 3 && seen[2].member == "Value" &&
+                  seen[2].new_value.as_number() == 7 && seen[2].args.empty() && g->Nodes[0]->Value == 10,
+              "batch validator: every change, dry run, a throw refuses");
+    }
+    {
+        rql::Engine e(reg);
+        engine(e);
+        auto ref = R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Floor"}]},"stages":[{"op":"count"}]})J";
+        check(has(hint(arun(e, ref)), "not a name") && has(hint(arun(e, ref)), "look it up by name"), "ref() of a name: generic hint");
+        e.find_hint = "unreal.find(\"Floor\")";
+        check(has(hint(arun(e, ref)), "look it up with unreal.find(\"Floor\")"), "ref() of a name: host finder in the hint");
+        auto r = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Tags",{"index":0}]},"value":{"lit":"x"}}]}]})J", true);
+        check(first_code(r) == "invalid-plan" && has(r.diagnostics[0].message, "index 0 out of range (count 0)") && has(hint(r), "set Tags = append(Tags, value)"),
+              "out-of-range list index: hint to assign the whole list");
+    }
+    {
+        // U5: a set through streamed map entries reports the object the map was read from as the owner
+        rql::Engine e(reg);
+        engine(e);
+        e.mutations().max_targets = 20;
+        std::vector<rql::MutationRecord> before;
+        e.mutations().before_write = [&](const std::vector<rql::MutationRecord>& b) { before = b; };
+        auto r = arun(e, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"get","expr":{"path":["Props"]}},{"op":"where","pred":{"op":">=","args":[{"path":["Value"]},{"lit":50}]}},{"op":"set","assign":[{"target":{"path":["Value"]},"value":{"op":"*","args":[{"path":["Value"]},{"lit":2}]}}]}]})J", true);
+        check(r.ok && before.size() == 2 && before[0].member == "Props[\"hp\"]" && before[0].owner.ptr() == g->Nodes[0].get() &&
+                  before[1].owner.ptr() == g->Nodes[1].get() && g->Nodes[0]->Props["hp"] == 200,
+              "map-entry set: owner is the object the map was read from");
+    }
+    {
+        // UTF-8: positions count UTF-16 units like len; byte-wise regex matches never split a character
+        rql::Engine e(reg);
+        engine(e);
+        auto r = arun(e, R"J({"rql":"0.1","source":{"path":["g"]},"stages":[{"op":"select","fields":[{"name":"a","expr":{"call":"substring","args":[{"lit":"héllo"},{"lit":1},{"lit":3}]}},{"name":"b","expr":{"call":"substring","args":[{"lit":"a😀b"},{"lit":1},{"lit":2}]}},{"name":"c","expr":{"call":"replace-regex","args":[{"lit":"é"},{"lit":"x*"},{"lit":"-"}]}},{"name":"d","expr":{"call":"pad","args":[{"lit":"é"},{"lit":3}]}}]}]})J");
+        check(r.ok && (*r.rows)[0][0].as_string() == "\xC3\xA9ll" && (*r.rows)[0][1].as_string() == "\xF0\x9F\x98\x80" &&
+                  (*r.rows)[0][2].as_string() == "-\xC3\xA9-" && (*r.rows)[0][3].as_string() == "00\xC3\xA9",
+              "string functions: UTF-16 positions over UTF-8 text, regex matches keep characters whole");
+    }
+    {
+        // U6: host text coercion for a struct no adapter handles
+        rql::Engine e(reg);
+        engine(e);
+        rql::TypeRegistry* rp = &reg;
+        const std::string plan = R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Pos"]},"value":{"lit":"X=3|Y=4"}}]}]})J";
+        check(first_code(arun(e, plan, true)) == "coercion-failed", "text coercion: without the hook a string is no struct");
+        e.mutations().coerce_text = [rp](const rql::TypeDescriptor& t, const std::string& text, std::string& reason) -> std::optional<rql::Value> {
+            if (t.name != "Vec2") return std::nullopt;
+            conformance::Vec2 v;
+            size_t bar = text.find("|Y=");
+            if (text.rfind("X=", 0) != 0 || bar == std::string::npos) {
+                reason = "expected X=..|Y=..";
+                return std::nullopt;
+            }
+            v.x = std::strtod(text.substr(2, bar - 2).c_str(), nullptr);
+            v.y = std::strtod(text.substr(bar + 3).c_str(), nullptr);
+            return rql::Traits<conformance::Vec2>::get(*rp, v);
+        };
+        auto r = arun(e, plan, true);
+        check(r.ok && g->Nodes[2]->Pos.x == 3 && g->Nodes[2]->Pos.y == 4, "text coercion: the host converts its text form");
+        auto bad = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Pos"]},"value":{"lit":"nope"}}]}]})J", true);
+        check(first_code(bad) == "coercion-failed" && has(bad.diagnostics[0].message, "expected X=..|Y=.."), "text coercion: a refusal is coercion-failed with the reason");
+    }
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) repo_root = argv[1];
     try {
@@ -1420,6 +1530,7 @@ int main(int argc, char** argv) {
         engine_tests();
         adapter_tests();
         port_tests();
+        wave2_tests();
     } catch (const std::exception& ex) {
         std::cout << "FATAL " << ex.what() << "\n";
         return 2;

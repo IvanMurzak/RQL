@@ -109,6 +109,31 @@ export interface SelectStage extends StageBase {
   readonly fields: readonly SelectField[];
 }
 
+/**
+ * group-by with several keys or named keys (spec §5): rows with one column per key, then `count`. A single unnamed key
+ * stays an `ExprStage` (columns `key`, `count`).
+ */
+export interface GroupByStage extends StageBase {
+  readonly kind: 'group-by';
+  readonly op: 'group-by';
+  readonly keys: readonly SelectField[];
+}
+
+/** Why these keys cannot form group-by columns (duplicate names, or a key named `count`), or undefined. */
+export function groupByProblem(keys: readonly SelectField[]): string | undefined {
+  const seen = new Set<string>(['COUNT']);
+  for (const k of keys) {
+    const upper = k.name.toUpperCase();
+    if (seen.has(upper)) {
+      return upper === 'COUNT'
+        ? "group-by key column 'count' clashes with the count column; name the key: group-by n=count"
+        : `group-by key column '${k.name}' appears twice; name the keys: group-by a=..., b=...`;
+    }
+    seen.add(upper);
+  }
+  return undefined;
+}
+
 export interface SortKey {
   readonly expr: Expr;
   readonly desc: boolean;
@@ -181,6 +206,7 @@ export interface GenericStage extends StageBase {
 export type Stage =
   | WhereStage
   | SelectStage
+  | GroupByStage
   | SortStage
   | LimitStage
   | SimpleTerminalStage

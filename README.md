@@ -195,13 +195,14 @@ objects | where $ is Enemy | first 1 | describe
 | `sort k [asc\|desc], …` · `first [n]` · `skip n` · `distinct [e]` | order and slice; `first` stops pulling items upstream |
 | `get e` | replace each item by `e`, flattening lists |
 | `recurse [via …] [max-depth=N]` | cycle-safe depth-first walk over the `via` members, or all owning members |
-| `group-by e` · `count` · `sum/min/max/avg e` | aggregate |
+| `group-by e[, e …]` · `count` · `sum/min/max/avg e` | aggregate (one key: `key`, `count`; several or named keys: one column each, then `count`) |
 | `describe` | the schema of the items' runtime types |
 | `set p = e, …` · `call m(args)` | mutation (see below) |
 
 Operators include `== != < <= > >=`, `and or not`, `in`, `is Type`, `is null`, `contains`, `starts-with`, `ends-with`,
 `matches`, `+ - * / %`. Collection methods: `any all count sum min max avg first keys values`. Functions include
-`len lower upper abs round floor ceil sqrt pow min max has ref append insert remove-at without`. Hosts register their
+`len lower upper abs round floor ceil sqrt pow min max has ref append insert remove-at without`, and string functions
+`replace replace-regex substring split trim pad` (also as methods: `Name.replace("a", "b")`). Hosts register their
 own sources and add namespaced functions and stages (`myapp.fn(...)`).
 
 Mistakes come back as diagnostics the agent can act on:
@@ -229,7 +230,9 @@ Enemy#233|Transform.Position.y|25.52|27.52
 - Writes need the host switch **and** a mutation request; a mutation request must end in `set` or `call`.
 - `set` is all-or-nothing: every assignment is resolved and coerced before the first write, and written values are
   restored if a later write fails. `call` validates every target before the first call; calls already made are not
-  undone. Dry runs return the receipt without changing anything.
+  undone. A host batch validator sees the whole stage first, dry runs included. Dry runs return the receipt without
+  changing anything. In values and arguments `$index` is the target's position in the stream entering `set` / `call`.
+- `get Rows | where … | set Value.Health = …` writes through the map the entries came from.
 - Identity members are read-only, `call` only reaches allowlisted methods, and budgets cap targets, rows, depth and
   time. See [docs/security-and-permissions.md](docs/security-and-permissions.md).
 

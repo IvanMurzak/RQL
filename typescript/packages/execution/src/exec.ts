@@ -156,7 +156,8 @@ export class Exec {
         'budget-exceeded',
         `visited more than ${this.maxVisited} objects`,
         undefined,
-        'narrow the source (e.g. a specific scene), filter earlier, lower recurse max-depth, or raise budgets.maxVisited',
+        'narrow the source (e.g. a specific scene), filter earlier or lower recurse max-depth' +
+          (this.budgetsAdjustable ? ', or raise budgets.maxVisited' : ''),
       );
     }
     if ((this.visited & 1023) === 0) this.checkTime();
@@ -164,8 +165,12 @@ export class Exec {
 
   checkTime(): void {
     if (this.elapsedMs > this.timeoutMs) {
-      throw new RqlError('timeout', `query exceeded ${this.timeoutMs} ms`, undefined, 'narrow the query or raise budgets.timeoutMs');
+      throw new RqlError('timeout', `query exceeded ${this.timeoutMs} ms`, undefined, 'narrow the query' + (this.budgetsAdjustable ? ' or raise budgets.timeoutMs' : ''));
     }
+  }
+
+  get budgetsAdjustable(): boolean {
+    return this.engine.defaults.budgetsAdjustable;
   }
 
   getterThrew(member: string, e: unknown): void {

@@ -27,7 +27,8 @@ get             = "get" , postfix ;
 recurse         = "recurse" , { postfix | option } ; (* positional args = members to traverse ("via") *)
 distinct        = "distinct" , [ postfix ] ;
 aggregate       = ( "sum" | "min" | "max" | "avg" ) , postfix ;
-group_by        = "group-by" , postfix ;
+group_by        = "group-by" , select_item , { [ "," ] , select_item } ;
+                  (* one unnamed key → plan {expr} (rows key, count); several keys or a named key → plan {fields} *)
 set             = "set" , assignment , { "," , assignment } ;
 assignment      = postfix , "=" , expr ;
 call            = "call" , name , "(" , [ expr , { "," , expr } ] , ")" ;
@@ -56,7 +57,7 @@ meta            = "$" , [ ident ] ;               (* "$" alone = current item; $
 type_name       = name | string ;
 list            = "[" , [ expr , { "," , expr } ] , "]" ;
 object          = "{" , [ entry , { "," , entry } ] , "}" ;   (* keys unique and non-empty, §4.5 *)
-entry           = ( name | string ) , ":" , expr ;
+entry           = ( name | string | meta ) , ":" , expr ;   (* `$type: …` is the key "$type" *)
 literal         = number | string | "true" | "false" | "null" ;
 
 (* ---------- lexical ---------- *)

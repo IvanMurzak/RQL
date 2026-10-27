@@ -136,3 +136,8 @@ are non-owning by default; a virtual setter must round-trip its getter (rollback
 - `engine.mutations.beforeWrite(records)` (throw = veto → `permission-denied`) and
   `engine.mutations.committed(records)` receive `{ item, owner, member, old, new, method? }`; `owner` is
   the last reference object on the written path. Neither runs on dry-run.
+- `engine.mutations.validateBatch(records)` sees every planned change of a `set` / `call` stage (call records
+  carry `args`) before anything runs, dry runs included; a returned reason refuses the stage (`invalid-value`).
+  `engine.mutations.coerceText(ctor, text)` converts strings for struct / object types no adapter coerces;
+  `engine.mutations.limitHint(op, limit)` replaces the `mutation-limit` hint; `engine.defaults.budgetsAdjustable
+  = false` keeps hints from advising `budgets.*`; `engine.findHint` names the host's finder in `ref()` hints.

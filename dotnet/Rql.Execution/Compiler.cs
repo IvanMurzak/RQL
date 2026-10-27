@@ -21,6 +21,7 @@ namespace Rql.Execution
         {
             "has", "is-null", "len", "lower", "upper", "abs", "round", "floor", "ceil", "sqrt", "pow", "min", "max", "coalesce", "ref",
             "append", "insert", "remove-at", "without",
+            "replace", "replace-regex", "substring", "split", "trim", "pad",
             "contains", "starts-with", "ends-with", "matches",
         };
 
@@ -28,6 +29,7 @@ namespace Rql.Execution
         {
             "any", "all", "count", "sum", "min", "max", "avg", "first", "keys", "values",
             "contains", "starts-with", "ends-with", "matches", "lower", "upper", "len",
+            "replace", "replace-regex", "substring", "split", "trim", "pad",
         };
 
         public Eval Compile(Expr e)
@@ -960,7 +962,7 @@ namespace Rql.Execution
                                 var o = x.Engine.ResolveRef(s, out var err, x);
                                 if (o == null)
                                 {
-                                    x.Diagnostics.Add(Diagnostic.Error("stale-ref", err!, "re-query to obtain a fresh $ref"));
+                                    x.Diagnostics.Add(Diagnostic.Error("stale-ref", err!, x.Engine.RefHint(s)));
                                     return new RqlError("stale-ref", err);
                                 }
                                 found.Add(o);
@@ -977,9 +979,163 @@ namespace Rql.Execution
                     Arity(c, 2, 2);
                     return CompileOp(new OpExpr(name, c.Args) { Span = c.Span });
                 }
+                case "replace":
+                case "replace-regex":
+                case "substring":
+                case "split":
+                case "trim":
+                case "pad":
+                    return CompileStringFunction(c, name, c.Args, 0);
             }
             var known = CoreFunctions.Concat(_x.Engine.Functions.Keys);
             throw new RqlException("unknown-function", $"unknown function '{c.Name}'", c.Span, "functions: " + string.Join(" ", known) + "; collection methods: list.any(pred) list.count() ...");
+        }
+
+        /// <summary>
+        /// String functions (spec §4.3), as functions (<c>replace(s, a, b)</c>) or methods on the string (<c>s.replace(a, b)</c>,
+        /// <paramref name="receiver"/> = 1: the first argument is the receiver and the arity excludes it).
+        /// </summary>
+        private Eval CompileStringFunction(CallExpr c, string name, IReadOnlyList<Expr> argExprs, int receiver)
+        {
+            var (min, max) = name switch { "replace" => (3, 3), "replace-regex" => (3, 3), "substring" => (2, 3), "pad" => (2, 3), "split" => (2, 2), _ => (1, 1) };
+            Arity(c, min - receiver, max - receiver);
+            if (name == "replace-regex") CheckLiteralRegex(argExprs[1]);
+            var args = argExprs.Select(Compile).ToArray();
+            return x =>
+            {
+                var vals = new object?[args.Length];
+                for (int i = 0; i < args.Length; i++)
+                {
+                    vals[i] = args[i](x);
+                    if (vals[i] == null || V.IsAbsent(vals[i])) return vals[i]; // null / missing / error propagate (first one)
+                }
+                var r = StringFunction(x, name, vals);
+                if (name == "replace-regex") x.CheckTime();
+                return r;
+            };
+        }
+
+        private static readonly char[] TrimChars = { ' ', '\t', '\n', '\r', '\v', '\f' };
+
+        /// <summary>The widest result <c>pad</c> builds (spec §4.3).</summary>
+        public const int MaxPadWidth = 1024;
+
+        private static object? StringFunction(Exec x, string name, object?[] vals)
+        {
+            if (name == "pad")
+            {
+                // A number pads its text form: pad(3, 2) → "03".
+                var text = V.IsString(vals[0]) ? V.AsString(vals[0]!) : V.TryNumber(vals[0], out var num) ? V.FormatNumber(num) : null;
+                if (text == null) return new RqlError("type-mismatch", $"pad() needs a string or a number, got {V.Describe(vals[0])}");
+                if (!Integral(vals[1], out var width) || width < 0 || width > MaxPadWidth)
+                    return new RqlError("type-mismatch", $"pad() width must be an integer from 0 to {MaxPadWidth}");
+                var fill = vals.Length < 3 ? "0" : V.IsString(vals[2]) ? V.AsString(vals[2]!) : null;
+                if (fill == null || fill.Length != 1) return new RqlError("type-mismatch", "pad() fill must be a one-character string");
+                return text.PadLeft((int)width, fill[0]);
+            }
+            if (!V.IsString(vals[0])) return new RqlError("type-mismatch", $"{name}() needs a string, got {V.Describe(vals[0])}");
+            var s = V.AsString(vals[0]!);
+            switch (name)
+            {
+                case "trim":
+                    return s.Trim(TrimChars);
+                case "replace":
+                case "split":
+                {
+                    if (!V.IsString(vals[1]) || (name == "replace" && !V.IsString(vals[2])))
+                        return new RqlError("type-mismatch", $"{name}() needs string arguments");
+                    var from = V.AsString(vals[1]!);
+                    if (name == "split")
+                    {
+                        if (from.Length == 0) return new RqlError("type-mismatch", "split() needs a non-empty separator");
+                        var parts = new List<object?>();
+                        int start = 0, at;
+                        while ((at = s.IndexOf(from, start, StringComparison.OrdinalIgnoreCase)) >= 0)
+                        {
+                            parts.Add(s.Substring(start, at - start));
+                            start = at + from.Length;
+                        }
+                        parts.Add(s.Substring(start));
+                        return parts;
+                    }
+                    if (from.Length == 0) return s;
+                    var to = V.AsString(vals[2]!);
+                    var sb = new System.Text.StringBuilder(s.Length);
+                    int pos = 0, hit;
+                    while ((hit = s.IndexOf(from, pos, StringComparison.OrdinalIgnoreCase)) >= 0)
+                    {
+                        sb.Append(s, pos, hit - pos).Append(to);
+                        pos = hit + from.Length;
+                    }
+                    return sb.Append(s, pos, s.Length - pos).ToString();
+                }
+                case "substring":
+                {
+                    long want = long.MaxValue;
+                    if (!Integral(vals[1], out var start) || (vals.Length > 2 && !Integral(vals[2], out want)))
+                        return new RqlError("type-mismatch", "substring() needs integral start and length");
+                    if (want < 0) return new RqlError("type-mismatch", "substring() length must not be negative");
+                    long len = s.Length;
+                    if (start < 0) start += len;
+                    start = Math.Max(0, Math.Min(len, start));
+                    return s.Substring((int)start, (int)Math.Min(len - start, want));
+                }
+                default: // replace-regex
+                {
+                    if (!(vals[1] is string pattern) || !V.IsString(vals[2])) return new RqlError("type-mismatch", "replace-regex() needs string arguments");
+                    var (re, error) = GetRegex(pattern);
+                    if (re == null)
+                    {
+                        var detail = $"invalid regex \"{pattern}\": {error}";
+                        x.WarnOnce("invalid-regex", detail, "invalid-regex");
+                        return new RqlError("invalid-regex", detail);
+                    }
+                    var repl = V.AsString(vals[2]!);
+                    try { return re.Replace(s, m => Expand(m, repl)); }
+                    catch (RegexMatchTimeoutException)
+                    {
+                        var detail = $"regex \"{pattern}\" timed out on a value (simplify the pattern)";
+                        x.WarnOnce("timeout", detail, "regex-timeout");
+                        return new RqlError("timeout", detail);
+                    }
+                }
+            }
+        }
+
+        /// <summary>Portable replacement text (spec §4.3): <c>$0</c>–<c>$9</c> insert a group (empty when absent), <c>$$</c> a dollar.</summary>
+        private static string Expand(Match m, string repl)
+        {
+            if (repl.IndexOf('$') < 0) return repl;
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < repl.Length; i++)
+            {
+                char ch = repl[i];
+                if (ch == '$' && i + 1 < repl.Length)
+                {
+                    char next = repl[i + 1];
+                    if (next == '$') { sb.Append('$'); i++; continue; }
+                    if (next >= '0' && next <= '9')
+                    {
+                        int g = next - '0';
+                        if (g < m.Groups.Count && m.Groups[g].Success) sb.Append(m.Groups[g].Value);
+                        i++;
+                        continue;
+                    }
+                }
+                sb.Append(ch);
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>The largest integer a double holds exactly (2^53): integral arguments up to it are accepted.</summary>
+        private const double MaxExactInteger = 9007199254740992;
+
+        private static bool Integral(object? v, out long n)
+        {
+            n = 0;
+            if (!V.TryNumber(v, out var d) || double.IsNaN(d) || Math.Floor(d) != d || Math.Abs(d) > MaxExactInteger) return false; // positions beyond the text are clamped
+            n = (long)d;
+            return true;
         }
 
         private static object? Len(object? v)
@@ -1058,6 +1214,13 @@ namespace Rql.Execution
                 case "len":
                     Arity(c, 0, 0);
                     return x => Len(on(x));
+                case "replace":
+                case "replace-regex":
+                case "substring":
+                case "split":
+                case "trim":
+                case "pad":
+                    return CompileStringFunction(c, name, new[] { c.On! }.Concat(c.Args).ToList(), 1);
             }
             throw new RqlException("unknown-function", $"unknown method '{c.Name}'", c.Span, "methods: " + string.Join(" ", CoreMethods));
         }

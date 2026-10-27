@@ -145,6 +145,18 @@
     {
       "rql": "g | select o={a: 1",
       "code": "syntax-error"
+    },
+    {
+      "rql": "g | select a=({$: 1})",
+      "code": "syntax-error"
+    },
+    {
+      "rql": "g | select a=({$ type: 1})",
+      "code": "syntax-error"
+    },
+    {
+      "rql": "g | select a=({$type: 1, \"$type\": 2})",
+      "code": "syntax-error"
     }
   ]
 }

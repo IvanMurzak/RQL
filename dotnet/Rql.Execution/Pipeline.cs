@@ -127,8 +127,8 @@ namespace Rql.Execution
         {
             var names = new HashSet<string>(_x.Engine.KnownMemberNames(), StringComparer.OrdinalIgnoreCase);
             foreach (var st in _x.Plan.Stages)
-                if (st is SelectStage sel)
-                    foreach (var f in sel.Fields)
+                if (st is SelectStage || st is GroupByStage)
+                    foreach (var f in st is SelectStage sel ? sel.Fields : ((GroupByStage)st).Keys)
                     {
                         names.Add(f.Name);
                         int dot = f.Name.IndexOf('.');
@@ -360,7 +360,8 @@ namespace Rql.Execution
         }
 
         /// <summary>Lists → elements, maps → entries, else the value itself; null/missing dropped.</summary>
-        private IEnumerable<Item> Expand(object? value, PathNode? path, bool countVisit)
+        /// <param name="origin">Where a map value lives (`get` before `set`); null: the map itself, when entries are tracked (spec §8).</param>
+        private IEnumerable<Item> Expand(object? value, PathNode? path, bool countVisit, EntryOrigin? origin = null)
         {
             if (value == null || value is Missing || value is Unknown) yield break;
             if (value is RqlError) yield break;
@@ -402,7 +403,8 @@ namespace Rql.Execution
                 {
                     if (countVisit) _x.Visit();
                     var me = (MapEntry)e!;
-                    yield return new Item(me, path?.Key(me.Key));
+                    if (TracksEntries) origin ??= new EntryOrigin(value, Array.Empty<Segment>(), null);
+                    yield return new Item(origin != null ? new MapEntry(me.Key, me.Value, origin) : me, path?.Key(me.Key));
                 }
                 yield break;
             }
@@ -423,7 +425,8 @@ namespace Rql.Execution
                 case LimitStage l: return input.Skip(l.N);
                 case ExprStage e when e.Op == "get": return Get(input, e.Expr!);
                 case ExprStage e when e.Op == "distinct": return Distinct(input, e.Expr == null ? null : _c.Compile(e.Expr));
-                case ExprStage e when e.Op == "group-by": return GroupBy(input, _c.Compile(e.Expr!));
+                case ExprStage e when e.Op == "group-by": return GroupBy(input, new[] { _c.Compile(e.Expr!) }, KeyColumns);
+                case GroupByStage g: return GroupBy(input, g.Keys.Select(k => _c.Compile(k.Expr)).ToArray(), g.Keys.Select(k => k.Name).ToArray());
                 case RecurseStage r: return Recurse(input, r);
                 case GenericStage g: return Generic(input, g);
                 default: throw new RqlException("unsupported", $"stage '{st.Op}' is not supported here", st.Span);
@@ -524,24 +527,46 @@ namespace Rql.Execution
             foreach (var b in best) yield return b.item;
         }
 
-        private IEnumerable<Item> Get(IEnumerable<Item> input, Expr e) => GetIter(input, _c.Compile(e), PathSuffix(e));
+        private IEnumerable<Item> Get(IEnumerable<Item> input, Expr e) =>
+            GetIter(input, _c.Compile(e), PathSuffix(e), e is PathExpr p && p.On == null && p.Segments.All(s => s.Kind != SegmentKind.Meta) ? p.Segments : null);
 
-        private IEnumerable<Item> GetIter(IEnumerable<Item> input, Eval eval, string? suffix)
+        /// <summary>Streamed map entries remember their map only when a `set` may write through them (spec §8).</summary>
+        private bool TracksEntries => _x.Plan.Stages.Count > 0 && _x.Plan.Stages[_x.Plan.Stages.Count - 1] is SetStage;
+
+        private IEnumerable<Item> GetIter(IEnumerable<Item> input, Eval eval, string? suffix, IReadOnlyList<Segment>? segments)
         {
             long i = 0;
+            bool tracks = TracksEntries;
             foreach (var it in input)
             {
-                _x.Current = it.Value;
-                _x.CurrentPath = it.Path;
-                _x.CurrentDepth = it.Depth;
-                _x.Index = i++;
+                _x.Enter(it, i++);
                 var v = eval(_x);
                 if (v is RqlError err) { _x.GetterErrors++; _x.FirstGetterError ??= err.Detail ?? err.Code; continue; }
                 PathNode? p = null;
                 if (_x.TrackPaths && it.Path != null && suffix != null) p = new PathNode(it.Path, suffix);
-                foreach (var sub in Expand(v, p, true)) yield return sub;
+                foreach (var sub in Expand(v, p, true, tracks && v != null ? OriginOf(it.Value, v, segments) : null)) yield return sub;
             }
         }
+
+        /// <summary>
+        /// Where map <paramref name="map"/>, read by `get` from <paramref name="from"/>, lives (spec §8): a plain path from the item —
+        /// or, for an entry item, continuing that entry's path through <c>[key]</c> — else the map itself.
+        /// </summary>
+        private static EntryOrigin OriginOf(object? from, object map, IReadOnlyList<Segment>? segments)
+        {
+            if (from is MapEntry me)
+            {
+                var o = me.Origin;
+                if (o == null || segments == null || segments.Count == 0 || IsMember(segments[0], "key")) return new EntryOrigin(map, Array.Empty<Segment>(), o?.Holder);
+                var prefix = new List<Segment>(o.Prefix) { Segment.ForKey(me.Key!) };
+                prefix.AddRange(IsMember(segments[0], "value") ? segments.Skip(1) : segments);
+                return new EntryOrigin(o.Root, prefix, o.Holder);
+            }
+            var holder = from is RowValue ? null : from;
+            return holder != null && segments != null ? new EntryOrigin(holder, segments, holder) : new EntryOrigin(map, Array.Empty<Segment>(), holder);
+        }
+
+        internal static bool IsMember(Segment s, string name) => s.Kind == SegmentKind.Member && string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase);
 
         /// <summary>Path text appended by `get`/`recurse via` when the expression is a plain member/index path.</summary>
         private static string? PathSuffix(Expr e)
@@ -722,28 +747,34 @@ namespace Rql.Execution
 
         // ------------------------------------------------------------ terminals / output
 
-        /// <summary>group-by: rows {key, count} in order of first appearance (null/missing keys grouped as null).</summary>
-        private IEnumerable<Item> GroupBy(IEnumerable<Item> input, Eval key)
+        private static readonly string[] KeyColumns = { "key" };
+
+        /// <summary>
+        /// group-by: one row per distinct key tuple, in order of first appearance: the key columns, then count
+        /// (null/missing key values group as null).
+        /// </summary>
+        private IEnumerable<Item> GroupBy(IEnumerable<Item> input, Eval[] keys, string[] keyColumns)
         {
-            var order = new List<object?>();
-            var counts = new Dictionary<object, long>(DistinctComparer.Instance);
-            long nullCount = 0;
-            bool sawNull = false;
-            foreach (var v in Values(input, key))
+            // The key tuple is a row of the key columns: rows hash and compare by their values, like distinct.
+            var groups = new List<(object?[] tuple, long count)>();
+            var index = new Dictionary<object, int>(DistinctComparer.Instance);
+            long i = 0;
+            foreach (var it in input)
             {
-                var k = v is Missing || v is Unknown ? null : v;
-                if (k == null)
+                _x.Enter(it, i++);
+                var tuple = new object?[keys.Length];
+                for (int k = 0; k < keys.Length; k++)
                 {
-                    if (!sawNull) { sawNull = true; order.Add(null); }
-                    nullCount++;
-                    continue;
+                    var v = keys[k](_x);
+                    tuple[k] = v is Missing || v is Unknown ? null : v;
                 }
-                if (counts.TryGetValue(k, out var c)) counts[k] = c + 1;
-                else { counts[k] = 1; order.Add(k); }
+                var row = new RowValue(keyColumns, tuple);
+                if (index.TryGetValue(row, out var g)) groups[g] = (groups[g].tuple, groups[g].count + 1);
+                else { index[row] = groups.Count; groups.Add((tuple, 1)); }
             }
-            var cols = new[] { "key", "count" };
-            foreach (var k in order)
-                yield return new Item(new RowValue(cols, new object?[] { k, (double)(k == null ? nullCount : counts[k]) }), null);
+            var cols = keyColumns.Append("count").ToArray();
+            foreach (var (tuple, count) in groups)
+                yield return new Item(new RowValue(cols, tuple.Append((object?)(double)count).ToArray()), null);
         }
 
         private QueryResult Collect(IEnumerable<Item> stream, Encoder enc)
@@ -778,17 +809,20 @@ namespace Rql.Execution
             bool rows = false;
             foreach (var st in _x.Plan.Stages)
             {
-                if (st is SelectStage || (st is ExprStage ge && ge.Op == "group-by")) rows = true;
+                if (Projects(st)) rows = true;
                 else if ((st is ExprStage ee && ee.Op != "distinct") || st is RecurseStage || st is GenericStage) rows = false;
             }
             return rows;
         }
 
-        private string[] SelectColumns()
+        private static bool Projects(Stage st) => st is SelectStage || st is GroupByStage || (st is ExprStage e && e.Op == "group-by");
+
+        private string[] SelectColumns() => _x.Plan.Stages.Last(Projects) switch
         {
-            var last = _x.Plan.Stages.Last(s => s is SelectStage || (s is ExprStage e && e.Op == "group-by"));
-            return last is SelectStage sel ? sel.Fields.Select(f => f.Name).ToArray() : new[] { "key", "count" };
-        }
+            SelectStage sel => sel.Fields.Select(f => f.Name).ToArray(),
+            GroupByStage g => g.Keys.Select(k => k.Name).Append("count").ToArray(),
+            _ => new[] { "key", "count" },
+        };
     }
 
     /// <summary>Sort order: null/missing last; number &lt; string &lt; bool &lt; other (spec §5).</summary>
