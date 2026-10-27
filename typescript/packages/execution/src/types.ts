@@ -172,6 +172,19 @@ export class EnumType {
    * `Type::` / `Type.` qualifier, ignoring case, ignoring the entry prefix (`HAlign_`). Several entries are ambiguous.
    */
   resolve(text: string): { value: EnumValue } | { why: string } {
+    // Comparisons resolve the same literal once per item: memoize, bounded.
+    let r = this.memo.get(text);
+    if (r === undefined) {
+      r = this.compute(text);
+      if (this.memo.size >= 1024) this.memo.clear();
+      this.memo.set(text, r);
+    }
+    return r;
+  }
+
+  private readonly memo = new Map<string, { value: EnumValue } | { why: string }>();
+
+  private compute(text: string): { value: EnumValue } | { why: string } {
     const s = text.trim();
     if (/^[+-]?\d+$/.test(s)) return { value: this.wrap(Number(s)) };
     if (this.flags && s.includes(',')) {

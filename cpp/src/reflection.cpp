@@ -278,7 +278,7 @@ TypeDescriptor::EnumMatch TypeDescriptor::enum_resolve(const std::string& text) 
     bool any = step(s, false, false);
     if (!any) {
         size_t q = s.rfind("::");
-        size_t cut = q != std::string::npos ? q + 2 : (s.rfind('.') == std::string::npos ? 0 : s.rfind('.') + 1);
+        size_t cut = q != std::string::npos ? q + 2 : s.rfind('.') + 1;  // npos + 1 == 0: unqualified
         if (cut > 0 && cut < s.size()) {
             const std::string part = s.substr(cut);
             any = step(part, false, false) || step(part, true, false) || step(part, true, true);
@@ -286,7 +286,7 @@ TypeDescriptor::EnumMatch TypeDescriptor::enum_resolve(const std::string& text) 
     }
     if (!any) any = step(s, true, false) || step(s, true, true);
     if (!any) {
-        m.why = "expected one of " + enum_names();
+        m.why = enum_expected();
         return m;
     }
     // Distinct entries: names sharing one value are one entry.

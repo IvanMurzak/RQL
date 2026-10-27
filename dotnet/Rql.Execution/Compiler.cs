@@ -342,7 +342,7 @@ namespace Rql.Execution
             return Missing.Value;
         }
 
-        internal static bool TryCoerceKey(object? key, Type? keyType, out object? result, TypeModel? model = null)
+        internal static bool TryCoerceKey(object? key, Type? keyType, out object? result, TypeModel model)
         {
             result = key;
             if (keyType == null || key == null || keyType.IsInstanceOfType(key)) return true;
@@ -355,7 +355,7 @@ namespace Rql.Execution
             if (key is string s)
             {
                 if (keyType.IsEnum)
-                    return EnumNames.Resolve(keyType, s, model?.AliasesOf(keyType), out result, out _) == EnumNames.Outcome.Found;
+                    return EnumNames.Resolve(keyType, s, model.AliasesOf(keyType), out result, out _) == EnumNames.Outcome.Found;
                 if (V.IsNumericType(keyType) && double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var dv))
                 {
                     try { result = Convert.ChangeType(dv, keyType, CultureInfo.InvariantCulture); return true; } catch { return false; }

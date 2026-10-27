@@ -180,6 +180,7 @@ public:
     bool enum_parse(const std::string& text, int64_t& out) const;
     bool enum_defined(int64_t v) const;
     std::string enum_names() const;  // "A, B, C"
+    std::string enum_expected() const { return "expected one of " + enum_names(); }
 
     std::string friendly_name() const;
     std::string signature(const MethodDescriptor& m) const;

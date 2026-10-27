@@ -27,9 +27,9 @@ struct Target {
 void enter_scope(Exec& x, const Target& t) { set_scope(x, t.item, t.index); }
 
 /// The mutation-limit hint (spec §10). When callers can raise the limit (`argument` non-empty) and the ceiling is above
-/// it: raise it to the `matched` count (one all-or-nothing call; matched < 0 = unknown), or (more matched than the
-/// ceiling) to the ceiling in batches of the ceiling. Otherwise: batches of `limit`.
-std::string mutation_limit_hint(const std::string& op, int limit, int matched, const std::string& argument, int ceiling) {
+/// it: raise it to the `matched` count (one all-or-nothing call), or (count unknown: more matched than the ceiling) to
+/// the ceiling in batches of the ceiling. Otherwise: batches of `limit`.
+std::string mutation_limit_hint(const std::string& op, int limit, std::optional<int> matched, const std::string& argument, int ceiling) {
     const std::string narrow = "narrow the query (where / ref(...))";
     auto batches = [&](int count) {
         std::string n = std::to_string(count);
@@ -37,8 +37,8 @@ std::string mutation_limit_hint(const std::string& op, int limit, int matched, c
                " | first " + n + " | " + op + " \xE2\x80\xA6 (repeat plain first " + n + " instead when the change removes the items from your where)";
     };
     if (argument.empty() || ceiling <= limit) return narrow + " or " + batches(limit);
-    if (matched >= 0) {
-        std::string c = std::to_string(matched);
+    if (matched) {
+        std::string c = std::to_string(*matched);
         return "pass " + argument + " = " + c + " (host ceiling " + std::to_string(ceiling) + ") to change all " + c +
                " in one all-or-nothing call (a dry run previews it); or " + narrow;
     }
@@ -90,7 +90,7 @@ void validate_batch(Exec& x, const std::string& op, const std::vector<MutationRe
         std::string argument = !m.limit_argument.empty() ? m.limit_argument
                                : x.engine.defaults().budgets_adjustable ? std::string("budgets.maxMutationTargets")
                                                                          : std::string();
-        hint = mutation_limit_hint(op, limit, ended ? static_cast<int>(matched) : -1, argument, static_cast<int>(ceiling));
+        hint = mutation_limit_hint(op, limit, ended ? std::optional<int>(static_cast<int>(matched)) : std::nullopt, argument, static_cast<int>(ceiling));
     }
     throw RqlException("mutation-limit", message, hint);
 }
@@ -613,13 +613,13 @@ std::optional<Value> coerce(Exec& x, const Value& v, const TypeDescriptor* targe
                 // Enum name resolution (spec §8): exact, qualified, case-insensitive, entry prefix; ambiguity refused.
                 TypeDescriptor::EnumMatch m = target->enum_resolve(v.as_string());
                 if (m.status == TypeDescriptor::EnumMatch::Found && target->enum_defined(m.value)) return Value::enumeration(target, m.value);
-                why = m.status == TypeDescriptor::EnumMatch::Found ? "expected one of " + target->enum_names() : m.why;
+                why = m.status == TypeDescriptor::EnumMatch::Found ? target->enum_expected() : m.why;
                 return std::nullopt;
             }
             double d;
             if (try_number(v, d) && std::floor(d) == d && target->enum_defined(static_cast<int64_t>(d)))
                 return Value::enumeration(target, static_cast<int64_t>(d));
-            why = "expected one of " + target->enum_names();
+            why = target->enum_expected();
             return std::nullopt;
         }
         case TypeKind::Object:

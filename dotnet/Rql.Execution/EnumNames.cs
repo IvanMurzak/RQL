@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -14,44 +15,79 @@ namespace Rql.Execution
     {
         internal enum Outcome { Found, NotFound, Ambiguous }
 
+        private readonly struct Result
+        {
+            public Result(Outcome outcome, object? value, string? why) { Outcome = outcome; Value = value; Why = why; }
+            public Outcome Outcome { get; }
+            public object? Value { get; }
+            public string? Why { get; }
+        }
+
+        /// <summary>Per enum type: entry names, their values and their names without the entry prefix (null: none).</summary>
+        private sealed class Entries
+        {
+            public Entries(Type type)
+            {
+                Names = Enum.GetNames(type);
+                Values = Names.Select(n => Enum.Parse(type, n)).ToArray();
+                Unprefixed = Names.Select(WithoutPrefix).ToArray();
+            }
+
+            public string[] Names { get; }
+            public object[] Values { get; }
+            public string?[] Unprefixed { get; }
+        }
+
+        private static readonly ConcurrentDictionary<Type, Entries> EntriesOf = new ConcurrentDictionary<Type, Entries>();
+
+        // Comparisons resolve the same literal once per item: memoize per (type, host aliases, text), bounded.
+        private static readonly ConcurrentDictionary<(Type, object?, string), Result> Memo = new ConcurrentDictionary<(Type, object?, string), Result>();
+        private const int MemoLimit = 4096;
+
         /// <summary>
         /// Resolve <paramref name="text"/> against enum <paramref name="type"/>. Integer text is the underlying value (not
         /// checked for being defined); a flags enum accepts a comma-separated list. <paramref name="why"/> explains a failure.
         /// </summary>
         internal static Outcome Resolve(Type type, string text, IReadOnlyDictionary<string, string>? aliases, out object? value, out string? why)
         {
-            value = null;
-            why = null;
+            var key = (type, (object?)aliases, text);
+            if (!Memo.TryGetValue(key, out var r))
+            {
+                r = Compute(type, text, aliases);
+                if (Memo.Count >= MemoLimit) Memo.Clear();
+                Memo[key] = r;
+            }
+            value = r.Value;
+            why = r.Why;
+            return r.Outcome;
+        }
+
+        /// <summary>The "expected one of …" reason listing the entry names.</summary>
+        internal static string Expected(Type type) => "expected one of " + string.Join(", ", EntriesOf.GetOrAdd(type, t => new Entries(t)).Names);
+
+        private static Result Compute(Type type, string text, IReadOnlyDictionary<string, string>? aliases)
+        {
             var s = text.Trim();
             if (long.TryParse(s, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var n))
-            {
-                value = Enum.ToObject(type, n);
-                return Outcome.Found;
-            }
+                return new Result(Outcome.Found, Enum.ToObject(type, n), null);
+            var entries = EntriesOf.GetOrAdd(type, t => new Entries(t));
             if (s.IndexOf(',') >= 0 && type.IsDefined(typeof(FlagsAttribute), false))
             {
                 ulong acc = 0;
                 foreach (var part in s.Split(','))
                 {
-                    var o = ResolveName(type, part.Trim(), aliases, out var pv, out why);
-                    if (o != Outcome.Found) return o;
-                    acc |= ToBits(pv!);
+                    var r = ResolveName(type, entries, part.Trim(), aliases);
+                    if (r.Outcome != Outcome.Found) return r;
+                    acc |= ToBits(r.Value!);
                 }
-                value = Enum.ToObject(type, acc);
-                return Outcome.Found;
+                return new Result(Outcome.Found, Enum.ToObject(type, acc), null);
             }
-            return ResolveName(type, s, aliases, out value, out why);
+            return ResolveName(type, entries, s, aliases);
         }
 
-        /// <summary>The "expected one of …" reason listing the entry names.</summary>
-        internal static string Expected(Type type) => "expected one of " + string.Join(", ", Enum.GetNames(type));
-
-        private static Outcome ResolveName(Type type, string s, IReadOnlyDictionary<string, string>? aliases, out object? value, out string? why)
+        private static Result ResolveName(Type type, Entries entries, string s, IReadOnlyDictionary<string, string>? aliases)
         {
-            var names = Enum.GetNames(type);
-            value = null;
-            why = null;
-            List<string>? found = Step(names, aliases, s, StringComparison.Ordinal, prefix: false);
+            List<int>? found = Step(entries, aliases, s, StringComparison.Ordinal, prefix: false);
             if (found == null)
             {
                 int q = s.LastIndexOf("::", StringComparison.Ordinal);
@@ -59,43 +95,40 @@ namespace Rql.Execution
                 if (cut > 0 && cut < s.Length)
                 {
                     var part = s.Substring(cut);
-                    found = Step(names, aliases, part, StringComparison.Ordinal, prefix: false)
-                        ?? Step(names, aliases, part, StringComparison.OrdinalIgnoreCase, prefix: false)
-                        ?? Step(names, null, part, StringComparison.OrdinalIgnoreCase, prefix: true);
+                    found = Step(entries, aliases, part, StringComparison.Ordinal, prefix: false)
+                        ?? Step(entries, aliases, part, StringComparison.OrdinalIgnoreCase, prefix: false)
+                        ?? Step(entries, null, part, StringComparison.OrdinalIgnoreCase, prefix: true);
                 }
             }
-            found ??= Step(names, aliases, s, StringComparison.OrdinalIgnoreCase, prefix: false)
-                ?? Step(names, null, s, StringComparison.OrdinalIgnoreCase, prefix: true);
-            if (found == null)
-            {
-                why = Expected(type);
-                return Outcome.NotFound;
-            }
+            found ??= Step(entries, aliases, s, StringComparison.OrdinalIgnoreCase, prefix: false)
+                ?? Step(entries, null, s, StringComparison.OrdinalIgnoreCase, prefix: true);
+            if (found == null) return new Result(Outcome.NotFound, null, Expected(type));
             // Distinct entries: names sharing one value (C# `None = 0, Default = 0`) are one entry.
-            var values = found.Select(f => Enum.Parse(type, f)).Distinct().ToList();
-            if (values.Count > 1)
-            {
-                why = $"\"{s}\" is ambiguous for {type.Name}: {string.Join(", ", found)}";
-                return Outcome.Ambiguous;
-            }
-            value = values[0];
-            return Outcome.Found;
+            var first = entries.Values[found[0]];
+            if (found.Any(i => !entries.Values[i].Equals(first)))
+                return new Result(Outcome.Ambiguous, null, $"\"{s}\" is ambiguous for {type.Name}: {string.Join(", ", found.Select(i => entries.Names[i]))}");
+            return new Result(Outcome.Found, first, null);
         }
 
-        /// <summary>The entry names one step matches (aliases mapped to their entry), or null when none.</summary>
-        private static List<string>? Step(string[] names, IReadOnlyDictionary<string, string>? aliases, string s, StringComparison cmp, bool prefix)
+        /// <summary>The indexes of the entries one step matches (aliases mapped to their entry), or null when none.</summary>
+        private static List<int>? Step(Entries entries, IReadOnlyDictionary<string, string>? aliases, string s, StringComparison cmp, bool prefix)
         {
-            List<string>? found = null;
-            void Add(string entry)
+            List<int>? found = null;
+            void Add(int i)
             {
-                found ??= new List<string>();
-                if (!found.Contains(entry)) found.Add(entry);
+                found ??= new List<int>();
+                if (!found.Contains(i)) found.Add(i);
             }
-            foreach (var name in names)
-                if (string.Equals(prefix ? WithoutPrefix(name) : name, s, cmp)) Add(name);
+            var names = prefix ? entries.Unprefixed : entries.Names;
+            for (int i = 0; i < names.Length; i++)
+                if (string.Equals(names[i], s, cmp)) Add(i);
             if (aliases != null)
                 foreach (var kv in aliases)
-                    if (string.Equals(kv.Key, s, cmp) && Array.IndexOf(names, kv.Value) >= 0) Add(kv.Value);
+                    if (string.Equals(kv.Key, s, cmp))
+                    {
+                        int i = Array.IndexOf(entries.Names, kv.Value);
+                        if (i >= 0) Add(i);
+                    }
             return found;
         }
 
