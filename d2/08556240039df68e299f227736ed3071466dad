@@ -1,0 +1,49 @@
+cpp/include/rql/engine.hpp
+  s_7be60963fe3603::t_46817bb0b4f77c 167
+cpp/src/mutator.cpp
+  s_7bc72ecaebd05d::t_73b47f78e2fd89 366,773,818-819
+cpp/src/pipeline.cpp
+  s_7be60963fe3603::t_c8fefdc6a03699 1098-1103
+dotnet/Rql.Execution/Mutator.cs
+  s_7be60963fe3603::t_de729df4dc5fc1 127-128,233,273-275
+dotnet/Rql.Execution/Pipeline.cs
+  s_7be60963fe3603::t_5df4db97cd5c28 178-179
+dotnet/Rql.Execution/RqlEngine.cs
+  s_7be60963fe3603::t_3becb8abea9b9d 342
+dotnet/Rql.Tests/Wave4Tests.cs
+  s_7bc72ecaebd05d::t_a018e35b14150a 263-284
+spec/semantics.md
+  s_7bc72ecaebd05d::t_f30fa214bab4a4 432-435
+typescript/packages/execution/src/adapters.ts
+  s_7be60963fe3603::t_35aa7bbc114ade 183
+typescript/packages/execution/src/engine.ts
+  s_7be60963fe3603::t_cb5031feff6536 424
+typescript/packages/execution/src/mutator.ts
+  s_7be60963fe3603::t_4b0d337f9b8c9e 41-42,424,467-469
+typescript/packages/execution/src/pipeline.ts
+  s_7be60963fe3603::t_68171cd6e0e8ca 180-181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d208556240039df68e299f227736ed3071466dad",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    },
+    "s_7be60963fe3603": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c306a43-6f1a-4fe9-9b57-09acf4bc1a65",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
