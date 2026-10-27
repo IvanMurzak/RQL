@@ -53,13 +53,14 @@ Enemy#241|Bandit_0240|0
 Enemy#490|Zombie_0489|0
 ```
 
-- **One call per question.** Filters, projections, sorting, graph walks and aggregates run inside the host, next to the
+- **One query per question.** Filters, projections, sorting, graph walks and aggregates run inside the host, next to the
   objects.
 - **Live objects, late encoding.** Executors read live objects through reflection and encode only the rows that survive,
   never a serialized copy of the world.
 - **Built for agents.** Compact `|`-separated rows, stable `Type#id` references, and diagnostics with hints
   (`did you mean Health?`) that let the model correct itself.
-- **Safe writes.** `set` and `call` are opt-in and all-or-nothing, with dry-run receipts ([details](#safe-mutations)).
+- **Safe writes.** `set` and `call` are opt-in and validated for every target before anything changes, with dry-run
+  receipts ([details](#safe-mutations)).
 - **Measured.** With a DeepSeek V4.1-Flash agent, a task set written after tuning was frozen (n=90) scores **100%**,
   while a conventional reflection-tool baseline (find / dump-object-as-JSON / set / call) scores 66.7% at **40× the
   cost per success**. Method, held-out numbers and caveats: [`RESULTS.md`](RESULTS.md).
@@ -198,10 +199,10 @@ objects | where $ is Enemy | first 1 | describe
 | `describe` | the schema of the items' runtime types |
 | `set p = e, …` · `call m(args)` | mutation (see below) |
 
-Operators: `== != < <= > >=`, `and or not`, `in`, `is Type`, `is null`, `contains`, `starts-with`, `ends-with`,
-`matches`, `+ - * / %`. Collection methods: `any all count sum min max avg first keys values`. Functions:
-`len lower upper abs round floor ceil sqrt pow min max has append insert remove-at without`. Hosts add namespaced
-sources, functions and stages (`myapp.fn(...)`).
+Operators include `== != < <= > >=`, `and or not`, `in`, `is Type`, `is null`, `contains`, `starts-with`, `ends-with`,
+`matches`, `+ - * / %`. Collection methods: `any all count sum min max avg first keys values`. Functions include
+`len lower upper abs round floor ceil sqrt pow min max has ref append insert remove-at without`. Hosts register their
+own sources and add namespaced functions and stages (`myapp.fn(...)`).
 
 Mistakes come back as diagnostics the agent can act on:
 
@@ -226,8 +227,9 @@ Enemy#233|Transform.Position.y|25.52|27.52
 ```
 
 - Writes need the host switch **and** a mutation request; a mutation request must end in `set` or `call`.
-- All-or-nothing: every target is validated before the first write, with rollback on failure. Dry runs return the
-  same receipt without changing anything.
+- `set` is all-or-nothing: every assignment is resolved and coerced before the first write, and written values are
+  restored if a later write fails. `call` validates every target before the first call; calls already made are not
+  undone. Dry runs return the receipt without changing anything.
 - Identity members are read-only, `call` only reaches allowlisted methods, and budgets cap targets, rows, depth and
   time. See [docs/security-and-permissions.md](docs/security-and-permissions.md).
 

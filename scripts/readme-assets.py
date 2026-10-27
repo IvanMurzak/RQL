@@ -62,7 +62,7 @@ def hero(p):
     b.append(f'<text x="60" y="148" class="sans" font-size="104" font-weight="800" fill="url(#g)" letter-spacing="-2">RQL</text>')
     b.append(f'<text x="64" y="194" class="sans tx" font-size="27" font-weight="600">Reflection Query Language</text>')
     b.append(f'<text x="64" y="230" class="sans mu" font-size="17">Query and safely change live object graphs,</text>')
-    b.append(f'<text x="64" y="254" class="sans mu" font-size="17">one precise call per question from an AI agent.</text>')
+    b.append(f'<text x="64" y="254" class="sans mu" font-size="17">one precise query per question from an AI agent.</text>')
     x = 64
     for label, cls in ((".NET", "vi"), ("TypeScript", "ac"), ("C++17", "or")):
         w = 18 + len(label) * 8.6
