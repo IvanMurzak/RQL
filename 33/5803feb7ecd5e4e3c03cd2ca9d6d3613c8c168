@@ -1,0 +1,46 @@
+cpp/tests/conformance_graph.cpp
+  s_7bc72ecaebd05d::t_bbd42e822a15e4 83-97
+cpp/src/compiler.cpp
+  s_7bc72ecaebd05d::t_503354df459b8c 908,911-1088,1402,1415-1419,1467-1471,1477-1506
+cpp/src/exec.hpp
+  s_7bc72ecaebd05d::t_99c2bf65a6dd4c 275-276
+cpp/tests/unit_tests.cpp
+  s_7bc72ecaebd05d::t_f520718f17a946 1415-1478,1487
+cpp/src/mutator.cpp
+  s_7bc72ecaebd05d::t_697eb730cffd63 20-30,32-63,65,67,84-91,96,98-99,105-112,201-202
+  s_7bc72ecaebd05d::t_f1d43cf4539206 31
+  s_7bc72ecaebd05d::t_9cb8661e793911 616,618-619,621,651-656,658,698,705-706,730,785-790,792
+cpp/src/codec.cpp
+  s_7bc72ecaebd05d::t_a0b31ef572ef30 499-512
+  s_7bc72ecaebd05d::t_a2efc249bee5e2 464,466
+  s_7bc72ecaebd05d::t_66389483f11184 205,230,232
+  s_7bc72ecaebd05d::t_247676093f31c7 189-199
+  s_7bc72ecaebd05d::t_f07fa0396f70f0 36-52
+  s_7bc72ecaebd05d::t_87a91ed6046c71 229,231
+  s_7bc72ecaebd05d::t_67641c3419cd95 417-430
+cpp/include/rql/plan.hpp
+  s_7bc72ecaebd05d::t_57be8a364f8fed 73-74,99-100
+cpp/src/pipeline.cpp
+  s_7bc72ecaebd05d::t_e6674b28d572d6 63-64,74-75,482-484,488-489,491,496-503,507-508,511-518,528-529,770-782,844-850,984
+cpp/include/rql/engine.hpp
+  s_7bc72ecaebd05d::t_3724556d21343f 51,54-55
+  s_7bc72ecaebd05d::t_961bf9f263ae2c 91-93
+  s_7bc72ecaebd05d::t_7bdb46af698b67 65-70
+  s_7bc72ecaebd05d::t_bb43a8c644ea32 118-120
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "335803feb7ecd5e4e3c03cd2ca9d6d3613c8c168",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}

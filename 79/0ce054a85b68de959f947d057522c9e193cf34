@@ -1,0 +1,54 @@
+dotnet/Rql.Execution/Kernel.cs
+  s_7bc72ecaebd05d::t_4d7dfb1064471b 31,35,44-45
+  s_7bc72ecaebd05d::t_6cab27651365c5 46
+fixtures/execution/cases.json
+  s_7bc72ecaebd05d::t_d41117028517db 15051-15130,15132-15136,15138-15246,15248-15252,15254-15258,15260-15395,15397-15401,15403-15582,15584-15720,15722-15726,15728-16003
+  s_7bc72ecaebd05d::t_a174c93554cdc3 15131,15137,15247,15253,15259,15396,15402,15583,15721,15727
+dotnet/Rql.Execution/Values.cs
+  s_7bc72ecaebd05d::t_1f65cbea131813 37-42,45-50
+fixtures/adapters/cases.json
+  s_7bc72ecaebd05d::t_d41117028517db 4914-4995,4997-5233
+  s_7bc72ecaebd05d::t_a174c93554cdc3 4996
+dotnet/Rql.Tests/Tests.cs
+  s_7bc72ecaebd05d::t_2079fbfae34c00 279-349
+spec/versioning.md
+  s_7bc72ecaebd05d::t_88b0ec63a597ca 51-54
+dotnet/Rql.Execution/Mutator.cs
+  s_7bc72ecaebd05d::t_6abf10b2e96bc3 161-163,165,170,172-179,181,185-190
+  s_7bc72ecaebd05d::t_86bc5642ff6b65 731-746
+  s_7bc72ecaebd05d::t_a174c93554cdc3 166
+  s_7bc72ecaebd05d::t_86beeb10b4a098 119,227
+  s_7bc72ecaebd05d::t_d25b6c49f68bac 70,75-98
+  s_7bc72ecaebd05d::t_b167e23434da7f 56-59,61-65
+  s_7bc72ecaebd05d::t_795b9fbe9cf9ba 104,106-109
+  s_7bc72ecaebd05d::t_dbd063580f39cf 99
+dotnet/Rql.Execution/Pipeline.cs
+  s_7bc72ecaebd05d::t_1f65cbea131813 364,406,545
+  s_7bc72ecaebd05d::t_71fc99f0488040 363
+  s_7bc72ecaebd05d::t_2464917c5bea37 544
+dotnet/Rql.Execution/RqlEngine.cs
+  s_7bc72ecaebd05d::t_2134a5e481d218 81-86
+  s_7bc72ecaebd05d::t_4d7dfb1064471b 637
+  s_7bc72ecaebd05d::t_b01902f4dbb4f8 80
+spec/semantics.md
+  s_7bc72ecaebd05d::t_b34cadb3503040 346-348
+  s_7bc72ecaebd05d::t_2f12a372501d0c 338-345,349-352
+dotnet/Rql.Parser/RqlParser.cs
+  s_7bc72ecaebd05d::t_b7906eba03dd74 655-657
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "790ce054a85b68de959f947d057522c9e193cf34",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
