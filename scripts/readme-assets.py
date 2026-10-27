@@ -6,7 +6,7 @@ The SVGs animate with SMIL only (no scripts, no external fonts: GitHub renders t
 runtime facts drawn here are real sandbox output and repo facts; keep them in sync with the README.
 
 social-preview.png (the repo's GitHub social preview, uploaded by hand in Settings) is rendered from the SVG, e.g.
-  chrome --headless=new --hide-scrollbars --window-size=1280,640 --screenshot=docs/assets/social-preview.png     file:///<repo>/docs/assets/social-preview.svg
+  chrome --headless=new --hide-scrollbars --window-size=1280,640 --screenshot=docs/assets/social-preview.png file:///<repo>/docs/assets/social-preview.svg
 """
 import os
 import sys
@@ -19,7 +19,7 @@ PALETTES = {
     "dark": dict(bg="#0d1117", card="#161b22", card2="#1c2330", bd="#30363d", tx="#e6edf3", mu="#8b949e",
                  ac="#39d0d8", vi="#a371f7", gr="#3fb950", orr="#f0883e", pk="#ff7b72", ye="#e3b341", g1="#39d0d8", g2="#a371f7"),
     "light": dict(bg="#ffffff", card="#f6f8fa", card2="#eef2f6", bd="#d0d7de", tx="#1f2328", mu="#59636e",
-                  ac="#0b7f8a", vi="#8250df", gr="#1a7f37", orr="#bc4c00", pk="#cf222e", ye="#9a6700", g1="#0b7f8a", g2="#8250df"),
+                  ac="#08707a", vi="#7341c9", gr="#1a7f37", orr="#a94400", pk="#cf222e", ye="#8a5c00", g1="#08707a", g2="#8250df"),
 }
 
 
@@ -64,7 +64,7 @@ def hero(p):
     b.append(f'<text x="64" y="230" class="sans mu" font-size="17">Query and safely change live object graphs,</text>')
     b.append(f'<text x="64" y="254" class="sans mu" font-size="17">one precise call per question from an AI agent.</text>')
     x = 64
-    for label, cls in ((".NET", "vi"), ("TypeScript", "ac"), ("C++", "or")):
+    for label, cls in ((".NET", "vi"), ("TypeScript", "ac"), ("C++17", "or")):
         w = 18 + len(label) * 8.6
         b.append(f'<rect x="{x}" y="270" width="{w:.0f}" height="26" rx="13" class="card2 bd" stroke-width="1"/>'
                  f'<text x="{x + w/2:.0f}" y="288" text-anchor="middle" class="mono {cls}" font-size="13" font-weight="600">{label}</text>')
@@ -88,9 +88,9 @@ def hero(p):
     # typewriter: clip rects grow; keyTimes on a shared 10 s loop
     t1a, t1b, t2a, t2b = 0.04, 0.20, 0.21, 0.38
     end = 0.94
-    b.append(f'<clipPath id="c1"><rect x="{lx-2}" y="{l1y-16}" height="22" width="0"><animate attributeName="width" '
+    b.append(f'<clipPath id="c1"><rect x="{lx-2}" y="{l1y-16}" height="22" width="{n1*cw+4:.0f}"><animate attributeName="width" '
              f'values="0;0;{n1*cw+4:.0f};{n1*cw+4:.0f}" keyTimes="{kt(0,t1a,t1b,1)}" dur="{D}s" repeatCount="indefinite"/></rect></clipPath>')
-    b.append(f'<clipPath id="c2"><rect x="{lx-2}" y="{l2y-16}" height="22" width="0"><animate attributeName="width" '
+    b.append(f'<clipPath id="c2"><rect x="{lx-2}" y="{l2y-16}" height="22" width="{n2*cw+4:.0f}"><animate attributeName="width" '
              f'values="0;0;{n2*cw+4:.0f};{n2*cw+4:.0f}" keyTimes="{kt(0,t2a,t2b,1)}" dur="{D}s" repeatCount="indefinite"/></rect></clipPath>')
     fade = f'<animate attributeName="opacity" values="1;1;0" keyTimes="{kt(0,end,1)}" dur="{D}s" repeatCount="indefinite"/>'
     b.append(f'<g>{fade}<text x="{lx}" y="{l1y}" class="mono" font-size="{fs}" textLength="{n1*cw:.0f}" lengthAdjust="spacing" clip-path="url(#c1)" xml:space="preserve">{q(line1)}</text>'
@@ -112,7 +112,7 @@ def hero(p):
         parts = t.split("|")
         inner = '<tspan class="ac">|</tspan>'.join(
             (f'<tspan class="gr">{s}</tspan>' if (j == 0 and c == "tx") else s) for j, s in enumerate(parts))
-        b.append(f'<text x="{lx}" y="{y}" class="mono {c}" font-size="{fs}" opacity="0">{inner}'
+        b.append(f'<text x="{lx}" y="{y}" class="mono {c}" font-size="{fs}">{inner}'
                  f'<animate attributeName="opacity" values="0;0;1;1;0" keyTimes="{kt(0,a,a+0.03,end,1)}" dur="{D}s" repeatCount="indefinite"/></text>')
     return svg(W, H, p, "".join(b), "RQL, Reflection Query Language: a query typed into an agent tool and its compact result rows")
 
@@ -159,14 +159,14 @@ def pipeline(p):
         b.append(f'<rect x="{sx-56}" y="{TY-112}" width="112" height="{50 + 16*len(args)}" rx="10" class="card2 bd" stroke-width="1.2"/>')
         b.append(f'<text x="{sx}" y="{TY-88}" text-anchor="middle" class="mono vi" font-size="15" font-weight="700">{name}</text>')
         for k, a in enumerate(args):
-            b.append(f'<text x="{sx}" y="{TY-68 + 16*k}" text-anchor="middle" class="mono mu" font-size="11.5">{a}</text>')
+            b.append(f'<text x="{sx}" y="{TY-68 + 16*k}" text-anchor="middle" class="mono mu" font-size="13">{a}</text>')
         b.append(f'<line x1="{sx}" y1="{TY-112 + 50 + 16*len(args)}" x2="{sx}" y2="{TY-9}" class="smu" stroke-width="1.2" opacity=".5"/>')
         b.append(f'<circle cx="{sx}" cy="{TY}" r="9" class="card2 sac" stroke-width="2"/>')
     # result table
     rx0, ry0 = 996, 120
-    b.append(f'<rect x="{rx0}" y="{ry0}" width="182" height="150" rx="10" class="bg bd" stroke-width="1.2"/>')
-    b.append(f'<text x="{rx0+12}" y="{ry0+24}" class="mono mu" font-size="11.5">3 results</text>')
-    b.append(f'<text x="{rx0+12}" y="{ry0+46}" class="mono mu" font-size="11.5">$ref|Name|Health</text>')
+    b.append(f'<rect x="{rx0}" y="{ry0}" width="190" height="150" rx="10" class="bg bd" stroke-width="1.2"/>')
+    b.append(f'<text x="{rx0+12}" y="{ry0+24}" class="mono mu" font-size="12">3 results</text>')
+    b.append(f'<text x="{rx0+12}" y="{ry0+46}" class="mono mu" font-size="12">$ref|Name|Health</text>')
     out_rows = ["Enemy#228|Wraith_0227|0", "Enemy#241|Bandit_0240|0", "Enemy#490|Zombie_0489|0"]
     row_y = [ry0 + 76 + i * 24 for i in range(3)]
     # dots: (leaf index, where it stops: 'where' | 'first' | row k)
@@ -214,7 +214,7 @@ def pipeline(p):
                 f'<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="{kt(0,times[0][1],times[0][1]+0.01,times[-1][0]-0.015,times[-1][0],1)}" dur="{D}s" repeatCount="indefinite"/></circle>')
 
     def drop_label(gx, t):
-        return (f'<text x="{gx+14}" y="{TY+48}" class="mono pk" font-size="12" opacity="0">dropped'
+        return (f'<text x="{gx+14}" y="{TY+48}" class="mono pk" font-size="13" opacity="0">dropped'
                 f'<animate attributeName="opacity" values="0;0;1;0;0" keyTimes="{kt(0,t,t+0.02,t+0.07,1)}" dur="{D}s" repeatCount="indefinite"/></text>')
 
     sort_x, queue_gap = sx_of["sort"], 18
@@ -259,11 +259,11 @@ def pipeline(p):
         else:
             parts = out_rows[fate].split("|")
             inner = f'<tspan class="gr">{parts[0]}</tspan><tspan class="ac">|</tspan>{parts[1]}<tspan class="ac">|</tspan>{parts[2]}'
-            b.append(f'<text x="{rx0+12}" y="{row_y[fate]}" class="mono tx" font-size="11.5" opacity="0">{inner}'
+            b.append(f'<text x="{rx0+12}" y="{row_y[fate]}" class="mono tx" font-size="12">{inner}'
                      f'<animate attributeName="opacity" values="0;0;1;1;0" keyTimes="{kt(0,t_end-0.005,t_end+0.02,end,1)}" dur="{D}s" repeatCount="indefinite"/></text>')
     assert t_end < end - 0.05, t_end
     # "buffering" hint at sort while it waits for the last item
-    b.append(f'<text x="{sort_x}" y="{TY+30}" text-anchor="middle" class="mono ac" font-size="11" opacity="0">buffering'
+    b.append(f'<text x="{sort_x}" y="{TY+30}" text-anchor="middle" class="mono ac" font-size="13" opacity="0">buffering'
              f'<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="{kt(0,min(q_arrive),min(q_arrive)+0.01,t_release,t_release+0.01,1)}" dur="{D}s" repeatCount="indefinite"/></text>')
     # source pulse on the graph root
     b.append(f'<rect x="{root[0]}" y="{TY-15}" width="{root[2]}" height="30" rx="15" fill="none" class="sac" stroke-width="2" opacity="0">'
@@ -284,19 +284,19 @@ def architecture(p):
         s = f'<rect x="{x}" y="{y-h/2}" width="{w}" height="{h}" rx="12" class="card2 bd" stroke-width="1.3"/>'
         s += f'<text x="{x+w/2}" y="{y-4 if sub else y+5}" text-anchor="middle" class="sans {tcls}" font-size="15" font-weight="700">{title}</text>'
         if sub:
-            s += f'<text x="{x+w/2}" y="{y+16}" text-anchor="middle" class="mono mu" font-size="11.5">{sub}</text>'
+            s += f'<text x="{x+w/2}" y="{y+16}" text-anchor="middle" class="mono mu" font-size="13">{sub}</text>'
         return s
 
     b.append(box(30, CY, 170, 70, "RQL text", "objects | where …", "ac"))
     b.append(box(260, CY, 170, 70, "Parser", ".NET · TypeScript", "tx"))
     b.append(box(490, CY, 200, 86, "QueryPlan JSON", "versioned, canonical", "vi"))
-    b.append(f'<text x="590" y="{CY+66}" text-anchor="middle" class="mono mu" font-size="11">spec/query-plan.schema.json</text>')
+    b.append(f'<text x="590" y="{CY+66}" text-anchor="middle" class="mono mu" font-size="13">spec/query-plan.schema.json</text>')
     ex = [(CY - 82, ".NET executor", "System.Reflection", "vi"), (CY, "TypeScript executor", "descriptors", "ac"),
           (CY + 82, "C++17 executor", "TypeRegistry, no RTTI", "or")]
     for y, t, s, c in ex:
         b.append(box(760, y, 200, 62, t, s, c))
     b.append(box(1020, CY, 150, 86, "QueryResult", "JSON or rows", "gr"))
-    b.append(f'<text x="1095" y="{CY+66}" text-anchor="middle" class="mono mu" font-size="11">surviving items only</text>')
+    b.append(f'<text x="1095" y="{CY+66}" text-anchor="middle" class="mono mu" font-size="13">surviving items only</text>')
     b.append(f'<text x="600" y="{H-18}" text-anchor="middle" class="sans mu" font-size="13.5">'
              f'One plan, three runtimes, one set of golden vectors. C++ executes plans only (no text parser by design).</text>')
     paths = ["M200,150 L260,150", "M430,150 L490,150"]
