@@ -1127,10 +1127,13 @@ namespace Rql.Execution
             return sb.ToString();
         }
 
+        /// <summary>The largest integer a double holds exactly (2^53): integral arguments up to it are accepted.</summary>
+        private const double MaxExactInteger = 9007199254740992;
+
         private static bool Integral(object? v, out long n)
         {
             n = 0;
-            if (!V.TryNumber(v, out var d) || double.IsNaN(d) || Math.Floor(d) != d || Math.Abs(d) > int.MaxValue) return false;
+            if (!V.TryNumber(v, out var d) || double.IsNaN(d) || Math.Floor(d) != d || Math.Abs(d) > MaxExactInteger) return false; // positions beyond the text are clamped
             n = (long)d;
             return true;
         }

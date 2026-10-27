@@ -923,25 +923,31 @@ bool is_string_function(const std::string& name) {
 /// The widest result pad builds.
 constexpr int64_t kMaxPadWidth = 1024;
 
-/// An integral number that fits a 32-bit int.
+/// An integral number a double holds exactly (up to 2^53).
 bool integral_arg(const Value& v, int64_t& n) {
     double d;
-    if (!try_number(v, d) || std::isnan(d) || std::floor(d) != d || std::fabs(d) > 2147483647.0) return false;
+    if (!try_number(v, d) || std::isnan(d) || std::floor(d) != d || std::fabs(d) > 9007199254740992.0) return false;  // up to 2^53; positions beyond the text are clamped
     n = static_cast<int64_t>(d);
     return true;
 }
 
 /// Byte offset of the UTF-16 position `units` in UTF-8 text (positions count UTF-16 code units, like len).
+/// Counting exactly like utf16_length (continuation bytes add nothing, a lead byte from 0xF0 adds 2); a position inside
+/// a surrogate pair rounds up to the end of the character.
 size_t utf8_offset(const std::string& s, int64_t units) {
-    size_t i = 0;
     int64_t u = 0;
-    while (i < s.size() && u < units) {
+    for (size_t i = 0; i < s.size(); ++i) {
         unsigned char ch = static_cast<unsigned char>(s[i]);
-        size_t len = ch < 0x80 ? 1 : (ch >> 5) == 0x6 ? 2 : (ch >> 4) == 0xE ? 3 : (ch >> 3) == 0x1E ? 4 : 1;
-        u += len == 4 ? 2 : 1;
-        i = std::min(s.size(), i + len);
+        if ((ch & 0xC0) == 0x80) continue;  // continuation byte
+        if (u >= units) return i;
+        u += ch >= 0xF0 ? 2 : 1;
     }
-    return i;
+    return s.size();
+}
+
+/// Whether position `at` of UTF-8 text `s` falls inside a character (on a continuation byte).
+bool splits_character(const std::string& s, std::string::const_iterator at) {
+    return at != s.cend() && (static_cast<unsigned char>(*at) & 0xC0) == 0x80;
 }
 
 /// Start offsets of every non-overlapping occurrence of `needle` in `hay`, left to right, ASCII case-insensitive
@@ -1060,6 +1066,8 @@ Value string_function(Exec& x, const std::string& name, const std::vector<Value>
         auto last = s.cbegin();
         for (std::sregex_iterator it(s.cbegin(), s.cend(), *cached.re), end; it != end; ++it) {
             const std::smatch& m = *it;
+            // std::regex works on bytes: a match that would split a UTF-8 character is skipped (spec §12).
+            if (splits_character(s, m[0].first) || splits_character(s, m[0].second)) continue;
             out.append(last, m[0].first);
             out += expand_replacement(m, repl);
             last = m[0].second;

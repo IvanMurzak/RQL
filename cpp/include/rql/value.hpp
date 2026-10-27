@@ -146,17 +146,10 @@ private:
     std::shared_ptr<void> holder_;
 };
 
-/// Where a streamed map entry came from (spec §8): `set Value... = ...` writes through `map`.
-struct EntryOrigin {
-    Value map;
-    Value holder;       // the stream item the map was read from (by get); missing for a source
-    std::string label;  // the member path get read the map by ("Props"), prefixing receipt labels; "" when computed
-};
-
 struct EntryData {
     Value key;
     Value value;
-    std::shared_ptr<const EntryOrigin> origin;  // set for entries streamed from a map
+    std::shared_ptr<const EntryOrigin> origin;  // engine-internal: where the map of a streamed entry lives (spec §8)
 };
 
 struct RowData {

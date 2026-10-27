@@ -913,10 +913,10 @@ export const MAX_PAD_WIDTH = 1024;
 
 const TRIM_CHARS = ' \t\n\r\v\f';
 
-/** An integral number that fits a 32-bit int, or undefined. */
+/** An integral number a double holds exactly (up to 2^53), or undefined. */
 function integral(v: unknown): number | undefined {
   const d = toNumber(v);
-  return d !== undefined && Number.isInteger(d) && Math.abs(d) <= 2147483647 ? d : undefined;
+  return d !== undefined && Number.isInteger(d) && Math.abs(d) <= 9007199254740992 ? d : undefined; // beyond the text: clamped
 }
 
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

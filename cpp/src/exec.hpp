@@ -15,6 +15,16 @@
 #include "rql/engine.hpp"
 
 namespace rql {
+
+/// The map of streamed entries as a write path (spec §8): `root` plus `prefix` reach the map, so `set Value.p` on an entry
+/// is the ordinary `set` of `prefix[key].p` on the root (owners, value types and write-back of copies come with the path).
+/// When `get` used a computed expression the root is the map itself.
+struct EntryOrigin {
+    Value root;
+    std::vector<Segment> prefix;
+    Value holder;  // the object the map was read from (owner fallback); missing for a map source
+};
+
 namespace detail {
 
 struct PathNode {
@@ -308,6 +318,8 @@ QueryResult run_pipeline(Exec& x);
 
 /// Evaluate against `it`: $, $path, $depth and $index (its position in the stage's input).
 void set_scope(Exec& x, const Item& it, int64_t index);
+/// Whether `s` is the member `name` (ASCII case-insensitive).
+inline bool is_member(const Segment& s, const char* name) { return s.kind == SegmentKind::Member && iequals(s.name, name); }
 QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s);
 QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s);
 /// Coerce a value to a member/parameter type (spec §8); nullopt + why on failure.

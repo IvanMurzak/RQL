@@ -128,7 +128,7 @@ written to a struct / object type that no adapter coerces (e.g. `ExportText` for
 false` keeps hints from advising `budgets.*` when the host's tool takes no budgets; `Engine::find_hint`
 (e.g. `unreal.find("Floor")`) is named by the hint of a `ref()` given a name. A `set` on map entries
 streamed by `get` (`get Rows | where Value.IsElite | set Value.Health = …`) writes through the map; the
-records' owner is the object the map was read from.
+write is the key path from the item `get` read the map from (`Rows["Orc"].Health`), so owners and write-back match a direct key-path `set`.
 
 **Object literals and ownership** (spec §4.5): `ClassBuilder::constructible()` lets literals build a
 type with `std::make_shared<T>()`; the engine then retains every object it built (set values and

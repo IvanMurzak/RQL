@@ -35,19 +35,26 @@ namespace Rql.Execution
     {
         public MapEntry(object? key, object? value) { Key = key; Value = value; }
 
-        internal MapEntry(object? key, object? value, object? map, object? holder, string? mapLabel) : this(key, value)
-        {
-            Map = map; Holder = holder; MapLabel = mapLabel;
-        }
+        internal MapEntry(object? key, object? value, EntryOrigin origin) : this(key, value) { Origin = origin; }
 
         public object? Key { get; }
         public object? Value { get; }
-        /// <summary>The map this entry was streamed from: <c>set Value… = …</c> writes through it (spec §8).</summary>
-        internal object? Map { get; }
-        /// <summary>The stream item the map was read from (by <c>get</c>), for receipts and host hooks; null for a source.</summary>
-        internal object? Holder { get; }
-        /// <summary>The member path the map was read by (<c>Props</c> for <c>get Props</c>), prefixing receipt labels; null when computed.</summary>
-        internal string? MapLabel { get; }
+        /// <summary>Where the map this entry was streamed from lives: <c>set Value… = …</c> writes through it (spec §8).</summary>
+        internal EntryOrigin? Origin { get; }
+    }
+
+    /// <summary>
+    /// The map of streamed entries as a write path (spec §8): <see cref="Root"/> plus <see cref="Prefix"/> reach the map, so
+    /// <c>set Value.p</c> on an entry is the ordinary <c>set</c> of <c>Prefix[key].p</c> on the root (owners, value types and
+    /// write-back of copies come with the path). When `get` used a computed expression the root is the map itself.
+    /// </summary>
+    internal sealed class EntryOrigin
+    {
+        public EntryOrigin(object root, IReadOnlyList<Segment> prefix, object? holder) { Root = root; Prefix = prefix; Holder = holder; }
+        public object Root { get; }
+        public IReadOnlyList<Segment> Prefix { get; }
+        /// <summary>The object the map was read from (receipts' $ref, owner fallback); null for a map source.</summary>
+        public object? Holder { get; }
     }
 
     internal static class V

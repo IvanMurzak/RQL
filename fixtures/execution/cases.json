@@ -15392,13 +15392,13 @@
         ],
         "rows": [
           [
-            "Graph@1",
+            "Node#1",
             "Index[\"a\"].Value",
             10,
             11
           ],
           [
-            "Graph@1",
+            "Special#3",
             "Index[\"special\"].Value",
             -4,
             -3
@@ -15579,7 +15579,7 @@
         ],
         "rows": [
           [
-            "Graph@1",
+            "Node#1",
             "Index[\"a\"].Note",
             "first",
             "via entry a"
@@ -16020,6 +16020,430 @@
             "code": "syntax-error"
           }
         ]
+      }
+    },
+    {
+      "name": "mut-entry-nested-get",
+      "rql": "g | get Index | where Key == \"a\" | get Value.Props | where Key == \"hp\" | set Value = Value + 1",
+      "then": "ref(\"Node#1\") | select Props",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Index"
+              ]
+            }
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Key"
+                  ]
+                },
+                {
+                  "lit": "a"
+                }
+              ]
+            }
+          },
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Value",
+                "Props"
+              ]
+            }
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Key"
+                  ]
+                },
+                {
+                  "lit": "hp"
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    },
+                    {
+                      "lit": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "Index[\"a\"].Props[\"hp\"]",
+            100,
+            101
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Props",
+                "expr": {
+                  "path": [
+                    "Props"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Props"
+        ],
+        "rows": [
+          [
+            {
+              "hp": 101,
+              "mp": 5
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "mut-entry-get-delegated",
+      "rql": "g | get Index | where Key == \"special\" | get Props | set Value = 8",
+      "then": "ref(\"Special#3\") | select Props",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Index"
+              ]
+            }
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Key"
+                  ]
+                },
+                {
+                  "lit": "special"
+                }
+              ]
+            }
+          },
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Props"
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": 8
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Special#3",
+            "Index[\"special\"].Props[\"hp\"]",
+            7,
+            8
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Special#3"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Props",
+                "expr": {
+                  "path": [
+                    "Props"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Props"
+        ],
+        "rows": [
+          [
+            {
+              "hp": 8
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "str-substring-huge-positions",
+      "rql": "g | select a=(substring(\"abc\", 0, 1e12)) b=(substring(\"abc\", 1e12)) c=(substring(\"abc\", -1e12, 2))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "call": "substring",
+                  "args": [
+                    {
+                      "lit": "abc"
+                    },
+                    {
+                      "lit": 0
+                    },
+                    {
+                      "lit": 1000000000000
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "call": "substring",
+                  "args": [
+                    {
+                      "lit": "abc"
+                    },
+                    {
+                      "lit": 1000000000000
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "c",
+                "expr": {
+                  "call": "substring",
+                  "args": [
+                    {
+                      "lit": "abc"
+                    },
+                    {
+                      "lit": -1000000000000
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "a",
+          "b",
+          "c"
+        ],
+        "rows": [
+          [
+            "abc",
+            "",
+            "ab"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "str-pad-negative-and-fraction",
+      "rql": "g | select a=(pad(-3, 4)) b=(pad(1.5, 5))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "call": "pad",
+                  "args": [
+                    {
+                      "lit": -3
+                    },
+                    {
+                      "lit": 4
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "call": "pad",
+                  "args": [
+                    {
+                      "lit": 1.5
+                    },
+                    {
+                      "lit": 5
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "a",
+          "b"
+        ],
+        "rows": [
+          [
+            "00-3",
+            "001.5"
+          ]
+        ],
+        "total": 1
       }
     }
   ]

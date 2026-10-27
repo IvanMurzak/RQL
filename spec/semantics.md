@@ -158,7 +158,7 @@ modulo by zero → `error(div-by-zero)`. Other operand kinds → `error(type-mis
 | `substring(s, start[, length])` | the part of `s` from `start` (negative counts from the end), at most `length` characters (default: to the end). `start` and the end are clamped to the string, so out-of-range positions give a shorter or empty string; a negative `length` is a `type-mismatch` error value. |
 | `split(s, sep)` | the list of the parts of `s` between occurrences of `sep` (ordinal case-insensitive; empty parts kept: `split("a,,b", ",")` → `["a", "", "b"]`). An empty `sep` is a `type-mismatch` error value. |
 | `trim(s)` | `s` without leading and trailing whitespace (space, tab, LF, CR, vertical tab, form feed). |
-| `pad(v, width[, fill])` | the text of `v` (a string, or a number written as `+` concatenation writes it) left-padded with `fill` (a one-character string, default `"0"`) to at least `width` characters (an integer from 0 to 1024): `pad(3, 2)` → `"03"`, `pad("ab", 4, " ")` → `"  ab"`. Text already that long is returned unchanged. |
+| `pad(v, width[, fill])` | the text of `v` (a string, or a number written as `+` concatenation writes it) left-padded with `fill` (a one-character string, default `"0"`) to at least `width` characters (an integer from 0 to 1024): `pad(3, 2)` → `"03"`, `pad("ab", 4, " ")` → `"  ab"`. Text already that long is returned unchanged; a sign is text like any other (`pad(-3, 4)` → `"00-3"`). |
 
 Numeric functions return `null` / `missing` / an error value unchanged when an argument is one (the first such argument),
 and a `type-mismatch` error value for any other non-number argument.
@@ -338,14 +338,16 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
 * **Map entries as targets**: a `set` target that is a map entry streamed from a map (`… | get Rows | where
   Value.IsElite | set Value.Health = Value.Health * 1.1`) writes through that map: `Value.p` (and a bare `p`, which reads
   through to the value like member access, §4.4) is the path `[key].p` on the map, and `Value` alone replaces the
-  entry's value. Everything else is the ordinary `set` on that path — coercion to the map's value type, struct values
-  written back into the map, validation of virtual-map entries, read-only maps refused (`readonly-member`), rollback,
-  dry runs, budgets. `Key` cannot be set (`readonly-member`). Receipts carry one row per entry: `$ref` is the object
-  the map was read from (by `get`; the map itself for a map source) and `member` the written path prefixed with the
-  map's member path when `get` named it (`Rows["Orc"].Health`); that object is also the owner reported to host hooks
-  unless an object inside the value owns the change. `call` on entries is `invalid-plan` (call the values:
-  `… | get Value | call …`). A map that is a copy (a copy-on-read member, §13, or a getter that builds a new map) does
-  not keep the change.
+  entry's value. When `get` read the map by a plain path (members, `[i]`, `["k"]`), the write is the ordinary `set` of
+  `path[key].p` on the item `get` read it from (`Rows["Orc"].Health`); entries of a map read from an entry continue
+  that entry's path (`… | get Index | get Value.Props | set Value = 1` writes `Index["a"].Props["hp"]`). Everything
+  else follows from that path — coercion to the map's value type, struct values and copy-on-read members written back,
+  validation of virtual-map entries, read-only maps refused (`readonly-member`), owners for host hooks, rollback, dry
+  runs, budgets. Otherwise (a map source, a computed `get` expression, `recurse`) the write starts at the map itself and
+  the item `get` read it from, when there is one, is the owner unless an object inside the value is; a map that is a
+  copy (built by a getter) then does not keep the change. `Key` cannot be set (`readonly-member`). Receipts carry one
+  row per entry: `$ref` is the owner of the change (the nearest enclosing object, §13) and `member` the written path.
+  `call` on entries is `invalid-plan` (call the values: `… | get Value | call …`).
 * **Host text coercion**: a host MAY register a text coercion that converts a string written to a struct or object
   type that no type adapter coerces (an engine's own text form, `"(Minimum=(X=0.5,Y=0),Maximum=(X=0.5,Y=0))"`). It
   runs after the adapters and before the built-in rules, on every write coercion (`set`, `call` arguments, object
@@ -462,7 +464,7 @@ Recorded from the TypeScript and C++ ports (`typescript/SPEC-QUESTIONS.md`, `cpp
 | Extension stages | SHOULD be lazy (pull-based) so `first` bounds work; a runtime whose extension contract materializes input must say so. |
 | `maxOutputBytes` | Advisory size budget in UTF-8 bytes of the compact JSON encoding; runtimes may approximate within ±10%. |
 | `pow` edge cases | The host math library's IEEE `pow`: `pow(1, NaN)` and `pow(-1, ±Infinity)` are `1` in .NET and C++, NaN in JS. Portable plans must not depend on them. |
-| Regex dialect | Only the §4.1 subset is portable; a pattern outside it may be valid in one runtime and `invalid-regex` in another (e.g. .NET inline options `(?i)`). |
+| Regex dialect | Only the §4.1 subset is portable; a pattern outside it may be valid in one runtime and `invalid-regex` in another (e.g. .NET inline options `(?i)`). Outside the subset, `matches` answers and `replace-regex` results can also differ: .NET `$` matches before a final newline and `\d` / `\w` match Unicode digits and letters; C++ `std::regex` works on UTF-8 bytes (ASCII-safe; a match that would split a character is skipped). |
 
 ## 13. Type adapters (host extension, normative behaviour)
 

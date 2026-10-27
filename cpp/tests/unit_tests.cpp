@@ -1488,6 +1488,15 @@ void wave2_tests() {
               "map-entry set: owner is the object the map was read from");
     }
     {
+        // UTF-8: positions count UTF-16 units like len; byte-wise regex matches never split a character
+        rql::Engine e(reg);
+        engine(e);
+        auto r = arun(e, R"J({"rql":"0.1","source":{"path":["g"]},"stages":[{"op":"select","fields":[{"name":"a","expr":{"call":"substring","args":[{"lit":"héllo"},{"lit":1},{"lit":3}]}},{"name":"b","expr":{"call":"substring","args":[{"lit":"a😀b"},{"lit":1},{"lit":2}]}},{"name":"c","expr":{"call":"replace-regex","args":[{"lit":"é"},{"lit":"x*"},{"lit":"-"}]}},{"name":"d","expr":{"call":"pad","args":[{"lit":"é"},{"lit":3}]}}]}]})J");
+        check(r.ok && (*r.rows)[0][0].as_string() == "\xC3\xA9ll" && (*r.rows)[0][1].as_string() == "\xF0\x9F\x98\x80" &&
+                  (*r.rows)[0][2].as_string() == "-\xC3\xA9-" && (*r.rows)[0][3].as_string() == "00\xC3\xA9",
+              "string functions: UTF-16 positions over UTF-8 text, regex matches keep characters whole");
+    }
+    {
         // U6: host text coercion for a struct no adapter handles
         rql::Engine e(reg);
         engine(e);

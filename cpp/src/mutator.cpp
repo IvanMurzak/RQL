@@ -333,21 +333,23 @@ struct PlannedWrite {
     Value new_value;
     Value owner;
     Value target;        // the stream item (host records)
-    std::string ref;     // the receipt's $ref: the target's, or for an entry the object its map was read from
+    std::string ref;     // the receipt's $ref: the target's, or for an entry the owner of the change (spec §8)
     std::shared_ptr<const std::vector<Segment>> owned;  // rewritten entry segments (`segments` points into it)
 };
 
-/// Where a set target writes (spec §8): the item itself, or — for a map entry streamed from a map — the map, with
-/// `Value.p` (or `p`, which reads through to the value like member access) rewritten to `[key].p`.
+/// Where a set target writes (spec §8): for a map entry streamed from a map, `Value.p` (or `p`, which reads through to
+/// the value like member access) rewritten to `prefix[key].p` from the entry's origin root — the ordinary write path from
+/// the object the map was read from.
 std::shared_ptr<const std::vector<Segment>> entry_segments(const Value& entry, const std::vector<Segment>& segs, const std::string& label) {
-    const Segment& first = segs[0];
-    if (first.kind == SegmentKind::Member && iequals(first.name, "key"))
+    if (is_member(segs[0], "key"))
         throw RqlException("readonly-member", "'" + label + "': a map entry's key cannot be set", "keys are fixed: set the value (set Value... = ...) or assign the whole map");
-    bool value = first.kind == SegmentKind::Member && iequals(first.name, "value");
     const Value& key = entry.entry().key;
-    auto out = std::make_shared<std::vector<Segment>>();
-    out->push_back(Segment::for_key(key.is_number() ? Literal::number(key.as_number()) : Literal::string(key.is_string() ? key.as_string() : to_text(key))));
-    out->insert(out->end(), segs.begin() + (value ? 1 : 0), segs.end());
+    if (!key.is_string() && !key.is_number())
+        throw RqlException("invalid-plan", "'" + label + "': this runtime writes through map entries with string or number keys only",
+                           "set the map member with a key path instead (Map[\"key\"] = ...)");
+    auto out = std::make_shared<std::vector<Segment>>(entry.entry().origin->prefix);
+    out->push_back(Segment::for_key(key.is_number() ? Literal::number(key.as_number()) : Literal::string(key.as_string())));
+    out->insert(out->end(), segs.begin() + (is_member(segs[0], "value") ? 1 : 0), segs.end());
     return out;
 }
 
@@ -657,13 +659,16 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
     for (auto& t : items) {
         const Value& item = t.item.value;
         const EntryOrigin* origin = item.is_entry() ? item.entry().origin.get() : nullptr;
-        const std::string item_ref = origin ? x.ref_of(origin->holder.is_missing() ? origin->map : origin->holder) : x.ref_of(item);
+        const std::string item_ref = origin ? x.ref_of(origin->holder.is_missing() ? origin->root : origin->holder) : x.ref_of(item);
+        // Without a path from the object the map was read from, the write starts at the map: that object (when known) still
+        // owns the change unless an object inside the value does.
+        const bool holder_owns = origin && origin->prefix.empty() && !origin->holder.is_missing();
         for (auto& a : assigns) {
             // A streamed map entry writes through its map: [key].path on the map (spec §8).
             std::shared_ptr<const std::vector<Segment>> owned = origin ? entry_segments(item, a.target->segments, a.label) : nullptr;
-            const Value& root = origin ? origin->map : item;
+            const Value& root = origin ? origin->root : item;
             const std::vector<Segment>& segs = owned ? *owned : a.target->segments;
-            const std::string label = origin ? origin->label + raw_label(segs) : a.label;
+            const std::string label = origin ? raw_label(segs) : a.label;
             enter_scope(x, t);
             Value nv = a.value(x);
             if (nv.is_missing() || nv.is_unknown())
@@ -674,8 +679,7 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
                                        (nv.error_detail().empty() ? nv.error_code() : nv.error_detail()));
             Value container, owner;
             Slot slot = resolve(x, root, segs, container, owner);
-            // An entry's map was read from its holder: that object owns the change unless an object inside the value does.
-            if (origin && !origin->holder.is_missing() && owner.ptr() == root.ptr()) owner = origin->holder;
+            if (holder_owns && owner.is_map()) owner = origin->holder;
             check_writable(x, slot, label, root, "");
             std::string why;
             auto coerced = coerce(x, nv, slot.type, slot.nullable, why);
@@ -692,7 +696,7 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
                 rejected = slot.validate(container, *coerced);
             if (!rejected.empty())
                 throw RqlException("invalid-value", "invalid value " + value_text(nv) + " for '" + label + "' on " + item_ref + ": " + rejected);
-            writes.push_back({root, &segs, label, snapshot(safe_get(slot, container, label)), *coerced, owner, item, item_ref, owned});
+            writes.push_back({root, &segs, label, snapshot(safe_get(slot, container, label)), *coerced, owner, item, origin ? x.ref_of(owner) : item_ref, owned});
         }
     }
 

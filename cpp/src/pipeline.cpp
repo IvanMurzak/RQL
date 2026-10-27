@@ -146,9 +146,9 @@ std::optional<std::string> path_suffix(const Expr& e) {
 /// Lists → elements, maps → entries, one-column rows → their value, else the value; null/missing dropped.
 class ExpandStream final : public Stream {
 public:
-    /// holder / label: the item and member path a map value was read from (get); streamed entries remember them (spec §8).
-    ExpandStream(Exec& x, Value v, PathPtr path, bool count, Value holder = Value(), std::string label = {})
-        : x_(x), path_(std::move(path)), count_(count), holder_(std::move(holder)), label_(std::move(label)) {
+    /// origin: where a map value read by get lives; null = the map itself. Streamed entries remember it (spec §8).
+    ExpandStream(Exec& x, Value v, PathPtr path, bool count, std::shared_ptr<const EntryOrigin> origin = nullptr)
+        : x_(x), path_(std::move(path)), count_(count), origin_(std::move(origin)) {
         while (v.is_row() && v.row().values.size() == 1) {
             Value inner = v.row().values[0];
             v = inner;
@@ -193,7 +193,7 @@ public:
                 if (i_ >= entries_.size()) { mode_ = Done; return false; }
                 if (count_) x_.visit();
                 auto& e = entries_[i_++];
-                if (!origin_) origin_ = std::make_shared<const EntryOrigin>(EntryOrigin{v_, holder_, label_});
+                if (!origin_) origin_ = std::make_shared<const EntryOrigin>(EntryOrigin{v_, {}, Value()});
                 out = Item{Value::entry(e.first, e.second, origin_), path_ ? path_key(path_, e.first) : nullptr, -1};
                 return true;
             }
@@ -211,8 +211,6 @@ private:
     size_t i_ = 0;
     bool loaded_ = false;
     std::vector<std::pair<Value, Value>> entries_;
-    Value holder_;
-    std::string label_;
     std::shared_ptr<const EntryOrigin> origin_;
 };
 
@@ -417,9 +415,9 @@ private:
 
 class GetStream final : public Stream {
 public:
-    GetStream(Exec& x, StreamPtr in, Eval eval, std::optional<std::string> suffix)
-        : x_(x), in_(std::move(in)), eval_(std::move(eval)), suffix_(std::move(suffix)),
-          label_(suffix_ ? (suffix_->rfind('.', 0) == 0 ? suffix_->substr(1) : *suffix_) : std::string()) {}
+    /// segments: the get expression when it is a plain path (members, [i], ["k"]), else null (spec §8).
+    GetStream(Exec& x, StreamPtr in, Eval eval, std::optional<std::string> suffix, const std::vector<Segment>* segments)
+        : x_(x), in_(std::move(in)), eval_(std::move(eval)), suffix_(std::move(suffix)), segments_(segments) {}
     bool next(Item& out) override {
         for (;;) {
             if (sub_ && sub_->next(out)) return true;
@@ -434,23 +432,35 @@ public:
                 continue;
             }
             PathPtr p = x_.track_paths && it.path && suffix_ ? path_text(it.path, *suffix_) : nullptr;
-            // A map read from an item: its streamed entries remember the item and the member path (spec §8).
-            Value holder;
-            if (it.value.is_entry()) {
-                if (it.value.entry().origin) holder = it.value.entry().origin->holder;
-            } else if (!it.value.is_row()) {
-                holder = it.value;
-            }
-            sub_ = std::make_unique<ExpandStream>(x_, std::move(v), std::move(p), true, std::move(holder), label_);
+            std::shared_ptr<const EntryOrigin> origin = v.is_map() ? origin_of(it.value, v) : nullptr;
+            sub_ = std::make_unique<ExpandStream>(x_, std::move(v), std::move(p), true, std::move(origin));
         }
     }
 
 private:
+    /// Where map `map`, read from `from`, lives (spec §8): the plain get path from the item — or, for an entry item, the
+    /// entry's path continued through [key] — else the map itself.
+    std::shared_ptr<const EntryOrigin> origin_of(const Value& from, const Value& map) const {
+        if (from.is_entry()) {
+            const auto& o = from.entry().origin;
+            const Value& key = from.entry().key;
+            if (!o || !segments_ || segments_->empty() || is_member(segments_->front(), "key") || !(key.is_string() || key.is_number()))
+                return std::make_shared<const EntryOrigin>(EntryOrigin{map, {}, o ? o->holder : Value()});
+            EntryOrigin out{o->root, o->prefix, o->holder};
+            out.prefix.push_back(Segment::for_key(key.is_number() ? Literal::number(key.as_number()) : Literal::string(key.as_string())));
+            out.prefix.insert(out.prefix.end(), segments_->begin() + (is_member(segments_->front(), "value") ? 1 : 0), segments_->end());
+            return std::make_shared<const EntryOrigin>(std::move(out));
+        }
+        Value holder = from.is_row() ? Value() : from;
+        if (!holder.is_missing() && segments_) return std::make_shared<const EntryOrigin>(EntryOrigin{holder, *segments_, holder});
+        return std::make_shared<const EntryOrigin>(EntryOrigin{map, {}, holder});
+    }
+
     Exec& x_;
     StreamPtr in_;
     Eval eval_;
     std::optional<std::string> suffix_;
-    std::string label_;  // the map label of streamed entries (spec §8)
+    const std::vector<Segment>* segments_;
     StreamPtr sub_;
     int64_t i_ = 0;
 };
@@ -780,7 +790,12 @@ StreamPtr apply_stage(Exec& x, Compiler& c, StreamPtr in, const Stage& st) {
         }
         case StageKind::First: return std::make_unique<FirstStream>(std::move(in), st.n);
         case StageKind::Skip: return std::make_unique<SkipStream>(std::move(in), st.n);
-        case StageKind::Get: return std::make_unique<GetStream>(x, std::move(in), c.compile(*st.expr), path_suffix(*st.expr));
+        case StageKind::Get: {
+            const Expr& e = *st.expr;
+            bool plain = e.kind == ExprKind::Path && !e.on &&
+                         std::none_of(e.segments.begin(), e.segments.end(), [](const Segment& s) { return s.kind == SegmentKind::Meta; });
+            return std::make_unique<GetStream>(x, std::move(in), c.compile(e), path_suffix(e), plain ? &e.segments : nullptr);
+        }
         case StageKind::Distinct: return std::make_unique<DistinctStream>(x, std::move(in), st.expr ? c.compile(*st.expr) : Eval());
         case StageKind::GroupBy: {
             std::vector<Eval> keys;

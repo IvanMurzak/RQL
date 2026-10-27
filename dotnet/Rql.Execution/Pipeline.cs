@@ -360,8 +360,8 @@ namespace Rql.Execution
         }
 
         /// <summary>Lists → elements, maps → entries, else the value itself; null/missing dropped.</summary>
-        /// <param name="holder">The item a map value was read from (`get`): streamed entries remember it and their map (spec §8).</param>
-        private IEnumerable<Item> Expand(object? value, PathNode? path, bool countVisit, object? holder = null, string? mapLabel = null)
+        /// <param name="origin">Where a map value lives (`get` before `set`); null: the map itself, when entries are tracked (spec §8).</param>
+        private IEnumerable<Item> Expand(object? value, PathNode? path, bool countVisit, EntryOrigin? origin = null)
         {
             if (value == null || value is Missing || value is Unknown) yield break;
             if (value is RqlError) yield break;
@@ -403,7 +403,8 @@ namespace Rql.Execution
                 {
                     if (countVisit) _x.Visit();
                     var me = (MapEntry)e!;
-                    yield return new Item(TracksEntries ? new MapEntry(me.Key, me.Value, value, holder, mapLabel) : me, path?.Key(me.Key));
+                    if (TracksEntries) origin ??= new EntryOrigin(value, Array.Empty<Segment>(), null);
+                    yield return new Item(origin != null ? new MapEntry(me.Key, me.Value, origin) : me, path?.Key(me.Key));
                 }
                 yield break;
             }
@@ -526,15 +527,16 @@ namespace Rql.Execution
             foreach (var b in best) yield return b.item;
         }
 
-        private IEnumerable<Item> Get(IEnumerable<Item> input, Expr e) => GetIter(input, _c.Compile(e), PathSuffix(e));
+        private IEnumerable<Item> Get(IEnumerable<Item> input, Expr e) =>
+            GetIter(input, _c.Compile(e), PathSuffix(e), e is PathExpr p && p.On == null && p.Segments.All(s => s.Kind != SegmentKind.Meta) ? p.Segments : null);
 
         /// <summary>Streamed map entries remember their map only when a `set` may write through them (spec §8).</summary>
         private bool TracksEntries => _x.Plan.Stages.Count > 0 && _x.Plan.Stages[_x.Plan.Stages.Count - 1] is SetStage;
 
-        private IEnumerable<Item> GetIter(IEnumerable<Item> input, Eval eval, string? suffix)
+        private IEnumerable<Item> GetIter(IEnumerable<Item> input, Eval eval, string? suffix, IReadOnlyList<Segment>? segments)
         {
             long i = 0;
-            var mapLabel = suffix?.TrimStart('.');
+            bool tracks = TracksEntries;
             foreach (var it in input)
             {
                 _x.Enter(it, i++);
@@ -542,10 +544,29 @@ namespace Rql.Execution
                 if (v is RqlError err) { _x.GetterErrors++; _x.FirstGetterError ??= err.Detail ?? err.Code; continue; }
                 PathNode? p = null;
                 if (_x.TrackPaths && it.Path != null && suffix != null) p = new PathNode(it.Path, suffix);
-                var holder = it.Value is MapEntry me ? me.Holder : it.Value is RowValue ? null : it.Value;
-                foreach (var sub in Expand(v, p, true, holder, mapLabel)) yield return sub;
+                foreach (var sub in Expand(v, p, true, tracks && v != null ? OriginOf(it.Value, v, segments) : null)) yield return sub;
             }
         }
+
+        /// <summary>
+        /// Where map <paramref name="map"/>, read by `get` from <paramref name="from"/>, lives (spec §8): a plain path from the item —
+        /// or, for an entry item, continuing that entry's path through <c>[key]</c> — else the map itself.
+        /// </summary>
+        private static EntryOrigin OriginOf(object? from, object map, IReadOnlyList<Segment>? segments)
+        {
+            if (from is MapEntry me)
+            {
+                var o = me.Origin;
+                if (o == null || segments == null || segments.Count == 0 || IsMember(segments[0], "key")) return new EntryOrigin(map, Array.Empty<Segment>(), o?.Holder);
+                var prefix = new List<Segment>(o.Prefix) { Segment.ForKey(me.Key!) };
+                prefix.AddRange(IsMember(segments[0], "value") ? segments.Skip(1) : segments);
+                return new EntryOrigin(o.Root, prefix, o.Holder);
+            }
+            var holder = from is RowValue ? null : from;
+            return holder != null && segments != null ? new EntryOrigin(holder, segments, holder) : new EntryOrigin(map, Array.Empty<Segment>(), holder);
+        }
+
+        internal static bool IsMember(Segment s, string name) => s.Kind == SegmentKind.Member && string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase);
 
         /// <summary>Path text appended by `get`/`recurse via` when the expression is a plain member/index path.</summary>
         private static string? PathSuffix(Expr e)

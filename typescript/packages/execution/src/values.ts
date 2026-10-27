@@ -1,6 +1,6 @@
 /** Runtime value kinds of the evaluator (spec §1.1) that have no native JS counterpart. */
 import type { DiagnosticCode } from '@rql/contracts';
-import type { TypeRef } from './types.js';
+import type { Segment } from '@rql/contracts';
 
 /** The path does not exist (no such member/key/index). Distinct from null. */
 export class Missing {
@@ -45,15 +45,16 @@ export class MapEntry {
   ) {}
 }
 
-/** Where a streamed entry came from (spec §8): `set Value… = …` writes through `map`. */
+/**
+ * The map of streamed entries as a write path (spec §8): `root` plus `prefix` reach the map, so `set Value.p` on an entry
+ * is the ordinary `set` of `prefix[key].p` on the root (owners, value types and write-back of copies come with the path).
+ * When `get` used a computed expression the root is the map itself.
+ */
 export interface EntryOrigin {
-  readonly map: object;
-  /** The stream item the map was read from (by `get`), for receipts and host hooks; undefined for a source. */
+  readonly root: object;
+  readonly prefix: readonly Segment[];
+  /** The object the map was read from (owner fallback); undefined for a map source. */
   readonly holder: object | undefined;
-  /** The member path the map was read by (`Props` for `get Props`), prefixing receipt labels. */
-  readonly label: string | undefined;
-  /** The map's declared type (from the member `get` read), so writes coerce to its value type. */
-  readonly type: TypeRef;
 }
 
 const entryOrigins = new WeakMap<MapEntry, EntryOrigin>();
@@ -66,6 +67,24 @@ export function streamedEntry(e: MapEntry, origin: EntryOrigin): MapEntry {
 }
 
 export const entryOrigin = (e: MapEntry): EntryOrigin | undefined => entryOrigins.get(e);
+
+/** Whether `s` is the member `upperName` (case-insensitive; `upperName` upper-cased). */
+export const isMember = (s: Segment, upperName: string): boolean => s.kind === 'member' && s.name.toUpperCase() === upperName;
+
+/**
+ * Where map `map`, read by `get` from `from` along `segments` (a plain path, else undefined), lives (spec §8): that path
+ * from the item — or, for an entry item, the entry's path continued through `[key]` — else the map itself.
+ */
+export function originOf(from: unknown, map: object, segments: readonly Segment[] | undefined): EntryOrigin {
+  if (from instanceof MapEntry) {
+    const o = entryOrigin(from);
+    if (o === undefined || segments === undefined || segments.length === 0 || isMember(segments[0]!, 'KEY')) return { root: map, prefix: [], holder: o?.holder };
+    const keySeg = { kind: 'key', key: from.Key } as Segment;
+    return { root: o.root, prefix: [...o.prefix, keySeg, ...(isMember(segments[0]!, 'VALUE') ? segments.slice(1) : segments)], holder: o.holder };
+  }
+  const holder = typeof from === 'object' && from !== null && !(from instanceof RowValue) ? from : undefined;
+  return holder !== undefined && segments !== undefined ? { root: holder, prefix: segments, holder } : { root: map, prefix: [], holder };
+}
 
 /** Projected row flowing between stages after `select`; its members are the column names. */
 export class RowValue {

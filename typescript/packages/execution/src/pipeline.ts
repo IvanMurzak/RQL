@@ -16,6 +16,7 @@ import {
   type QueryResult,
   type RecurseStage,
   type SelectStage,
+  type Segment,
   type SortStage,
   type Stage,
 } from '@rql/contracts';
@@ -27,8 +28,8 @@ import type { ArgEvaluator, SourceRegistration } from './engine.js';
 import { PathNode, type Exec } from './exec.js';
 import { Mutator } from './mutator.js';
 import { closest, memberList } from './suggest.js';
-import { EnumType, EnumValue, unwrapNullable, type TypeInfo, type TypeRef } from './types.js';
-import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, entryOrigin, isAbsent, streamedEntry, toNumber, type EntryOrigin } from './values.js';
+import { EnumType, EnumValue, unwrapNullable, type TypeInfo } from './types.js';
+import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, isAbsent, originOf, streamedEntry, toNumber, type EntryOrigin } from './values.js';
 
 export interface Item {
   readonly value: unknown;
@@ -39,8 +40,6 @@ export interface Item {
 
 const NULL_GROUP = Symbol('null');
 
-/** Where a map's streamed entries come from, except the map itself (spec §8). */
-type EntrySource = Omit<EntryOrigin, 'map'>;
 const item = (value: unknown, path: PathNode | null, depth = -1): Item => ({ value, path, depth });
 
 export class Pipeline {
@@ -304,10 +303,10 @@ export class Pipeline {
   }
 
   /**
-   * Lists → elements, maps → entries, else the value itself; null/missing and destroyed objects dropped. With `source`
-   * (a map read by `get` before a `set`), streamed entries remember their map and where it came from (spec §8).
+   * Lists → elements, maps → entries, else the value itself; null/missing and destroyed objects dropped. With `origin`
+   * (where a map read by `get` lives), or when a `set` may write through them, streamed entries remember it (spec §8).
    */
-  private *expand(value: unknown, path: PathNode | null, source?: EntrySource): Generator<Item> {
+  private *expand(value: unknown, path: PathNode | null, origin?: EntryOrigin): Generator<Item> {
     const x = this.x;
     if (value === null || value === undefined || value === MISSING || value === UNKNOWN || value instanceof ErrorValue || x.dead(value)) return;
     if (value instanceof RowValue && value.columns.length === 1) {
@@ -327,11 +326,10 @@ export class Pipeline {
       return;
     }
     if (info?.isMap) {
-      const from = source ?? (this.tracksEntries ? { holder: undefined, label: undefined, type: 'any' as TypeRef } : undefined);
-      const origin = from !== undefined ? { map: value as object, ...from } : undefined;
+      const o = origin ?? (this.tracksEntries ? { root: value as object, prefix: [], holder: undefined } : undefined);
       for (const e of mapEntries(value as MapLike)) {
         x.visit();
-        yield item(origin !== undefined ? streamedEntry(e, origin) : e, path !== null ? path.key(e.Key) : null);
+        yield item(o !== undefined ? streamedEntry(e, o) : e, path !== null ? path.key(e.Key) : null);
       }
       return;
     }
@@ -425,24 +423,8 @@ export class Pipeline {
   }
 
   private get(input: Iterable<Item>, e: Expr): Iterable<Item> {
-    const names = e.kind === 'path' && e.on === undefined && e.segments.length > 0 && e.segments.every((s) => s.kind === 'member') ? e.segments.map((s) => (s as { name: string }).name) : undefined;
-    return this.getIter(input, this.c.compile(e), pathSuffix(e), names);
-  }
-
-  /** The declared type of a member path read from `holder` (map writes through streamed entries coerce to it), else 'any'. */
-  private declaredType(holder: object, names: readonly string[]): TypeRef {
-    let info: TypeInfo | undefined = this.x.types.infoOf(holder);
-    let type: TypeRef = 'any';
-    for (let i = 0; i < names.length; i++) {
-      const m = info?.find(names[i]!, i === 0 ? holder : undefined);
-      if (m === undefined) return 'any';
-      type = m.type;
-      if (i < names.length - 1) {
-        const u = unwrapNullable(type);
-        info = typeof u === 'object' && !(u instanceof EnumType) && u.kind === 'class' ? this.x.types.infoForCtor(u.ctor) : undefined;
-      }
-    }
-    return type;
+    const segments = e.kind === 'path' && e.on === undefined && e.segments.every((s) => s.kind !== 'meta') ? e.segments : undefined;
+    return this.getIter(input, this.c.compile(e), pathSuffix(e), segments);
   }
 
   /** Streamed map entries remember their map only when a `set` may write through them (spec §8). */
@@ -451,18 +433,9 @@ export class Pipeline {
     return stages.length > 0 && stages[stages.length - 1]!.kind === 'set';
   }
 
-  /** Where the entries of map `v`, read from item `from` by member path `names`, come from (spec §8). */
-  private entrySource(from: unknown, v: unknown, names: readonly string[] | undefined, label: string | undefined): EntrySource {
-    if (from instanceof MapEntry) return { holder: entryOrigin(from)?.holder, label, type: 'any' };
-    const holder = typeof from === 'object' && from !== null && !(from instanceof RowValue) ? from : undefined;
-    const isMap = typeof v === 'object' && v !== null && this.x.types.infoOf(v).isMap;
-    return { holder, label, type: holder !== undefined && names !== undefined && isMap ? this.declaredType(holder, names) : 'any' };
-  }
-
-  private *getIter(input: Iterable<Item>, ev: Eval, suffix: string | undefined, names?: readonly string[]): Generator<Item> {
+  private *getIter(input: Iterable<Item>, ev: Eval, suffix: string | undefined, segments?: readonly Segment[]): Generator<Item> {
     const x = this.x;
     const tracks = this.tracksEntries;
-    const label = suffix?.replace(/^\./, '');
     let i = 0;
     for (const it of input) {
       this.enter(it, i++);
@@ -473,7 +446,7 @@ export class Pipeline {
         continue;
       }
       const p = x.trackPaths && it.path !== null && suffix !== undefined ? new PathNode(it.path, suffix) : null;
-      yield* this.expand(v, p, tracks ? this.entrySource(it.value, v, names, label) : undefined);
+      yield* this.expand(v, p, tracks && typeof v === 'object' && v !== null ? originOf(it.value, v, segments) : undefined);
     }
   }
 

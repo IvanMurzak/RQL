@@ -50,7 +50,7 @@ namespace Rql.Execution
                 if (it.Value is MapEntry entry)
                 {
                     // set Value… writes through the entry's map (spec §8)
-                    if (op != "set" || entry.Map == null)
+                    if (op != "set" || entry.Origin == null)
                         throw new RqlException("invalid-plan", op == "set"
                                 ? "'set' cannot target these map entries (they do not come from a map it can write to); set the map member with a key path instead (Stats[\"key\"] = ...)"
                                 : $"'{op}' cannot target map entries; call the method on the values instead: … | get Value | {op} …");
@@ -73,20 +73,22 @@ namespace Rql.Execution
         }
 
         /// <summary>
-        /// Where a set target writes (spec §8): the item itself, or — for a map entry streamed from a writable map — the map,
-        /// with <c>Value.p</c> (or <c>p</c>, which reads through to the value like member access) rewritten to <c>[key].p</c>.
+        /// Where a set target writes (spec §8): the item itself, or — for a map entry streamed from a map — the entry's origin,
+        /// with <c>Value.p</c> (or <c>p</c>, which reads through to the value like member access) rewritten to
+        /// <c>prefix[key].p</c>: the ordinary write path from the object the map was read from.
         /// </summary>
-        private (object root, IReadOnlyList<Segment> segments) WriteRoot(object item, MapEntry? e, IReadOnlyList<Segment> segments, string label)
+        private static (object root, IReadOnlyList<Segment> segments) WriteRoot(object item, MapEntry? e, IReadOnlyList<Segment> segments, string label)
         {
             if (e == null) return (item, segments);
-            var first = segments[0];
-            if (first.Kind == SegmentKind.Member && string.Equals(first.Name, "key", StringComparison.OrdinalIgnoreCase))
+            if (Pipeline.IsMember(segments[0], "key"))
                 throw new RqlException("readonly-member", $"'{label}': a map entry's key cannot be set", null,
                     "keys are fixed: set the value (set Value… = …) or assign the whole map");
-            bool value = first.Kind == SegmentKind.Member && string.Equals(first.Name, "value", StringComparison.OrdinalIgnoreCase);
-            var rewritten = new List<Segment>(segments.Count + 1) { Segment.ForKey(e.Key!) };
-            rewritten.AddRange(value ? segments.Skip(1) : segments);
-            return (e.Map!, rewritten);
+            var o = e.Origin!;
+            var rewritten = new List<Segment>(o.Prefix.Count + segments.Count + 1);
+            rewritten.AddRange(o.Prefix);
+            rewritten.Add(Segment.ForKey(e.Key!));
+            rewritten.AddRange(Pipeline.IsMember(segments[0], "value") ? segments.Skip(1) : segments);
+            return (o.Root, rewritten);
         }
 
         // ------------------------------------------------------------ set
@@ -97,7 +99,7 @@ namespace Rql.Execution
             public object Item = null!;
             /// <summary>The stream item (host records).</summary>
             public object Target = null!;
-            /// <summary>The receipt's $ref: the target's, or for an entry the object its map was read from.</summary>
+            /// <summary>The receipt's $ref: the target's, or for an entry the owner of the change (spec §8).</summary>
             public string Ref = "";
             public IReadOnlyList<Segment> Segments = null!;
             public string Label = "";
@@ -151,12 +153,15 @@ namespace Rql.Execution
             {
                 var item = t.Value;
                 var entry = item as MapEntry;
-                var holder = entry?.Holder;
-                var itemRef = _x.Engine.RefOf(entry != null ? holder ?? entry.Map! : item);
+                var origin = entry?.Origin;
+                // Without a path from the object the map was read from, the write starts at the map: that object (when known)
+                // still owns the change unless an object inside the value does.
+                var holder = origin != null && origin.Prefix.Count == 0 ? origin.Holder : null;
+                var itemRef = _x.Engine.RefOf(origin != null ? origin.Holder ?? origin.Root : item);
                 foreach (var (target, value, assignLabel) in assigns)
                 {
                     var (root, segments) = WriteRoot(item, entry, target.Segments, assignLabel);
-                    var label = entry == null ? assignLabel : entry.MapLabel + Label(segments);
+                    var label = entry == null ? assignLabel : Label(segments);
                     EnterScope(t);
                     var nv = value(_x);
                     if (nv is Missing || nv is Unknown)
@@ -166,7 +171,6 @@ namespace Rql.Execution
                     var slot = Resolve(root, segments, out var container, out var owner, out var owners);
                     if (holder != null)
                     {
-                        // An entry's map was read from `holder`: that object owns the change unless an object inside the value does.
                         if (ReferenceEquals(owner, root)) owner = holder;
                         owners = owners.Where(o => !ReferenceEquals(o, root)).Append(holder).ToList();
                     }
@@ -178,7 +182,7 @@ namespace Rql.Execution
                         throw new RqlException("invalid-value", $"invalid value {ValueText(nv)} for '{label}' on {itemRef}: {rejected}");
                     writes.Add(new PlannedWrite
                     {
-                        Item = root, Target = item, Ref = itemRef, Segments = segments, Label = label, Old = SafeGet(slot, container, label), New = coerced,
+                        Item = root, Target = item, Ref = entry != null ? _x.Engine.RefOf(owner) : itemRef, Segments = segments, Label = label, Old = SafeGet(slot, container, label), New = coerced,
                         Owner = owner, Owners = owners,
                     });
                 }

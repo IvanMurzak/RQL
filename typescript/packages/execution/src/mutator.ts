@@ -23,16 +23,14 @@ import {
   type TypeModel,
   type TypeRef,
 } from './types.js';
-import { ErrorValue, MISSING, MapEntry, ObjectValue, RowValue, UNKNOWN, entryOrigin, isAbsent, toNumber } from './values.js';
+import { ErrorValue, MISSING, MapEntry, ObjectValue, RowValue, UNKNOWN, entryOrigin, isAbsent, isMember, toNumber, type EntryOrigin } from './values.js';
 
 interface PlannedWrite {
   /** Where the write navigates from: the target, or the map of a streamed entry (`writeRoot`). */
   item: object;
   /** The stream item (host records). */
   target: object;
-  /** The declared type of `item` ('any' for a target; the map's type for an entry). */
-  rootType: TypeRef;
-  /** The receipt's $ref: the target's, or for an entry the object its map was read from. */
+  /** The receipt's $ref: the target's, or for an entry the owner of the change (spec §8). */
   ref: string;
   /** The last reference object on the written path (host hooks mark it dirty). */
   owner: object;
@@ -276,19 +274,17 @@ export class Mutator {
   }
 
   /**
-   * Where a set target writes (spec §8): the item itself, or — for a map entry streamed from a map — the map, with
-   * `Value.p` (or `p`, which reads through to the value like member access) rewritten to `[key].p`.
+   * Where a set target writes (spec §8): the item itself, or — for a map entry streamed from a map — the entry's origin,
+   * with `Value.p` (or `p`, which reads through to the value like member access) rewritten to `prefix[key].p`: the
+   * ordinary write path from the object the map was read from.
    */
-  private writeRoot(item: object, segments: readonly Segment[], lbl: string): { root: object; segments: readonly Segment[]; rootType: TypeRef } {
-    const origin = item instanceof MapEntry ? entryOrigin(item) : undefined;
-    if (origin === undefined) return { root: item, segments, rootType: 'any' };
-    const first = segments[0]!;
-    if (first.kind === 'member' && first.name.toUpperCase() === 'KEY') {
+  private writeRoot(item: object, origin: EntryOrigin | undefined, segments: readonly Segment[], lbl: string): { root: object; segments: readonly Segment[] } {
+    if (origin === undefined) return { root: item, segments };
+    if (isMember(segments[0]!, 'KEY')) {
       throw new RqlError('readonly-member', `'${lbl}': a map entry's key cannot be set`, undefined, 'keys are fixed: set the value (set Value… = …) or assign the whole map');
     }
-    const isValue = first.kind === 'member' && first.name.toUpperCase() === 'VALUE';
     const keySeg = { kind: 'key', key: (item as MapEntry).Key } as Segment;
-    return { root: origin.map, segments: [keySeg, ...(isValue ? segments.slice(1) : segments)], rootType: origin.type };
+    return { root: origin.root, segments: [...origin.prefix, keySeg, ...(isMember(segments[0]!, 'VALUE') ? segments.slice(1) : segments)] };
   }
 
   /**
@@ -348,27 +344,29 @@ export class Mutator {
       const it = t.item;
       const item = it.value as object;
       const origin = item instanceof MapEntry ? entryOrigin(item) : undefined;
-      const itemRef = origin !== undefined ? this.refOf(origin.holder ?? origin.map) : this.refOf(item);
+      const itemRef = origin !== undefined ? this.refOf(origin.holder ?? origin.root) : this.refOf(item);
+      // Without a path from the object the map was read from, the write starts at the map: that object (when known) still
+      // owns the change unless an object inside the value does.
+      const holder = origin !== undefined && origin.prefix.length === 0 ? origin.holder : undefined;
       for (const { target, value, label: assignLabel } of assigns) {
-        const { root, segments, rootType } = this.writeRoot(item, target.segments, assignLabel);
-        const lbl = origin === undefined ? assignLabel : (origin.label ?? '') + segmentsLabel(segments);
+        const { root, segments } = this.writeRoot(item, origin, target.segments, assignLabel);
+        const lbl = origin === undefined ? assignLabel : segmentsLabel(segments);
         this.enterScope(t);
         const nv = value(x);
         if (nv === MISSING || nv === UNKNOWN) throw new RqlError('coercion-failed', `value for '${lbl}' on ${itemRef} is missing`);
         if (nv instanceof ErrorValue) {
           throw new RqlError(nv.code === 'stale-ref' ? 'stale-ref' : 'coercion-failed', `value for '${lbl}' on ${itemRef} failed: ${nv.detail ?? nv.code}`);
         }
-        const resolved = this.resolve(root, segments, rootType);
+        const resolved = this.resolve(root, segments);
         const { slot, container } = resolved;
-        // An entry's map was read from its holder: that object owns the change unless an object inside the value does.
-        const owner = origin?.holder !== undefined && resolved.owner === root ? origin.holder : resolved.owner;
+        const owner = holder !== undefined && resolved.owner === root ? holder : resolved.owner;
         if (!slot.writable(x)) throw new RqlError(slot.denyCode, `'${lbl}' on ${itemRef} is not writable${slot.denyReason}`);
         const co = coerce(x.types, nv, slot.type, x.engine.mutations.canWrite, x.engine.mutations.coerceText);
         if (!co.ok) throw new RqlError(co.code ?? 'coercion-failed', `cannot assign ${describeValue(nv)} to '${lbl}' (${friendlyName(slot.type, x.types)}): ${co.why}`);
         // Validation runs while the mutation is planned, before any write (spec §13).
         const rejected = slot.validate(container, co.value);
         if (rejected !== undefined) throw new RqlError('invalid-value', `invalid value ${valueText(nv)} for '${lbl}' on ${itemRef}: ${rejected}`);
-        writes.push({ item: root, target: item, rootType, ref: itemRef, owner, segments, label: lbl, old: safeGet(slot, container, lbl), new: co.value });
+        writes.push({ item: root, target: item, ref: origin !== undefined ? this.refOf(owner) : itemRef, owner, segments, label: lbl, old: safeGet(slot, container, lbl), new: co.value });
       }
     }
 
@@ -380,20 +378,20 @@ export class Mutator {
     if (!x.options.dryRun) {
       let applied = 0;
       try {
-        for (; applied < writes.length; applied++) this.assign(writes[applied]!.item, writes[applied]!.segments, writes[applied]!.new, writes[applied]!.rootType);
+        for (; applied < writes.length; applied++) this.assign(writes[applied]!.item, writes[applied]!.segments, writes[applied]!.new);
       } catch (e) {
         const failed = writes[applied]!;
         // Restore the failing write too: an adapter setter may change state before it throws.
         let selfRestored = true;
         try {
-          this.assign(failed.item, failed.segments, failed.old, failed.rootType);
+          this.assign(failed.item, failed.segments, failed.old);
         } catch {
           selfRestored = false;
         }
         let rollbackFailures = 0;
         for (let k = applied - 1; k >= 0; k--) {
           try {
-            this.assign(writes[k]!.item, writes[k]!.segments, writes[k]!.old, writes[k]!.rootType);
+            this.assign(writes[k]!.item, writes[k]!.segments, writes[k]!.old);
           } catch {
             rollbackFailures++;
           }
@@ -421,7 +419,7 @@ export class Mutator {
   private readBack(w: PlannedWrite): unknown {
     try {
       let cur: object = w.item;
-      let declared: TypeRef = w.rootType;
+      let declared: TypeRef = 'any';
       for (let i = 0; ; i++) {
         const slot = this.slotOf(cur, declared, w.segments[i]!, w.label);
         const v = slot.get(cur);
@@ -477,10 +475,10 @@ export class Mutator {
     return new MemberSlot(info, m);
   }
 
-  private resolve(root: object, segs: readonly Segment[], rootType: TypeRef): { slot: Slot; container: object; owner: object } {
+  private resolve(root: object, segs: readonly Segment[]): { slot: Slot; container: object; owner: object } {
     const lbl = segmentsLabel(segs);
     let cur: object = root;
-    let declared: TypeRef = rootType;
+    let declared: TypeRef = 'any';
     const chain: { slot: Slot; value: object }[] = [];
     for (let i = 0; i < segs.length; i++) {
       const slot = this.slotOf(cur, declared, segs[i]!, lbl);
@@ -510,12 +508,12 @@ export class Mutator {
   }
 
   /** Navigate fresh, write, then write back value-like (struct) containers up the chain. */
-  private assign(root: object, segs: readonly Segment[], value: unknown, rootType: TypeRef): void {
+  private assign(root: object, segs: readonly Segment[], value: unknown): void {
     const lbl = segmentsLabel(segs);
     const containers: object[] = [root];
     const slots: Slot[] = [];
     let cur: object = root;
-    let declared: TypeRef = rootType;
+    let declared: TypeRef = 'any';
     for (let i = 0; i < segs.length; i++) {
       const slot = this.slotOf(cur, declared, segs[i]!, lbl);
       slots.push(slot);
