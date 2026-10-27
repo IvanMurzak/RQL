@@ -51,5 +51,5 @@
   `set` through map entries streamed from a writable map (§8; formerly always `invalid-plan`); host text coercion for
   struct / object types (§8);
   hints for an out-of-range list index in a `set` target, a computed `sort` key, a parenthesised tuple and a `ref()`
-  given a name (§7);
+  given a name (§7); unquoted `$`-name object keys (`{$type: "T"}`, §4.5);
   `$path` is the query path, `distinct e` keeps items (§3.1, §5).

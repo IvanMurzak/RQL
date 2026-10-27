@@ -206,7 +206,7 @@ determinism). Any other member accessed on an entry is looked up on its value, s
 
 ### 4.5 Object literals
 
-`{ key: expr, … }` builds a value: an ordered map from string keys to values. Keys are names or strings, non-empty and
+`{ key: expr, … }` builds a value: an ordered map from string keys to values. Keys are names, strings or `$`-names (`{$type: "PlaneMesh"}` is `{"$type": "PlaneMesh"}`), non-empty and
 unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as a map everywhere (`{a: 1}.a`,
 `len({…})`, encoding as a JSON object, equality is unknown). Its purpose is writes: when coerced to a member type
 (§8),

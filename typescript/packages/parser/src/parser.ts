@@ -641,11 +641,13 @@ class Parser {
           if (!this.accept('}')) {
             do {
               const k = this.peek();
-              if (k.kind !== 'ident' && k.kind !== 'quoted' && k.kind !== 'string') {
-                throw this.error(`expected an object key (name or string), found ${describeToken(k)}`, k);
+              // `$name` keys (`{$type: "PlaneMesh"}`) read like their quoted form (spec §4.5).
+              const metaKey = k.kind === 'meta' && k.text.length > 0;
+              if (k.kind !== 'ident' && k.kind !== 'quoted' && k.kind !== 'string' && !metaKey) {
+                throw this.error(`expected an object key (name or string), found ${describeToken(k)}`, k, 'keys are names or strings: {Name: "x", "$type": "T"}');
               }
               this.next();
-              const key = k.kind === 'string' ? (k.value as string) : k.text;
+              const key = k.kind === 'string' ? (k.value as string) : metaKey ? '$' + k.text : k.text;
               if (key.length === 0) throw this.error('object keys must not be empty', k);
               if (keys.has(key)) throw this.error(`duplicate object key '${key}'`, k);
               keys.add(key);

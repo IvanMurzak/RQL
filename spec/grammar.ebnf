@@ -57,7 +57,7 @@ meta            = "$" , [ ident ] ;               (* "$" alone = current item; $
 type_name       = name | string ;
 list            = "[" , [ expr , { "," , expr } ] , "]" ;
 object          = "{" , [ entry , { "," , entry } ] , "}" ;   (* keys unique and non-empty, §4.5 *)
-entry           = ( name | string ) , ":" , expr ;
+entry           = ( name | string | meta ) , ":" , expr ;   (* `$type: …` is the key "$type" *)
 literal         = number | string | "true" | "false" | "null" ;
 
 (* ---------- lexical ---------- *)

@@ -16445,6 +16445,218 @@
         ],
         "total": 1
       }
+    },
+    {
+      "name": "object-literal-meta-key",
+      "rql": "ref(\"Node#8\") | set Peer = {$type: \"Special\", Name: \"made\", Power: 5}",
+      "then": "ref(\"Node#8\") | select Peer.$type Peer.Name Peer.Power",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Peer"
+                  ]
+                },
+                "value": {
+                  "object": [
+                    {
+                      "key": "$type",
+                      "value": {
+                        "lit": "Special"
+                      }
+                    },
+                    {
+                      "key": "Name",
+                      "value": {
+                        "lit": "made"
+                      }
+                    },
+                    {
+                      "key": "Power",
+                      "value": {
+                        "lit": 5
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "Peer",
+            null,
+            {
+              "$ref": "Special#0",
+              "name": "made"
+            }
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Peer.$type",
+                "expr": {
+                  "path": [
+                    "Peer",
+                    {
+                      "meta": "type"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "Peer.Name",
+                "expr": {
+                  "path": [
+                    "Peer",
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Peer.Power",
+                "expr": {
+                  "path": [
+                    "Peer",
+                    "Power"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Peer.$type",
+          "Peer.Name",
+          "Peer.Power"
+        ],
+        "rows": [
+          [
+            "Special",
+            "made",
+            5
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "object-literal-meta-key-equals-quoted",
+      "rql": "g | select a=({$type: \"x\"}.len()) b=({$type: \"x\"}[\"$type\"])",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "call": "len",
+                  "on": {
+                    "object": [
+                      {
+                        "key": "$type",
+                        "value": {
+                          "lit": "x"
+                        }
+                      }
+                    ]
+                  },
+                  "args": []
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "path": [
+                    {
+                      "key": "$type"
+                    }
+                  ],
+                  "on": {
+                    "object": [
+                      {
+                        "key": "$type",
+                        "value": {
+                          "lit": "x"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "a",
+          "b"
+        ],
+        "rows": [
+          [
+            1,
+            "x"
+          ]
+        ],
+        "total": 1
+      }
     }
   ]
 }
