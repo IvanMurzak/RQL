@@ -1,0 +1,47 @@
+typescript/packages/execution/src/compiler.ts
+  s_7bc72ecaebd05d::t_66372135fd5421 994
+  s_7bc72ecaebd05d::t_0302dffc1a4ab9 939
+  s_7bc72ecaebd05d::t_91ad07c7dd3c13 924-936
+dotnet/Rql.Execution/Pipeline.cs
+  s_7bc72ecaebd05d::t_5b08c0a9eb1a8e 406,546,737-739,743,751-752,755-756
+  s_7bc72ecaebd05d::t_032f811005432a 531-533,537,540
+cpp/src/exec.hpp
+  s_7bc72ecaebd05d::t_92eb1d7c782bc1 309-310
+dotnet/Rql.Execution/RqlEngine.cs
+  s_7bc72ecaebd05d::t_4535a1d1a1cde5 660-668
+dotnet/Rql.Execution/Mutator.cs
+  s_7bc72ecaebd05d::t_be74cbf6ca08cb 37,50,52-56,58,79,81,153-155,158-159,187-189,540-542
+typescript/packages/execution/src/pipeline.ts
+  s_7bc72ecaebd05d::t_3caba6f03368fd 31,41-43,306-310,330-331,334,448-461,464-465,476
+  s_7bc72ecaebd05d::t_1035be39e7a882 507
+cpp/src/pipeline.cpp
+  s_7bc72ecaebd05d::t_5224f2f4661143 93-94,421-422,444,453
+  s_7bc72ecaebd05d::t_45261d6a080f16 506,517,523,530
+cpp/src/mutator.cpp
+  s_7bc72ecaebd05d::t_5aea4e9b1e243a 27,39,41,704-707,839-842
+cpp/src/compiler.cpp
+  s_7bc72ecaebd05d::t_3374df7588cb90 1014-1015,1025-1026
+  s_7bc72ecaebd05d::t_15732f601de933 947-953
+  s_7bc72ecaebd05d::t_1418d0cb725b58 737-743,849,1482
+typescript/packages/execution/src/mutator.ts
+  s_7bc72ecaebd05d::t_83e500f7ed33cd 378
+  s_7bc72ecaebd05d::t_66372135fd5421 480,513
+dotnet/Rql.Execution/Compiler.cs
+  s_7bc72ecaebd05d::t_9800d0f78cc0b1 1032,1034,1074-1075,1077,1081
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ad7ddf9874f31912f72492e0cd5b8e4cd75fbb91",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
