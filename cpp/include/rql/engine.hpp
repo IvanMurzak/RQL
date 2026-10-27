@@ -68,6 +68,10 @@ struct MutationPolicy {
     BatchValidator validate_batch;
     /// Replaces the mutation-limit hint (spec §10): (stage "set"/"call", target limit) → hint; "" keeps the built-in one.
     std::function<std::string(const std::string& op, int limit)> limit_hint;
+    /// Host text coercion (spec §8): converts a string written to a struct / object type that no type adapter coerces
+    /// (e.g. Unreal's ExportText form "(Minimum=(X=0.5,Y=0),Maximum=(X=0.5,Y=0))"). Return the value; nullopt when the
+    /// type is not handled (the built-in rules then report the failure); set `reason` (or throw) to refuse.
+    std::function<std::optional<Value>(const TypeDescriptor& type, const std::string& text, std::string& reason)> coerce_text;
     /// After planning, before any write (not on dry-run): e.g. record undo for the owners. Throwing (any
     /// exception) vetoes the whole mutation → permission-denied, nothing changed.
     MutationHook before_write;

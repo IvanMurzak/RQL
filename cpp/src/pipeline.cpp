@@ -146,7 +146,9 @@ std::optional<std::string> path_suffix(const Expr& e) {
 /// Lists → elements, maps → entries, one-column rows → their value, else the value; null/missing dropped.
 class ExpandStream final : public Stream {
 public:
-    ExpandStream(Exec& x, Value v, PathPtr path, bool count) : x_(x), path_(std::move(path)), count_(count) {
+    /// holder / label: the item and member path a map value was read from (get); streamed entries remember them (spec §8).
+    ExpandStream(Exec& x, Value v, PathPtr path, bool count, Value holder = Value(), std::string label = {})
+        : x_(x), path_(std::move(path)), count_(count), holder_(std::move(holder)), label_(std::move(label)) {
         while (v.is_row() && v.row().values.size() == 1) {
             Value inner = v.row().values[0];
             v = inner;
@@ -191,7 +193,8 @@ public:
                 if (i_ >= entries_.size()) { mode_ = Done; return false; }
                 if (count_) x_.visit();
                 auto& e = entries_[i_++];
-                out = Item{Value::entry(e.first, e.second), path_ ? path_key(path_, e.first) : nullptr, -1};
+                if (!origin_) origin_ = std::make_shared<const EntryOrigin>(EntryOrigin{v_, holder_, label_});
+                out = Item{Value::entry(e.first, e.second, origin_), path_ ? path_key(path_, e.first) : nullptr, -1};
                 return true;
             }
         }
@@ -208,6 +211,9 @@ private:
     size_t i_ = 0;
     bool loaded_ = false;
     std::vector<std::pair<Value, Value>> entries_;
+    Value holder_;
+    std::string label_;
+    std::shared_ptr<const EntryOrigin> origin_;
 };
 
 class SourceStream final : public Stream {
@@ -427,7 +433,15 @@ public:
                 continue;
             }
             PathPtr p = x_.track_paths && it.path && suffix_ ? path_text(it.path, *suffix_) : nullptr;
-            sub_ = std::make_unique<ExpandStream>(x_, std::move(v), std::move(p), true);
+            // A map read from an item: its streamed entries remember the item and the member path (spec §8).
+            Value holder;
+            if (it.value.is_entry()) {
+                if (it.value.entry().origin) holder = it.value.entry().origin->holder;
+            } else if (!it.value.is_row()) {
+                holder = it.value;
+            }
+            std::string label = suffix_ ? (suffix_->rfind('.', 0) == 0 ? suffix_->substr(1) : *suffix_) : std::string();
+            sub_ = std::make_unique<ExpandStream>(x_, std::move(v), std::move(p), true, std::move(holder), std::move(label));
         }
     }
 

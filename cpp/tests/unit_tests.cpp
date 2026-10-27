@@ -1,6 +1,7 @@
 // Unit tests: JSON edge cases, number formatting, and engine features the golden vectors do not
 // cover (call stage, extensions, session handles, liveness, unordered maps, shared_ptr, rollback).
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -1473,6 +1474,42 @@ void wave2_tests() {
         auto r = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Tags",{"index":0}]},"value":{"lit":"x"}}]}]})J", true);
         check(first_code(r) == "invalid-plan" && has(r.diagnostics[0].message, "index 0 out of range (count 0)") && has(hint(r), "set Tags = append(Tags, value)"),
               "out-of-range list index: hint to assign the whole list");
+    }
+    {
+        // U5: a set through streamed map entries reports the object the map was read from as the owner
+        rql::Engine e(reg);
+        engine(e);
+        e.mutations().max_targets = 20;
+        std::vector<rql::MutationRecord> before;
+        e.mutations().before_write = [&](const std::vector<rql::MutationRecord>& b) { before = b; };
+        auto r = arun(e, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"get","expr":{"path":["Props"]}},{"op":"where","pred":{"op":">=","args":[{"path":["Value"]},{"lit":50}]}},{"op":"set","assign":[{"target":{"path":["Value"]},"value":{"op":"*","args":[{"path":["Value"]},{"lit":2}]}}]}]})J", true);
+        check(r.ok && before.size() == 2 && before[0].member == "Props[\"hp\"]" && before[0].owner.ptr() == g->Nodes[0].get() &&
+                  before[1].owner.ptr() == g->Nodes[1].get() && g->Nodes[0]->Props["hp"] == 200,
+              "map-entry set: owner is the object the map was read from");
+    }
+    {
+        // U6: host text coercion for a struct no adapter handles
+        rql::Engine e(reg);
+        engine(e);
+        rql::TypeRegistry* rp = &reg;
+        const std::string plan = R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Pos"]},"value":{"lit":"X=3|Y=4"}}]}]})J";
+        check(first_code(arun(e, plan, true)) == "coercion-failed", "text coercion: without the hook a string is no struct");
+        e.mutations().coerce_text = [rp](const rql::TypeDescriptor& t, const std::string& text, std::string& reason) -> std::optional<rql::Value> {
+            if (t.name != "Vec2") return std::nullopt;
+            conformance::Vec2 v;
+            size_t bar = text.find("|Y=");
+            if (text.rfind("X=", 0) != 0 || bar == std::string::npos) {
+                reason = "expected X=..|Y=..";
+                return std::nullopt;
+            }
+            v.x = std::strtod(text.substr(2, bar - 2).c_str(), nullptr);
+            v.y = std::strtod(text.substr(bar + 3).c_str(), nullptr);
+            return rql::Traits<conformance::Vec2>::get(*rp, v);
+        };
+        auto r = arun(e, plan, true);
+        check(r.ok && g->Nodes[2]->Pos.x == 3 && g->Nodes[2]->Pos.y == 4, "text coercion: the host converts its text form");
+        auto bad = arun(e, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Pos"]},"value":{"lit":"nope"}}]}]})J", true);
+        check(first_code(bad) == "coercion-failed" && has(bad.diagnostics[0].message, "expected X=..|Y=.."), "text coercion: a refusal is coercion-failed with the reason");
     }
 }
 

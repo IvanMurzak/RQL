@@ -67,6 +67,7 @@ struct ErrorInfo {
 };
 
 struct EntryData;
+struct EntryOrigin;
 struct RowData;
 
 class Value {
@@ -91,6 +92,8 @@ public:
     static Value map(std::shared_ptr<IMapAdapter> map);
     static Value list_of(std::vector<Value> items);  // owned list
     static Value entry(Value key, Value value);
+    /// An entry streamed from a map, remembering it (spec §8).
+    static Value entry(Value key, Value value, std::shared_ptr<const EntryOrigin> origin);
     static Value row(std::shared_ptr<const std::vector<std::string>> columns, std::vector<Value> values);
 
     Kind kind() const { return kind_; }
@@ -143,9 +146,17 @@ private:
     std::shared_ptr<void> holder_;
 };
 
+/// Where a streamed map entry came from (spec §8): `set Value... = ...` writes through `map`.
+struct EntryOrigin {
+    Value map;
+    Value holder;       // the stream item the map was read from (by get); missing for a source
+    std::string label;  // the member path get read the map by ("Props"), prefixing receipt labels; "" when computed
+};
+
 struct EntryData {
     Value key;
     Value value;
+    std::shared_ptr<const EntryOrigin> origin;  // set for entries streamed from a map
 };
 
 struct RowData {

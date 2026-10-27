@@ -15629,7 +15629,7 @@
     },
     {
       "name": "mut-entry-set-struct-member",
-      "rql": "g.Nodes | recurse Children include-self=true | where Id == 4 | get Props | set Value = $index + 0.5",
+      "rql": "g.Nodes | recurse Children include-self=true | where Id == 4 | get Props | where Key == \"armor\" | set Value = Value + $index + 0.5",
       "then": "ref(\"Node#4\") | select Props",
       "options": {
         "allowMutation": true
@@ -15678,6 +15678,22 @@
             }
           },
           {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Key"
+                  ]
+                },
+                {
+                  "lit": "armor"
+                }
+              ]
+            }
+          },
+          {
             "op": "set",
             "assign": [
               {
@@ -15690,9 +15706,19 @@
                   "op": "+",
                   "args": [
                     {
-                      "path": [
+                      "op": "+",
+                      "args": [
                         {
-                          "meta": "index"
+                          "path": [
+                            "Value"
+                          ]
+                        },
+                        {
+                          "path": [
+                            {
+                              "meta": "index"
+                            }
+                          ]
                         }
                       ]
                     },
@@ -15718,18 +15744,12 @@
         "rows": [
           [
             "Node#4",
-            "Props[\"hp\"]",
-            0,
-            0.5
-          ],
-          [
-            "Node#4",
             "Props[\"armor\"]",
             12,
-            1.5
+            12.5
           ]
         ],
-        "total": 2
+        "total": 1
       },
       "thenPlan": {
         "rql": "0.1",
@@ -15766,8 +15786,8 @@
         "rows": [
           [
             {
-              "hp": 0.5,
-              "armor": 1.5
+              "hp": 0,
+              "armor": 12.5
             }
           ]
         ],
