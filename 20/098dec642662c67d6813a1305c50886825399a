@@ -1,0 +1,69 @@
+spec/semantics.md
+  s_7bc72ecaebd05d::t_00d79ed31138fc 467
+  s_7bc72ecaebd05d::t_871629dd68d93d 161,341-350
+typescript/packages/execution/src/compiler.ts
+  s_7bc72ecaebd05d::t_13b10f09eb5b23 916,919
+dotnet/Rql.Execution/Compiler.cs
+  s_7bc72ecaebd05d::t_8d391d85592fbd 1136
+  s_7bc72ecaebd05d::t_b05231ab1081da 1130-1132
+docs/feature-matrix-cpp.md
+  s_7bc72ecaebd05d::t_5bbf090c01de8a 27
+dotnet/Rql.Execution/Pipeline.cs
+  s_7bc72ecaebd05d::t_c5b896224931ca 530-531,536,539,547,551-569
+  s_7bc72ecaebd05d::t_81ce5509339ae4 363-364,406-407
+  s_7bc72ecaebd05d::t_3a86d1111a7e16 570
+cpp/tests/unit_tests.cpp
+  s_7bc72ecaebd05d::t_57e3ba5e4f4586 1490-1498
+cpp/src/mutator.cpp
+  s_7bc72ecaebd05d::t_c3a7d00e3603e9 336,340-342,344,347-352,662-665,669,671,682,699
+dotnet/Rql.Execution/Mutator.cs
+  s_7bc72ecaebd05d::t_3680cab9d253d3 76-78,80,83,86-91
+  s_7bc72ecaebd05d::t_dcffbc27ac7bd6 102,185
+  s_7bc72ecaebd05d::t_e97fbc7683324d 156-160,164
+  s_7bc72ecaebd05d::t_bc63ef71d9a116 53
+typescript/packages/execution/src/pipeline.ts
+  s_7bc72ecaebd05d::t_76c1a9e84ae85d 32
+  s_7bc72ecaebd05d::t_e68d51cf1e6c97 31
+  s_7bc72ecaebd05d::t_a07014a54a1a07 19
+  s_7bc72ecaebd05d::t_edfb191cda9fbb 306-307,309,329,332,426-427,436,449
+cpp/include/rql/value.hpp
+  s_7bc72ecaebd05d::t_3ca36a898b6b3e 152
+cpp/src/compiler.cpp
+  s_7bc72ecaebd05d::t_a2fc3e4c18196a 929,1069-1070
+  s_7bc72ecaebd05d::t_59f3cf9c1da1dc 935-936,939,941-943,945
+  s_7bc72ecaebd05d::t_13b5b6ed88ad8d 926,946-950
+cpp/README.md
+  s_7bc72ecaebd05d::t_a176aed6db8dd5 131
+typescript/packages/execution/src/mutator.ts
+  s_7bc72ecaebd05d::t_edfb191cda9fbb 26,33,277-279,281-283,287,347-350,352-353,360,362,369,381,387,394,422,478,481,511,516
+fixtures/execution/cases.json
+  s_7bc72ecaebd05d::t_9a960f42486a31 15395,15401,15582,16024-16447
+docs/feature-matrix-typescript.md
+  s_7bc72ecaebd05d::t_5bbf090c01de8a 19
+typescript/packages/execution/src/values.ts
+  s_7bc72ecaebd05d::t_edfb191cda9fbb 3,48-52,54-56
+  s_7bc72ecaebd05d::t_ee07b61bc47a87 71-88
+dotnet/Rql.Execution/Values.cs
+  s_7bc72ecaebd05d::t_a6048a73a16b47 38,42-57
+cpp/src/exec.hpp
+  s_7bc72ecaebd05d::t_fe2111043daf7f 18-27
+  s_7bc72ecaebd05d::t_1724490fffe52a 321-322
+cpp/src/pipeline.cpp
+  s_7bc72ecaebd05d::t_c3a7d00e3603e9 149-151,196,418-420,435-436,441-458,463,793-798
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "20098dec642662c67d6813a1305c50886825399a",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
