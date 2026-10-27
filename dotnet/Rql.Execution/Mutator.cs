@@ -21,7 +21,7 @@ namespace Rql.Execution
             if (!_x.Engine.Mutations.Enabled)
                 throw new RqlException("permission-denied", $"'{op}' is not allowed: this host does not permit mutations");
             if (!_x.Options.AllowMutation)
-                throw new RqlException("permission-denied", $"'{op}' requires a mutation request (use the mutate tool / options.allowMutation)");
+                throw new RqlException("permission-denied", $"'{op}' requires a mutation request: run it with {_x.Engine.MutateTool}");
         }
 
         /// <summary>A target with the scope its expressions see: its path, depth and position in the stage's input (spec §8).</summary>
@@ -85,7 +85,7 @@ namespace Rql.Execution
             string message = exact != null
                 ? $"{matched} objects matched '{op}', more than the limit of {limit}; nothing was changed"
                 : $"more than {ceiling} objects matched '{op}' (the limit is {limit}); nothing was changed";
-            string? argument = !string.IsNullOrEmpty(m.LimitArgument) ? m.LimitArgument : _x.BudgetsAdjustable ? "budgets.maxMutationTargets" : null;
+            string? argument = _x.LimitArgument;
             string? hostHint = m.LimitHint?.Invoke(op, limit);
             return new RqlException("mutation-limit", message, null,
                 !string.IsNullOrEmpty(hostHint) ? hostHint : Exec.MutationLimitHint(op, limit, exact, argument, ceiling));
@@ -162,11 +162,34 @@ namespace Rql.Execution
                 throw new RqlException("invalid-value", $"the host refused this '{op}' of {batch.Count} change(s): {rejected}; nothing was changed");
         }
 
+        /// <summary>
+        /// A set target member that some targets lack while others have it (a mixed stream): unknown-member naming the types that
+        /// have it, so the agent filters to them (spec §10). All other cases are reported per target by <see cref="SlotOf"/>.
+        /// </summary>
+        private void CheckMixedTargets(List<Target> targets, IEnumerable<PathExpr> paths)
+        {
+            var types = targets.Select(t => t.Value).Where(v => !(v is MapEntry)).Select(v => _x.Types.Info(v.GetType())).Where(i => i.IsObject || i.IsStruct).Distinct().ToList();
+            if (types.Count < 2) return;
+            foreach (var p in paths)
+            {
+                if (p.Segments[0].Kind != SegmentKind.Member) continue;
+                var name = p.Segments[0].Name!;
+                var lacking = types.Where(i => i.Find(name) == null).ToList();
+                if (lacking.Count == 0 || lacking.Count == types.Count) continue;
+                var having = types.Where(i => i.Find(name) != null).Select(i => i.ShortName).Distinct().Take(3).ToList();
+                int n = targets.Count(t => !(t.Value is MapEntry) && lacking.Contains(_x.Types.Info(t.Value.GetType())));
+                throw new RqlException("unknown-member",
+                    $"no member '{name}' on {string.Join(", ", lacking.Select(i => i.ShortName).Take(4))} ({n} of {targets.Count} targets); nothing was changed", null,
+                    $"only {string.Join(", ", having)} {(having.Count == 1 ? "has" : "have")} '{name}': filter first, e.g. … | where $ is {having[0]} | set …, or … | where has({name}) | set …");
+            }
+        }
+
         public QueryResult Set(IEnumerable<Item> stream, SetStage s)
         {
             CheckPolicy("set");
             var assigns = s.Assignments.Select(a => (target: a.Target, value: _c.Compile(a.Value), label: Label(a.Target))).ToList();
             var targets = Targets(stream, "set");
+            CheckMixedTargets(targets, s.Assignments.Select(a => a.Target));
             var writes = new List<PlannedWrite>();
             foreach (var t in targets)
             {
@@ -196,7 +219,7 @@ namespace Rql.Execution
                     if (!slot.Writable(_x))
                         throw new RqlException(slot.DenyCode, $"'{label}' on {itemRef} is not writable{slot.DenyReason}");
                     if (!Coerce.TryTo(_x.Kernel, nv, slot.Type, out var coerced, out var why))
-                        throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' ({TypeModel.FriendlyName(slot.Type)}): {why}");
+                        throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' ({_x.Types.FriendlyNameOf(slot.Type)}): {why}");
                     if (slot.Validate(container, coerced) is string rejected)
                         throw new RqlException("invalid-value", $"invalid value {ValueText(nv)} for '{label}' on {itemRef}: {rejected}");
                     writes.Add(new PlannedWrite
@@ -395,11 +418,8 @@ namespace Rql.Execution
             if (name == null) throw new RqlException("invalid-plan", $"'{label}': invalid segment {seg} on {info.ShortName}");
             var m = info.Find(name);
             if (m == null)
-            {
-                var close = Suggest.Closest(name, info.Members.Select(mm => mm.Name).ToList(), 3);
                 throw new RqlException("unknown-member", $"no member '{name}' on {info.ShortName}", null,
-                    close.Count > 0 ? "did you mean " + string.Join(" / ", close) + "?" : Suggest.MemberList(info.Members.Select(mm => mm.Name).ToList()));
-            }
+                    Suggest.MemberHint(name, info.Members.Select(mm => mm.Name).ToList(), _x.Engine.TypesDeclaring(name, new[] { info })));
             return new MemberSlot(container.GetType(), m);
         }
 
@@ -521,9 +541,15 @@ namespace Rql.Execution
                     var all = info.Callable.Select(m => m.Signature).ToList();
                     bool exists = item.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance)
                         .Any(m => string.Equals(m.Name, s.Method, StringComparison.OrdinalIgnoreCase));
+                    // In a mixed stream, name the targets' types that do have the method (filter to them first).
+                    var having = targets.Select(o => _x.Types.Info(o.Value.GetType())).Distinct()
+                        .Where(o => o.Callable.Any(m => string.Equals(m.Name, s.Method, StringComparison.OrdinalIgnoreCase))).Select(o => o.ShortName).Take(3).ToList();
+                    var filter = having.Count > 0
+                        ? $"only {string.Join(", ", having)} {(having.Count == 1 ? "has" : "have")} {s.Method}: filter first, e.g. … | where $ is {having[0]} | call {s.Method}(…); "
+                        : "";
                     throw new RqlException(exists ? "permission-denied" : "unknown-function",
                         $"no callable method '{s.Method}' on {info.ShortName}", null,
-                        (all.Count > 0 ? "callable: " + string.Join(", ", all) : $"{info.ShortName} has no callable methods")
+                        filter + (all.Count > 0 ? "callable: " + string.Join(", ", all) : $"{info.ShortName} has no callable methods")
                         + (exists ? "" : _x.Engine.SourcesWithCallable(s.Method)));
                 }
                 EnterScope(t);
@@ -652,6 +678,9 @@ namespace Rql.Execution
                 var found = entry.index.TryGetValue(tn, out var hits)
                     ? hits.Where(t => !model.IsExcludedType(t)).ToArray()
                     : Array.Empty<Type>();
+                // The host's display name of a type (spec §13) names it too.
+                if (found.Length == 0 && model.TypeDisplayName != null)
+                    found = entry.index.Values.SelectMany(v => v).Distinct().Where(t => !model.IsExcludedType(t) && model.NameOf(t) == tn).ToArray();
                 if (found.Length == 0) { why = $"no concrete type named '{tn}' derives from {TypeModel.FriendlyName(target)}"; return false; }
                 if (found.Length > 1) { why = $"'{tn}' is ambiguous: " + string.Join(", ", found.Select(t => t.FullName)); return false; }
                 concrete = found[0];

@@ -30,7 +30,7 @@ namespace Rql.Execution
             var o = new JsonObject { ["name"] = info.ShortName };
             var baseType = t.BaseType;
             if (baseType != null && baseType != typeof(object) && baseType != typeof(ValueType) && baseType != typeof(Enum))
-                o["base"] = TypeModel.ShortName(baseType);
+                o["base"] = model.NameOf(baseType);
             o["kind"] = info.Kind switch
             {
                 TypeKind.Enum => "enum",
@@ -48,7 +48,7 @@ namespace Rql.Execution
             var members = new JsonArray();
             foreach (var m in info.Members)
             {
-                var mo = new JsonObject { ["name"] = m.Name, ["type"] = TypeModel.FriendlyName(m.Type) };
+                var mo = new JsonObject { ["name"] = m.Name, ["type"] = model.FriendlyNameOf(m.Type) };
                 if (showWritable && m.CanWrite) mo["writable"] = true;
                 if (m.ExplicitOnly) mo["explicitOnly"] = true;
                 if (m.Description != null) mo["description"] = m.Description;

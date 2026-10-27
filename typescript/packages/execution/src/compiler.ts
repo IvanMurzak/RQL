@@ -3,7 +3,7 @@
  * Kleene logic, comparisons, arithmetic, core functions and collection methods.
  * Port of dotnet/Rql.Execution/Compiler.cs.
  */
-import { RqlError, diagnostic, formatNumber, type CallExpr, type Expr, type OpExpr, type PathExpr } from '@rql/contracts';
+import { RqlError, diagnostic, formatNumber, segmentToString, type CallExpr, type Expr, type OpExpr, type PathExpr } from '@rql/contracts';
 import { elements, findMapKey, indexAt, isMapLike, mapEntries, mapGet, sizeOf, type MapLike } from './collections.js';
 import { firstAnswer } from './adapters.js';
 import { Exec, IsSite, MemberSite, errorMessage } from './exec.js';
@@ -177,9 +177,25 @@ export class Compiler {
 
   // ---------------------------------------------------------------- operators
 
+  /**
+   * An expression in a predicate position (spec §1.2: where, and / or / not, the condition of if / ?:, method predicates):
+   * a boolean, null or an absent value (missing, unknown, error) passes through; any other value fails the query, because
+   * there is no implicit truthiness (`where sharedMaterial` would otherwise silently drop every item).
+   */
+  compileCondition(e: Expr): Eval {
+    const ev = this.compile(e);
+    return (x) => {
+      let v = ev(x);
+      if (v instanceof RowValue && v.columns.length === 1) v = v.values[0]; // a one-column row stands for its value (spec §3)
+      if (v === null || v === undefined || typeof v === 'boolean' || isAbsent(v)) return v ?? null;
+      throw notACondition(x, e, v);
+    };
+  }
+
   private compileOp(o: OpExpr): Eval {
-    const a = this.compile(o.args[0]!);
-    const b: Eval = o.args.length > 1 ? this.compile(o.args[1]!) : () => null;
+    const logical = o.op === 'and' || o.op === 'or' || o.op === 'not';
+    const a = logical ? this.compileCondition(o.args[0]!) : this.compile(o.args[0]!);
+    const b: Eval = o.args.length > 1 ? (logical ? this.compileCondition(o.args[1]!) : this.compile(o.args[1]!)) : () => null;
     switch (o.op) {
       case 'and':
         return (x) => {
@@ -431,8 +447,9 @@ export class Compiler {
       case 'if': {
         // Lazy: only the taken branch runs; a condition that is not true (false or unknown) takes the else branch.
         this.arity(c, 3, 3);
-        const [cond, then, otherwise] = c.args.map((e) => this.compile(e));
-        return (x) => (truth(cond(x)) === true ? then(x) : otherwise(x));
+        const cond = this.compileCondition(c.args[0]!);
+        const [then, otherwise] = c.args.slice(1).map((e) => this.compile(e));
+        return (x) => (truth(cond(x)) === true ? then!(x) : otherwise!(x));
       }
       case 'ref': {
         this.arity(c, 1, 64);
@@ -484,7 +501,7 @@ export class Compiler {
       case 'count':
       case 'first': {
         this.arity(c, name === 'all' ? 1 : 0, 1);
-        const pred = c.args.length > 0 ? this.compile(c.args[0]!) : undefined;
+        const pred = c.args.length > 0 ? this.compileCondition(c.args[0]!) : undefined;
         return (x) => quantify(x, on(x), pred, name);
       }
       case 'sum':
@@ -664,6 +681,44 @@ function keyAt(x: Exec, v: unknown, key: string | number, p: PathExpr): unknown 
 
 // ------------------------------------------------------------------ logic and comparison
 
+/** The text of a plain relative path (`Renderer.sharedMaterial`, `Tags[0]`), or undefined for other expressions. */
+export function pathText(e: Expr): string | undefined {
+  if (e.kind !== 'path' || e.on !== undefined || e.segments.length === 0) return undefined;
+  let s = '';
+  for (const seg of e.segments) {
+    if ((seg.kind === 'member' || seg.kind === 'meta') && s.length > 0) s += '.';
+    s += segmentToString(seg);
+  }
+  return s;
+}
+
+/** type-mismatch for a non-boolean condition (spec §1.2), with a boolean test to write instead. */
+function notACondition(x: Exec, e: Expr, v: unknown): RqlError {
+  const text = pathText(e);
+  let what: string;
+  let example: string;
+  const n = toNumber(v);
+  const info = typeof v === 'object' && v !== null ? x.types.infoOf(v) : undefined;
+  if (typeof v === 'string') {
+    what = `the string "${v}"`;
+    example = `${text ?? 'Name'} != ""`;
+  } else if (n !== undefined) {
+    what = 'the number ' + formatNumber(n);
+    example = `${text ?? 'Count'} != 0`;
+  } else if (v instanceof EnumValue) {
+    what = `the ${v.type.name} value ${v.name}`;
+    example = `${text ?? 'Kind'} == "${v.name}"`;
+  } else if (info !== undefined && (info.isList || info.isMap)) {
+    what = info.isList ? 'a list' : 'a map';
+    example = `len(${text ?? 'Items'}) > 0`;
+  } else {
+    what = 'a ' + (info?.shortName ?? describeValue(v));
+    example = `${text ?? 'Target'} != null`;
+  }
+  const exists = text !== undefined && typeof v !== 'string' && n === undefined && !(v instanceof EnumValue) ? `, or has(${text}) to test that the member exists` : '';
+  return new RqlError('type-mismatch', `the condition ${text !== undefined ? `'${text}' ` : ''}is ${what}, not a boolean`, e.span, `a condition must be a boolean, e.g. ${example}${exists}`);
+}
+
 export function truth(v: unknown): Truth {
   if (typeof v === 'boolean') return v;
   if (v === null) return false;
@@ -698,9 +753,30 @@ export function equal(x: Exec, a: unknown, b: unknown): Truth {
   if (typeof a === 'boolean') return typeof b === 'boolean' ? a === b : undefined;
   if (typeof a !== 'object' || typeof b !== 'object') return undefined;
   if (a instanceof Date || b instanceof Date) return a instanceof Date && b instanceof Date ? a.getTime() === b.getTime() : undefined;
-  // Structs, lists and maps are not comparable in v0 (spec §4.1); objects by identity.
+  const ia = x.types.infoOf(a);
+  const ib = x.types.infoOf(b);
+  if (ia.isList && ib.isList) return listEqual(x, a, ia, b, ib);
+  // Structs and maps are not comparable in v0 (spec §4.1); objects by identity.
   if (isStructOrCollection(x, a) || isStructOrCollection(x, b)) return undefined;
   return a === b;
+}
+
+/**
+ * Lists compare by value (spec §4.1): the same length and pairwise equal elements; false as soon as a pair differs,
+ * unknown when no pair differs but one is unknown.
+ */
+function listEqual(x: Exec, a: object, ia: TypeInfo, b: object, ib: TypeInfo): Truth {
+  if (a === b) return true;
+  const ea = [...elements(a, ia)];
+  const eb = [...elements(b, ib)];
+  if (ea.length !== eb.length) return false;
+  let unknown = false;
+  for (let i = 0; i < ea.length; i++) {
+    const r = equal(x, x.live(ea[i] ?? null), x.live(eb[i] ?? null));
+    if (r === false) return false;
+    if (r === undefined) unknown = true;
+  }
+  return unknown ? undefined : true;
 }
 
 function enumEqual(e: EnumValue, other: unknown): Truth {

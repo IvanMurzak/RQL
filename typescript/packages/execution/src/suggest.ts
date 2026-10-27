@@ -31,6 +31,30 @@ export function memberList(names: readonly string[]): string {
   return 'members: ' + names.slice(0, MAX_LISTED).join(' ') + (names.length > MAX_LISTED ? ` … (${names.length - MAX_LISTED} more)` : '');
 }
 
+/** Names ordered by their distance to `name` (then ordinal): the nearest come first in a capped list. */
+export function bySimilarity(name: string, names: Iterable<string>): string[] {
+  const lower = name.toLowerCase();
+  return [...new Set(names)]
+    .map((c) => ({ c, d: distance(lower, c.toLowerCase()) }))
+    .sort((a, b) => a.d - b.d || (a.c < b.c ? -1 : a.c > b.c ? 1 : 0))
+    .map((t) => t.c);
+}
+
+/**
+ * The hint of an unknown member (spec §10): the known types that have it (filter the stream to them first), then the
+ * closest names, else the members ranked by similarity to the name.
+ */
+export function memberHint(name: string, members: readonly string[], declaring: readonly string[]): string {
+  const parts: string[] = [];
+  if (declaring.length > 0) {
+    parts.push(`'${name}' is a member of ${declaring.join(', ')}: filter to those first, e.g. where $ is ${declaring[0]} (or where has(${name}))`);
+  }
+  const close = closest(name, members, 3);
+  if (close.length > 0) parts.push(`did you mean ${close.join(' / ')}?`);
+  else if (declaring.length === 0 && members.length > 0) parts.push(memberList(bySimilarity(name, members)));
+  return parts.join('; ');
+}
+
 /** Optimal string alignment distance: Levenshtein plus adjacent transpositions at cost 1 ("Lable" → "Label" = 1). */
 export function distance(a: string, b: string): number {
   // Rows i-2, i-1 and i of the DP matrix.

@@ -82,7 +82,8 @@ public:
     static Value error(std::string code, std::string detail = {});
     static Value boolean(bool b) { Value v; v.kind_ = Kind::Bool; v.b_ = b; return v; }
     /// type: scalar descriptor of the native member type (Int32, Single, Double...); nullptr = double literal.
-    static Value number(double d, const TypeDescriptor* type = nullptr) { Value v; v.kind_ = Kind::Number; v.num_ = d; v.type_ = type; return v; }
+    /// A Single (float) number is widened to the double of its shortest round-trip decimal (spec §1.1), so 4.2f reads as 4.2.
+    static Value number(double d, const TypeDescriptor* type = nullptr);
     static Value string(std::string s) { Value v; v.kind_ = Kind::String; v.str_ = std::move(s); return v; }
     static Value enumeration(const TypeDescriptor* type, int64_t value) { Value v; v.kind_ = Kind::Enum; v.type_ = type; v.int_ = value; return v; }
     /// ptr must point to the object as its (most-derived registered) descriptor type.
@@ -204,6 +205,8 @@ private:
 
 // ---------------------------------------------------------------- helpers
 
+/// A float as the double of its shortest round-trip decimal (4.2f -> 4.2, not 4.19999980926514); converts back to the same float.
+double widen_single(float f);
 /// Text form used for string concatenation, map keys and ids (.NET-compatible number formatting).
 std::string to_text(const Value& v);
 /// Short human description for messages: null, missing, "str", type name...

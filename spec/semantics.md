@@ -26,7 +26,7 @@ Every expression evaluates to one of:
 | `missing` | The path does not exist on this value (no such member/key/index). |
 | `null` | The member exists and its value is null / empty optional / nullptr. |
 | `error` | Evaluation failed (getter threw, division by zero, type mismatch in arithmetic). Carries a code. |
-| `bool`, `number`, `string` | Scalars. Numbers are compared numerically regardless of the runtime's int/float types. |
+| `bool`, `number`, `string` | Scalars. Numbers are compared numerically regardless of the runtime's int/float types. A single-precision (float) value is the double of its shortest round-trip decimal wherever it is used as a number (`4.2f` is `4.2`, not `4.19999980926514`), so arithmetic, functions and aggregates over float members compute with the value the member shows; the widened value converts back to the same float, so comparisons in float precision (§4.1) are unchanged. |
 | `enum` | Runtime enum value; compares to strings by name (enum name resolution, §8) and to numbers by underlying value. |
 | `object` | A reference-like runtime object with identity. |
 | `struct` | A value type (e.g. `Vector3`); no identity, compared member-wise is NOT supported in v0 (use members). |
@@ -37,9 +37,15 @@ Every expression evaluates to one of:
 
 ### 1.2 Truth (three-valued logic)
 
-Predicates evaluate to `true`, `false` or `unknown`. As a predicate, a boolean is itself, `null` is
-`false`, and `missing`, `error` and every non-boolean value are `unknown`. Comparisons involving `missing`, `error`,
-or incomparable kinds yield `unknown`. Logic is Kleene:
+Predicates evaluate to `true`, `false` or `unknown`. A **predicate position** is the condition of `where`, the operands
+of `and` / `or` / `not`, the condition of `if` / `?:` and the predicate argument of `any` / `all` / `count` / `first`.
+There, a boolean is itself, `null` is `false`, and `missing`, `error` and `unknown` are `unknown` (a one-column row stands
+for its value, §3). **Any other value** (a number, string, enum, object, struct, list or map) is not a condition: there is
+no implicit truthiness, and evaluating it fails the query with a `type-mismatch` error naming the value and showing a
+boolean test, e.g. "condition must be a boolean, e.g. `sharedMaterial != null`" (otherwise `where sharedMaterial` would
+silently drop every item). A null value still reads as `false`, so `where Parent` keeps no item when every `Parent` is
+null; a branch or operand that is never evaluated (short-circuit, the untaken branch of `if`) is never checked.
+Comparisons involving `missing`, `error`, or incomparable kinds yield `unknown`. Logic is Kleene:
 `not unknown = unknown`, `false and unknown = false`, `true or unknown = true`, otherwise unknown.
 `where` keeps an item only when its predicate is `true`.
 
@@ -118,8 +124,11 @@ path; the same object reached by another query has another `$path`. Hosts expose
 * `==`/`=` and `!=`: numbers numerically; strings ordinal **case-sensitive**; bools; enums vs
   string (the entry the string resolves to by enum name resolution, §8; a string that resolves to no entry or to
   several is not equal) or number; objects by identity; `null == null` is `true`;
-  `null` vs non-null is `false` for `==` and `true` for `!=`. Lists/structs/maps: `unknown` — including a struct
-  against an object literal (§4.5), unless a type adapter's comparison answers (§13).
+  `null` vs non-null is `false` for `==` and `true` for `!=`. **Lists by value**: two lists are equal when they have the
+  same length and their elements are pairwise equal by these rules (`Tags == ["root", "red"]`; order matters); `false` as
+  soon as one pair is not equal, `unknown` when no pair differs but one is `unknown`. A list against a non-list, structs
+  and maps: `unknown` — including a struct against an object literal (§4.5), unless a type adapter's comparison answers
+  (§13). `in` / `contains` use the same equality, so `Tags in [["root"], []]` works.
 * `<`, `<=`, `>`, `>=`: numbers, strings (ordinal), enums (underlying value). Otherwise `unknown`.
 * `contains`, `starts-with`, `ends-with`: on strings — ordinal **case-insensitive** substring test.
   `contains` on a list — membership using `==`. Otherwise `unknown`.
@@ -151,7 +160,7 @@ modulo by zero → `error(div-by-zero)`. Other operand kinds → `error(type-mis
 | `abs(n)`, `round(n[, digits])`, `floor(n)`, `ceil(n)` | numeric. |
 | `sqrt(n)`, `pow(base, exponent)` | numeric (IEEE: `sqrt` of a negative number is NaN). |
 | `min(a, b, ...)`, `max(a, b, ...)` | the smallest / largest of two or more numbers (the `min` / `max` *stages* and *methods* aggregate a stream or a collection instead; with one argument the call is an `arity` error). |
-| `if(cond, then, else)` | `then` when `cond` is `true` as a predicate (§1.2), otherwise (`false`, `null`, unknown, an error value) `else`. **Lazy**: only the taken branch is evaluated, so it can guard an error (`if(Count > 0, Total / Count, 0)`). The text form `cond ? then : else` (lowest precedence, right-associative, §11) is the same function. |
+| `if(cond, then, else)` | `then` when `cond` is `true` as a predicate (§1.2), otherwise (`false`, `null`, unknown, an error value) `else`; any other `cond` value fails the query (§1.2). **Lazy**: only the taken branch is evaluated, so it can guard an error (`if(Count > 0, Total / Count, 0)`). The text form `cond ? then : else` (lowest precedence, right-associative, §11) is the same function. |
 | `ref(s, ...)` | root scope only: resolve object references. |
 | `append(list, v, ...)` | a new list: the elements of `list` followed by the values. |
 | `insert(list, i, v)` | a new list with `v` inserted before index `i` (negative `i` counts from the end, `-1` appends). |
@@ -241,10 +250,10 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
 | `count` | terminal: number of items. |
 | `get e` | replace each item by `e`; `list` results are flattened into separate items; `missing`/`null` dropped. |
 | `recurse [via...] [max-depth=N] [include-self=false]` | depth-first pre-order expansion of each item into **itself (depth 0) and** its descendants; `include-self=false` emits descendants only. With `via` members (e.g. `recurse Children`) only those members are followed; without, every **owning** object-valued member and list/map element of objects is followed (runtime member order). Members the descriptor marks as non-owning references (parent links, targets, shared assets) are not followed by generic recursion. Cycle-safe: each object identity is emitted at most once per stage. `max-depth` default 8, hard cap per budget. |
-| `distinct [e]` | keep the first item for each distinct value of `e` (default `$`; objects by identity; projected rows by their column values, so `select Tag \| distinct` keeps one row per tag; structs and other values by value). It keeps **items**, not the values of `e`: `distinct Tag` returns one whole item per tag; to list the values project first (`select Tag \| distinct`) or count them (`group-by Tag`). |
+| `distinct [e]` | keep the first item for each distinct value of `e` (default `$`; objects by identity; projected rows by their column values, so `select Tag \| distinct` keeps one row per tag; lists by their elements, like `==` (§4.1), so `distinct Tags` keeps one item per tag list; structs and other values by value). It keeps **items**, not the values of `e`: `distinct Tag` returns one whole item per tag; to list the values project first (`select Tag \| distinct`) or count them (`group-by Tag`). |
 | `sum/min/max/avg e` | terminal aggregate, same rules as the collection methods (`sum` of nothing → `0`). |
 | `group-by e` | replaces the stream by rows `{key, count}` (members `key`, `count`) in order of first appearance of the key; `null`/`missing` keys form one `null` group. Can be followed by `sort count desc`, `where count > 1`, etc. |
-| `group-by [n=]e, [n=]e ...` | several keys, or a named key: one row per distinct **combination** of key values, in order of first appearance, with one column per key — named like `select` columns (alias, or the key's source text: `group-by Folder, $type` → columns `Folder`, `$type`, `count`) — then `count`. Key values compare like `distinct`; `null`/`missing` values group as `null` per column. Keys are separated by commas or whitespace like `select` fields; computed keys need parentheses (`group-by Kind, big=(Mass > 10)`). Column names must be distinct (case-insensitive) and none may be `count` (`syntax-error` / `invalid-plan`). A single key without a name keeps the `{key, count}` form above. |
+| `group-by [n=]e, [n=]e ...` | several keys, or a named key: one row per distinct **combination** of key values, in order of first appearance, with one column per key — named like `select` columns (alias, or the key's source text: `group-by Folder, $type` → columns `Folder`, `$type`, `count`) — then `count`. Key values compare like `distinct` (lists by their elements: `group-by Tags` merges equal tag lists); `null`/`missing` values group as `null` per column. Keys are separated by commas or whitespace like `select` fields; computed keys need parentheses (`group-by Kind, big=(Mass > 10)`). Column names must be distinct (case-insensitive) and none may be `count` (`syntax-error` / `invalid-plan`). A single key without a name keeps the `{key, count}` form above. |
 | `describe` | terminal: schema of the distinct runtime types of the items (members, kinds, writability). |
 | `set p = e, ...` | mutation (§8). |
 | `call m(args)` | mutation: invoke an allowlisted method (§8). |
@@ -317,7 +326,9 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
 * **Empty through a typo**: when no item reaches the `set` / `call` stage, every `unknown-member` warning of a member
   read that was **tested on items and missed on all of them** becomes an `unknown-member` **error** (its message adds
   that nothing was changed), provided **no known type declares** the name — no type statically reachable from the
-  sources, no `select` / `group-by` column and nothing the host's known-member hook accepts:
+  sources (the types the sources have produced so far: a source that is null right now, such as an empty selection, keeps
+  the types it had, so runtimes MAY cache the names by those types), no `select` / `group-by` column and nothing the
+  host's known-member hook accepts:
   `objects | where name == "X" | get transfrom | set position = …` fails instead of reporting "0 changes". These stay
   warnings with an empty receipt: a name some known type declares, so a polymorphic stream whose items happen not to
   have the member (`components | where intensity > 1 | set …` with no light among them) is a legitimate empty change;
@@ -330,7 +341,9 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   are rejected with `invalid-plan` because a change to a copy would be lost.
 * Writing through value types requires every value-type parent member on the path to be writable and
   allowed by policy, since the modified copy is written back into it.
-* A request's `maxMutationTargets` may not exceed the host's hard ceiling (target limit, below).
+* A request's `maxMutationTargets` must be an integer from 1 to the host's hard ceiling (target limit, below). A value
+  outside that range (`0`, `1001` with the default ceiling) is refused with `invalid-value` before anything runs, naming
+  the limit argument (§10) and the range — never clamped, so a caller never believes it raised the limit when it did not.
 * `set p = e`: for each item, evaluate `e` against the item, coerce to the member type of `p`
   (number→integral only if integral and in range; string→enum by enum name resolution, below; null only for nullable /
   reference types; list literal → list/array type; object literal → map / constructed object, §4.5), then write. Writing through value types
@@ -481,9 +494,11 @@ for every tested item; the hint names where `T` objects are reachable).
 this is the main self-correction channel for agents.
 
 Hints never present a source or tool as available unless the host has it (syntax examples in parser hints use
-placeholder names). A host MAY name its **schema tool** (e.g.
-`rql-schema`); hints that point to the list of types say "list the types with rql-schema", otherwise "with the schema
-tool". A `call` of a method the targets do not have (`unknown-function`) lists the targets' callable methods and also
+placeholder names), and never name request options (`options.allowMutation`) the caller does not see. A host MAY name its
+**schema tool** (e.g. `rql-schema`); hints that point to the list of types say "list the types with rql-schema",
+otherwise "with the schema tool". A host MAY name its **mutation tool** (e.g. `rql-mutate`): a `set` / `call` sent without
+a mutation request is `permission-denied` "… requires a mutation request: run it with rql-mutate", otherwise "with the
+mutation tool". A `call` of a method the targets do not have (`unknown-function`) lists the targets' callable methods and also
 names every source whose value is a single object that has a callable method of that name
 (`objects | call CreateGameObject(…)` → "the source 'editor' has CreateGameObject: editor | call CreateGameObject(…)").
 
@@ -494,7 +509,13 @@ the transposition of two adjacent characters each cost 1, so `Lable` → `Label`
 the name's length, or when it contains the name (at least 3 characters), or when the name contains it and it is at
 least half as long as the name (`LabelText` → `Label`, but not `NoSuchType` → `Type`). Order: containment first, then
 distance, then ordinal name; at most 3 suggestions. When nothing qualifies, a hint MAY list the type's members, at most
-12 of them followed by `… (N more)`.
+12 of them followed by `… (N more)`, **ordered by distance to the name** (then ordinal), never in declaration order.
+**Mixed streams**: an `unknown-member` hint names the known types that do have the member (statically reachable types,
+least derived first, at most 3) and suggests filtering to them: "'light_energy' is a member of OmniLight3D: filter to
+those first, e.g. where $ is OmniLight3D (or where has(light_energy))". A `set` whose first target segment some targets
+lack while other targets have it fails with `unknown-member` naming how many targets lack it and the targets' types that
+have it ("only OmniLight3D has 'light_energy': filter first, e.g. … | where $ is OmniLight3D | set …"), and an unknown
+`call` method names the targets' types that have it likewise.
 Runtimes SHOULD also report `unknown-member` for a bare name that was never evaluated (short-circuit,
 empty stream, the untaken branch of `if`) when no type statically reachable from the sources declares it, no `select`
 alias produces it, no other read of the name found it and the host's known-member hook (§8) does not accept it.
@@ -517,6 +538,12 @@ To reduce agent errors the parser accepts, and canonicalizes away:
   `syntax-error` whose hint shows the form.
 * `x is null` / `x is not null` canonicalize to `==`/`!=` with a null literal; `x not in L` and
   `x is not T` to `not(...)`; a negated numeric literal folds into the literal.
+
+Comparisons do not chain: a comparison (`==`, `<`, …, `contains`, `starts-with`, `ends-with`, `matches`, `in`, `is`)
+followed by another comparison operator (`path contains "addons" == false`) is a `syntax-error` that says so and shows
+the fix (`not (path contains "addons")`). One query per call: when a syntax error falls on or after a line that starts a
+new query (a name, optionally a call, then `|`) after a non-blank line that does not end in `|`, the hint says "one query
+per call" and names the line.
 
 These never appear in canonical plans; plans only contain the core operators.
 
@@ -623,6 +650,14 @@ order (then by name), isolate failures (a failing module is reported, the others
 Modules may also contribute agent-facing *guides* (topic + markdown) that hosts render into their help or skill files.
 A module that lives in an optional package exists exactly when that package is installed, so enabling or disabling an
 engine feature (e.g. Unity's Particle System) enables or disables its adapters.
+
+**Type display names.** A host MAY give runtime types display names — the names its own API and documentation use
+(Godot's ClassDB `GPUParticles3D` for the C# class `GpuParticles3D`). The display name is the type's name everywhere a
+type is shown: `$type`, `$ref` (`GPUParticles3D#…`), `describe` and schemas (names, bases, member types), hints and
+suggestions. `x is T`, `ref("T#id")` and an object literal's `"$type"` accept both the display name and the runtime's own
+short name. .NET: `RqlEngine.TypeDisplayName` (type → name or null, cached per type); TypeScript and C++ name types at
+registration (`TypeSpec.name` plus the extra `is` names in `interfaces` / the `TypeRegistry` name plus
+`ClassBuilder::also_is`), which already gives both.
 
 **Scope.** Adapters belong to an engine (a host may run engines with different adapter sets over one type registry);
 engines without adapters behave exactly as without this section. An explicit-only member is also not searched by

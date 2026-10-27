@@ -7,7 +7,7 @@ import { errorMessage, type Exec } from './exec.js';
 import type { MutationRecord, TextCoercion } from './engine.js';
 import type { Item } from './pipeline.js';
 import { adapterName } from './adapters.js';
-import { closest, memberList } from './suggest.js';
+import { memberHint } from './suggest.js';
 import {
   EnumType,
   EnumValue,
@@ -199,7 +199,7 @@ export class Mutator {
 
   private checkPolicy(op: string): void {
     if (!this.x.engine.mutations.enabled) throw new RqlError('permission-denied', `'${op}' is not allowed: this host does not permit mutations`);
-    if (!this.x.options.allowMutation) throw new RqlError('permission-denied', `'${op}' requires a mutation request (use the mutate tool / options.allowMutation)`);
+    if (!this.x.options.allowMutation) throw new RqlError('permission-denied', `'${op}' requires a mutation request: run it with ${this.x.engine.mutateTool}`);
   }
 
   /** `$`, `$index`, `$path` and `$depth` in a set value / call argument are the target's (spec §8). */
@@ -295,7 +295,7 @@ export class Mutator {
       exact !== undefined
         ? `${matched} objects matched '${op}', more than the limit of ${limit}; nothing was changed`
         : `more than ${ceiling} objects matched '${op}' (the limit is ${limit}); nothing was changed`;
-    const argument = m.limitArgument || (this.x.budgetsAdjustable ? 'budgets.maxMutationTargets' : undefined);
+    const argument = this.x.limitArgument;
     return new RqlError('mutation-limit', message, undefined, m.limitHint?.(op, limit) || mutationLimitHint(op, limit, exact, argument, ceiling));
   }
 
@@ -360,11 +360,38 @@ export class Mutator {
 
   // ---------------------------------------------------------------- set
 
+  /**
+   * A set target member that some targets lack while others have it (a mixed stream): unknown-member naming the types that
+   * have it, so the agent filters to them (spec §10). All other cases are reported per target by slotOf.
+   */
+  private checkMixedTargets(targets: readonly Target[], paths: readonly PathExpr[]): void {
+    const x = this.x;
+    const objects = targets.map((t) => t.item.value as object).filter((v) => !(v instanceof MapEntry));
+    const types = [...new Set(objects.map((v) => x.types.infoOf(v)))].filter((i) => (i.kind === 'object' || i.kind === 'struct') && i.dynamic === undefined);
+    if (types.length < 2) return;
+    for (const p of paths) {
+      const seg = p.segments[0];
+      if (seg?.kind !== 'member') continue;
+      const name = seg.name;
+      const lacking = types.filter((i) => i.find(name) === undefined);
+      if (lacking.length === 0 || lacking.length === types.length) continue;
+      const having = [...new Set(types.filter((i) => i.find(name) !== undefined).map((i) => i.shortName))].slice(0, 3);
+      const n = objects.filter((v) => lacking.includes(x.types.infoOf(v))).length;
+      throw new RqlError(
+        'unknown-member',
+        `no member '${name}' on ${lacking.map((i) => i.shortName).slice(0, 4).join(', ')} (${n} of ${targets.length} targets); nothing was changed`,
+        undefined,
+        `only ${having.join(', ')} ${having.length === 1 ? 'has' : 'have'} '${name}': filter first, e.g. … | where $ is ${having[0]} | set …, or … | where has(${name}) | set …`,
+      );
+    }
+  }
+
   set(stream: Iterable<Item>, s: SetStage): QueryResult {
     const x = this.x;
     this.checkPolicy('set');
     const assigns = s.assign.map((a) => ({ target: a.target, value: this.c.compile(a.value), label: label(a.target) }));
     const targets = this.targets(stream, 'set');
+    this.checkMixedTargets(targets, s.assign.map((a) => a.target));
     const writes: PlannedWrite[] = [];
     for (const t of targets) {
       const it = t.item;
@@ -495,8 +522,7 @@ export class Mutator {
     const m = info.find(name, container);
     if (m === undefined) {
       const names = info.membersOf(container).map((mm) => mm.name);
-      const close = closest(name, names, 3);
-      throw new RqlError('unknown-member', `no member '${name}' on ${info.shortName}`, undefined, close.length > 0 ? `did you mean ${close.join(' / ')}?` : memberList(names));
+      throw new RqlError('unknown-member', `no member '${name}' on ${info.shortName}`, undefined, memberHint(name, names, this.x.engine.typesDeclaring(name, [info])));
     }
     return new MemberSlot(info, m);
   }
@@ -572,11 +598,18 @@ export class Mutator {
       if (candidates.length === 0) {
         const all = info.callable.map((m) => m.signature(x.types));
         const exists = hasMethod(item, wanted);
+        // In a mixed stream, name the targets' types that do have the method (filter to them first).
+        const having = [...new Set(targets.map((o) => x.types.infoOf(o.item.value as object)))]
+          .filter((o) => o.callable.some((m) => m.name.toUpperCase() === wanted))
+          .map((o) => o.shortName)
+          .slice(0, 3);
+        const filter = having.length > 0 ? `only ${having.join(', ')} ${having.length === 1 ? 'has' : 'have'} ${s.method}: filter first, e.g. … | where $ is ${having[0]} | call ${s.method}(…); ` : '';
         throw new RqlError(
           exists ? 'permission-denied' : 'unknown-function',
           `no callable method '${s.method}' on ${info.shortName}`,
           undefined,
-          (all.length > 0 ? 'callable: ' + all.join(', ') : `${info.shortName} has no callable methods`) +
+          filter +
+            (all.length > 0 ? 'callable: ' + all.join(', ') : `${info.shortName} has no callable methods`) +
             (exists ? '' : x.engine.sourcesWithCallable(s.method)),
         );
       }

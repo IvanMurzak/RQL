@@ -37,9 +37,38 @@ const STAGE_LIST = 'stages: where select sort first skip count get recurse disti
 
 /** Parses or throws {@link RqlError} (syntax-error / unknown-stage / invalid-plan). */
 export function parse(text: string): QueryPlan {
-  const plan = new Parser(text).parseQuery();
+  let plan: QueryPlan;
+  try {
+    plan = new Parser(text).parseQuery();
+  } catch (e) {
+    const line = e instanceof RqlError && e.code === 'syntax-error' ? secondQueryLine(text, e.at?.start ?? 0) : undefined;
+    if (line === undefined) throw e;
+    // Two queries pasted into one call: say so instead of only reporting the token where the second one began.
+    const err = e as RqlError;
+    const hint = `one query per call: line ${line} starts another query; run each query in its own call`;
+    throw new RqlError(err.code, err.message, err.at, err.hint === undefined ? hint : `${hint}; ${err.hint}`);
+  }
   validateStructure(plan);
   return plan;
+}
+
+const QUERY_START = /^\s*[A-Za-z_][\w.-]*\s*(\(.*\))?\s*\|/;
+
+/**
+ * The 1-based number of the first line, starting at or before `errorAt`, that starts a new query (a name, optionally a
+ * call, then '|') after a non-blank line that does not end in '|'; undefined when there is none.
+ */
+export function secondQueryLine(text: string, errorAt: number): number | undefined {
+  const lines = text.split('\n');
+  let offset = 0;
+  let prev: string | undefined;
+  for (let i = 0; i < lines.length && offset <= errorAt; i++) {
+    const line = lines[i]!;
+    if (prev !== undefined && !prev.trimEnd().endsWith('|') && QUERY_START.test(line)) return i + 1;
+    if (line.trim().length > 0) prev = line;
+    offset += line.length + 1;
+  }
+  return undefined;
 }
 
 export type ParseOutcome = { ok: true; plan: QueryPlan } | { ok: false; error: Diagnostic };
@@ -457,7 +486,28 @@ class Parser {
     return this.parseComparison();
   }
 
+  /** A comparison followed by another comparison operator: they do not chain (spec §11), so say how to write it. */
   private parseComparison(): Expr {
+    const start = this.peek().start;
+    const e = this.parseComparisonCore();
+    const t = this.peek();
+    if (this.isComparisonOperator(t)) {
+      const left = trimDotnet(this.text.slice(start, this.prevEnd));
+      throw this.error(
+        `unexpected ${describeToken(t)}: comparisons do not chain`,
+        t,
+        `contains / starts-with / ends-with / matches / in / is and == < > … take one operand on each side; to negate write not (${left}), to combine use and / or`,
+      );
+    }
+    return e;
+  }
+
+  private isComparisonOperator(t: Token): boolean {
+    if (t.kind === 'punct') return COMPARE_OPS.has(t.text);
+    return t.kind === 'ident' && (WORD_OPS.has(t.text.toLowerCase()) || isWord(t, 'is') || isWord(t, 'in') || (isWord(t, 'not') && isWord(this.peek(1), 'in')));
+  }
+
+  private parseComparisonCore(): Expr {
     const start = this.peek().start;
     const left = this.parseAdditive();
     const t = this.peek();

@@ -149,6 +149,12 @@ public:
     QueryOptions options;
     const QueryPlan& plan;
     int max_visited, max_rows, max_list_items, max_depth, timeout_ms, max_output_bytes, max_mutation_targets;
+    /// The request's own target limit, when it set one.
+    std::optional<int> requested_max_targets;
+    /// The name under which callers raise the target limit (spec §10), or empty when they cannot.
+    std::string limit_argument() const;
+    /// A request target limit outside 1 ... the host ceiling is refused, never clamped (spec §8).
+    void check_target_limit() const;
     bool track_paths = false;
 
     // evaluation scope
@@ -241,6 +247,14 @@ using Eval = std::function<Value(Exec&)>;
 
 // ---------------------------------------------------------------- value semantics (compiler.cpp)
 
+/// The text of a plain relative path (Renderer.sharedMaterial, Tags[0]), or empty for other expressions.
+std::string path_text(const Expr& e);
+/// The hint of an unknown member (spec §10): the known types that have it, then the closest names, else the members
+/// ranked by similarity to the name.
+std::string member_hint(const std::string& name, const std::vector<std::string>& members, const std::vector<std::string>& declaring);
+/// Names of the known object types (reachable from the sources) that have a member of this name, at most max, base types
+/// before their subclasses; types in `except` are skipped (pipeline.cpp).
+std::vector<std::string> types_declaring(Exec& x, const std::string& member, const std::vector<const TypeDescriptor*>& except, size_t max = 3);
 /// Kleene truth: bool → value, null → false, otherwise unknown (nullopt).
 std::optional<bool> truth(const Value& v);
 Value tri(std::optional<bool> b);
@@ -271,6 +285,8 @@ class Compiler {
 public:
     explicit Compiler(Exec& x) : x_(x) {}
     Eval compile(const Expr& e);
+    /// An expression in a predicate position (spec §1.2): a value that is not a boolean, null or absent fails the query.
+    Eval compile_condition(const Expr& e);
 
 private:
     Exec& x_;

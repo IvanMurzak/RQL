@@ -21,14 +21,14 @@ import {
   type SortStage,
   type Stage,
 } from '@rql/contracts';
-import { mapEntries, type MapLike } from './collections.js';
+import { elements, mapEntries, type MapLike } from './collections.js';
 import { Compiler, compare, reduce, toText, type Eval } from './compiler.js';
 import { describeRun, reachableTypes } from './describe.js';
 import { Encoder } from './encoder.js';
 import type { ArgEvaluator, SourceRegistration } from './engine.js';
 import { PathNode, type Exec } from './exec.js';
 import { Mutator } from './mutator.js';
-import { closest, memberList } from './suggest.js';
+import { closest, memberHint } from './suggest.js';
 import { EnumType, EnumValue, unwrapNullable, type TypeInfo } from './types.js';
 import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, isAbsent, originOf, streamedEntry, toNumber, type EntryOrigin } from './values.js';
 
@@ -137,7 +137,7 @@ export class Pipeline {
       const typeNames = [...new Set(types.map((t) => t.shortName))].slice(0, 4).join(', ');
       const candidates = [...new Set(types.flatMap((t) => t.members.map((m) => m.name)))];
       const close = closest(site.name, candidates, 3);
-      let hint = close.length > 0 ? `did you mean ${close.join(' / ')}?` : candidates.length > 0 ? memberList(candidates) : '';
+      let hint = memberHint(site.name, candidates, x.engine.typesDeclaring(site.name, types));
       if (close.length === 0 && /^\p{Lu}/u.test(site.name)) {
         hint += (hint.length > 0 ? '; ' : '') + `if '${site.name}' is a value, quote it: "${site.name}"`;
       }
@@ -223,6 +223,7 @@ export class Pipeline {
   private runCore(): QueryResult {
     const x = this.x;
     const plan = x.plan;
+    x.checkTargetLimit();
     const last = plan.stages[plan.stages.length - 1];
     if (x.options.allowMutation && last?.kind !== 'set' && last?.kind !== 'call') {
       throw new RqlError(
@@ -377,7 +378,7 @@ export class Pipeline {
   private apply(input: Iterable<Item>, st: Stage): Iterable<Item> {
     switch (st.kind) {
       case 'where':
-        return this.where(input, this.c.compile(st.pred));
+        return this.where(input, this.c.compileCondition(st.pred));
       case 'select':
         return this.select(input, st);
       case 'group-by':
@@ -801,6 +802,8 @@ export function distinctKey(x: Exec, v: unknown): unknown {
   }
   if (typeof v === 'object') {
     const info = x.types.infoOf(v);
+    // Lists by their elements (spec §5): `group-by Tags` merges equal tag lists.
+    if (info.isList) return `l:[${[...elements(v, info)].map((e) => keyPart(x, x.live(e ?? null))).join(',')}]`;
     if (info.kind === 'struct') {
       return `v:${JSON.stringify(info.shortName)}(${info.implicitMembersOf(v).map((m) => keyPart(x, m.get(v))).join(',')})`;
     }

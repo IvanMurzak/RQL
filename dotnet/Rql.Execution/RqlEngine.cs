@@ -168,7 +168,7 @@ namespace Rql.Execution
             if (excluded == null) throw new ArgumentNullException(nameof(excluded));
             if (ReferenceEquals(Types, TypeModel.Shared)) Types = new TypeModel(Types.Mode);
             Types.ExcludeTypes(excluded);
-            _knownMembers = null;
+            InvalidateKnownMembers();
             return this;
         }
 
@@ -209,7 +209,7 @@ namespace Rql.Execution
             if (adapter == null) throw new ArgumentNullException(nameof(adapter));
             if (ReferenceEquals(Types, TypeModel.Shared)) Types = new TypeModel(Types.Mode);
             Types.AddAdapter(adapter);
-            _knownMembers = null;
+            InvalidateKnownMembers();
             return this;
         }
 
@@ -244,6 +244,23 @@ namespace Rql.Execution
             }
         }
 
+        /// <summary>
+        /// The host's display name of a type (spec §13 type display names), e.g. Godot's ClassDB name <c>GPUParticles3D</c> for
+        /// the C# class <c>GpuParticles3D</c>; null (or empty) keeps the short CLR name. The display name is what <c>$type</c>,
+        /// <c>$ref</c>, <c>describe</c>, schemas and hints show; <c>is T</c>, <c>ref("T#id")</c> and object-literal <c>$type</c>
+        /// accept both names. Called once per type and cached: set it before queries run (setting it again clears the cache).
+        /// </summary>
+        public Func<Type, string?>? TypeDisplayName
+        {
+            get => Types.TypeDisplayName;
+            set
+            {
+                if (ReferenceEquals(Types, TypeModel.Shared)) Types = new TypeModel(Types.Mode);
+                Types.TypeDisplayName = value;
+                InvalidateKnownMembers();
+            }
+        }
+
         /// <summary>Resolve "Type#id" (type short name, id string). Null result = not found. When unset, sources are searched.</summary>
         public Func<string, string, object?>? ResolveStableRef { get; set; }
 
@@ -261,28 +278,84 @@ namespace Rql.Execution
         {
             ValidateName(name, allowDots: true);
             _sources[name] = new SourceRegistration(name, getter, description);
-            _knownMembers = null;
+            lock (_sourceTypes) _sourceTypes.Remove(name);
+            InvalidateKnownMembers();
             return this;
         }
 
         private HashSet<string>? _knownMembers;
 
-        /// <summary>Every member name of every type statically reachable from the sources (case-insensitive), cached.</summary>
+        // Every type each source has produced so far (by source name). Known names come from these types, not from the
+        // current values: a source that is null right now (no selection, no open prefab) keeps the types it had, and the
+        // reachability walk reruns only when a source shows a new type (spec §8 known names).
+        private readonly Dictionary<string, HashSet<Type>> _sourceTypes = new Dictionary<string, HashSet<Type>>(StringComparer.Ordinal);
+        private int _knownVersion;
+
+        private void InvalidateKnownMembers()
+        {
+            lock (_sourceTypes) { _knownMembers = null; _knownVersion++; }
+        }
+
+        /// <summary>Records the type of a source's value (queries call it as they read a source); a new type clears the known names.</summary>
+        internal void NoteSourceType(string source, object? value)
+        {
+            if (value == null) return;
+            var t = value.GetType();
+            lock (_sourceTypes)
+            {
+                if (!_sourceTypes.TryGetValue(source, out var types)) _sourceTypes[source] = types = new HashSet<Type>();
+                if (types.Add(t)) InvalidateKnownMembers();
+            }
+        }
+
+        /// <summary>
+        /// Every member name of every type statically reachable from the types the sources have produced (case-insensitive),
+        /// cached by those types. Only sources that never produced a value are read again.
+        /// </summary>
         internal HashSet<string> KnownMemberNames()
         {
-            var known = _knownMembers;
-            if (known != null) return known;
-            known = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "key", "value", "count", "Count", "Length" };
-            var roots = new List<Type>();
-            bool complete = true; // a source that is null or throws now may have a type later: do not cache without it
             foreach (var s in _sources.Values)
             {
-                try { var v = s.Getter(); if (v != null) roots.Add(v.GetType()); else complete = false; } catch { complete = false; }
+                bool seen;
+                lock (_sourceTypes) seen = _sourceTypes.ContainsKey(s.Name);
+                if (seen) continue;
+                try { NoteSourceType(s.Name, s.Getter()); } catch { /* no type yet */ }
             }
-            foreach (var t in Describe.Reachable(Types, roots, 1000))
+            var known = _knownMembers;
+            if (known != null) return known;
+            List<Type> roots;
+            int version;
+            lock (_sourceTypes)
+            {
+                version = _knownVersion;
+                roots = _sourceTypes.Where(kv => _sources.ContainsKey(kv.Key)).SelectMany(kv => kv.Value).Distinct().ToList();
+            }
+            known = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "key", "value", "count", "Count", "Length" };
+            var reachable = Describe.Reachable(Types, roots, 1000);
+            foreach (var t in reachable)
                 foreach (var m in Types.Info(t).Members) known.Add(m.Name);
-            if (complete) _knownMembers = known;
+            lock (_sourceTypes)
+                if (version == _knownVersion) _knownMembers = known; // something changed meanwhile: the next call walks again
+            _knownTypes = reachable;
             return known;
+        }
+
+        private List<Type>? _knownTypes;
+
+        /// <summary>
+        /// Names of the known object types (statically reachable from what the sources produced) that have a member of this name,
+        /// at most <paramref name="max"/>, base types before their subclasses — for hints that suggest filtering a mixed stream
+        /// (spec §10). Types in <paramref name="except"/> are skipped.
+        /// </summary>
+        internal List<string> TypesDeclaring(string member, IEnumerable<TypeInfo>? except = null, int max = 3)
+        {
+            KnownMemberNames();
+            var types = _knownTypes ?? new List<Type>();
+            var skip = new HashSet<TypeInfo>(except ?? Array.Empty<TypeInfo>());
+            var hits = types.Select(t => Types.Info(t)).Where(i => i.IsObject || i.IsStruct).Where(i => !skip.Contains(i) && i.Find(member) != null).ToList();
+            // A base type that has the member covers its subclasses: name the declaring (least derived) types.
+            var names = hits.Where(i => !hits.Any(o => o != i && i.Type.IsSubclassOf(o.Type))).Select(i => i.ShortName).Distinct().Take(max).ToList();
+            return names;
         }
 
         /// <summary>Register a namespaced host function (<c>ns.fn(args)</c>); it may also start a query (spec §2).</summary>
@@ -526,6 +599,14 @@ namespace Rql.Execution
         internal string SchemaTool => string.IsNullOrEmpty(SchemaHint) ? "the schema tool" : SchemaHint!;
 
         /// <summary>
+        /// How callers run a mutation on this host, e.g. <c>rql-mutate</c> (a tool name); the permission-denied hint of a
+        /// <c>set</c> / <c>call</c> sent as a plain query names it (spec §10). Null: "the mutation tool".
+        /// </summary>
+        public string? MutateHint { get; set; }
+
+        internal string MutateTool => string.IsNullOrEmpty(MutateHint) ? "the mutation tool" : MutateHint!;
+
+        /// <summary>
         /// Whether some type the host knows has a member of this name (case-insensitive), beyond the types statically reachable from
         /// the sources, e.g. every component type of an engine. A name known here is never reported as a certain typo: neither by
         /// the static unknown-member check nor as the cause of an empty mutation (spec §8). Null: only the reachable types count.
@@ -694,8 +775,29 @@ namespace Rql.Execution
             MaxDepth = budgets.MaxDepth ?? d.MaxDepth;
             TimeoutMs = Math.Min(budgets.TimeoutMs ?? d.TimeoutMs, d.HardTimeoutMs);
             MaxOutputBytes = budgets.MaxOutputBytes ?? d.MaxOutputBytes;
-            // Requests may change the per-request limit, but never beyond the host's hard ceiling.
+            // Requests may change the per-request limit, but never beyond the host's hard ceiling (an out-of-range request is
+            // refused by the pipeline before anything runs, spec §8).
+            RequestedMaxTargets = budgets.MaxMutationTargets;
             MaxMutationTargets = Math.Min(budgets.MaxMutationTargets ?? engine.Mutations.MaxTargets, engine.Mutations.HardMaxTargets);
+        }
+
+        /// <summary>The request's own target limit, when it set one.</summary>
+        public int? RequestedMaxTargets { get; }
+
+        /// <summary>The name under which callers raise the target limit (spec §10), or null when they cannot.</summary>
+        public string? LimitArgument =>
+            !string.IsNullOrEmpty(Engine.Mutations.LimitArgument) ? Engine.Mutations.LimitArgument : BudgetsAdjustable ? "budgets.maxMutationTargets" : null;
+
+        /// <summary>A request target limit outside 1 … the host ceiling is refused, never clamped (spec §8).</summary>
+        public void CheckTargetLimit()
+        {
+            if (!(RequestedMaxTargets is int n)) return;
+            int ceiling = Engine.Mutations.HardMaxTargets;
+            if (n >= 1 && n <= ceiling) return;
+            var name = LimitArgument ?? "the target limit";
+            throw new RqlException("invalid-value", $"{name} must be from 1 to {ceiling} (the host ceiling), got {n}; nothing was run", null,
+                $"omit it for the host default of {Engine.Mutations.MaxTargets}, pass at most {ceiling}, or split a larger change into batches "
+                + $"(… | first {ceiling} | set …, then … | skip {ceiling} | first {ceiling} | set …)");
         }
 
         public RqlEngine Engine { get; }

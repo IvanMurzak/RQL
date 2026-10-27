@@ -365,7 +365,7 @@ void engine_tests() {
     r = run(e, R"({"rql":"0.1","source":{"path":["h"]},"stages":[{"op":"demo.boom"}]})");
     check(!r.ok && first_code(r) == "internal-error", "throwing extension → internal-error");
 
-    // request maxMutationTargets is capped by the host ceiling
+    // a request maxMutationTargets above the host ceiling is refused, never clamped (spec §8)
     e.mutations().hard_max_targets = 2;
     {
         rql::Budgets mb;
@@ -373,7 +373,8 @@ void engine_tests() {
         rql::QueryOptions mo;
         mo.allow_mutation = true;
         r = e.execute_json(R"({"rql":"0.1","source":{"path":["h","Counters"]},"stages":[{"op":"set","assign":[{"target":{"path":["Count"]},"value":{"lit":1}}]}]})", mb, mo);
-        check(!r.ok && first_code(r) == "mutation-limit", "hard_max_targets caps request budget");
+        check(!r.ok && first_code(r) == "invalid-value" && r.diagnostics[0].message.find("must be from 1 to 2") != std::string::npos,
+              "hard_max_targets refuses a larger request budget");
     }
     e.mutations().hard_max_targets = 1000;
 
@@ -1317,8 +1318,9 @@ void port_tests() {
     r = run(e, R"J({"rql":"0.1","source":{"path":["w","Wide"]},"stages":[{"op":"select","fields":[{"name":"x","expr":{"path":["Qqqq"]}}]}]})J");
     {
         std::string h = hint_of(r, "unknown-member");
-        check(r.ok && h.find("members: Id m0 ") == 0 && h.find("m10 \xE2\x80\xA6 (4 more)") != std::string::npos && h.find("m11") == std::string::npos,
-              "suggest: member list capped at 12 names + … (N more)");
+        // Ranked by similarity to the name (all equally far here), then ordinal; capped at 12.
+        check(r.ok && h.find("members: Id m0 m1 m10 m11 m12 m13 m14 m2 m3 m4 m5 \xE2\x80\xA6 (4 more)") == 0,
+              "suggest: member list capped at 12 names + … (N more), by similarity");
     }
 
     // a dotted path names a projected column of that name
@@ -1665,6 +1667,84 @@ void wave3b_tests() {
     check(lazy.ok && (*lazy.rows)[0][0].as_string() == "X", "if() is lazy");
 }
 
+struct W4Item {
+    std::string Name;
+    float Weight = 0;
+};
+struct W4Bag {
+    std::vector<std::shared_ptr<W4Item>> Items;
+};
+
+void wave4_tests() {
+    auto has = [](const std::string& s, const std::string& part) { return s.find(part) != std::string::npos; };
+    // Float members widen to the shortest decimal: arithmetic and aggregates show 4.2, not 4.19999980926514.
+    check(rql::widen_single(4.2f) == 4.2 && rql::widen_single(0.1f) == 0.1 && rql::widen_single(1.5707964f) == 1.5707964 &&
+              rql::widen_single(1e-30f) == 1e-30 && rql::widen_single(123456.79f) == 123456.79 && rql::widen_single(-2.5f) == -2.5 &&
+              static_cast<float>(rql::widen_single(3.14159274f)) == 3.14159274f,
+          "widen_single: shortest round-trip decimal");
+    rql::TypeRegistry reg;
+    reg.object<W4Item>("W4Item").member("Name", &W4Item::Name).member("Weight", &W4Item::Weight);
+    reg.object<W4Bag>("W4Bag").member("Items", &W4Bag::Items);
+    W4Bag bag;
+    for (float w : {1.0f, 4.2f}) {
+        auto it = std::make_shared<W4Item>();
+        it->Name = "i";
+        it->Weight = w;
+        bag.Items.push_back(it);
+    }
+    rql::Engine e(reg);
+    e.add_object_source("bag", &bag);
+    e.mutations().enabled = true;
+    auto avg = arun(e, R"J({"rql":"0.1","source":{"path":["bag","Items"]},"stages":[{"op":"avg","expr":{"path":["Weight"]}}]})J");
+    auto sum = arun(e, R"J({"rql":"0.1","source":{"path":["bag","Items"]},"stages":[{"op":"sum","expr":{"path":["Weight"]}}]})J");
+    auto mul = arun(e, R"J({"rql":"0.1","source":{"path":["bag","Items"]},"stages":[{"op":"select","fields":[{"name":"w","expr":{"op":"*","args":[{"path":["Weight"]},{"lit":1}]}}]}]})J");
+    check(avg.ok && avg.value.as_number() == 2.6 && sum.value.as_number() == 5.2 && mul.ok &&
+              (*mul.rows)[1][0].as_number() == 4.2,
+          "float arithmetic and aggregates use the shortest decimal");
+    // A non-boolean condition fails with a boolean test to write instead (spec §1.2).
+    auto cond = arun(e, R"J({"rql":"0.1","source":{"path":["bag","Items"]},"stages":[{"op":"where","pred":{"path":["Weight"]}}]})J");
+    check(!cond.ok && first_code(cond) == "type-mismatch" && has(cond.diagnostics[0].message, "the condition 'Weight' is the number 1") &&
+              has(cond.diagnostics[0].hint, "a condition must be a boolean, e.g. Weight != 0"),
+          "non-boolean condition: type-mismatch with a hint");
+    auto obj = arun(e, R"J({"rql":"0.1","source":{"path":["bag"]},"stages":[{"op":"select","fields":[{"name":"c","expr":{"call":"if","args":[{"path":["Items"]},{"lit":1},{"lit":0}]}}]}]})J");
+    check(!obj.ok && first_code(obj) == "type-mismatch" && has(obj.diagnostics[0].hint, "len(Items) > 0"), "non-boolean if() condition fails");
+    // The target limit outside 1 ... ceiling is refused; the host names its argument.
+    e.mutations().limit_argument = "max_targets";
+    for (int n : {0, 1001}) {
+        rql::Budgets b;
+        b.max_mutation_targets = n;
+        rql::QueryOptions o;
+        o.allow_mutation = true;
+        auto r = e.execute_json(R"J({"rql":"0.1","source":{"path":["bag","Items"]},"stages":[{"op":"set","assign":[{"target":{"path":["Name"]},"value":{"lit":"x"}}]}]})J", b, o);
+        check(!r.ok && first_code(r) == "invalid-value" &&
+                  has(r.diagnostics[0].message, "max_targets must be from 1 to 1000 (the host ceiling), got " + std::to_string(n)) &&
+                  bag.Items[0]->Name == "i",
+              "target limit " + std::to_string(n) + " refused");
+    }
+    // permission-denied names the host's mutation tool, never options.allowMutation.
+    const std::string set_plan = R"J({"rql":"0.1","source":{"path":["bag","Items"]},"stages":[{"op":"set","assign":[{"target":{"path":["Name"]},"value":{"lit":"x"}}]}]})J";
+    auto denied = arun(e, set_plan);
+    check(first_code(denied) == "permission-denied" && has(denied.diagnostics[0].message, "run it with the mutation tool") &&
+              !has(denied.diagnostics[0].message, "allowMutation"),
+          "permission-denied: neutral mutation tool");
+    e.mutate_hint = "rql-mutate";
+    check(has(arun(e, set_plan).diagnostics[0].message, "run it with rql-mutate"), "permission-denied: host mutation tool");
+    // A set on a mixed stream names the types that have the member.
+    rql::TypeRegistry greg;
+    conformance::register_types(greg);
+    auto g = conformance::load_graph(repo_root + "/fixtures/cross-runtime/graph.json");
+    rql::Engine ge(greg);
+    ge.add_object_source("g", g.get());
+    ge.mutations().enabled = true;
+    auto mixed = arun(ge, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"recurse","via":[{"path":["Children"]}]},{"op":"set","assign":[{"target":{"path":["Power"]},"value":{"lit":1}}]}]})J", true);
+    check(!mixed.ok && first_code(mixed) == "unknown-member" && has(mixed.diagnostics[0].message, "(6 of 8 targets)") &&
+              has(mixed.diagnostics[0].hint, "only Special has 'Power'") && has(mixed.diagnostics[0].hint, "where $ is Special"),
+          "mixed-stream set names the types that have the member");
+    // Lists compare by value; group-by merges equal list keys.
+    auto lists = arun(ge, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"group-by","expr":{"list":[{"lit":1},{"lit":2}]}}]})J");
+    check(lists.ok && lists.rows && lists.rows->size() == 1, "group-by a literal list: one group");
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) repo_root = argv[1];
     try {
@@ -1676,6 +1756,7 @@ int main(int argc, char** argv) {
         wave2_tests();
         wave3_tests();
         wave3b_tests();
+        wave4_tests();
     } catch (const std::exception& ex) {
         std::cout << "FATAL " << ex.what() << "\n";
         return 2;
