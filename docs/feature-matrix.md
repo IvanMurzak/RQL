@@ -1,7 +1,7 @@
 # Feature matrix
 
-Conformance status (latest local run): **.NET 807/807** golden checks (compiled and reflection
-accessors) · **TypeScript 807/807** · **C++ 609 passed, 49 skipped** (text-only cases; no parser
+Conformance status (latest local run): **.NET 819/819** golden checks (compiled and reflection
+accessors) · **TypeScript 819/819** · **C++ 621 passed, 49 skipped** (text-only cases; no parser
 by design, ADR-0003). Details: [TypeScript](feature-matrix-typescript.md), [C++](feature-matrix-cpp.md).
 
 | Feature | .NET | TS | C++ |
@@ -35,4 +35,5 @@ by design, ADR-0003). Details: [TypeScript](feature-matrix-typescript.md), [C++]
 | Wave-3 (unreleased): enum name resolution (`Type::Name` / `Type.Name` qualifiers, case-insensitive, entry prefix `HAlign_`, ambiguity refused, host aliases) in writes, map keys and comparisons; target limit: matched count in `mutation-limit`, raise-first hint, host `LimitArgument` independent of `BudgetsAdjustable` (C++ manifest: `mutations.hardMaxTargets`) | ✅ (`RqlEngine.EnumAliases`) | ✅ (`EnumType` `aliases`; gap: a string key read from a map whose keys are raw enum values is not resolved, the read path does not know the declared key type) | ✅ (`EnumBuilder::alias`, `TypeDescriptor::enum_aliases`; ASCII case folding) |
 | Wave-3b (unreleased): `if(cond, then, else)` / `cond ? then : else` (lazy); a `set` / `call` emptied by a member no known type declares is an `unknown-member` error, host known-member hook; host schema-tool name in hints; `unknown-source` example from the registered sources; unknown `call` hint names sources that have the method | ✅ (`IsKnownMember`, `SchemaHint`) | ✅ (`isKnownMember`, `schemaHint`) | ✅ (`is_known_member`, `schema_hint`; `?:` is text syntax: plans carry `if`) |
 | Wave-4 (unreleased): a non-boolean condition is a `type-mismatch` error with a boolean-test hint (no implicit truthiness; null stays false); float members widen to their shortest decimal in arithmetic / aggregates; lists compare by value (`==`, `in`, `distinct`, `group-by` keys); a request target limit outside 1 … ceiling is `invalid-value`; host mutation-tool name in `permission-denied`; mixed-stream `unknown-member` hints (types that have the member, `where $ is T`), member lists ranked by similarity; host type display names; parser hints: comparisons do not chain, one query per call; known member names cached by the types sources produced | ✅ (`MutateHint`, `TypeDisplayName`) | ✅ (`mutateHint`; display names via `TypeSpec.name` + `interfaces`; floats n/a: JS numbers are doubles) | ✅ (`mutate_hint`; display names via the registry name + `also_is`; text-only parser hints n/a: no parser) |
+| Wave-4 features (unreleased): group rows have `items` (per-group aggregates `items.avg(…)`); `set` receipts omit no-op assignments and count them in `unchanged`; public adapter list | ✅ (`RqlEngine.Adapters`) | ✅ (`engine.adapters`) | ✅ (`Engine::adapters()`) |
 | AOT-safe accessor mode | ✅ `AccessorMode.Reflection` | n/a | n/a |

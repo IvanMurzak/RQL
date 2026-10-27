@@ -45,6 +45,8 @@ export class MemberSite {
   readonly missTypes = new Set<TypeInfo>();
   /** Columns of the first projected row that lacked the member. */
   rowColumns: readonly string[] | undefined;
+  /** The rows that lacked the member were group-by rows (hint: aggregate their items). */
+  groupRows = false;
   cachedInfo: TypeInfo | undefined;
   cachedMember: MemberAccessor | undefined;
 

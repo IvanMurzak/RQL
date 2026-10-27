@@ -23,6 +23,8 @@ namespace Rql.Tests
 
         private static readonly QueryOptions Mutate = new QueryOptions { AllowMutation = true };
 
+        private sealed class ItemAdapter : RqlTypeAdapter<Item> { }
+
         private static RqlEngine Engine(IEnumerable<object> items)
         {
             var list = items.ToList();
@@ -231,6 +233,64 @@ namespace Rql.Tests
             var e = new RqlEngine().AddSource("items", () => items).AddSource("lights", () => new List<OmniLight3D>());
             var d = e.Execute("items | where Energy > 1").Diagnostics.First(x => x.Code == "unknown-member");
             Assert.Contains("'Energy' is a member of OmniLight3D", d.Hint);
+        }
+
+        // ------------------------------------------------------------ #12 group items, #14 no-op receipts, adapter list
+
+        [Fact]
+        public void GroupRowsAggregateTheirItems()
+        {
+            var e = Engine(new object[] { new Item { Name = "a", Weight = 1f }, new Item { Name = "a", Weight = 4.2f }, new Item { Name = "b", Weight = 2f } });
+            var r = e.Execute("items | group-by Name | select key, count, avg = items.avg(Weight)");
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal(2.6, r.Rows![0][2]!.GetValue<double>());
+            var miss = e.Execute("items | group-by Name | select key, avg = Weight").Diagnostics.First(d => d.Code == "unknown-member");
+            Assert.Contains("items.avg(Weight)", miss.Hint);
+        }
+
+        [Fact]
+        public void NoOpAssignmentsAreCountedNotListed()
+        {
+            var items = new List<object> { new Item { Name = "a" }, new Item { Name = "b" } };
+            var e = Engine(items);
+            var r = e.Execute("items | set Name = \"a\"", options: Mutate);
+            Assert.True(r.Ok);
+            Assert.Single(r.Rows!);
+            Assert.Equal(1, r.Unchanged);
+            Assert.Contains("\"unchanged\":1", r.ToJson(includeStats: false));
+            Assert.Contains("(1 unchanged assignment(s) not listed)", AgentFormat.Render(r, OutputFormat.Table));
+        }
+
+        public sealed class Stubborn
+        {
+            private string _tag = "Untagged";
+            public string Name { get; set; } = "s";
+            public string Tag { get => _tag; set { if (value == "Untagged" || value == "Hero") _tag = value; } }
+        }
+
+        [Fact]
+        public void AWriteTheHostRefusedStaysInTheReceipt()
+        {
+            var s = new Stubborn();
+            var e = new RqlEngine().AddSource("s", () => s);
+            e.Mutations.Enabled = true;
+            var r = e.Execute("s | set Tag = \"Typo\"", options: Mutate);
+            Assert.Single(r.Rows!);
+            Assert.Null(r.Unchanged);
+            Assert.Equal("Untagged", r.Rows![0][3]!.GetValue<string>());
+            Assert.Equal(1, e.Execute("s | set Tag = \"Untagged\"", options: Mutate).Unchanged);
+            Assert.False(e.Execute("s | where itmes.count() > 0 | set Name = \"x\"", options: Mutate).Ok);
+            Assert.False(e.Execute("s | where items.count() > 0 | set Name = \"x\"", options: Mutate).Ok); // items is a member name only on group rows
+        }
+
+        [Fact]
+        public void EngineListsItsAdapters()
+        {
+            var e = new RqlEngine();
+            Assert.Empty(e.Adapters);
+            var a = new ItemAdapter();
+            e.AddAdapter(a);
+            Assert.Same(a, Assert.Single(e.Adapters));
         }
 
         // ------------------------------------------------------------ #13 / #17 parser hints

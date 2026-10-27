@@ -1742,6 +1742,15 @@ void wave4_tests() {
     check(!mixed.ok && first_code(mixed) == "unknown-member" && has(mixed.diagnostics[0].message, "(6 of 8 targets)") &&
               has(mixed.diagnostics[0].hint, "only Special has 'Power'") && has(mixed.diagnostics[0].hint, "where $ is Special"),
           "mixed-stream set names the types that have the member");
+    // The engine lists its adapters in registration order.
+    {
+        rql::TypeAdapter ad;
+        ad.name = "W4Adapter";
+        ad.target = reg.descriptor<W4Item>();
+        check(e.adapters().empty(), "adapters(): empty");
+        e.add_adapter(std::move(ad));
+        check(e.adapters().size() == 1 && e.adapters()[0]->name == "W4Adapter", "adapters(): registered adapter listed");
+    }
     // Lists compare by value; group-by merges equal list keys.
     auto lists = arun(ge, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"group-by","expr":{"list":[{"lit":1},{"lit":2}]}}]})J");
     check(lists.ok && lists.rows && lists.rows->size() == 1, "group-by a literal list: one group");

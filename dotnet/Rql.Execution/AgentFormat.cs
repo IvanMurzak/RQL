@@ -38,7 +38,8 @@ namespace Rql.Execution
                     sb.Append(Cell(r.Value));
                     break;
                 case ResultKind.Rows:
-                    Header(sb, r, r.Rows!.Count, r.DryRun ? "DRY RUN — nothing changed; " : "");
+                    Header(sb, r, r.Rows!.Count, r.DryRun ? "DRY RUN — nothing changed; " : "",
+                        r.Unchanged > 0 ? $" ({r.Unchanged} unchanged assignment(s) not listed)" : "");
                     sb.Append(string.Join("|", r.Columns!)).Append('\n');
                     foreach (var row in r.Rows!) sb.Append(string.Join("|", row.Select(Cell))).Append('\n');
                     foreach (var e in r.CellErrors) sb.Append("note: error cell ").Append(e).Append('\n');
@@ -54,13 +55,13 @@ namespace Rql.Execution
             return sb.ToString().TrimEnd();
         }
 
-        private static void Header(StringBuilder sb, QueryResult r, int shown, string prefix)
+        private static void Header(StringBuilder sb, QueryResult r, int shown, string prefix, string suffix = "")
         {
             long total = r.Total ?? shown;
             sb.Append(prefix);
             if (r.Truncated) sb.Append(shown).Append(" of ").Append(total).Append(" (truncated; page with skip N | first M, or count)");
             else sb.Append(total).Append(total == 1 ? " result" : " results");
-            sb.Append('\n');
+            sb.Append(suffix).Append('\n');
         }
 
         /// <summary>One value as compact text: strings raw (quoted only when ambiguous), objects "Type#id(Name)".</summary>

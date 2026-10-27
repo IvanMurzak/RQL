@@ -127,7 +127,7 @@ export class Pipeline {
             'warning',
             'unknown-member',
             `no column '${site.name}' in the projected rows (columns: ${site.rowColumns.join(', ')})`,
-            ROW_COLUMN_HINT,
+            site.groupRows ? groupRowHint(site.name) : ROW_COLUMN_HINT,
             site.span,
           ),
         );
@@ -163,7 +163,7 @@ export class Pipeline {
   private emptyMutation(result: QueryResult): QueryResult | undefined {
     const x = this.x;
     const stages = x.plan.stages;
-    if (this.unknownMembers.length === 0 || !x.options.allowMutation || stages.length === 0 || (result.rows?.length ?? 0) > 0) return undefined;
+    if (this.unknownMembers.length === 0 || !x.options.allowMutation || stages.length === 0 || (result.rows?.length ?? 0) > 0 || (result.unchanged ?? 0) > 0) return undefined;
     const known = new Map(this.knownNames());
     for (const s of x.sites) if (s.hits > 0) known.set(s.name.toUpperCase(), s.name); // another read found it
     const typos = this.unknownMembers.filter((u) => !known.has(u.name.toUpperCase()) && !x.engine.hostKnowsMember(u.name));
@@ -177,6 +177,8 @@ export class Pipeline {
   /** Known member names (keyed upper-cased) plus the plan's select field names. */
   private knownNames(): ReadonlyMap<string, string> {
     const names = new Map(this.x.engine.knownMemberNames());
+    // Group rows have their items (spec §5); elsewhere `items` is an ordinary member name.
+    if (this.x.plan.stages.some((st) => st.kind === 'group-by' || (st.kind === 'expr' && st.op === 'group-by'))) names.set('ITEMS', 'items');
     for (const st of this.x.plan.stages) {
       if (st.kind !== 'select' && st.kind !== 'group-by') continue;
       for (const f of st.kind === 'select' ? st.fields : st.keys) {
@@ -384,7 +386,7 @@ export class Pipeline {
       case 'select':
         return this.select(input, st);
       case 'group-by':
-        return this.groupBy(input, st.keys.map((k) => this.c.compile(k.expr)), st.keys.map((k) => k.name));
+        return this.groupBy(input, st.keys.map((k) => this.c.compile(k.expr)), st.keys.map((k) => k.name), st);
       case 'sort':
         return this.sort(input, st);
       case 'limit':
@@ -392,7 +394,7 @@ export class Pipeline {
       case 'expr':
         if (st.op === 'get') return this.get(input, st.expr!);
         if (st.op === 'distinct') return this.distinct(input, st.expr !== undefined ? this.c.compile(st.expr) : undefined);
-        if (st.op === 'group-by') return this.groupBy(input, [this.c.compile(st.expr!)], ['key']);
+        if (st.op === 'group-by') return this.groupBy(input, [this.c.compile(st.expr!)], ['key'], st);
         break;
       case 'recurse':
         return this.recurse(input, st);
@@ -510,9 +512,11 @@ export class Pipeline {
    * group-by: one row per distinct key tuple, in order of first appearance: the key columns, then count
    * (null/missing key values group as null).
    */
-  private *groupBy(input: Iterable<Item>, keys: readonly Eval[], keyColumns: readonly string[]): Generator<Item> {
+  private *groupBy(input: Iterable<Item>, keys: readonly Eval[], keyColumns: readonly string[], stage: Stage): Generator<Item> {
     const x = this.x;
-    const groups = new Map<unknown, { tuple: unknown[]; count: number }>();
+    const groups = new Map<unknown, { tuple: unknown[]; count: number; items: unknown[] | undefined }>();
+    // Per-group aggregates read the group's items: items.avg(Weight) (spec §5).
+    const keepItems = usesSegment(x.plan, (s) => s.kind === 'member' && s.name.toUpperCase() === 'ITEMS', stage);
     let i = 0;
     for (const it of input) {
       this.enter(it, i++);
@@ -521,12 +525,13 @@ export class Pipeline {
         return v === MISSING || v === UNKNOWN ? null : v;
       });
       const dk = tuple.length === 1 ? (tuple[0] === null ? NULL_GROUP : distinctKey(x, tuple[0])) : distinctKey(x, new RowValue([...keyColumns], tuple));
-      const g = groups.get(dk);
+      let g = groups.get(dk);
       if (g !== undefined) g.count++;
-      else groups.set(dk, { tuple, count: 1 });
+      else groups.set(dk, (g = { tuple, count: 1, items: keepItems ? [] : undefined }));
+      g.items?.push(it.value);
     }
     const cols = [...keyColumns, 'count'];
-    for (const g of groups.values()) yield item(new RowValue(cols, [...g.tuple, g.count]), null);
+    for (const g of groups.values()) yield item(new RowValue(cols, [...g.tuple, g.count], true, g.items), null);
   }
 
   private recurse(input: Iterable<Item>, r: RecurseStage): Iterable<Item> {
@@ -828,10 +833,23 @@ export function distinctKey(x: Exec, v: unknown): unknown {
 
 /** Whether any expression of the plan uses the meta member `$name`. */
 function usesMeta(plan: Exec['plan'], meta: string): boolean {
+  return usesSegment(plan, (s) => s.kind === 'meta' && s.name === meta);
+}
+
+/** A member missing on group-by rows: aggregate the group's items (spec §5). */
+function groupRowHint(name: string): string {
+  return (
+    "group-by rows have their key column(s), count and the group's items: aggregate per group with items, e.g. " +
+    `select key, count, avg = items.avg(${name}) (also items.sum(…), items.min(…), items.max(…), items.count(…), items.first().${name})`
+  );
+}
+
+/** Whether any path segment of the plan (only of the stages after `after`, when given) passes `test`. */
+function usesSegment(plan: Exec['plan'], test: (s: Segment) => boolean, after?: Stage): boolean {
   const inExpr = (e: Expr): boolean => {
     switch (e.kind) {
       case 'path':
-        return e.segments.some((s) => s.kind === 'meta' && s.name === meta) || (e.on !== undefined && inExpr(e.on));
+        return e.segments.some(test) || (e.on !== undefined && inExpr(e.on));
       case 'op':
         return e.args.some(inExpr);
       case 'call':
@@ -844,8 +862,9 @@ function usesMeta(plan: Exec['plan'], meta: string): boolean {
         return false;
     }
   };
-  if (inExpr(plan.source)) return true;
-  for (const st of plan.stages) {
+  const from = after !== undefined ? plan.stages.indexOf(after) + 1 : 0;
+  if (from === 0 && inExpr(plan.source)) return true;
+  for (const st of plan.stages.slice(from)) {
     switch (st.kind) {
       case 'where':
         if (inExpr(st.pred)) return true;

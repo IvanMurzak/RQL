@@ -91,6 +91,10 @@ export class RowValue {
   constructor(
     readonly columns: readonly string[],
     readonly values: unknown[],
+    /** A group-by row (spec §5): besides its columns it has the member `items`. */
+    readonly group = false,
+    /** The group's items in stream order, kept only when the plan reads `items`; not a column. */
+    readonly items: unknown[] | undefined = undefined,
   ) {}
 
   indexOf(name: string): number {

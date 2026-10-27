@@ -213,6 +213,9 @@ namespace Rql.Execution
 
         internal bool HasAdapters => _adapters.Any;
 
+        /// <summary>Every registered type adapter in registration order (spec §13).</summary>
+        public IReadOnlyList<RqlTypeAdapter> Adapters => _adapters.All;
+
         /// <summary>Union of the registered adapters' capabilities: adapter-free (or capability-free) paths are one check.</summary>
         internal AdapterCaps Caps => _adapters.Caps;
 

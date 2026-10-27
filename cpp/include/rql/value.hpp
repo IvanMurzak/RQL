@@ -96,6 +96,8 @@ public:
     /// An entry streamed from a map, remembering it (spec §8).
     static Value entry(Value key, Value value, std::shared_ptr<const EntryOrigin> origin);
     static Value row(std::shared_ptr<const std::vector<std::string>> columns, std::vector<Value> values);
+    /// A group-by row; `items` is the group's item list or missing (spec §5).
+    static Value group_row(std::shared_ptr<const std::vector<std::string>> columns, std::vector<Value> values, Value items);
 
     Kind kind() const { return kind_; }
     bool is_missing() const { return kind_ == Kind::Missing; }
@@ -156,6 +158,10 @@ struct EntryData {
 struct RowData {
     std::shared_ptr<const std::vector<std::string>> columns;
     std::vector<Value> values;
+    /// A group-by row (spec §5): besides its columns it has the member `items`.
+    bool group = false;
+    /// The group's items in stream order (an owned list), kept only when the plan reads `items`; not a column.
+    Value items;
     /// Column index: exact, then case-insensitive; -1 if absent.
     int index_of(const std::string& name) const;
 };

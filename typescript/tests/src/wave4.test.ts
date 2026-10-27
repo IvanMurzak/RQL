@@ -129,6 +129,20 @@ test('self-containing lists do not overflow', () => {
   assert.equal(e.execute('ls | group-by $ | count').ok, true);
 });
 
+test('group rows aggregate their items; the engine lists its adapters', () => {
+  const items = [Object.assign(new Item(), { Name: 'a', Weight: 1 }), Object.assign(new Item(), { Name: 'a', Weight: 4.2 }), Object.assign(new Item(), { Name: 'b', Weight: 2 })];
+  const e = engine(items);
+  const r = e.execute('items | group-by Name | select key, count, avg = items.avg(Weight)');
+  assert.equal(r.ok, true);
+  assert.equal(r.rows![0]![2], 2.6);
+  const miss = e.execute('items | group-by Name | select key, avg = Weight').diagnostics.find((d) => d.code === 'unknown-member')!;
+  assert.ok(miss.hint!.includes('items.avg(Weight)'), miss.hint);
+  assert.equal(e.adapters.length, 0);
+  const a = { name: 'ItemNames', target: Item };
+  e.addAdapter(a);
+  assert.equal(e.adapters[0], a);
+});
+
 test('a second query on a new line hints one query per call', () => {
   assert.throws(
     () => parse('items | where Name == "a" | set Name = "b"\nitems | where Name == "c" | count'),

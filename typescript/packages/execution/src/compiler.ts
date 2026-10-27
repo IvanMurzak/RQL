@@ -621,10 +621,16 @@ export function member(x: Exec, v: unknown, site: MemberSite): unknown {
         site.hits++;
         return v.values[ci];
       }
+      // A group row's items (spec §5): a column of that name takes precedence.
+      if (v.items !== undefined && site.name.toUpperCase() === 'ITEMS') {
+        site.hits++;
+        return v.items;
+      }
       // A single-column row stands for its value (`select A.B | get Item` style navigation).
       if (v.columns.length === 1) return member(x, v.values[0], site);
       site.misses++;
       site.rowColumns ??= v.columns;
+      if (v.group) site.groupRows = true;
       return MISSING;
     }
     m = info.find(site.name, v);

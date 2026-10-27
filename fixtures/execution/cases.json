@@ -20880,6 +20880,916 @@
         "kind": "scalar",
         "value": 3
       }
+    },
+    {
+      "name": "group-items-aggregates",
+      "rql": "g.Nodes | recurse Children | group-by Kind | select key, count, avg = items.avg(Value), on = items.count(Enabled), top = items.max(Value)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "group-by",
+            "expr": {
+              "path": [
+                "Kind"
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "key",
+                "expr": {
+                  "path": [
+                    "key"
+                  ]
+                }
+              },
+              {
+                "name": "count",
+                "expr": {
+                  "path": [
+                    "count"
+                  ]
+                }
+              },
+              {
+                "name": "avg",
+                "expr": {
+                  "call": "avg",
+                  "on": {
+                    "path": [
+                      "items"
+                    ]
+                  },
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "on",
+                "expr": {
+                  "call": "count",
+                  "on": {
+                    "path": [
+                      "items"
+                    ]
+                  },
+                  "args": [
+                    {
+                      "path": [
+                        "Enabled"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "top",
+                "expr": {
+                  "call": "max",
+                  "on": {
+                    "path": [
+                      "items"
+                    ]
+                  },
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "key",
+          "count",
+          "avg",
+          "on",
+          "top"
+        ],
+        "rows": [
+          [
+            "Alpha",
+            3,
+            5.666666666666667,
+            3,
+            10
+          ],
+          [
+            "Beta",
+            2,
+            4.75,
+            2,
+            7
+          ],
+          [
+            "Gamma",
+            3,
+            333,
+            1,
+            1000
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "group-items-multi-key",
+      "rql": "g.Nodes | recurse Children | group-by Kind, on=Enabled | select Kind, on, s = items.sum(Value)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "group-by",
+            "fields": [
+              {
+                "name": "Kind",
+                "expr": {
+                  "path": [
+                    "Kind"
+                  ]
+                }
+              },
+              {
+                "name": "on",
+                "expr": {
+                  "path": [
+                    "Enabled"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Kind",
+                "expr": {
+                  "path": [
+                    "Kind"
+                  ]
+                }
+              },
+              {
+                "name": "on",
+                "expr": {
+                  "path": [
+                    "on"
+                  ]
+                }
+              },
+              {
+                "name": "s",
+                "expr": {
+                  "call": "sum",
+                  "on": {
+                    "path": [
+                      "items"
+                    ]
+                  },
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Kind",
+          "on",
+          "s"
+        ],
+        "rows": [
+          [
+            "Alpha",
+            true,
+            17
+          ],
+          [
+            "Beta",
+            true,
+            9.5
+          ],
+          [
+            "Gamma",
+            false,
+            996
+          ],
+          [
+            "Gamma",
+            true,
+            3
+          ]
+        ],
+        "total": 4
+      }
+    },
+    {
+      "name": "group-items-first",
+      "rql": "g.Nodes | recurse Children | group-by Kind | select key, first = items.first().Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "group-by",
+            "expr": {
+              "path": [
+                "Kind"
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "key",
+                "expr": {
+                  "path": [
+                    "key"
+                  ]
+                }
+              },
+              {
+                "name": "first",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ],
+                  "on": {
+                    "call": "first",
+                    "on": {
+                      "path": [
+                        "items"
+                      ]
+                    },
+                    "args": []
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "key",
+          "first"
+        ],
+        "rows": [
+          [
+            "Alpha",
+            "root-a"
+          ],
+          [
+            "Beta",
+            "a-1"
+          ],
+          [
+            "Gamma",
+            "a-2"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "group-items-filter",
+      "rql": "g.Nodes | recurse Children | group-by Kind | where items.any(Enabled == false) | select key",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "group-by",
+            "expr": {
+              "path": [
+                "Kind"
+              ]
+            }
+          },
+          {
+            "op": "where",
+            "pred": {
+              "call": "any",
+              "on": {
+                "path": [
+                  "items"
+                ]
+              },
+              "args": [
+                {
+                  "op": "==",
+                  "args": [
+                    {
+                      "path": [
+                        "Enabled"
+                      ]
+                    },
+                    {
+                      "lit": false
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "key",
+                "expr": {
+                  "path": [
+                    "key"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "key"
+        ],
+        "rows": [
+          [
+            "Gamma"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "group-items-not-a-column",
+      "rql": "g.Nodes | recurse Children | group-by Kind | sort count desc",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "group-by",
+            "expr": {
+              "path": [
+                "Kind"
+              ]
+            }
+          },
+          {
+            "op": "sort",
+            "keys": [
+              {
+                "expr": {
+                  "path": [
+                    "count"
+                  ]
+                },
+                "desc": true
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "key",
+          "count"
+        ],
+        "rows": [
+          [
+            "Alpha",
+            3
+          ],
+          [
+            "Gamma",
+            3
+          ],
+          [
+            "Beta",
+            2
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "group-items-column-wins",
+      "rql": "g.Nodes | group-by items=Kind | select items",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "group-by",
+            "fields": [
+              {
+                "name": "items",
+                "expr": {
+                  "path": [
+                    "Kind"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "items",
+                "expr": {
+                  "path": [
+                    "items"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "items"
+        ],
+        "rows": [
+          [
+            "Alpha"
+          ],
+          [
+            "Beta"
+          ],
+          [
+            "Gamma"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "group-row-missing-member-warns",
+      "rql": "g.Nodes | group-by Kind | where Value > 1",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "group-by",
+            "expr": {
+              "path": [
+                "Kind"
+              ]
+            }
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": ">",
+              "args": [
+                {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                {
+                  "lit": 1
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "key",
+          "count"
+        ],
+        "rows": [],
+        "total": 0,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "set-noop-rows-omitted",
+      "rql": "g.Nodes | set Value = (Value > 5 ? 5 : Value)",
+      "then": "g.Nodes | select Name Value",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "op": ">",
+                      "args": [
+                        {
+                          "path": [
+                            "Value"
+                          ]
+                        },
+                        {
+                          "lit": 5
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 5
+                    },
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "Value",
+            10,
+            5
+          ],
+          [
+            "Node#5",
+            "Value",
+            7,
+            5
+          ]
+        ],
+        "total": 2,
+        "unchanged": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "Value"
+        ],
+        "rows": [
+          [
+            "root-a",
+            5
+          ],
+          [
+            "root-b",
+            5
+          ],
+          [
+            "lonely",
+            3
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "set-noop-all-unchanged",
+      "rql": "g.Nodes | set Enabled = Enabled",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Enabled"
+                  ]
+                },
+                "value": {
+                  "path": [
+                    "Enabled"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [],
+        "total": 0,
+        "unchanged": 3
+      }
+    },
+    {
+      "name": "set-noop-dry-run",
+      "rql": "g.Nodes | set Value = 7",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": 7
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "Value",
+            10,
+            7
+          ],
+          [
+            "Node#8",
+            "Value",
+            3,
+            7
+          ]
+        ],
+        "total": 2,
+        "dryRun": true,
+        "unchanged": 1
+      }
+    },
+    {
+      "name": "set-noop-list-by-value",
+      "rql": "g.Nodes | set Tags = Tags",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Tags"
+                  ]
+                },
+                "value": {
+                  "path": [
+                    "Tags"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [],
+        "total": 0,
+        "unchanged": 3
+      }
     }
   ]
 }

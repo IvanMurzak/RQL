@@ -281,6 +281,14 @@ export class RqlEngine {
     return this.model;
   }
 
+  /**
+   * Every type adapter registered on this engine, in registration order, e.g. for a host known-member hook that also
+   * accepts adapter-defined members.
+   */
+  get adapters(): readonly TypeAdapter[] {
+    return this.model.adapters;
+  }
+
   /** The ordered adapters applying to a class, most specific first (rank, priority). */
   explain(ctor: Ctor): string[] {
     return this.model.explain(ctor);

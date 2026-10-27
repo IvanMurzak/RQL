@@ -363,6 +363,7 @@ struct PlannedWrite {
     Value target;        // the stream item (host records)
     std::string ref;     // the receipt's $ref: the target's, or for an entry the owner of the change (spec §8)
     std::shared_ptr<const std::vector<Segment>> owned;  // rewritten entry segments (`segments` points into it)
+    Value planned;  // the coerced value the query asked for (new_value becomes the read-back after the write)
 };
 
 /// Where a set target writes (spec §8): for a map entry streamed from a map, `Value.p` (or `p`, which reads through to
@@ -769,7 +770,7 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
                 rejected = slot.validate(container, *coerced);
             if (!rejected.empty())
                 throw RqlException("invalid-value", "invalid value " + value_text(nv) + " for '" + label + "' on " + item_ref + ": " + rejected);
-            writes.push_back({root, &segs, label, snapshot(safe_get(slot, container, label)), *coerced, owner, item, origin ? x.ref_of(owner) : item_ref, owned});
+            writes.push_back({root, &segs, label, snapshot(safe_get(slot, container, label)), *coerced, owner, item, origin ? x.ref_of(owner) : item_ref, owned, *coerced});
         }
     }
 
@@ -810,10 +811,20 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
     }
     committed(x, records);
 
+    // No-op assignments (the value read back equals the old one) are counted, not listed (spec §8 receipt).
     std::vector<std::vector<Value>> rows;
-    for (auto& w : writes) rows.push_back({Value::string(w.ref), Value::string(w.label), w.old_value, w.new_value});
+    int64_t unchanged = 0;
+    for (auto& w : writes) {
+        // A write the host refused or clamped back to the old value stays listed.
+        if (rql_equal(x, w.old_value, w.planned) == std::optional<bool>(true) && rql_equal(x, w.old_value, w.new_value) == std::optional<bool>(true)) {
+            ++unchanged;
+            continue;
+        }
+        rows.push_back({Value::string(w.ref), Value::string(w.label), w.old_value, w.new_value});
+    }
     QueryResult r = enc.rows({"$ref", "member", "old", "new"}, rows);
     r.dry_run = x.options.dry_run;
+    r.unchanged = unchanged;
     return r;
 }
 

@@ -133,28 +133,39 @@ namespace {
 
 // ------------------------------------------------------------------ plan scan
 
-bool uses_meta(const Expr& e, const std::string& meta) {
+/// Whether any path segment of the expression passes `test`.
+template <class F>
+bool uses_segment(const Expr& e, const F& test) {
     switch (e.kind) {
         case ExprKind::Path:
             for (auto& s : e.segments)
-                if (s.kind == SegmentKind::Meta && s.name == meta) return true;
-            return e.on && uses_meta(*e.on, meta);
+                if (test(s)) return true;
+            return e.on && uses_segment(*e.on, test);
         case ExprKind::Call:
-            if (e.on && uses_meta(*e.on, meta)) return true;
+            if (e.on && uses_segment(*e.on, test)) return true;
             [[fallthrough]];
         case ExprKind::Op:
         case ExprKind::List:
         case ExprKind::Object:
             for (auto& a : e.args)
-                if (uses_meta(*a, meta)) return true;
+                if (uses_segment(*a, test)) return true;
             return false;
         default: return false;
     }
 }
 
-bool plan_uses_meta(const QueryPlan& p, const std::string& meta) {
-    if (uses_meta(*p.source, meta)) return true;
-    for (auto& st : p.stages) {
+/// Whether any path segment of the plan (only of the stages after `after`, when given) passes `test`.
+template <class F>
+bool plan_uses_segment(const QueryPlan& p, const F& test, const Stage* after = nullptr) {
+    size_t from = 0;
+    if (after) {
+        while (from < p.stages.size() && &p.stages[from] != after) ++from;
+        ++from;
+    } else if (uses_segment(*p.source, test)) {
+        return true;
+    }
+    for (size_t i = from; i < p.stages.size(); ++i) {
+        const Stage& st = p.stages[i];
         std::vector<ExprPtr> all;
         if (st.expr) all.push_back(st.expr);
         for (auto& f : st.fields) all.push_back(f.expr);
@@ -164,9 +175,13 @@ bool plan_uses_meta(const QueryPlan& p, const std::string& meta) {
         for (auto& a : st.args) all.push_back(a);
         for (auto& n : st.named) all.push_back(n.second);
         for (auto& e : all)
-            if (uses_meta(*e, meta)) return true;
+            if (uses_segment(*e, test)) return true;
     }
     return false;
+}
+
+bool plan_uses_meta(const QueryPlan& p, const std::string& meta) {
+    return plan_uses_segment(p, [&](const Segment& s) { return s.kind == SegmentKind::Meta && s.name == meta; });
 }
 
 /// Path text appended by get/recurse-via when the expression is a plain member/index path.
@@ -545,8 +560,9 @@ private:
 class GroupByStream final : public Stream {
 public:
     /// One row per distinct key tuple (first appearance order): the key columns, then count (spec §5).
-    GroupByStream(Exec& x, StreamPtr in, std::vector<Eval> keys, std::vector<std::string> key_columns)
-        : x_(x), in_(std::move(in)), keys_(std::move(keys)), key_columns_(std::move(key_columns)) {}
+    /// keep_items: a later stage reads the rows' `items` (per-group aggregates, spec §5).
+    GroupByStream(Exec& x, StreamPtr in, std::vector<Eval> keys, std::vector<std::string> key_columns, bool keep_items)
+        : x_(x), in_(std::move(in)), keys_(std::move(keys)), key_columns_(std::move(key_columns)), keep_items_(keep_items) {}
     bool next(Item& out) override {
         if (!done_) {
             done_ = true;
@@ -554,6 +570,8 @@ public:
             auto key_cols = std::make_shared<const std::vector<std::string>>(key_columns_);
             std::unordered_map<Value, size_t, ValueHash, ValueEq> index(16, ValueHash{&x_}, ValueEq{&x_});
             std::vector<std::pair<Value, double>> groups;  // key row, count
+            const bool keep_items = keep_items_;
+            std::vector<std::vector<Value>> items;
             Item it;
             int64_t i = 0;
             while (in_->next(it)) {
@@ -566,20 +584,25 @@ public:
                 }
                 Value row = Value::row(key_cols, std::move(tuple));
                 auto f = index.find(row);
+                size_t g;
                 if (f != index.end()) {
-                    groups[f->second].second += 1;
+                    g = f->second;
+                    groups[g].second += 1;
                 } else {
-                    index.emplace(row, groups.size());
+                    g = groups.size();
+                    index.emplace(row, g);
                     groups.emplace_back(std::move(row), 1.0);
+                    if (keep_items) items.emplace_back();
                 }
+                if (keep_items) items[g].push_back(it.value);
             }
             std::vector<std::string> names = key_columns_;
             names.push_back("count");
             auto cols = std::make_shared<const std::vector<std::string>>(std::move(names));
-            for (auto& g : groups) {
-                std::vector<Value> values = g.first.row().values;
-                values.push_back(Value::number(g.second));
-                rows_.push_back(Value::row(cols, std::move(values)));
+            for (size_t g = 0; g < groups.size(); ++g) {
+                std::vector<Value> values = groups[g].first.row().values;
+                values.push_back(Value::number(groups[g].second));
+                rows_.push_back(Value::group_row(cols, std::move(values), keep_items ? Value::list_of(std::move(items[g])) : Value::missing()));
             }
         }
         if (pos_ >= rows_.size()) return false;
@@ -592,6 +615,7 @@ private:
     StreamPtr in_;
     std::vector<Eval> keys_;
     std::vector<std::string> key_columns_;
+    bool keep_items_;
     bool done_ = false;
     std::vector<Value> rows_;
     size_t pos_ = 0;
@@ -851,7 +875,9 @@ StreamPtr apply_stage(Exec& x, Compiler& c, StreamPtr in, const Stage& st) {
                 keys.push_back(c.compile(*f.expr));
                 names.push_back(f.name);
             }
-            return std::make_unique<GroupByStream>(x, std::move(in), std::move(keys), std::move(names));
+            const bool keep_items = plan_uses_segment(
+                x.plan, [](const Segment& s) { return s.kind == SegmentKind::Member && iequals(s.name, "items"); }, &st);
+            return std::make_unique<GroupByStream>(x, std::move(in), std::move(keys), std::move(names), keep_items);
         }
         case StageKind::Recurse: {
             std::vector<RecurseStream::Via> via;
@@ -1070,6 +1096,11 @@ std::vector<Diagnostic> add_warnings(Exec& x, QueryResult& r, bool only_general)
         if (!known_ready) {
             known_ready = true;
             known = {"key", "value", "count", "Count", "Length"};
+            for (auto& st : x.plan.stages)
+                if (st.kind == StageKind::GroupBy) {
+                    known.push_back("items");  // group rows have their items (spec §5)
+                    break;
+                }
             for (auto* t : known_types(x))
             {
                 const TypeView view = x.view(t);
@@ -1114,8 +1145,11 @@ std::vector<Diagnostic> add_warnings(Exec& x, QueryResult& r, bool only_general)
         if (!site.row_columns.empty() && site.miss_types.empty()) {
             r.diagnostics.push_back(Diagnostic::warning(
                 "unknown-member", "no column '" + site.name + "' in the projected rows (columns: " + join(site.row_columns, ", ") + ")",
-                "select produces rows with only the listed columns; to navigate into objects select the full path (select "
-                "Path.Member) or put `get Path` before the select"));
+                site.group_rows
+                    ? "group-by rows have their key column(s), count and the group's items: aggregate per group with items, e.g. select key, "
+                      "count, avg = items.avg(" + site.name + ") (also items.sum(\xE2\x80\xA6), items.min(\xE2\x80\xA6), items.max(\xE2\x80\xA6), items.count(\xE2\x80\xA6), items.first()." + site.name + ")"
+                    : std::string("select produces rows with only the listed columns; to navigate into objects select the full path (select "
+                                  "Path.Member) or put `get Path` before the select")));
             continue;
         }
         std::vector<std::string> type_names, candidates;
@@ -1269,7 +1303,7 @@ QueryResult run_pipeline(Exec& x) {
     auto typos = add_warnings(x, result, false);
     // A mutation that reached no target because a misspelt member emptied its stream is an error, not "0 changes"
     // (spec §8): the unknown-member warnings for names no known type declares become errors.
-    if (!typos.empty() && x.options.allow_mutation && !x.plan.stages.empty() && (!result.rows || result.rows->empty())) {
+    if (!typos.empty() && x.options.allow_mutation && !x.plan.stages.empty() && (!result.rows || result.rows->empty()) && result.unchanged == 0) {
         std::string op = x.plan.stages.back().kind == StageKind::Call ? "call" : "set";
         for (auto& d : typos) {
             d.severity = Severity::Error;

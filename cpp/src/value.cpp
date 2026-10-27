@@ -91,6 +91,14 @@ Value Value::entry(Value key, Value value, std::shared_ptr<const EntryOrigin> or
     return v;
 }
 
+Value Value::group_row(std::shared_ptr<const std::vector<std::string>> columns, std::vector<Value> values, Value items) {
+    Value v = row(std::move(columns), std::move(values));
+    auto* r = static_cast<RowData*>(v.holder_.get());
+    r->group = true;
+    r->items = std::move(items);
+    return v;
+}
+
 Value Value::row(std::shared_ptr<const std::vector<std::string>> columns, std::vector<Value> values) {
     Value v;
     v.kind_ = Kind::Row;
