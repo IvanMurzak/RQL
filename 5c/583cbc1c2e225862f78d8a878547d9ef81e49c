@@ -1,0 +1,59 @@
+cpp/src/mutator.cpp
+  s_7bc72ecaebd05d::t_94629586708f15 799-800
+dotnet/Rql.SampleRuntime/SampleHost.cs
+  s_7bc72ecaebd05d::t_e1eded19d91a0c 32
+cpp/src/compiler.cpp
+  s_7bc72ecaebd05d::t_cc0bf58235635a 560,1274-1278
+cpp/src/engine.cpp
+  s_7bc72ecaebd05d::t_4d483b1e7ff78c 31,33-35,38-39
+cpp/src/exec.hpp
+  s_7bc72ecaebd05d::t_f751456fd0506e 126,277
+cpp/src/pipeline.cpp
+  s_7bc72ecaebd05d::t_d5645d575d6dae 1045-1046,1085-1090
+cpp/tests/unit_tests.cpp
+  s_7bc72ecaebd05d::t_33da01adc2c84d 1651-1654,1661
+dotnet/Rql.Execution/Compiler.cs
+  s_7bc72ecaebd05d::t_6fe14d76deb8f1 20-22,91,804-807
+dotnet/Rql.Execution/Pipeline.cs
+  s_7bc72ecaebd05d::t_f2878a2ffb0bc2 94-95,126,133-136,157
+dotnet/Rql.Execution/RqlEngine.cs
+  s_7bc72ecaebd05d::t_8607f3d28e0216 277,280,284-285,844-845
+dotnet/Rql.Parser/RqlParser.cs
+  s_7bc72ecaebd05d::t_ae6391c80b1f7a 121
+dotnet/Rql.Tests/Tests.cs
+  s_7bc72ecaebd05d::t_469b5a8eae693a 1041-1073
+fixtures/execution/cases.json
+  s_7bc72ecaebd05d::t_13c2f355d8af74 18932-19577
+spec/semantics.md
+  s_7bc72ecaebd05d::t_b9fad6d5ba9755 154,317-328,469-470,483-484,500,516
+spec/versioning.md
+  s_7bc72ecaebd05d::t_fd32df3c1d602e 68,70-72
+typescript/packages/execution/src/compiler.ts
+  s_7bc72ecaebd05d::t_2fea524fbcca32 32-34,74,320-326
+typescript/packages/execution/src/engine.ts
+  s_7bc72ecaebd05d::t_d4411f242cf799 203
+typescript/packages/execution/src/exec.ts
+  s_7bc72ecaebd05d::t_3d291b737d890f 56-57
+typescript/packages/execution/src/pipeline.ts
+  s_7bc72ecaebd05d::t_1ffa3c054c60ad 105-107,146-147,151-154,166-167
+typescript/packages/parser/src/parser.ts
+  s_7bc72ecaebd05d::t_ff61e92ba047e6 122
+typescript/tests/src/unit.test.ts
+  s_7bc72ecaebd05d::t_59103a08b22bd4 777-790
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5c583cbc1c2e225862f78d8a878547d9ef81e49c",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
