@@ -17,10 +17,54 @@ void check_policy(Exec& x, const std::string& op) {
         throw RqlException("permission-denied", "'" + op + "' requires a mutation request (use the mutate tool / options.allowMutation)");
 }
 
-std::vector<Value> targets(Exec& x, Stream& stream, const std::string& op) {
-    std::vector<Value> list;
+/// A target with the scope its expressions see: its path, depth and position in the stage's input (spec §8).
+struct Target {
+    Item item;
+    int64_t index;
+};
+
+/// `$`, `$index`, `$path` and `$depth` in a set value / call argument are the target's (spec §8).
+void enter_scope(Exec& x, const Target& t) {
+    x.current = t.item.value;
+    x.current_path = t.item.path;
+    x.current_depth = t.item.depth;
+    x.index = t.index;
+}
+
+std::string mutation_limit_hint(const std::string& op, int limit, int ceiling) {
+    std::string n = std::to_string(limit);
+    std::string h = "narrow the query (where / ref(...)) or split the change into batches of " + n + ": \xE2\x80\xA6 | first " + n + " | " + op +
+                    " \xE2\x80\xA6, then \xE2\x80\xA6 | skip " + n + " | first " + n + " | " + op + " \xE2\x80\xA6 (repeat plain first " + n +
+                    " instead when the change removes the items from your where)";
+    if (ceiling > limit) h += "; or raise budgets.maxMutationTargets (host ceiling " + std::to_string(ceiling) + ")";
+    return h;
+}
+
+/// The host's batch validation (spec §8): every planned change at once, before any write or call, dry runs too.
+void validate_batch(Exec& x, const std::string& op, const std::function<std::vector<MutationRecord>()>& records) {
+    const BatchValidator& validate = x.engine.mutations().validate_batch;
+    if (!validate) return;
+    std::vector<MutationRecord> batch = records();
+    if (batch.empty()) return;
+    std::string rejected;
+    try {
+        rejected = validate(batch);
+    } catch (const std::exception& ex) {
+        rejected = std::string("the batch check threw: ") + ex.what();
+    } catch (...) {
+        rejected = "the batch check threw";
+    }
+    if (!rejected.empty())
+        throw RqlException("invalid-value", "the host refused this '" + op + "' of " + std::to_string(batch.size()) + " change(s): " + rejected +
+                                                "; nothing was changed");
+}
+
+std::vector<Target> targets(Exec& x, Stream& stream, const std::string& op) {
+    std::vector<Target> list;
     Item it;
+    int64_t index = -1;
     while (stream.next(it)) {
+        ++index;  // skipped null/destroyed items keep their positions: $index is the position in the stage's input
         // Null and destroyed items are skipped (spec §13: a destroyed object reads as null).
         if (it.value.is_null() || x.is_dead(it.value)) continue;
         if (it.value.is_row())
@@ -37,28 +81,35 @@ std::vector<Value> targets(Exec& x, Stream& stream, const std::string& op) {
             throw RqlException("invalid-plan",
                                "'" + op + "' needs objects with identity; '" + type_name_of(v) + "' items are value copies, so the change would be lost",
                                "set the member from its owner instead, e.g. objects | where ... | set Transform.Position.x = 0");
-        list.push_back(it.value);
-        if (static_cast<int64_t>(list.size()) > x.max_mutation_targets)
-            throw RqlException("mutation-limit",
-                               "more than " + std::to_string(x.max_mutation_targets) + " objects matched '" + op + "'; nothing was changed",
-                               "narrow the query (where / first / ref(...)) or raise budgets.maxMutationTargets if the bulk change is intended");
+        list.push_back({it, index});
+        if (static_cast<int64_t>(list.size()) > x.max_mutation_targets) {
+            const MutationPolicy& m = x.engine.mutations();
+            const int limit = static_cast<int>(x.max_mutation_targets);
+            std::string hint = m.limit_hint ? m.limit_hint(op, limit) : std::string();
+            if (hint.empty()) hint = mutation_limit_hint(op, limit, x.engine.defaults().budgets_adjustable ? m.hard_max_targets : 0);
+            throw RqlException("mutation-limit", "more than " + std::to_string(limit) + " objects matched '" + op + "'; nothing was changed", hint);
+        }
     }
     return list;
 }
 
-std::string label_of(const Expr& p) {
+std::string raw_label(const std::vector<Segment>& segs) {
     std::string s;
-    for (size_t i = 0; i < p.segments.size(); ++i) {
-        const Segment& seg = p.segments[i];
+    for (size_t i = 0; i < segs.size(); ++i) {
+        const Segment& seg = segs[i];
         s += seg.kind == SegmentKind::Member ? (i == 0 ? "" : ".") + seg.name : seg.to_string();
     }
     return s;
 }
 
-std::string raw_label(const std::vector<Segment>& segs) {
-    std::string s;
-    for (auto& seg : segs) s += seg.to_string();
-    return s;
+std::string label_of(const Expr& p) { return raw_label(p.segments); }
+
+/// A set target only replaces an existing element; adding one means assigning the whole list.
+std::string list_grow_hint(const std::string& label, const Segment& seg) {
+    size_t at = label.rfind(seg.to_string());
+    std::string list = at != std::string::npos && at > 0 ? label.substr(0, at) : "List";
+    return "an indexed set replaces an existing element only; to add elements assign the whole list: set " + list + " = append(" + list +
+           ", value), set " + list + " = insert(" + list + ", " + std::to_string(seg.index) + ", value) or set " + list + " = [ ... ]";
 }
 
 struct Slot {
@@ -147,7 +198,8 @@ Slot slot_of(Exec& x, const Value& container, const Segment& seg, const std::str
         int64_t i = seg.index < 0 ? n + seg.index : seg.index;
         if (i < 0 || i >= n)
             throw RqlException("invalid-plan",
-                               "'" + label + "': index " + std::to_string(seg.index) + " out of range (count " + std::to_string(n) + ")");
+                               "'" + label + "': index " + std::to_string(seg.index) + " out of range (count " + std::to_string(n) + ")",
+                               list_grow_hint(label, seg));
         s.kind = Slot::ListIndex;
         s.index = seg.index;
         const TypeDescriptor* lt = container.list().type();
@@ -561,13 +613,12 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
     };
     std::vector<Assign> assigns;
     for (auto& a : s.assign) assigns.push_back({a.target.get(), c.compile(*a.value), label_of(*a.target)});
-    std::vector<Value> items = targets(x, stream, "set");
+    std::vector<Target> items = targets(x, stream, "set");
     std::vector<PlannedWrite> writes;
-    for (auto& item : items) {
+    for (auto& t : items) {
+        const Value& item = t.item.value;
         for (auto& a : assigns) {
-            x.current = item;
-            x.current_path = nullptr;
-            x.current_depth = -1;
+            enter_scope(x, t);
             Value nv = a.value(x);
             if (nv.is_missing() || nv.is_unknown())
                 throw RqlException("coercion-failed", "value for '" + a.label + "' on " + x.ref_of(item) + " is missing");
@@ -597,9 +648,14 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
         }
     }
 
+    auto to_records = [&] {
+        std::vector<MutationRecord> out;
+        for (auto& w : writes) out.push_back({w.item, w.owner, w.label, w.old_value, w.new_value, nullptr, {}});
+        return out;
+    };
+    validate_batch(x, "set", to_records);
     std::vector<MutationRecord> records;  // built once, shared by both hooks
-    if (has_hooks(x))
-        for (auto& w : writes) records.push_back({w.item, w.owner, w.label, w.old_value, w.new_value, nullptr});
+    if (has_hooks(x)) records = to_records();
     before_write(x, records);
     if (!x.options.dry_run) {
         size_t applied = 0;
@@ -639,14 +695,15 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
     check_policy(x, "call");
     std::vector<Eval> args;
     for (auto& a : s.args) args.push_back(c.compile(*a));
-    std::vector<Value> items = targets(x, stream, "call");
+    std::vector<Target> items = targets(x, stream, "call");
     struct Planned {
         Value item;
         const MethodDescriptor* method;
         std::vector<Value> args;
     };
     std::vector<Planned> planned;
-    for (auto& item : items) {
+    for (auto& target : items) {
+        const Value& item = target.item.value;
         const TypeDescriptor* t = (item.is_object() || item.is_struct()) ? item.type() : nullptr;
         std::vector<const MethodDescriptor*> candidates;
         bool exists = false;
@@ -670,8 +727,7 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
         if (candidates.empty())
             throw RqlException(exists ? "permission-denied" : "unknown-function", "no callable method '" + s.method + "' on " + tn,
                                !sigs.empty() ? "callable: " + join(sigs, ", ") : tn + " has no callable methods");
-        x.current = item;
-        x.current_depth = -1;
+        enter_scope(x, target);
         std::vector<Value> vals;
         for (auto& a : args) vals.push_back(a(x));
         const MethodDescriptor* chosen = nullptr;
@@ -726,9 +782,14 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
         planned.push_back({item, chosen, std::move(coerced)});
     }
 
+    auto call_records = [&] {
+        std::vector<MutationRecord> out;
+        for (auto& p : planned) out.push_back({p.item, p.item, p.item.type()->signature(*p.method), Value(), Value(), p.method, p.args});
+        return out;
+    };
+    validate_batch(x, "call", call_records);
     std::vector<MutationRecord> records;  // built once, shared by both hooks
-    if (has_hooks(x))
-        for (auto& p : planned) records.push_back({p.item, p.item, p.item.type()->signature(*p.method), Value(), Value(), p.method});
+    if (has_hooks(x)) records = call_records();
     before_write(x, records);
     std::vector<std::vector<Value>> rows;
     size_t done = 0;

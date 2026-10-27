@@ -272,6 +272,8 @@ private:
     Eval compile_function(const Expr& c);
     Eval compile_method(const Expr& c);
     Eval compile_extension(const std::string& name, const FunctionHandler& fn, const std::vector<ExprPtr>& args);
+    /// String functions as functions (receiver 0) or methods on the string (receiver 1: args[0] is the receiver).
+    Eval compile_string_function(const Expr& c, const std::string& name, const std::vector<const Expr*>& args, size_t receiver);
     void arity(const Expr& c, size_t min, size_t max);
 };
 

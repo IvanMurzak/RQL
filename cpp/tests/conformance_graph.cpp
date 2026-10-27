@@ -80,6 +80,21 @@ bool try_vec(rql::TypeRegistry& reg, const rql::Value& v, Vec2& out) {
 void register_test_adapters(rql::Engine& engine, rql::TypeRegistry& reg) {
     rql::TypeRegistry* r = &reg;
 
+    // The fixture's batch validator ("engine" in fixtures/adapters/cases.json).
+    engine.mutations().validate_batch = [](const std::vector<rql::MutationRecord>& batch) -> std::string {
+        std::vector<std::string> names;
+        double bump = 0;
+        for (auto& rec : batch) {
+            if (!rec.method && rec.member == "Name" && rec.new_value.is_string()) {
+                const std::string& n = rec.new_value.as_string();
+                if (std::find(names.begin(), names.end(), n) != names.end()) return "duplicate Name '" + n + "'";
+                names.push_back(n);
+            }
+            if (rec.method && rec.method->name == "bump" && !rec.args.empty() && rec.args[0].is_number()) bump += rec.args[0].as_number();
+        }
+        return bump > 100 ? "bump total " + rql::format_number_text(bump) + " exceeds 100" : std::string();
+    };
+
     rql::TypeAdapter vec;
     vec.name = "Vec2Adapter";
     vec.target = reg.descriptor<Vec2>();
