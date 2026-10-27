@@ -64,3 +64,11 @@
   items matched (counting up to the host ceiling), its hint advises raising the host's **limit argument** to the count
   first and is independent of whether callers can pass the other budgets (a budget error while counting is reported
   instead); capability manifest `mutations.hardMaxTargets`.
+* Wave-3b fixes (Unity / Unreal / Godot; unreleased, protocol stays `0.1`; additive or clarifying, no new error code,
+  plans unchanged): the core function **`if(cond, then, else)`** with the text form `cond ? then : else` (lowest
+  precedence, right-associative, lazy; §4.3, §11, grammar `conditional`); a `set` / `call` that no item reaches because
+  of a name **no known type declares** fails with an `unknown-member` error instead of "0 changes" (§8) — **behaviour
+  change** for such queries, which returned ok — with a host known-member hook for polymorphic hosts; hints name only
+  what the host has: the `unknown-source` example is a registered source, the projected-rows hint names no sample
+  path, the schema tool is the host's (`SchemaHint`, default "the schema tool"; was `rql_schema / describe`), and an
+  unknown `call` method names a source that has it (§2, §10).

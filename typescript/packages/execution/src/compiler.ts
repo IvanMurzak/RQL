@@ -14,7 +14,7 @@ export type Eval = (x: Exec) => unknown;
 type Truth = boolean | undefined;
 
 export const CORE_FUNCTIONS = [
-  'has', 'is-null', 'len', 'lower', 'upper', 'abs', 'round', 'floor', 'ceil', 'sqrt', 'pow', 'min', 'max', 'coalesce', 'ref',
+  'has', 'is-null', 'len', 'lower', 'upper', 'abs', 'round', 'floor', 'ceil', 'sqrt', 'pow', 'min', 'max', 'coalesce', 'if', 'ref',
   'append', 'insert', 'remove-at', 'without',
   'replace', 'replace-regex', 'substring', 'split', 'trim', 'pad',
   'contains', 'starts-with', 'ends-with', 'matches',
@@ -418,6 +418,12 @@ export class Compiler {
           }
           return null;
         };
+      }
+      case 'if': {
+        // Lazy: only the taken branch runs; a condition that is not true (false or unknown) takes the else branch.
+        this.arity(c, 3, 3);
+        const [cond, then, otherwise] = c.args.map((e) => this.compile(e));
+        return (x) => (truth(cond(x)) === true ? then(x) : otherwise(x));
       }
       case 'ref': {
         this.arity(c, 1, 64);

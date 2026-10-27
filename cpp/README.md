@@ -130,7 +130,9 @@ is the host's default target limit (editor hosts with undo: e.g. 200) and `Mutat
 tool argument callers raise it with (e.g. `max_targets`, mapped to `Budgets::max_mutation_targets`, up to
 `hard_max_targets`), advised by the `mutation-limit` hint whatever `budgets_adjustable` says; enum entries take host
 alias names through `EnumBuilder::alias` / `TypeDescriptor::enum_aliases` (spec §8 enum name resolution); `Engine::find_hint`
-(e.g. `unreal.find("Floor")`) is named by the hint of a `ref()` given a name. A `set` on map entries
+(e.g. `unreal.find("Floor")`) is named by the hint of a `ref()` given a name; `Engine::schema_hint` (e.g. `rql-schema`) names
+the host's schema tool in hints; `Engine::is_known_member` (name → bool) declares member names of types the host knows
+beyond static reachability, so a `set` / `call` emptied by such a name stays a warning instead of an `unknown-member` error. A `set` on map entries
 streamed by `get` (`get Rows | where Value.IsElite | set Value.Health = …`) writes through the map; the
 write is the key path from the item `get` read the map from (`Rows["Orc"].Health`), so owners and write-back match a direct key-path `set`.
 

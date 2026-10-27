@@ -52,7 +52,9 @@ The source is a `postfix` expression evaluated in **root scope**:
 
 * A path whose leading dotted segments match a registered source name (longest match wins,
   e.g. `unity.gameObjects` before `unity`) resolves to that source's live value; remaining
-  segments navigate from it. Unknown root → error `unknown-source` (with suggestions).
+  segments navigate from it. Unknown root → error `unknown-source` (with suggestions). Any other source text (a literal,
+  a list, an unknown function) is `unknown-source` too; its message gives a registered source as the example (the
+  first one the host registered, never an invented name) and its hint lists the sources and source functions.
 * `ref("Type#id", ...)` resolves stable object references (§7). Unresolvable → `stale-ref`.
   `ref()` may also be used inside expressions (e.g. `set Target = ref("Player#1")`).
 * A call to a registered host extension function (§9), e.g. `unity.assets("t:Material")`, evaluated with no current
@@ -149,6 +151,7 @@ modulo by zero → `error(div-by-zero)`. Other operand kinds → `error(type-mis
 | `abs(n)`, `round(n[, digits])`, `floor(n)`, `ceil(n)` | numeric. |
 | `sqrt(n)`, `pow(base, exponent)` | numeric (IEEE: `sqrt` of a negative number is NaN). |
 | `min(a, b, ...)`, `max(a, b, ...)` | the smallest / largest of two or more numbers (the `min` / `max` *stages* and *methods* aggregate a stream or a collection instead; with one argument the call is an `arity` error). |
+| `if(cond, then, else)` | `then` when `cond` is `true` as a predicate (§1.2), otherwise (`false` or unknown) `else`. **Lazy**: only the taken branch is evaluated, so it can guard an error (`if(Count > 0, Total / Count, 0)`). The text form `cond ? then : else` (lowest precedence, right-associative, §11) is the same function. |
 | `ref(s, ...)` | root scope only: resolve object references. |
 | `append(list, v, ...)` | a new list: the elements of `list` followed by the values. |
 | `insert(list, i, v)` | a new list with `v` inserted before index `i` (negative `i` counts from the end, `-1` appends). |
@@ -311,6 +314,15 @@ A request that asks for mutation (`options.allowMutation`) must end in a `set` o
 refused with `invalid-plan` before anything runs (the mutation tool never doubles as a query tool, and a forgotten
 `set` is reported instead of silently returning rows).
 
+* **Empty through a typo**: when no item reaches the `set` / `call` stage and the query has an `unknown-member` warning
+  for a name that **no known type declares** — no type statically reachable from the sources, no `select` / `group-by`
+  column and nothing the host's known-member hook accepts — that warning becomes an `unknown-member` **error** (its
+  message adds that nothing was changed): `objects | where name == "X" | get transfrom | set position = …` fails
+  instead of reporting "0 changes". A name that some known type declares stays a warning with an empty receipt, so a
+  polymorphic stream whose items happen not to have the member (`components | where intensity > 1 | set …` with no
+  light among them) is a legitimate empty change. Hosts whose type knowledge is wider than static reachability (every
+  component type of an engine) supply a **known-member hook** (name → bool); it also silences the static
+  "not evaluated" warning (§10) for those names.
 * Targets must be objects with identity; value-type or scalar items (e.g. from `get Transform.Position`)
   are rejected with `invalid-plan` because a change to a copy would be lost.
 * Writing through value types requires every value-type parent member on the path to be writable and
@@ -464,6 +476,12 @@ for every tested item; the hint names where `T` objects are reachable).
 `unknown-member` SHOULD carry a `hint` with the closest member names of the observed types —
 this is the main self-correction channel for agents.
 
+Hints never name a tool, source or object the host does not have. A host MAY name its **schema tool** (e.g.
+`rql-schema`); hints that point to the list of types say "list the types with rql-schema", otherwise "with the schema
+tool". A `call` of a method the targets do not have (`unknown-function`) lists the targets' callable methods and also
+names every source whose value is a single object that has a callable method of that name
+(`objects | call CreateGameObject(…)` → "the source 'editor' has CreateGameObject: editor | call CreateGameObject(…)").
+
 **Suggestions** ("did you mean …?" for members, sources, stages, functions and type names) rank candidates the same
 way in every runtime. Comparison is ASCII case-insensitive. A candidate qualifies when its *optimal string alignment*
 distance to the name (Damerau–Levenshtein without repeated edits of a substring: insertion, deletion, substitution and
@@ -473,8 +491,8 @@ least half as long as the name (`LabelText` → `Label`, but not `NoSuchType` �
 distance, then ordinal name; at most 3 suggestions. When nothing qualifies, a hint MAY list the type's members, at most
 12 of them followed by `… (N more)`.
 Runtimes SHOULD also report `unknown-member` for a bare name that was never evaluated (short-circuit,
-empty stream) when no type statically reachable from the sources declares it and no `select` alias
-produces it.
+empty stream, the untaken branch of `if`) when no type statically reachable from the sources declares it, no `select`
+alias produces it and the host's known-member hook (§8) does not accept it.
 
 ## 11. Lexical conveniences (normative)
 
@@ -489,6 +507,9 @@ To reduce agent errors the parser accepts, and canonicalizes away:
 * Keywords `and or not in is null true false` and core stage names in any letter case.
 * `=` as equality in expressions (`where Name = "x"`), `&&`, `||`, `!` for `and`, `or`, `not`.
 * `limit N` as an alias of `first N`; `expr as name` as an alias form in `select`.
+* `cond ? then : else` for `if(cond, then, else)` (§4.3). Like every complex expression it needs parentheses where the
+  grammar takes a `postfix` (`select kind = ($ is Light ? "light" : "other")`); a `?` without its `:` is a
+  `syntax-error` whose hint shows the form.
 * `x is null` / `x is not null` canonicalize to `==`/`!=` with a null literal; `x not in L` and
   `x is not T` to `not(...)`; a negated numeric literal folds into the literal.
 

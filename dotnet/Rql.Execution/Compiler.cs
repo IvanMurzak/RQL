@@ -19,7 +19,7 @@ namespace Rql.Execution
 
         public static readonly string[] CoreFunctions =
         {
-            "has", "is-null", "len", "lower", "upper", "abs", "round", "floor", "ceil", "sqrt", "pow", "min", "max", "coalesce", "ref",
+            "has", "is-null", "len", "lower", "upper", "abs", "round", "floor", "ceil", "sqrt", "pow", "min", "max", "coalesce", "if", "ref",
             "append", "insert", "remove-at", "without",
             "replace", "replace-regex", "substring", "split", "trim", "pad",
             "contains", "starts-with", "ends-with", "matches",
@@ -940,6 +940,15 @@ namespace Rql.Execution
                         }
                         return null;
                     };
+                }
+                case "if":
+                {
+                    // Lazy: only the taken branch runs; a condition that is not true (false or unknown) takes the else branch.
+                    Arity(c, 3, 3);
+                    var cond = Compile(c.Args[0]);
+                    var then = Compile(c.Args[1]);
+                    var otherwise = Compile(c.Args[2]);
+                    return x => Truth(cond(x)) == true ? then(x) : otherwise(x);
                 }
                 case "ref":
                 {

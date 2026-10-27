@@ -157,6 +157,18 @@
     {
       "rql": "g | select a=({$type: 1, \"$type\": 2})",
       "code": "syntax-error"
+    },
+    {
+      "rql": "g | select v = (a ? b)",
+      "code": "syntax-error"
+    },
+    {
+      "rql": "g | where a ?? b",
+      "code": "syntax-error"
+    },
+    {
+      "rql": "g | select v = (a ? b , c)",
+      "code": "syntax-error"
     }
   ]
 }

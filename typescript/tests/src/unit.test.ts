@@ -702,3 +702,75 @@ test('a mutation request must end with set or call', () => {
   assert.equal(e.execute('bodies', {}, { allowMutation: true }).diagnostics[0]?.code, 'invalid-plan');
   assert.equal(bodies[0]!.Mass, 1);
 });
+
+// ---------------------------------------------------------------- wave 3b: host-neutral hints, empty mutations, conditionals
+
+function wave3bEngine(doors: { Name: string; Opened: number }[]): RqlEngine {
+  class Door {
+    Name = '';
+    Opened = 0;
+  }
+  class Editor {}
+  for (const d of doors) Object.setPrototypeOf(d, Door.prototype);
+  const types = new TypeModel()
+    .register(Door, { members: [{ name: 'Name', type: t.string }, { name: 'Opened', type: t.int }] })
+    .register(Editor, { members: [] });
+  const e = new RqlEngine({ types })
+    .addSource('doors', () => doors)
+    .addSource('editor', () => new Editor())
+    .addAdapter({ target: Door, members: (m) => m.method('open', [{ name: 'force', type: t.int }], undefined, (d, f: number) => void (d.Opened += f)) })
+    .addAdapter({ target: Editor, members: (m) => m.method('createThing', [{ name: 'name', type: t.string }], t.string, (_e, n: string) => n) });
+  e.mutations.enabled = true;
+  return e;
+}
+
+test('the unknown-source example names a registered source', () => {
+  const d = wave3bEngine([]).execute('[0, 1, 2] | select $').diagnostics[0]!;
+  assert.equal(d.code, 'unknown-source');
+  assert.ok(d.message.includes('(e.g. doors)'), d.message);
+  assert.ok(!(d.message + d.hint).includes('world'));
+  assert.ok(d.hint!.includes('sources: doors editor'));
+  const rowHint = wave3bEngine([{ Name: 'a', Opened: 0 }]).execute('doors | select Name | where Opend > 0').diagnostics.find((x) => x.code === 'unknown-member')!;
+  assert.ok(!rowHint.hint!.includes('world'));
+});
+
+test('the no-match hint names the host schema tool', () => {
+  const e = wave3bEngine([{ Name: 'a', Opened: 0 }]);
+  assert.ok(e.execute('doors | where $ is Window').diagnostics.find((x) => x.code === 'no-match')!.hint!.includes('list the types with the schema tool'));
+  e.schemaHint = 'rql-schema';
+  assert.ok(e.execute('doors | where $ is Window').diagnostics.find((x) => x.code === 'no-match')!.hint!.includes('list the types with rql-schema'));
+});
+
+test('a mutation emptied by a typo fails; a member a host type knows keeps it ok', () => {
+  const doors = [{ Name: 'X', Opened: 0 }];
+  const e = wave3bEngine(doors);
+  const r = e.execute('doors | where Name == "X" | get Nmae | set Name = "Y"', {}, { allowMutation: true });
+  assert.equal(r.ok, false);
+  assert.equal(r.diagnostics[0]?.code, 'unknown-member');
+  assert.equal(r.diagnostics[0]?.severity, 'error');
+  assert.ok(r.diagnostics[0]!.message.includes('nothing was changed'));
+  assert.equal(doors[0]!.Name, 'X');
+  assert.equal(e.execute('doors | where intensity > 1 | set Name = "Y"', {}, { allowMutation: true }).ok, false);
+  e.isKnownMember = (n) => n === 'intensity';
+  const ok = e.execute('doors | where intensity > 1 | set Name = "Y"', {}, { allowMutation: true });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.total, 0);
+  assert.ok(ok.diagnostics.some((x) => x.code === 'unknown-member' && x.severity === 'warning'));
+});
+
+test('the unknown-callable hint names a source that has the method', () => {
+  const d = wave3bEngine([{ Name: 'a', Opened: 0 }]).execute('doors | call createThing("a")', {}, { allowMutation: true }).diagnostics[0]!;
+  assert.equal(d.code, 'unknown-function');
+  assert.ok(d.hint!.includes('callable: open('), d.hint);
+  assert.ok(d.hint!.includes("the source 'editor' has createThing: editor | call createThing("), d.hint);
+});
+
+test('conditionals are lazy and right-associative; an incomplete one hints at the form', () => {
+  const e = wave3bEngine([{ Name: 'a', Opened: 0 }, { Name: 'b', Opened: 0 }]);
+  const r = e.execute('doors | select v = (Name == "a" ? 1 : Name == "b" ? 2 : 3), w = if(true, Name, ref("Door#99"))');
+  assert.equal(r.ok, true, JSON.stringify(r.diagnostics));
+  assert.deepEqual(rows(r), [[1, 'a'], [2, 'b']]);
+  const bad = e.execute('doors | select v = (Name ? 1)').diagnostics[0]!;
+  assert.equal(bad.code, 'syntax-error');
+  assert.ok(bad.hint!.includes('cond ? then : else'));
+});

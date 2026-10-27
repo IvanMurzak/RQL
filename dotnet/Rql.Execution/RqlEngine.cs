@@ -515,6 +515,46 @@ namespace Rql.Execution
         /// </summary>
         public string? FindHint { get; set; }
 
+        /// <summary>
+        /// How callers list types and their members on this host, e.g. <c>rql-schema</c> (a tool name); hints name it (spec §10).
+        /// Null: the hints say "the schema tool".
+        /// </summary>
+        public string? SchemaHint { get; set; }
+
+        internal string SchemaTool => string.IsNullOrEmpty(SchemaHint) ? "the schema tool" : SchemaHint!;
+
+        /// <summary>
+        /// Whether some type the host knows has a member of this name (case-insensitive), beyond the types statically reachable from
+        /// the sources, e.g. every component type of an engine. A name known here is never reported as a certain typo: neither by
+        /// the static unknown-member check nor as the cause of an empty mutation (spec §8). Null: only the reachable types count.
+        /// </summary>
+        public Func<string, bool>? IsKnownMember { get; set; }
+
+        /// <summary>The first registered source, shown as an example in hints (never an invented name).</summary>
+        internal string? ExampleSource => _sources.Keys.FirstOrDefault();
+
+        /// <summary>
+        /// Sources whose value is a single object with a callable method of this name, as hint text
+        /// ("; the source 'editor' has it: editor | call M(…)"), or "" (spec §10).
+        /// </summary>
+        internal string SourcesWithCallable(string method)
+        {
+            var names = new List<string>();
+            foreach (var s in _sources.Values)
+            {
+                object? v;
+                try { v = Types.Live(s.Getter()); } catch { continue; }
+                if (v == null) continue;
+                var info = Types.Info(v.GetType());
+                if (info.IsList || info.IsMap) continue;
+                if (info.Callable.Any(m => string.Equals(m.Name, method, StringComparison.OrdinalIgnoreCase))) names.Add(s.Name);
+            }
+            if (names.Count == 0) return "";
+            return names.Count == 1
+                ? $"; the source '{names[0]}' has {method}: {names[0]} | call {method}(…)"
+                : $"; sources with {method}: {string.Join(", ", names)} (e.g. {names[0]} | call {method}(…))";
+        }
+
         /// <summary>The hint of a ref() that did not resolve: malformed text is usually a name, not a $ref.</summary>
         internal string RefHint(string reference)
         {

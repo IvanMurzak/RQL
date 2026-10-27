@@ -776,6 +776,30 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
     return r;
 }
 
+/// Sources whose value is a single object with a callable method of this name, as hint text, or "" (spec §10).
+std::string sources_with_callable(Exec& x, const std::string& method) {
+    std::vector<std::string> names;
+    for (auto& s : x.engine.sources()) {
+        Value v;
+        try {
+            v = x.live(s.getter());
+        } catch (...) {
+            continue;
+        }
+        if (!v.is_object() || !v.type()) continue;
+        const TypeView view = x.view(v.type());
+        for (auto& m : view.methods())
+            if (m.callable && iequals(m.name, method)) {
+                names.push_back(s.name);
+                break;
+            }
+    }
+    if (names.empty()) return {};
+    if (names.size() == 1)
+        return "; the source '" + names[0] + "' has " + method + ": " + names[0] + " | call " + method + "(â¦)";
+    return "; sources with " + method + ": " + join(names, ", ") + " (e.g. " + names[0] + " | call " + method + "(â¦))";
+}
+
 QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s) {
     check_policy(x, "call");
     std::vector<Eval> args;
@@ -811,7 +835,8 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
         std::string tn = type_name_of(item);
         if (candidates.empty())
             throw RqlException(exists ? "permission-denied" : "unknown-function", "no callable method '" + s.method + "' on " + tn,
-                               !sigs.empty() ? "callable: " + join(sigs, ", ") : tn + " has no callable methods");
+                               (!sigs.empty() ? "callable: " + join(sigs, ", ") : tn + " has no callable methods") +
+                                   (exists ? std::string() : sources_with_callable(x, s.method)));
         enter_scope(x, target);
         std::vector<Value> vals;
         for (auto& a : args) vals.push_back(a(x));

@@ -64,7 +64,7 @@ namespace Rql.Execution
                 return fail;
             }
             AddWarnings(result, onlyGeneral: false);
-            return result;
+            return EmptyMutation(result) ?? result;
         }
 
         private void AddWarnings(QueryResult result, bool onlyGeneral)
@@ -80,7 +80,7 @@ namespace Rql.Execution
                 var holders = Holders(site.TypeName);
                 string hint = holders.Count > 0
                     ? $"{site.TypeName} objects are reached via {string.Join(", ", holders)}"
-                    : $"no reachable type is named '{site.TypeName}'; use rql_schema / describe to list types";
+                    : $"no reachable type is named '{site.TypeName}'; list the types with {_x.Engine.SchemaTool}";
                 result.Diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, "no-match",
                     $"none of the {site.Evaluated} tested item(s) is a {site.TypeName} (saw {string.Join(", ", site.Seen.Select(t => t.ShortName))})", site.Span, hint));
             }
@@ -92,12 +92,14 @@ namespace Rql.Execution
             {
                 if (!site.Bare || site.Hits > 0 || site.Misses > 0 || reported.Contains(site.Name)) continue;
                 known ??= KnownNames();
-                if (known.Contains(site.Name)) continue;
+                if (known.Contains(site.Name) || HostKnows(site.Name)) continue;
                 reported.Add(site.Name);
                 var close = Suggest.Closest(site.Name, known.ToList(), 3);
-                result.Diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, "unknown-member",
+                var typo = new Diagnostic(DiagnosticSeverity.Warning, "unknown-member",
                     $"no type reachable from the sources has a member '{site.Name}' (not evaluated)", site.Span,
-                    close.Count > 0 ? "did you mean " + string.Join(" / ", close) + "?" : $"if '{site.Name}' is a value, quote it: \"{site.Name}\""));
+                    close.Count > 0 ? "did you mean " + string.Join(" / ", close) + "?" : $"if '{site.Name}' is a value, quote it: \"{site.Name}\"");
+                result.Diagnostics.Add(typo);
+                _typos.Add(typo);
             }
             foreach (var site in _x.Sites)
             {
@@ -106,7 +108,7 @@ namespace Rql.Execution
                 {
                     result.Diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, "unknown-member",
                         $"no column '{site.Name}' in the projected rows (columns: {string.Join(", ", site.RowColumns)})", site.Span,
-                        "select produces rows with only the listed columns; to navigate into objects use the path in the source or `get Path` (e.g. world.LocalPlayer.Inventory.Slots | select Item.Name)"));
+                        RowColumnHint));
                     continue;
                 }
                 var types = site.MissTypes.ToList();
@@ -118,9 +120,40 @@ namespace Rql.Execution
                     : (candidates.Count > 0 ? Suggest.MemberList(candidates) : "");
                 if (close.Count == 0 && char.IsUpper(site.Name[0]))
                     hint += (hint.Length > 0 ? "; " : "") + $"if '{site.Name}' is a value, quote it: \"{site.Name}\"";
-                result.Diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, "unknown-member",
-                    $"no member '{site.Name}' on {typeNames}", site.Span, hint));
+                var diag = new Diagnostic(DiagnosticSeverity.Warning, "unknown-member", $"no member '{site.Name}' on {typeNames}", site.Span, hint);
+                result.Diagnostics.Add(diag);
+                // Missing on every evaluated item, yet another type may have it (polymorphic streams): only a name no known type
+                // declares is a certain typo.
+                known ??= KnownNames();
+                if (!known.Contains(site.Name) && !HostKnows(site.Name)) _typos.Add(diag);
             }
+        }
+
+        internal const string RowColumnHint =
+            "select produces rows with only the listed columns; to navigate into objects select the full path (select Path.Member) or put `get Path` before the select";
+
+        /// <summary>unknown-member warnings for names no known type declares (certain typos), see <see cref="EmptyMutation"/>.</summary>
+        private readonly List<Diagnostic> _typos = new List<Diagnostic>();
+
+        private bool HostKnows(string name)
+        {
+            var hook = _x.Engine.IsKnownMember;
+            if (hook == null) return false;
+            try { return hook(name); }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// A mutation that reached no target because a misspelt member emptied its stream is an error, not "0 changes" (spec §8):
+        /// the unknown-member warnings for names that no known type declares become errors.
+        /// </summary>
+        private QueryResult? EmptyMutation(QueryResult result)
+        {
+            var plan = _x.Plan;
+            if (_typos.Count == 0 || !_x.Options.AllowMutation || plan.Stages.Count == 0 || (result.Rows?.Count ?? 0) > 0) return null;
+            var op = plan.Stages[plan.Stages.Count - 1].Op;
+            return QueryResult.Fail(_typos.Select(d => new Diagnostic(DiagnosticSeverity.Error, d.Code,
+                $"{d.Message}; no item reached '{op}', nothing was changed", d.At, d.Hint)));
         }
 
         private HashSet<string> KnownNames()
@@ -313,7 +346,9 @@ namespace Rql.Execution
             // A host extension function may produce the input too, e.g. unity.assets("t:Material") (spec §2).
             if (src is CallExpr fn && Compiler.ExtensionName(fn, _x.Engine.Functions) is string fnName)
                 return FunctionItems(_c.Compile(src), fnName);
-            throw new RqlException("unknown-source", "query must start with a source name (e.g. world), ref(\"Type#id\") or a host function", src.Span,
+            var example = _x.Engine.ExampleSource;
+            throw new RqlException("unknown-source",
+                $"query must start with a source name{(example != null ? $" (e.g. {example})" : "")}, ref(\"Type#id\") or a host function", src.Span,
                 "sources: " + string.Join(" ", _x.Engine.Sources.Keys)
                 + (_x.Engine.Functions.Count > 0 ? "; functions: " + string.Join(" ", _x.Engine.Functions.Keys) : ""));
         }

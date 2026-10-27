@@ -930,4 +930,120 @@ namespace Rql.Tests
             Assert.Equal(Layers.Layer_Ground | Layers.Layer_Water, w.Mask);
         }
     }
+
+    /// <summary>Wave-3b findings: host-neutral hints, empty mutations through typos, conditionals.</summary>
+    public class Wave3bTests
+    {
+        public sealed class Door
+        {
+            public string Name { get; set; } = "";
+            public int Opened { get; private set; }
+            [RqlCallable] public void Open(int force) => Opened += force;
+        }
+
+        public sealed class Editor
+        {
+            [RqlCallable] public string CreateThing(string name) => name;
+        }
+
+        private static readonly QueryOptions Mutate = new QueryOptions { AllowMutation = true };
+
+        private static RqlEngine Engine(List<Door> doors)
+        {
+            var e = new RqlEngine().AddSource("doors", () => doors).AddSource("editor", () => new Editor());
+            e.Mutations.Enabled = true;
+            return e;
+        }
+
+        [Theory]
+        [InlineData("[0, 1, 2] | select $")]
+        [InlineData("range(0, 3)")]
+        public void UnknownSourceExampleNamesARegisteredSource(string q)
+        {
+            var r = Engine(new List<Door>()).Execute(q);
+            var d = r.Diagnostics[0];
+            Assert.Equal("unknown-source", d.Code);
+            Assert.Contains("(e.g. doors)", d.Message);
+            Assert.DoesNotContain("world", d.Message + d.Hint);
+            Assert.Contains("sources: doors editor", d.Hint);
+        }
+
+        [Fact]
+        public void RowColumnHintNamesNoInventedSource()
+        {
+            var r = Engine(new List<Door> { new Door() }).Execute("doors | select Name | where Opend > 0");
+            var d = r.Diagnostics.First(x => x.Code == "unknown-member");
+            Assert.DoesNotContain("world", d.Hint);
+        }
+
+        [Theory]
+        [InlineData(null, "list the types with the schema tool")]
+        [InlineData("rql-schema", "list the types with rql-schema")]
+        public void NoMatchHintNamesTheHostSchemaTool(string? schema, string expected)
+        {
+            var e = Engine(new List<Door> { new Door() });
+            e.SchemaHint = schema;
+            var d = e.Execute("doors | where $ is Window").Diagnostics.First(x => x.Code == "no-match");
+            Assert.Contains(expected, d.Hint);
+            Assert.DoesNotContain("rql_schema", d.Hint);
+        }
+
+        [Fact]
+        public void MutationEmptiedByATypoFails()
+        {
+            var doors = new List<Door> { new Door { Name = "X" } };
+            var r = Engine(doors).Execute("doors | where Name == \"X\" | get Nmae | set Name = \"Y\"", options: Mutate);
+            Assert.False(r.Ok);
+            var d = r.Diagnostics[0];
+            Assert.Equal("unknown-member", d.Code);
+            Assert.Equal(DiagnosticSeverity.Error, d.Severity);
+            Assert.Contains("nothing was changed", d.Message);
+            Assert.Contains("Name", d.Hint);
+            Assert.Equal("X", doors[0].Name);
+        }
+
+        [Fact]
+        public void HostKnownMemberKeepsAnEmptyMutationOk()
+        {
+            var doors = new List<Door> { new Door { Name = "X" } };
+            var e = Engine(doors);
+            e.IsKnownMember = n => n == "intensity";
+            var r = e.Execute("doors | where intensity > 1 | set Name = \"Y\"", options: Mutate);
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal(0, r.Total);
+            Assert.Contains(r.Diagnostics, x => x.Code == "unknown-member" && x.Severity == DiagnosticSeverity.Warning);
+            // The same typo without the hook is an error.
+            e.IsKnownMember = null;
+            Assert.False(e.Execute("doors | where intensity > 1 | set Name = \"Y\"", options: Mutate).Ok);
+        }
+
+        [Fact]
+        public void UnknownCallableHintNamesASourceThatHasIt()
+        {
+            var r = Engine(new List<Door> { new Door() }).Execute("doors | call CreateThing(\"a\")", options: Mutate);
+            var d = r.Diagnostics[0];
+            Assert.Equal("unknown-function", d.Code);
+            Assert.Contains("callable: Open(", d.Hint);
+            Assert.Contains("the source 'editor' has CreateThing: editor | call CreateThing(", d.Hint);
+        }
+
+        [Fact]
+        public void ConditionalIsLazyAndRightAssociative()
+        {
+            var e = Engine(new List<Door> { new Door { Name = "a" }, new Door { Name = "b" } });
+            var r = e.Execute("doors | select v = (Name == \"a\" ? 1 : Name == \"b\" ? 2 : 3), w = if(true, Name, ref(\"Door#99\"))");
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal(1, r.Rows![0][0]!.GetValue<long>());
+            Assert.Equal(2, r.Rows![1][0]!.GetValue<long>());
+            Assert.Equal("b", r.Rows![1][1]!.GetValue<string>());
+        }
+
+        [Fact]
+        public void IncompleteConditionalHintsAtTheForm()
+        {
+            var d = Engine(new List<Door>()).Execute("doors | select v = (Name ? 1)").Diagnostics[0];
+            Assert.Equal("syntax-error", d.Code);
+            Assert.Contains("cond ? then : else", d.Hint);
+        }
+    }
 }

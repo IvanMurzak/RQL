@@ -906,7 +906,7 @@ Eval Compiler::compile_op_args(const std::string& op, const ExprPtr& ae, const E
 namespace {
 
 const char* kCoreFunctions[] = {"has", "is-null", "len", "lower", "upper", "abs", "round", "floor", "ceil", "sqrt", "pow", "min", "max",
-                                "coalesce", "ref",
+                                "coalesce", "if", "ref",
                                 "append", "insert", "remove-at", "without",
                                 "replace", "replace-regex", "substring", "split", "trim", "pad",
                                 "contains", "starts-with", "ends-with", "matches"};
@@ -1389,6 +1389,12 @@ Eval Compiler::compile_function(const Expr& c) {
             }
             return Value::null();
         };
+    }
+    if (name == "if") {
+        // Lazy: only the taken branch runs; a condition that is not true (false or unknown) takes the else branch.
+        arity(c, 3, 3);
+        Eval cond = compile(*c.args[0]), then = compile(*c.args[1]), otherwise = compile(*c.args[2]);
+        return [cond, then, otherwise](Exec& x) { return truth(cond(x)) == std::optional<bool>(true) ? then(x) : otherwise(x); };
     }
     if (name == "ref") {
         arity(c, 1, 64);

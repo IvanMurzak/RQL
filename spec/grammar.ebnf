@@ -37,7 +37,10 @@ generic_stage   = name , { "." , name } , { option | postfix } ;   (* any other 
 option          = name , "=" , postfix ;         (* max-depth=4, include-self=false *)
 
 (* ---------- expressions (lowest to highest precedence) ---------- *)
-expr            = or_expr ;
+expr            = conditional ;
+conditional     = or_expr , [ "?" , expr , ":" , expr ] ;
+                  (* lowest precedence, right-associative: a ? b : c ? d : e = a ? b : (c ? d : e);
+                     canonicalizes to the core function if(cond, then, else), semantics.md §4.3 *)
 or_expr         = and_expr , { ( "or" | "||" ) , and_expr } ;
 and_expr        = not_expr , { ( "and" | "&&" ) , not_expr } ;
 not_expr        = ( "not" | "!" ) , not_expr | comparison ;
