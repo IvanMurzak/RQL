@@ -431,6 +431,7 @@ namespace Rql.Tests
             var e = new RqlEngine();
             e.AddSource("h", () => h);
             e.AddSource("many", () => { var l = new List<GuardHost>(); for (int i = 0; i < 50; i++) l.Add(new GuardHost()); return l; });
+            e.AddSource("some", () => { var l = new List<GuardHost?>(); for (int i = 0; i < 25; i++) l.Add(new GuardHost()); l.Add(null); return l; });
             e.Mutations.Enabled = true;
             e.Mutations.MaxTargets = maxTargets;
             e.Mutations.HardMaxTargets = 30;
@@ -490,10 +491,52 @@ namespace Rql.Tests
             e.Defaults.BudgetsAdjustable = adjustable;
             var d = Mut(e, "many | set Free.x = 1").Diagnostics[0];
             Assert.Equal("mutation-limit", d.Code);
-            Assert.Contains("first 20 | set", d.Hint);
-            Assert.Contains("skip 20 | first 20 | set", d.Hint);
-            Assert.Equal(adjustable, d.Hint!.Contains("budgets.maxMutationTargets (host ceiling 30)"));
+            // 50 items, ceiling 30: counting stops past the ceiling.
+            Assert.Equal("more than 30 objects matched 'set' (the limit is 20); nothing was changed", d.Message);
+            int batch = adjustable ? 30 : 20;
+            Assert.Contains($"first {batch} | set", d.Hint);
+            Assert.Contains($"skip {batch} | first {batch} | set", d.Hint);
+            Assert.Equal(adjustable, d.Hint!.StartsWith("pass budgets.maxMutationTargets = 30 (the host ceiling) and split"));
             if (!adjustable) Assert.DoesNotContain("budgets", d.Hint);
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void MutationLimitCountsTheMatchesAndNamesTheHostLimitArgument(bool adjustable)
+        {
+            var e = Engine(new GuardHost());
+            e.Defaults.BudgetsAdjustable = adjustable;
+            e.Mutations.LimitArgument = "max_targets";
+            var d = Mut(e, "some | set Free.x = 1").Diagnostics[0];
+            Assert.Equal("mutation-limit", d.Code);
+            Assert.Equal("25 objects matched 'set', more than the limit of 20; nothing was changed", d.Message);
+            Assert.Equal("pass max_targets = 25 (host ceiling 30) to change all 25 in one all-or-nothing call (a dry run previews it); "
+                + "or narrow the query (where / ref(...))", d.Hint);
+            // The raise works whatever BudgetsAdjustable says: it only shapes hints.
+            Assert.True(Mut(e, "some | set Free.x = 1", new Budgets { MaxMutationTargets = 25 }).Ok);
+        }
+
+        [Fact]
+        public void BudgetErrorWhileCountingIsReportedAndCeilingAtLimitAdvisesBatches()
+        {
+            var e = Engine(new GuardHost());
+            var r = Mut(e, "many | set Free.x = 1", new Budgets { MaxVisited = 25 });
+            Assert.Equal("budget-exceeded", r.Diagnostics[0].Code);
+            e.Mutations.HardMaxTargets = 20; // ceiling == limit: no raise to advise
+            e.Mutations.LimitArgument = "";  // empty counts as unset
+            var d = Mut(e, "some | set Free.x = 1").Diagnostics[0];
+            Assert.Equal("more than 20 objects matched 'set' (the limit is 20); nothing was changed", d.Message);
+            Assert.StartsWith("narrow the query (where / ref(...)) or split the change into batches of 20", d.Hint);
+        }
+
+        [Fact]
+        public void HostDefaultTargetLimitApplies()
+        {
+            var e = Engine(new GuardHost(), maxTargets: 25);
+            Assert.True(Mut(e, "some | set Free.x = 1").Ok);
+            var d = Mut(e, "many | set Free.x = 1").Diagnostics[0];
+            Assert.Equal("more than 30 objects matched 'set' (the limit is 25); nothing was changed", d.Message);
         }
 
         [Theory]
@@ -778,6 +821,113 @@ namespace Rql.Tests
             Assert.False(r.Ok);
             Assert.Equal("invalid-regex", r.Diagnostics[0].Code);
             Assert.Contains("([", r.Diagnostics[0].Message);
+        }
+    }
+
+    /// <summary>Wave-3: enum name resolution (spec §8) — qualified names, entry prefixes, ambiguity, host aliases.</summary>
+    public class EnumNameResolutionTests
+    {
+        public enum EAlign { HAlign_Fill, HAlign_Left, VAlign_Fill, VAlign_Top, Center }
+        [System.Flags] public enum Layers { None = 0, Layer_Ground = 1, Layer_Water = 2 }
+        public enum Small : byte { X = 0, Y = 44 }
+        public enum Huge : ulong { Zero = 0, Max = ulong.MaxValue }
+
+        public sealed class Sized
+        {
+            public Small S { get; set; }
+            public Huge H { get; set; }
+        }
+
+        [Fact]
+        public void IntegerTextRespectsTheUnderlyingType()
+        {
+            var z = new Sized();
+            var e = new RqlEngine();
+            e.AddSource("z", () => z);
+            e.Mutations.Enabled = true;
+            var o = new QueryOptions { AllowMutation = true };
+            Assert.Equal("coercion-failed", e.Execute("z | set S = \"300\"", null, o).Diagnostics[0].Code); // not 300 mod 256 = Y
+            Assert.True(e.Execute("z | set H = \"18446744073709551615\"", null, o).Ok);
+            Assert.Equal(Huge.Max, z.H);
+            Assert.Equal(0, e.Execute("z | where S == \"256\" | count").Value!.GetValue<long>());
+        }
+
+        public sealed class Widget
+        {
+            public EAlign Align { get; set; } = EAlign.HAlign_Left;
+            public Layers Mask { get; set; }
+            public Dictionary<EAlign, int> Weights { get; set; } = new Dictionary<EAlign, int> { [EAlign.VAlign_Top] = 1 };
+        }
+
+        private static (RqlEngine, Widget) Engine()
+        {
+            var w = new Widget();
+            var e = new RqlEngine();
+            e.AddSource("w", () => w);
+            e.Mutations.Enabled = true;
+            return (e, w);
+        }
+
+        private static QueryResult Set(RqlEngine e, string assign) =>
+            e.Execute("w | set " + assign, null, new QueryOptions { AllowMutation = true });
+
+        [Theory]
+        [InlineData("\"VAlign_Top\"", EAlign.VAlign_Top)]
+        [InlineData("\"valign_top\"", EAlign.VAlign_Top)]
+        [InlineData("\"EAlign::VAlign_Fill\"", EAlign.VAlign_Fill)]
+        [InlineData("\"EWhatever::Left\"", EAlign.HAlign_Left)]
+        [InlineData("\"EAlign.center\"", EAlign.Center)]
+        [InlineData("\"Top\"", EAlign.VAlign_Top)]
+        [InlineData("\" top \"", EAlign.VAlign_Top)]
+        [InlineData("\"3\"", EAlign.VAlign_Top)]
+        public void LenientNamesResolve(string literal, EAlign expected)
+        {
+            var (e, w) = Engine();
+            var r = Set(e, "Align = " + literal);
+            Assert.True(r.Ok, string.Join("; ", r.Diagnostics.Select(d => d.Message)));
+            Assert.Equal(expected, w.Align);
+        }
+
+        [Fact]
+        public void AmbiguousNameIsRefusedWithTheCandidates()
+        {
+            var (e, w) = Engine();
+            var r = Set(e, "Align = \"fill\"");
+            Assert.Equal("coercion-failed", r.Diagnostics[0].Code);
+            Assert.Contains("\"fill\" is ambiguous for EAlign: HAlign_Fill, VAlign_Fill", r.Diagnostics[0].Message);
+            Assert.Equal(EAlign.HAlign_Left, w.Align);
+            Assert.Equal("coercion-failed", Set(e, "Align = \"Bottom\"").Diagnostics[0].Code);
+        }
+
+        [Fact]
+        public void HostAliasesResolveLikeEntryNames()
+        {
+            var (e, w) = Engine();
+            e.EnumAliases = t => t == typeof(EAlign) ? new Dictionary<string, string> { ["Fill"] = "HAlign_Fill", ["Middle"] = "Center" } : null;
+            Assert.True(Set(e, "Align = \"Fill\"").Ok); // the alias decides at step 1, before the ambiguous prefix step
+            Assert.Equal(EAlign.HAlign_Fill, w.Align);
+            Assert.True(Set(e, "Align = \"middle\"").Ok);
+            Assert.Equal(EAlign.Center, w.Align);
+            var rows = e.Execute("w | where Align == \"MIDDLE\" | count");
+            Assert.Equal(1, rows.Value!.GetValue<long>());
+            Assert.Equal("Center", e.Execute("w | select Align").Rows![0][0]!.GetValue<string>()); // encoding keeps the entry name
+        }
+
+        [Fact]
+        public void ComparisonsAndMapKeysUseTheSameResolution()
+        {
+            var (e, w) = Engine();
+            Assert.Equal(1, e.Execute("w | where Align == \"EAlign::Left\" | count").Value!.GetValue<long>());
+            Assert.Equal(0, e.Execute("w | where Align == \"Fill\" | count").Value!.GetValue<long>()); // ambiguous: not equal
+            Assert.Equal(1, e.Execute("w | select v = Weights[\"Top\"]").Rows![0][0]!.GetValue<long>());
+        }
+
+        [Fact]
+        public void FlagsListsResolveEachName()
+        {
+            var (e, w) = Engine();
+            Assert.True(Set(e, "Mask = \"Ground, water\"").Ok);
+            Assert.Equal(Layers.Layer_Ground | Layers.Layer_Water, w.Mask);
         }
     }
 }

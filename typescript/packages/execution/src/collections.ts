@@ -68,9 +68,13 @@ export function findMapKey(m: MapLike, key: unknown): { found: true; key: unknow
   }
   if (typeof key === 'string') {
     const up = key.toUpperCase();
+    let resolved: EnumValue | undefined; // the key resolved against the map's enum key type, once (spec §8)
     for (const k of m.keys()) {
       if (typeof k === 'string' && k.toUpperCase() === up) return { found: true, key: k };
-      if (k instanceof EnumValue && k.name.toUpperCase() === up) return { found: true, key: k };
+      if (k instanceof EnumValue) {
+        resolved ??= k.type.parse(key);
+        if (resolved !== undefined && resolved.type === k.type && resolved.value === k.value) return { found: true, key: k };
+      }
     }
   } else if (typeof key === 'number') {
     for (const k of m.keys()) if (k instanceof EnumValue && k.ordinal === key) return { found: true, key: k };

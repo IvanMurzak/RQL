@@ -24,4 +24,5 @@ Experiment E5 compared both (see `RESULTS.md`).
 ## Budgets applied by the sample host
 
 `maxRows` 50 per call (configurable per run), engine defaults otherwise (spec §10); mutation
-target limit 20 unless the request raises `maxMutationTargets`.
+target limit 20 unless the request raises `maxMutationTargets` (up to the host ceiling, 1000; spec §8 target limit:
+editor hosts with undo should default higher, e.g. 200, and name their raise argument in `LimitArgument`).

@@ -27,7 +27,7 @@ Every expression evaluates to one of:
 | `null` | The member exists and its value is null / empty optional / nullptr. |
 | `error` | Evaluation failed (getter threw, division by zero, type mismatch in arithmetic). Carries a code. |
 | `bool`, `number`, `string` | Scalars. Numbers are compared numerically regardless of the runtime's int/float types. |
-| `enum` | Runtime enum value; compares to strings by name (case-insensitive) and to numbers by underlying value. |
+| `enum` | Runtime enum value; compares to strings by name (enum name resolution, §8) and to numbers by underlying value. |
 | `object` | A reference-like runtime object with identity. |
 | `struct` | A value type (e.g. `Vector3`); no identity, compared member-wise is NOT supported in v0 (use members). |
 | `list` | Ordered collection (array, list, set, generic enumerable that is not a string or map). |
@@ -114,7 +114,8 @@ path; the same object reached by another query has another `$path`. Hosts expose
 ### 4.1 Comparison
 
 * `==`/`=` and `!=`: numbers numerically; strings ordinal **case-sensitive**; bools; enums vs
-  string (name, case-insensitive) or number; objects by identity; `null == null` is `true`;
+  string (the entry the string resolves to by enum name resolution, §8; a string that resolves to no entry or to
+  several is not equal) or number; objects by identity; `null == null` is `true`;
   `null` vs non-null is `false` for `==` and `true` for `!=`. Lists/structs/maps: `unknown` — including a struct
   against an object literal (§4.5), unless a type adapter's comparison answers (§13).
 * `<`, `<=`, `>`, `>=`: numbers, strings (ordinal), enums (underlying value). Otherwise `unknown`.
@@ -314,9 +315,9 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   are rejected with `invalid-plan` because a change to a copy would be lost.
 * Writing through value types requires every value-type parent member on the path to be writable and
   allowed by policy, since the modified copy is written back into it.
-* A request's `maxMutationTargets` may not exceed the host's hard ceiling.
+* A request's `maxMutationTargets` may not exceed the host's hard ceiling (target limit, below).
 * `set p = e`: for each item, evaluate `e` against the item, coerce to the member type of `p`
-  (number→integral only if integral and in range; string→enum by name; null only for nullable /
+  (number→integral only if integral and in range; string→enum by enum name resolution, below; null only for nullable /
   reference types; list literal → list/array type; object literal → map / constructed object, §4.5), then write. Writing through value types
   (`Transform.Position.x = 1`) MUST write back the modified copy to every enclosing value-type
   member up to the first reference object. Target member must be writable and allowed by
@@ -348,6 +349,26 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   copy (built by a getter) then does not keep the change. `Key` cannot be set (`readonly-member`). Receipts carry one
   row per entry: `$ref` is the owner of the change (the nearest enclosing object, §13) and `member` the written path.
   `call` on entries is `invalid-plan` (call the values: `… | get Value | call …`).
+* **Enum name resolution**: a string meets an enum type (a write coercion, a map key, a comparison) and is resolved
+  to one entry. Leading and trailing spaces are ignored; integer text is the underlying value (writes accept only
+  defined values, or any combination for a flags enum); a runtime whose enums support flags MAY accept a comma-separated
+  list of names, each resolved by these rules. Otherwise the first step that finds a candidate decides:
+  1. an entry name equal to the text (ordinal, case-sensitive), or a host alias equal to it;
+  2. when the text is qualified — `Type::Name`, or `Type.Name` when it has no `::` — the steps 1, 3 and 4 run on the
+     part after the last separator (`"EWidgetSpace::World"` → `World`, `"NodeKind.gamma"` → `Gamma`). The qualifier is
+     not checked against the type's name: hosts name types differently from the source code agents copy from
+     (`EWidgetSpace` / `WidgetSpace`), and the entry must exist in the target type anyway;
+  3. entry names and host aliases equal to the text ignoring case;
+  4. entry names without their **entry prefix** (the text up to and including the first `_`, when both that part and
+     the rest are non-empty) equal to the text ignoring case: `"Fill"` → `HAlign_Fill`.
+
+  Candidates are counted as distinct entries (an alias and its entry are one). One candidate is the result; several
+  stop the resolution as **ambiguous**: a write fails with `coercion-failed` listing the candidates
+  (`"Fill" is ambiguous for EAlign: HAlign_Fill, VAlign_Fill`), a comparison is not equal. No candidate is
+  `coercion-failed` listing the entry names (comparison: not equal). Exact matches thus always win over the lenient
+  steps, and a lenient step never picks between two entries. **Host aliases**: a host MAY declare alias names for
+  enum entries (an engine's display names, `"Fill"` for `HAlign_Fill`); they take part in steps 1 to 3 like entry
+  names (not in step 4), encoding still uses the entry name.
 * **Host text coercion**: a host MAY register a text coercion that converts a string written to a struct or object
   type that no type adapter coerces (an engine's own text form, `"(Minimum=(X=0.5,Y=0),Maximum=(X=0.5,Y=0))"`). It
   runs after the adapters and before the built-in rules, on every write coercion (`set`, `call` arguments, object
@@ -359,8 +380,22 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   called. It serves rules that span targets: two calls saving to the same file, a component whose dependency is
   removed by the same `call`. Per-target validators (§13) still run first.
 * **All-or-nothing**: every target and assignment is resolved and coerced before any write. If
-  more than `budgets.maxMutationTargets` (default 20) items reach the stage → `mutation-limit`,
+  more than `budgets.maxMutationTargets` items reach the stage → `mutation-limit`,
   nothing written. If a write fails midway the runtime MUST restore already-written values.
+* **Target limit**: the limit guards the *breadth* of a change — a filter that is wider than intended (a forgotten
+  `where`, a name that matches more than expected) — not its correctness: resolution, coercion, validation, batch
+  validation, the host's before-write hook (e.g. one undo step for the whole stage), rollback on failure and dry runs
+  apply to a change of any size. Its default is the host's (`MaxTargets`, 20 unless the host sets it): hosts that
+  record the whole change as one undoable step (editors) SHOULD use a larger default (e.g. 200); hosts without undo
+  keep a small one. A request MAY raise it through `budgets.maxMutationTargets` up to the host's ceiling (`HardMaxTargets`,
+  default 1000), which bounds the cost of one stage (planning, receipts, undo memory); raising it is always an explicit
+  per-request decision, and whether a host's callers can raise it is independent of whether they can pass the other
+  budgets (§10). On `mutation-limit` the runtime keeps counting the items that reach the stage, up to the ceiling (the
+  earlier stages run for them as usual; null and destroyed items are skipped as targets are; the stage itself checks
+  and evaluates nothing for the extra items), so the message states how many items matched (`160 objects matched
+  'set', more than the limit of 20`) or that more than the ceiling did. A budget error (`budget-exceeded`, `timeout`)
+  while counting is reported instead of `mutation-limit`: it is what the caller must fix first. A limit argument or
+  hint override the host sets to an empty text counts as unset.
 * **Dry-run** (`options.dryRun`) computes and returns the receipt without writing.
 * Receipt: `kind: "rows"`, columns `["$ref", "member", "old", "new"]` (`call`: `["$ref", "method", "result"]`).
   After the writes, `new` is the value **read back** from each written member, i.e. what the host actually stored (a
@@ -392,14 +427,26 @@ Budgets (request-level, all optional, runtime may clamp to its own hard caps):
 | `maxDepth` (recurse cap) | 16 | clamp + warning |
 | `timeoutMs` | 2 000 | `timeout` |
 | `maxOutputBytes` | 65 536 | truncation of rows + warning `output-truncated` |
-| `maxMutationTargets` | 20 | `mutation-limit` |
+| `maxMutationTargets` | the host's (20 unless set, §8) | `mutation-limit` |
 
-Budget hints: the hints of `budget-exceeded`, `timeout` and `mutation-limit` advise raising a budget (`budgets.*`)
-only when the host declares that its callers can pass request budgets (default: they can); hosts whose tools take no
-budgets argument turn that off, so no hint names a setting the caller cannot reach. The `mutation-limit` hint always
-suggests narrowing the query or splitting the change into batches of the limit (`… | first 20 | set …`, then
-`… | skip 20 | first 20 | set …`, or `first 20` again when the change removes the items from the filter); a host MAY
-replace the whole hint (e.g. to name its own limit argument).
+Budget hints: the hints of `budget-exceeded` and `timeout` advise raising a budget (`budgets.*`) only when the host
+declares that its callers can pass request budgets (default: they can); hosts whose tools take no budgets argument turn
+that off, so no hint names a setting the caller cannot reach. The target limit (§8) has its own **limit argument**: the
+name under which the host's callers raise it (e.g. a tool argument `max_targets`). When the host names none, it is
+`budgets.maxMutationTargets` if callers can pass budgets, and otherwise callers cannot raise the limit. The
+`mutation-limit` hint:
+
+* when callers can raise the limit and the ceiling is above it, and the matched count is within the ceiling: first
+  advise raising the limit argument to the count, which changes every item in one all-or-nothing call
+  (`pass max_targets = 160 (host ceiling 1000) to change all 160 in one all-or-nothing call (a dry run previews it);
+  or narrow the query (where / ref(...))`);
+* when more items matched than the ceiling: advise raising the limit argument to the ceiling and splitting the change
+  into batches of the ceiling (as below, with the ceiling as batch size), or narrowing the query;
+* when callers cannot raise the limit: narrow the query or split the change into batches of the limit
+  (`… | first 20 | set …`, then `… | skip 20 | first 20 | set …`, or `first 20` again when the change removes the items
+  from the filter).
+
+A host MAY replace the whole hint.
 
 Diagnostics: `{severity: "error"|"warning", code, message, at?: {start, end}, hint?}`. Error codes
 are a closed set per release (package 0.2.0 added `call-threw`, `function-threw`, `hook-threw`, `invalid-value` and

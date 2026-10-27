@@ -13,6 +13,11 @@ namespace conformance {
 void register_types(rql::TypeRegistry& reg) {
     reg.structure<Vec2>("Vec2").member("x", &Vec2::x).member("y", &Vec2::y);
     reg.enumeration<NodeKind>("NodeKind").value("Alpha", NodeKind::Alpha).value("Beta", NodeKind::Beta).value("Gamma", NodeKind::Gamma);
+    reg.enumeration<Align>("Align")
+        .value("HAlign_Fill", Align::HAlign_Fill)
+        .value("HAlign_Left", Align::HAlign_Left)
+        .value("VAlign_Fill", Align::VAlign_Fill)
+        .value("VAlign_Top", Align::VAlign_Top);
     reg.object<Node>("Node")
         .member("Id", &Node::Id).readonly()
         .member("Name", &Node::Name)
@@ -29,7 +34,7 @@ void register_types(rql::TypeRegistry& reg) {
         .id("Id")
         .display("Name")
         .constructible();  // object literals (spec §4.5)
-    reg.object<Special>("Special").base<Node>().member("Power", &Special::Power).constructible();
+    reg.object<Special>("Special").base<Node>().member("Power", &Special::Power).member("Align", &Special::Align).constructible();
     reg.object<Graph>("Graph")
         .member("Name", &Graph::Name)
         .member("Version", &Graph::Version)
@@ -260,6 +265,8 @@ struct Loader {
         if (req(e, "$type").as_string() == "Special") {
             auto s = std::make_unique<Special>();
             s->Power = static_cast<int>(req(e, "Power").as_number());
+            const std::string& align = req(e, "Align").as_string();
+            s->Align = align == "HAlign_Fill" ? Align::HAlign_Fill : align == "HAlign_Left" ? Align::HAlign_Left : align == "VAlign_Fill" ? Align::VAlign_Fill : Align::VAlign_Top;
             n = std::move(s);
         } else {
             n = std::make_unique<Node>();

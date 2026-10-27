@@ -106,6 +106,12 @@ export class EnumValue {
   }
 }
 
+/** An entry name without its entry prefix (text up to and including the first `_`), or undefined (spec §8). */
+function withoutEntryPrefix(name: string): string | undefined {
+  const i = name.indexOf('_');
+  return i > 0 && i < name.length - 1 ? name.slice(i + 1) : undefined;
+}
+
 /**
  * Enum descriptor. Accepts a TS enum object (`enum NodeKind { Alpha, Beta }` — the numeric reverse
  * mapping is ignored), a name → value record, or a list of names (values 0..n-1).
@@ -116,12 +122,17 @@ export class EnumType {
   readonly description: string | undefined;
   readonly values: readonly EnumValue[];
   private readonly byRaw = new Map<number | string, EnumValue>();
-  private readonly byName = new Map<string, EnumValue>();
+  /** Host alias names (spec §8 enum name resolution), e.g. an editor's display names, with their entries. */
+  private readonly aliases: readonly [string, EnumValue][];
 
+  /**
+   * `options.aliases` maps alias names to entry names (`{ Fill: 'HAlign_Fill' }`): they resolve like entry names
+   * (exactly, then ignoring case) in writes, map keys and comparisons; encoding keeps the entry name.
+   */
   constructor(
     name: string,
     values: Readonly<Record<string, number | string>> | readonly string[],
-    options: { flags?: boolean; description?: string } = {},
+    options: { flags?: boolean; description?: string; aliases?: Readonly<Record<string, string>> } = {},
   ) {
     this.name = name;
     this.flags = options.flags ?? false;
@@ -130,11 +141,11 @@ export class EnumType {
       ? (values as readonly string[]).map((n, i) => [n, i])
       : Object.entries(values as Readonly<Record<string, number | string>>).filter(([k]) => !/^-?\d+(\.\d+)?$/.test(k));
     this.values = entries.map(([n, v], i) => new EnumValue(this, v, n, typeof v === 'number' ? v : i));
-    for (const ev of this.values) {
-      if (!this.byRaw.has(ev.value)) this.byRaw.set(ev.value, ev);
-      const key = ev.name.toUpperCase();
-      if (!this.byName.has(key)) this.byName.set(key, ev);
-    }
+    for (const ev of this.values) if (!this.byRaw.has(ev.value)) this.byRaw.set(ev.value, ev);
+    this.aliases = Object.entries(options.aliases ?? {}).flatMap(([alias, entry]): [string, EnumValue][] => {
+      const ev = this.values.find((v) => v.name === entry);
+      return ev === undefined ? [] : [[alias, ev]];
+    });
   }
 
   /** Wraps a raw host value (defined values are cached instances). */
@@ -149,20 +160,84 @@ export class EnumType {
     return ev.type === this && this.byRaw.get(ev.value) === ev;
   }
 
-  /** Like .NET `Enum.Parse(type, s, ignoreCase: true)`: names, numbers, comma-separated flags. */
+  /** {@link resolve}; undefined when the text resolves to no entry or to several. */
   parse(text: string): EnumValue | undefined {
-    const s = text.trim();
-    if (s.length === 0) return undefined;
-    if (/^[+-]?\d+$/.test(s)) return this.wrap(Number(s));
-    const parts = s.split(',').map((p) => p.trim());
-    if (parts.length === 1) return this.byName.get(parts[0]!.toUpperCase());
-    let acc = 0;
-    for (const p of parts) {
-      const ev = this.byName.get(p.toUpperCase());
-      if (ev === undefined || typeof ev.value !== 'number') return undefined;
-      acc |= ev.value;
+    const r = this.resolve(text);
+    return 'value' in r ? r.value : undefined;
+  }
+
+  /**
+   * Enum name resolution (spec §8): integer text is the value (not checked for being defined); a flags enum accepts a
+   * comma-separated list; otherwise the first step with candidates decides: exact name or alias, the part after a
+   * `Type::` / `Type.` qualifier, ignoring case, ignoring the entry prefix (`HAlign_`). Several entries are ambiguous.
+   */
+  resolve(text: string): { value: EnumValue } | { why: string } {
+    // Comparisons resolve the same literal once per item: memoize, bounded.
+    let r = this.memo.get(text);
+    if (r === undefined) {
+      r = this.compute(text);
+      if (this.memo.size >= 1024) this.memo.clear();
+      this.memo.set(text, r);
     }
-    return this.wrap(acc);
+    return r;
+  }
+
+  private readonly memo = new Map<string, { value: EnumValue } | { why: string }>();
+
+  private compute(text: string): { value: EnumValue } | { why: string } {
+    const s = text.trim();
+    if (/^[+-]?\d+$/.test(s)) return { value: this.wrap(Number(s)) };
+    if (this.flags && s.includes(',')) {
+      let acc = 0;
+      for (const p of s.split(',')) {
+        const r = this.resolveName(p.trim());
+        if (!('value' in r)) return r;
+        if (typeof r.value.value !== 'number') return { why: this.expected() };
+        acc |= r.value.value;
+      }
+      return { value: this.wrap(acc) };
+    }
+    return this.resolveName(s);
+  }
+
+  /** The "expected one of ..." reason listing the entry names. */
+  expected(): string {
+    return 'expected one of ' + this.values.map((e) => e.name).join(', ');
+  }
+
+  private resolveName(s: string): { value: EnumValue } | { why: string } {
+    const exact = (t: string): EnumValue[] | undefined => this.step(t, false, false);
+    const anyCase = (t: string): EnumValue[] | undefined => this.step(t, true, false);
+    const unprefixed = (t: string): EnumValue[] | undefined => this.step(t, true, true);
+    let found = exact(s);
+    if (found === undefined) {
+      const q = s.lastIndexOf('::');
+      const cut = q >= 0 ? q + 2 : s.lastIndexOf('.') + 1;
+      if (cut > 0 && cut < s.length) {
+        const part = s.slice(cut);
+        found = exact(part) ?? anyCase(part) ?? unprefixed(part);
+      }
+    }
+    found ??= anyCase(s) ?? unprefixed(s);
+    if (found === undefined) return { why: this.expected() };
+    // Distinct entries: names sharing one value are one entry.
+    if (new Set(found.map((e) => e.value)).size > 1) {
+      return { why: `"${s}" is ambiguous for ${this.name}: ${found.map((e) => e.name).join(', ')}` };
+    }
+    return { value: this.wrap(found[0]!.value) }; // the defined instance, also for an entry sharing another's value
+  }
+
+  /** The entries one resolution step matches (aliases take part except in the entry-prefix step), or undefined. */
+  private step(s: string, ignoreCase: boolean, prefix: boolean): EnumValue[] | undefined {
+    const up = s.toUpperCase();
+    const eq = (n: string | undefined): boolean => n !== undefined && (ignoreCase ? n.toUpperCase() === up : n === s);
+    const out: EnumValue[] = [];
+    const add = (ev: EnumValue): void => {
+      if (!out.includes(ev)) out.push(ev);
+    };
+    for (const ev of this.values) if (eq(prefix ? withoutEntryPrefix(ev.name) : ev.name)) add(ev);
+    if (!prefix) for (const [alias, ev] of this.aliases) if (eq(alias)) add(ev);
+    return out.length > 0 ? out : undefined;
   }
 
   private formatUndefined(raw: number): string {

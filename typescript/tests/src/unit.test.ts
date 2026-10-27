@@ -182,19 +182,153 @@ const hintEngine = (count: number): { e: RqlEngine; xs: { Id: number; v: number;
 
 for (const adjustable of [true, false]) {
   test(`mutation-limit hint suggests batches; budgets only when adjustable (${adjustable})`, () => {
-    const { e } = hintEngine(25);
+    const { e } = hintEngine(50);
     e.defaults.budgetsAdjustable = adjustable;
     const d = e.execute('xs | set v = 1', undefined, { allowMutation: true }).diagnostics[0]!;
     assert.equal(d.code, 'mutation-limit');
-    assert.ok(d.hint!.includes('first 20 | set'));
-    assert.ok(d.hint!.includes('skip 20 | first 20 | set'));
-    assert.equal(d.hint!.includes('budgets.maxMutationTargets (host ceiling 30)'), adjustable);
+    // 50 items, ceiling 30: counting stops past the ceiling.
+    assert.equal(d.message, "more than 30 objects matched 'set' (the limit is 20); nothing was changed");
+    const batch = adjustable ? 30 : 20;
+    assert.ok(d.hint!.includes(`first ${batch} | set`));
+    assert.ok(d.hint!.includes(`skip ${batch} | first ${batch} | set`));
+    assert.equal(d.hint!.startsWith('pass budgets.maxMutationTargets = 30 (the host ceiling) and split'), adjustable);
     if (!adjustable) assert.ok(!d.hint!.includes('budgets'));
     const v = e.execute('xs | count', { maxVisited: 3 }).diagnostics[0]!;
     assert.equal(v.code, 'budget-exceeded');
     assert.equal(v.hint!.includes('budgets.maxVisited'), adjustable);
   });
+
+  test(`mutation-limit counts the matches and names the host limit argument (${adjustable})`, () => {
+    const { e, xs } = hintEngine(25);
+    (xs as unknown[]).push(null);
+    e.defaults.budgetsAdjustable = adjustable;
+    e.mutations.limitArgument = 'max_targets';
+    const d = e.execute('xs | set v = 1', undefined, { allowMutation: true }).diagnostics[0]!;
+    assert.equal(d.code, 'mutation-limit');
+    assert.equal(d.message, "25 objects matched 'set', more than the limit of 20; nothing was changed");
+    assert.equal(
+      d.hint,
+      'pass max_targets = 25 (host ceiling 30) to change all 25 in one all-or-nothing call (a dry run previews it); or narrow the query (where / ref(...))',
+    );
+    // The raise works whatever budgetsAdjustable says: it only shapes hints.
+    assert.equal(e.execute('xs | set v = 1', { maxMutationTargets: 25 }, { allowMutation: true }).ok, true);
+  });
 }
+
+test('a budget error while counting is reported; a source is released on mutation-limit', () => {
+  const { e } = hintEngine(50);
+  assert.equal(e.execute('xs | set v = 1', { maxVisited: 25 }, { allowMutation: true }).diagnostics[0]?.code, 'budget-exceeded');
+  let released = false;
+  const g = new RqlEngine().addSource('gen', function* () {
+    try {
+      for (let i = 0; i < 2000; i++) yield { Id: i, v: 0 };
+    } finally {
+      released = true;
+    }
+  });
+  g.mutations.enabled = true;
+  assert.equal(g.execute('gen | set v = 1', undefined, { allowMutation: true }).diagnostics[0]?.code, 'mutation-limit');
+  assert.equal(released, true);
+});
+
+test('the host default target limit applies', () => {
+  const { e } = hintEngine(25);
+  e.mutations.maxTargets = 25;
+  assert.equal(e.execute('xs | set v = 1', undefined, { allowMutation: true }).ok, true);
+});
+
+// ---------------------------------------------------------------- wave-3: enum name resolution (spec §8)
+
+enum EAlign {
+  HAlign_Fill,
+  HAlign_Left,
+  VAlign_Fill,
+  VAlign_Top,
+  Center,
+}
+
+const alignEngine = (aliases?: Record<string, string>): { e: RqlEngine; w: { Align: EAlign; Mask: number } } => {
+  const Align = new EnumType('EAlign', EAlign, { aliases });
+  const Layers = new EnumType('Layers', { None: 0, Layer_Ground: 1, Layer_Water: 2 }, { flags: true });
+  class Widget {
+    Align = EAlign.HAlign_Left;
+    Mask = 0;
+  }
+  const model = new TypeModel().register(Widget, {
+    members: [
+      { name: 'Align', type: Align },
+      { name: 'Mask', type: Layers },
+    ],
+  });
+  const w = new Widget();
+  const e = new RqlEngine({ types: model }).addSource('w', () => w);
+  e.mutations.enabled = true;
+  return { e, w };
+};
+
+for (const [literal, expected] of [
+  ['"VAlign_Top"', EAlign.VAlign_Top],
+  ['"valign_top"', EAlign.VAlign_Top],
+  ['"EAlign::VAlign_Fill"', EAlign.VAlign_Fill],
+  ['"EWhatever::Left"', EAlign.HAlign_Left],
+  ['"EAlign.center"', EAlign.Center],
+  ['"Top"', EAlign.VAlign_Top],
+  ['" top "', EAlign.VAlign_Top],
+  ['"3"', EAlign.VAlign_Top],
+] as const) {
+  test(`enum name resolution: ${literal}`, () => {
+    const { e, w } = alignEngine();
+    const r = e.execute(`w | set Align = ${literal}`, undefined, { allowMutation: true });
+    assert.equal(r.ok, true, r.diagnostics.map((d) => d.message).join('; '));
+    assert.equal(w.Align, expected);
+  });
+}
+
+test('an ambiguous enum name is refused with the candidates', () => {
+  const { e, w } = alignEngine();
+  const r = e.execute('w | set Align = "fill"', undefined, { allowMutation: true });
+  assert.equal(r.diagnostics[0]?.code, 'coercion-failed');
+  assert.ok(r.diagnostics[0]!.message.includes('"fill" is ambiguous for EAlign: HAlign_Fill, VAlign_Fill'), r.diagnostics[0]!.message);
+  assert.equal(w.Align, EAlign.HAlign_Left);
+  assert.equal(e.execute('w | set Align = "Bottom"', undefined, { allowMutation: true }).diagnostics[0]?.code, 'coercion-failed');
+});
+
+test('host enum aliases resolve like entry names', () => {
+  const { e, w } = alignEngine({ Fill: 'HAlign_Fill', Middle: 'Center' });
+  assert.equal(e.execute('w | set Align = "Fill"', undefined, { allowMutation: true }).ok, true);
+  assert.equal(w.Align, EAlign.HAlign_Fill);
+  assert.equal(e.execute('w | set Align = "middle"', undefined, { allowMutation: true }).ok, true);
+  assert.equal(w.Align, EAlign.Center);
+  assert.equal(e.execute('w | where Align == "MIDDLE" | count').value, 1);
+  assert.deepEqual(rows(e.execute('w | select Align')), [['Center']]);
+});
+
+test('enum comparisons use the same resolution', () => {
+  const { e } = alignEngine();
+  assert.equal(e.execute('w | where Align == "EAlign::Left" | count').value, 1);
+  assert.equal(e.execute('w | where Align == "Fill" | count').value, 0);
+});
+
+test('a name for an entry sharing another entry\'s value is accepted', () => {
+  const Mode = new EnumType('Mode', { None: 0, Default: 0, Other: 1 }, { aliases: { Std: 'Default' } });
+  class M {
+    Mode = 1;
+  }
+  const m = new M();
+  const e = new RqlEngine({ types: new TypeModel().register(M, { members: [{ name: 'Mode', type: Mode }] }) }).addSource('m', () => m);
+  e.mutations.enabled = true;
+  assert.equal(e.execute('m | set Mode = "Default"', undefined, { allowMutation: true }).ok, true);
+  assert.equal(m.Mode, 0);
+  m.Mode = 1;
+  assert.equal(e.execute('m | set Mode = "std"', undefined, { allowMutation: true }).ok, true);
+  assert.equal(m.Mode, 0);
+});
+
+test('flags lists resolve each name', () => {
+  const { e, w } = alignEngine();
+  assert.equal(e.execute('w | set Mask = "Ground, water"', undefined, { allowMutation: true }).ok, true);
+  assert.equal(w.Mask, 3);
+});
 
 test('a host replaces the mutation-limit hint', () => {
   const { e } = hintEngine(25);

@@ -40,8 +40,10 @@ namespace Rql.Execution
         {
             var list = new List<Target>();
             long index = -1;
-            foreach (var it in stream)
+            using var rest = stream.GetEnumerator();
+            while (rest.MoveNext())
             {
+                var it = rest.Current;
                 index++; // skipped null/destroyed items keep their positions: $index is the position in the stage's input
                 if (it.Value == null) continue;
                 if (it.Value is RowValue)
@@ -59,17 +61,34 @@ namespace Rql.Execution
                     throw new RqlException("invalid-plan", $"'{op}' needs objects with identity; '{_x.Types.Info(it.Value.GetType()).ShortName}' items are value copies, so the change would be lost",
                         null, "set the member from its owner instead, e.g. objects | where … | set Transform.Position.x = 0");
                 list.Add(new Target(it, index));
-                CheckLimit(list.Count, op);
+                if (list.Count > _x.MaxMutationTargets) throw LimitExceeded(rest, list.Count, op);
             }
             return list;
         }
 
-        private void CheckLimit(int count, string op)
+        /// <summary>
+        /// mutation-limit (spec §8, §10): counts the rest of the stage's input up to the host ceiling (counting only) so the
+        /// message states how many items matched, and builds the hint for the host's limit argument.
+        /// </summary>
+        private RqlException LimitExceeded(IEnumerator<Item> rest, int matched, string op)
         {
-            if (count <= _x.MaxMutationTargets) return;
-            throw new RqlException("mutation-limit", $"more than {_x.MaxMutationTargets} objects matched '{op}'; nothing was changed",
-                null, _x.Engine.Mutations.LimitHint?.Invoke(op, _x.MaxMutationTargets)
-                      ?? Exec.MutationLimitHint(op, _x.MaxMutationTargets, _x.BudgetsAdjustable ? _x.Engine.Mutations.HardMaxTargets : (int?)null));
+            var m = _x.Engine.Mutations;
+            int limit = _x.MaxMutationTargets;
+            int ceiling = Math.Max(m.HardMaxTargets, limit);
+            // A budget error while counting propagates: it, not the limit, is what the caller must fix first.
+            while (matched <= ceiling && rest.MoveNext())
+            {
+                var v = rest.Current.Value;
+                if (v != null && !_x.Types.IsDead(v)) matched++;
+            }
+            int? exact = matched <= ceiling ? matched : (int?)null;
+            string message = exact != null
+                ? $"{matched} objects matched '{op}', more than the limit of {limit}; nothing was changed"
+                : $"more than {ceiling} objects matched '{op}' (the limit is {limit}); nothing was changed";
+            string? argument = !string.IsNullOrEmpty(m.LimitArgument) ? m.LimitArgument : _x.BudgetsAdjustable ? "budgets.maxMutationTargets" : null;
+            string? hostHint = m.LimitHint?.Invoke(op, limit);
+            return new RqlException("mutation-limit", message, null,
+                !string.IsNullOrEmpty(hostHint) ? hostHint : Exec.MutationLimitHint(op, limit, exact, argument, ceiling));
         }
 
         /// <summary>
@@ -356,7 +375,7 @@ namespace Rql.Execution
                     foreach (DictionaryEntry de in existing)
                         if (de.Key is string dk && string.Equals(dk, ks, StringComparison.OrdinalIgnoreCase)) { key = dk; break; }
                 }
-                if (key == null || !Compiler.TryCoerceKey(key, info.KeyType, out var k) || k == null)
+                if (key == null || !Compiler.TryCoerceKey(key, info.KeyType, out var k, _x.Types) || k == null)
                     throw new RqlException("coercion-failed", $"invalid map key in '{label}'");
                 var entryType = container is IVirtualMap vm && k is string sk ? vm.EntryType(sk) : null;
                 return new MapSlot(k, entryType ?? info.ElementType ?? typeof(object));
@@ -612,7 +631,7 @@ namespace Rql.Execution
                 var map = (IDictionary)mapObj;
                 foreach (var kv in literal)
                 {
-                    if (!Compiler.TryCoerceKey(kv.Key, keyType, out var key) || key == null) { why = $"invalid key '{kv.Key}' for {TypeModel.FriendlyName(target)}"; return false; }
+                    if (!Compiler.TryCoerceKey(kv.Key, keyType, out var key, kernel.Types) || key == null) { why = $"invalid key '{kv.Key}' for {TypeModel.FriendlyName(target)}"; return false; }
                     if (!TryTo(kernel, kv.Value, valueType, out var mv, out var w)) { why = $"'{kv.Key}': {w}"; return false; }
                     map[key] = mv;
                 }
@@ -747,13 +766,14 @@ namespace Rql.Execution
             {
                 if (v is string s)
                 {
-                    try
+                    // Enum name resolution (spec §8): exact, qualified, case-insensitive, entry prefix; ambiguity refused.
+                    if (EnumNames.Resolve(target, s, model.AliasesOf(target), out var parsed, out var refused) != EnumNames.Outcome.Found)
                     {
-                        var parsed = Enum.Parse(target, s, true);
-                        if (Enum.IsDefined(target, parsed) || target.IsDefined(typeof(FlagsAttribute), false)) { result = parsed; return true; }
+                        why = refused!;
+                        return false;
                     }
-                    catch (ArgumentException) { }
-                    why = "expected one of " + string.Join(", ", Enum.GetNames(target));
+                    if (Enum.IsDefined(target, parsed!) || target.IsDefined(typeof(FlagsAttribute), false)) { result = parsed; return true; }
+                    why = EnumNames.Expected(target);
                     return false;
                 }
                 if (V.TryNumber(v, out var dn) && Math.Floor(dn) == dn)
@@ -761,7 +781,7 @@ namespace Rql.Execution
                     var e = Enum.ToObject(target, (long)dn);
                     if (Enum.IsDefined(target, e)) { result = e; return true; }
                 }
-                why = "expected one of " + string.Join(", ", Enum.GetNames(target));
+                why = EnumNames.Expected(target);
                 return false;
             }
 

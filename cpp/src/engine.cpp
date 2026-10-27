@@ -698,6 +698,7 @@ Json Engine::capabilities_impl() {
     Json mut = Json::object();
     mut.set("enabled", mutations_.enabled);
     mut.set("maxTargets", mutations_.max_targets);
+    mut.set("hardMaxTargets", mutations_.hard_max_targets);
     Json callable = Json::array();
     for (auto* t : types_->registered()) {
         const detail::TypeView tv = view_of(t, nullptr);  // includes adapter methods

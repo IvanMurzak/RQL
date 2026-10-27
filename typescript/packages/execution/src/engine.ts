@@ -39,10 +39,21 @@ export interface MutationPolicy {
   enabled: boolean;
   /** Optional extra allow-check per (declaring type, member). */
   canWrite?: (type: TypeInfo, member: MemberAccessor) => boolean;
-  /** Default per-request target limit (requests may raise it up to `hardMaxTargets`). */
+  /**
+   * Default per-request target limit (spec §8 target limit): requests may raise it up to `hardMaxTargets`. It guards
+   * the breadth of a change, not its correctness (all-or-nothing, rollback and dry runs hold at any size): hosts that
+   * record a whole stage as one undo step (editors) should use a larger default, e.g. 200.
+   */
   maxTargets: number;
-  /** Host ceiling no request can exceed. */
+  /** Host ceiling no request can exceed (bounds one stage's planning, receipts and undo memory). */
   hardMaxTargets: number;
+  /**
+   * The name under which this host's callers raise the target limit, e.g. a tool argument `max_targets` that the host
+   * maps to `budgets.maxMutationTargets` (spec §10). The mutation-limit hint advises it whether or not
+   * `defaults.budgetsAdjustable` is set. Unset: `budgets.maxMutationTargets` when budgets are adjustable, otherwise
+   * callers cannot raise the limit and the hint only suggests narrowing or batches.
+   */
+  limitArgument?: string;
   /**
    * Batch validation (spec §8): sees every planned change of a set / call stage at once (targets, members or methods,
    * coerced values or arguments) after each target passed its own checks and before anything is written or called,
@@ -103,7 +114,8 @@ export interface EngineDefaults {
   hardTimeoutMs: number;
   /**
    * Whether the host's callers can pass request budgets (`budgets.*`). Hosts whose tools expose no budgets argument
-   * set it to false, so error hints never advise raising a budget the caller cannot reach (spec §10).
+   * set it to false, so error hints never advise raising a budget the caller cannot reach (spec §10). The target limit
+   * has its own switch, `mutations.limitArgument`.
    */
   budgetsAdjustable: boolean;
 }

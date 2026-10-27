@@ -125,7 +125,11 @@ change of a `set` / `call` stage (call records carry the coerced `args`) before 
 included, and refuses the stage by returning a reason; `MutationPolicy::coerce_text` converts a string
 written to a struct / object type that no adapter coerces (e.g. `ExportText` forms);
 `MutationPolicy::limit_hint` replaces the `mutation-limit` hint; `EngineDefaults::budgets_adjustable =
-false` keeps hints from advising `budgets.*` when the host's tool takes no budgets; `Engine::find_hint`
+false` keeps hints from advising `budgets.*` when the host's tool takes no budgets; `MutationPolicy::max_targets`
+is the host's default target limit (editor hosts with undo: e.g. 200) and `MutationPolicy::limit_argument` names the
+tool argument callers raise it with (e.g. `max_targets`, mapped to `Budgets::max_mutation_targets`, up to
+`hard_max_targets`), advised by the `mutation-limit` hint whatever `budgets_adjustable` says; enum entries take host
+alias names through `EnumBuilder::alias` / `TypeDescriptor::enum_aliases` (spec §8 enum name resolution); `Engine::find_hint`
 (e.g. `unreal.find("Floor")`) is named by the hint of a `ref()` given a name. A `set` on map entries
 streamed by `get` (`get Rows | where Value.IsElite | set Value.Health = …`) writes through the map; the
 write is the key path from the item `get` read the map from (`Rows["Orc"].Health`), so owners and write-back match a direct key-path `set`.

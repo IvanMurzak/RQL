@@ -216,6 +216,23 @@ namespace Rql.Execution
         /// <summary>Union of the registered adapters' capabilities: adapter-free (or capability-free) paths are one check.</summary>
         internal AdapterCaps Caps => _adapters.Caps;
 
+        private Func<Type, IReadOnlyDictionary<string, string>?>? _enumAliases;
+        private readonly ConcurrentDictionary<Type, IReadOnlyDictionary<string, string>?> _aliasCache = new ConcurrentDictionary<Type, IReadOnlyDictionary<string, string>?>();
+
+        /// <summary>The engine's EnumAliases hook (spec §8 enum name resolution): alias → entry name per enum type.</summary>
+        internal Func<Type, IReadOnlyDictionary<string, string>?>? EnumAliases
+        {
+            get => _enumAliases;
+            set { _enumAliases = value; _aliasCache.Clear(); }
+        }
+
+        /// <summary>The host's alias names of <paramref name="enumType"/>'s entries (cached), or null.</summary>
+        internal IReadOnlyDictionary<string, string>? AliasesOf(Type enumType)
+        {
+            var hook = _enumAliases;
+            return hook == null ? null : _aliasCache.GetOrAdd(enumType, t => hook(t));
+        }
+
         private Func<object, bool>? _hostAlive;
 
         /// <summary>The engine's IsAlive hook; part of the one liveness definition (adapters first, then the hook).</summary>
