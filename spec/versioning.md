@@ -73,3 +73,15 @@
   what the host has: the `unknown-source` example is a registered source, the projected-rows hint names no sample
   path, the schema tool is the host's (`SchemaHint`, default "the schema tool"; was `rql_schema / describe`), and an
   unknown `call` method names a source that has it (§2, §10).
+* Wave-4 fixes (Unity / Unreal / Godot; unreleased, protocol stays `0.1`; no new error code, no new plan node shape):
+  **no implicit truthiness** (§1.2): a number, string, enum, object, struct, list or map in a predicate position
+  (`where`, `and` / `or` / `not`, `if` / `?:`, method predicates) fails the query with `type-mismatch` and a hint showing a
+  boolean test — **behaviour change**: such conditions were silently `unknown` (`where sharedMaterial` kept nothing);
+  `null` stays `false`. **Lists compare by value** (§4.1, §5): `==` / `!=` / `in` / `contains`, `distinct` and `group-by`
+  keys — **behaviour change**: list equality was `unknown` and `group-by` / `distinct` never merged equal lists. **Float
+  widening** (§1.1): a float is the double of its shortest decimal as a number (`4.2f * 1` is `4.2`) — results of
+  arithmetic and aggregates over float members change in their last digits. **Target limit range** (§8): a request
+  limit outside 1 … the host ceiling is refused with `invalid-value` — **behaviour change**: it was clamped (or `0`
+  accepted). Hints: the host's mutation tool in `permission-denied` (no `options.allowMutation`), mixed-stream
+  `unknown-member` hints and member lists ranked by similarity (§10), type display names (§13), and the parser hints
+  "comparisons do not chain" and "one query per call" (§11).

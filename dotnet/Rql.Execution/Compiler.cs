@@ -404,10 +404,57 @@ namespace Rql.Execution
 
         // ------------------------------------------------------------ operators
 
+        /// <summary>
+        /// An expression in a predicate position (spec §1.2: where, and / or / not, the condition of if / ?:, method predicates):
+        /// a boolean, null or an absent value (missing, unknown, error) passes through; any other value fails the query, because
+        /// there is no implicit truthiness (`where sharedMaterial` would otherwise silently drop every item).
+        /// </summary>
+        public Eval CompileCondition(Expr e)
+        {
+            var ev = Compile(e);
+            return x =>
+            {
+                var v = ev(x);
+                if (v is bool) return v;
+                if (v is RowValue row && row.Columns.Length == 1) v = row.Values[0]; // a one-column row stands for its value (spec §3)
+                if (v == null || v is bool || V.IsAbsent(v)) return v;
+                throw NotACondition(x, e, v);
+            };
+        }
+
+        private static RqlException NotACondition(Exec x, Expr e, object v)
+        {
+            var text = PathText(e);
+            var info = x.Types.Info(v.GetType());
+            string what, example;
+            if (V.IsString(v)) { what = "the string \"" + V.AsString(v) + "\""; example = (text ?? "Name") + " != \"\""; }
+            else if (V.TryNumber(v, out var d)) { what = "the number " + V.FormatNumber(d); example = (text ?? "Count") + " != 0"; }
+            else if (v is Enum) { what = $"the {info.ShortName} value {v}"; example = (text ?? "Kind") + $" == \"{v}\""; }
+            else if (info.IsList || info.IsMap) { what = info.IsList ? "a list" : "a map"; example = $"len({text ?? "Items"}) > 0"; }
+            else { what = "a " + info.ShortName; example = (text ?? "Target") + " != null"; }
+            var exists = text != null && !V.IsString(v) && !V.IsNumber(v) && !(v is Enum) ? $", or has({text}) to test that the member exists" : "";
+            return new RqlException("type-mismatch", $"the condition {(text != null ? "'" + text + "' " : "")}is {what}, not a boolean", e.Span,
+                $"a condition must be a boolean, e.g. {example}{exists}");
+        }
+
+        /// <summary>The text of a plain relative path (<c>Renderer.sharedMaterial</c>, <c>Tags[0]</c>), or null for other expressions.</summary>
+        internal static string? PathText(Expr e)
+        {
+            if (!(e is PathExpr p) || p.On != null || p.Segments.Count == 0) return null;
+            var sb = new System.Text.StringBuilder();
+            foreach (var s in p.Segments)
+            {
+                if ((s.Kind == SegmentKind.Member || s.Kind == SegmentKind.Meta) && sb.Length > 0) sb.Append('.');
+                sb.Append(s.ToString());
+            }
+            return sb.ToString();
+        }
+
         private Eval CompileOp(OpExpr o)
         {
-            var a = Compile(o.Args[0]);
-            Eval? b = o.Args.Count > 1 ? Compile(o.Args[1]) : null;
+            Func<Expr, Eval> operand = o.Op == "and" || o.Op == "or" || o.Op == "not" ? CompileCondition : Compile;
+            var a = operand(o.Args[0]);
+            Eval? b = o.Args.Count > 1 ? operand(o.Args[1]) : null;
             switch (o.Op)
             {
                 case "and":
@@ -517,7 +564,10 @@ namespace Rql.Execution
 
         internal static bool? Equal(RqlKernel kernel, object? a, object? b) => Equal(kernel.Types, kernel, a, b);
 
-        private static bool? Equal(TypeModel? model, RqlKernel? kernel, object? a, object? b)
+        /// <summary>Nesting of lists compared by value (spec §4.1): deeper (or self-containing) lists compare as unknown.</summary>
+        internal const int MaxCompareDepth = 32;
+
+        private static bool? Equal(TypeModel? model, RqlKernel? kernel, object? a, object? b, int depth = 0)
         {
             if (V.IsAbsent(a) || V.IsAbsent(b)) return null;
             if (a == null || b == null) return a == null && b == null;
@@ -537,6 +587,8 @@ namespace Rql.Execution
             if (V.IsString(a)) return V.IsString(b) ? string.Equals(V.AsString(a), V.AsString(b), StringComparison.Ordinal) : (bool?)null;
             if (a is bool ba) return b is bool bb ? ba == bb : (bool?)null;
             var ta = a.GetType();
+            bool la = V.IsList(a), lb = V.IsList(b);
+            if (la && lb) return ListEqual(model, kernel, a, b, depth);
             if (ta.IsValueType || b.GetType().IsValueType)
             {
                 // DateTime / Guid etc: same-type equality; other structs are not comparable in v0.
@@ -544,8 +596,29 @@ namespace Rql.Execution
                 return null;
             }
             if (b is string) return null;
-            if (V.IsList(a) || V.IsList(b) || TypeModel.Get(ta).IsMap || TypeModel.Get(b.GetType()).IsMap) return null;
+            if (la || lb || TypeModel.Get(ta).IsMap || TypeModel.Get(b.GetType()).IsMap) return null;
             return ReferenceEquals(a, b);
+        }
+
+        /// <summary>
+        /// Lists compare by value (spec §4.1): the same length and pairwise equal elements; false as soon as a pair differs,
+        /// unknown when no pair differs but one is unknown.
+        /// </summary>
+        private static bool? ListEqual(TypeModel? model, RqlKernel? kernel, object a, object b, int depth)
+        {
+            if (ReferenceEquals(a, b)) return true;
+            if (depth >= MaxCompareDepth) return null; // a list nested this deep (or containing itself) is not compared
+            var ea = V.Iterate(a).ToList();
+            var eb = V.Iterate(b).ToList();
+            if (ea.Count != eb.Count) return false;
+            bool unknown = false;
+            for (int i = 0; i < ea.Count; i++)
+            {
+                var r = Equal(model, kernel, model != null ? model.Live(ea[i]) : ea[i], model != null ? model.Live(eb[i]) : eb[i], depth + 1);
+                if (r == false) return false;
+                if (r == null) unknown = true;
+            }
+            return unknown ? (bool?)null : true;
         }
 
         // First adapter answer for the left operand, then for the right operand (spec §13); ordering is mirrored. An adapter
@@ -949,9 +1022,9 @@ namespace Rql.Execution
                 }
                 case "if":
                 {
-                    // Lazy: only the taken branch runs; a condition that is not true (false or unknown) takes the else branch.
+                    // Lazy: only the taken branch runs; a condition that is not true (false, null or unknown) takes the else branch.
                     Arity(c, 3, 3);
-                    var cond = Compile(c.Args[0]);
+                    var cond = CompileCondition(c.Args[0]);
                     var then = Compile(c.Args[1]);
                     var otherwise = Compile(c.Args[2]);
                     return x => Truth(cond(x)) == true ? then(x) : otherwise(x);
@@ -1183,7 +1256,7 @@ namespace Rql.Execution
                 case "first":
                 {
                     Arity(c, name == "all" ? 1 : 0, 1);
-                    var pred = c.Args.Count > 0 ? Compile(c.Args[0]) : null;
+                    var pred = c.Args.Count > 0 ? CompileCondition(c.Args[0]) : null;
                     return x => Quantify(x, on(x), pred, name);
                 }
                 case "sum":

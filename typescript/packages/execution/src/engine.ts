@@ -170,6 +170,17 @@ export class RqlEngine {
    */
   isKnownMember: ((name: string) => boolean) | undefined;
 
+  /**
+   * How callers run a mutation on this host, e.g. `rql-mutate` (a tool name); the permission-denied hint of a `set` /
+   * `call` sent as a plain query names it (spec §10). Undefined: "the mutation tool".
+   */
+  mutateHint: string | undefined;
+
+  /** The mutation tool as hint text. */
+  get mutateTool(): string {
+    return this.mutateHint !== undefined && this.mutateHint !== '' ? this.mutateHint : 'the mutation tool';
+  }
+
   /** The schema tool as hint text. */
   get schemaTool(): string {
     return this.schemaHint !== undefined && this.schemaHint !== '' ? this.schemaHint : 'the schema tool';
@@ -227,7 +238,7 @@ export class RqlEngine {
   private readonly handles = new WeakMap<object, number>();
   private readonly handleTargets = new Map<number, WeakRef<object>>();
   private nextHandle = 0;
-  private knownMembers: { version: number; names: ReadonlyMap<string, string> } | undefined;
+  private knownMembers: { version: number; names: ReadonlyMap<string, string>; types: readonly TypeInfo[] } | undefined;
 
   private model: TypeModel;
   /** False while `model` may be shared with other engines (passed in via options). */
@@ -288,6 +299,7 @@ export class RqlEngine {
   addSource(name: string, getter: () => unknown, description?: string): this {
     validateName(name, false);
     this.sourceMap.set(name, { name, getter, description });
+    this.sourceTypes.delete(name);
     this.knownMembers = undefined;
     return this;
   }
@@ -373,7 +385,32 @@ export class RqlEngine {
    * Member names declared by any type statically reachable from the sources (plus the universal
    * key/value/count/Length), keyed by upper-cased name; used to flag never-evaluated bare names as typos.
    */
+  /**
+   * Records the type of a source's value (queries call it as they read a source). Known names come from the types the
+   * sources have produced, not only their current values: a source that is null right now keeps the types it had (spec §8).
+   */
+  noteSourceType(source: string, value: unknown): void {
+    if (typeof value !== 'object' || value === null) return;
+    const info = this.types.infoOf(value);
+    let seen = this.sourceTypes.get(source);
+    if (seen === undefined) this.sourceTypes.set(source, (seen = new Set()));
+    if (seen.has(info)) return;
+    seen.add(info);
+    this.knownMembers = undefined;
+  }
+
+  private readonly sourceTypes = new Map<string, Set<TypeInfo>>();
+
   knownMemberNames(): ReadonlyMap<string, string> {
+    // Sources that never produced a value are read again; the others keep the types they had.
+    for (const s of this.sourceMap.values()) {
+      if (this.sourceTypes.has(s.name)) continue;
+      try {
+        this.noteSourceType(s.name, s.getter());
+      } catch {
+        // no type yet
+      }
+    }
     const cached = this.knownMembers;
     if (cached !== undefined && cached.version === this.types.version) return cached.names;
     const names = new Map<string, string>(['key', 'value', 'count', 'Count', 'Length'].map((n) => [n.toUpperCase(), n]));
@@ -406,9 +443,28 @@ export class RqlEngine {
         }
       }
     }
-    for (const t of reachableTypes(this.types, roots, 1000)) for (const m of t.members) add(m.name);
-    this.knownMembers = { version: this.types.version, names };
+    for (const [name, seen] of this.sourceTypes) if (this.sourceMap.has(name)) for (const info of seen) if (!roots.includes(info)) roots.push(info);
+    const types = reachableTypes(this.types, roots, 1000);
+    for (const t of types) for (const m of t.members) add(m.name);
+    this.knownMembers = { version: this.types.version, names, types };
     return names;
+  }
+
+  /**
+   * Names of the known object types (statically reachable from the sources) that have a member of this name, at most
+   * `max`, base types before their subclasses — for hints that suggest filtering a mixed stream (spec §10). Types in
+   * `except` are skipped.
+   */
+  typesDeclaring(member: string, except: Iterable<TypeInfo> = [], max = 3): string[] {
+    this.knownMemberNames();
+    const skip = new Set(except);
+    const hits = (this.knownMembers?.types ?? []).filter((t) => (t.kind === 'object' || t.kind === 'struct') && !skip.has(t) && t.find(member) !== undefined);
+    // A base type that has the member covers its subclasses: name the least derived types.
+    const derives = (t: TypeInfo, base: TypeInfo): boolean => {
+      for (let b = t.base; b !== undefined; b = b.base) if (b === base) return true;
+      return false;
+    };
+    return [...new Set(hits.filter((t) => !hits.some((o) => o !== t && derives(t, o))).map((t) => t.shortName))].slice(0, max);
   }
 
   /** Type descriptors of everything reachable from the registered sources (schema tool). */

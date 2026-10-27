@@ -116,10 +116,9 @@ namespace Rql.Execution
                 var typeNames = string.Join(", ", types.Select(t => t.ShortName).Distinct().Take(4));
                 var candidates = types.SelectMany(t => t.Members.Select(m => m.Name)).Distinct().ToList();
                 var close = Suggest.Closest(site.Name, candidates, 3);
-                string hint = close.Count > 0
-                    ? "did you mean " + string.Join(" / ", close) + "?"
-                    : (candidates.Count > 0 ? Suggest.MemberList(candidates) : "");
-                if (close.Count == 0 && char.IsUpper(site.Name[0]))
+                var declaring = _x.Engine.TypesDeclaring(site.Name, types);
+                string hint = Suggest.MemberHint(site.Name, candidates, declaring);
+                if (close.Count == 0 && declaring.Count == 0 && char.IsUpper(site.Name[0]))
                     hint += (hint.Length > 0 ? "; " : "") + $"if '{site.Name}' is a value, quote it: \"{site.Name}\"";
                 var diag = new Diagnostic(DiagnosticSeverity.Warning, "unknown-member", $"no member '{site.Name}' on {typeNames}", site.Span, hint);
                 result.Diagnostics.Add(diag);
@@ -254,6 +253,7 @@ namespace Rql.Execution
         private QueryResult RunCore()
         {
             var plan = _x.Plan;
+            _x.CheckTargetLimit();
             if (_x.Options.AllowMutation && (plan.Stages.Count == 0 || !plan.Stages[plan.Stages.Count - 1].IsMutation))
                 throw new RqlException("invalid-plan", "a mutation request must end with a set or call stage; nothing was changed", null,
                     "add '| set Member = value' or '| call Method(...)', or use the query tool to read");
@@ -369,6 +369,7 @@ namespace Rql.Execution
         private IEnumerable<Item> SourceItems(SourceRegistration reg, Eval? nav, string pathText)
         {
             var root = _x.Types.Live(reg.Getter());
+            _x.Engine.NoteSourceType(reg.Name, root);
             object? value = root;
             if (nav != null)
             {
@@ -459,7 +460,7 @@ namespace Rql.Execution
         {
             switch (st)
             {
-                case WhereStage w: return Where(input, _c.Compile(w.Pred));
+                case WhereStage w: return Where(input, _c.CompileCondition(w.Pred));
                 case SelectStage s: return Select(input, s);
                 case SortStage s: return Sort(input, s);
                 case LimitStage l when l.Op == "first": return First(input, l.N);
@@ -618,7 +619,7 @@ namespace Rql.Execution
 
         private IEnumerable<Item> Distinct(IEnumerable<Item> input, Eval? key)
         {
-            var seen = new HashSet<object?>(DistinctComparer.Instance);
+            var seen = new HashSet<object?>(new DistinctComparer(_x.Types));
             long i = 0;
             foreach (var it in input)
             {
@@ -798,7 +799,7 @@ namespace Rql.Execution
         {
             // The key tuple is a row of the key columns: rows hash and compare by their values, like distinct.
             var groups = new List<(object?[] tuple, long count)>();
-            var index = new Dictionary<object, int>(DistinctComparer.Instance);
+            var index = new Dictionary<object, int>(new DistinctComparer(_x.Types));
             long i = 0;
             foreach (var it in input)
             {
@@ -906,13 +907,18 @@ namespace Rql.Execution
 
     /// <summary>
     /// Equality for distinct/group-by: numbers numerically, strings ordinal, enums by name, projected rows by their column
-    /// values, structs by value, objects by identity.
+    /// values, lists by their elements, structs by value, objects by identity.
     /// </summary>
     internal sealed class DistinctComparer : IEqualityComparer<object?>
     {
-        public static readonly DistinctComparer Instance = new DistinctComparer();
+        private readonly TypeModel _model;
 
-        public new bool Equals(object? a, object? b)
+        /// <param name="model">Turns destroyed list elements into null (spec §13), as everywhere values are read.</param>
+        public DistinctComparer(TypeModel model) { _model = model; }
+
+        public new bool Equals(object? a, object? b) => Equals(a, b, 0);
+
+        private bool Equals(object? a, object? b, int depth)
         {
             if (a == null || b == null) return a == null && b == null;
             if (V.TryNumber(a, out var da) && V.TryNumber(b, out var db)) return da.Equals(db); // NaN groups with NaN
@@ -923,14 +929,29 @@ namespace Rql.Execution
             {
                 if (ra.Values.Length != rb.Values.Length) return false;
                 for (int i = 0; i < ra.Values.Length; i++)
-                    if (!Equals(ra.Values[i], rb.Values[i])) return false;
+                    if (!Equals(ra.Values[i], rb.Values[i], depth)) return false;
+                return true;
+            }
+            if (V.IsList(a) && V.IsList(b))
+            {
+                // Lists by their elements (spec §5): `group-by Tags` merges equal tag lists. Self-containing or very deep lists
+                // fall back to identity.
+                if (ReferenceEquals(a, b)) return true;
+                if (depth >= Compiler.MaxCompareDepth) return false;
+                var ea = V.Iterate(a).ToList();
+                var eb = V.Iterate(b).ToList();
+                if (ea.Count != eb.Count) return false;
+                for (int i = 0; i < ea.Count; i++)
+                    if (!Equals(_model.Live(ea[i]), _model.Live(eb[i]), depth + 1)) return false;
                 return true;
             }
             if (a.GetType().IsValueType && a.GetType() == b.GetType()) return a.Equals(b);
             return ReferenceEquals(a, b);
         }
 
-        public int GetHashCode(object? o)
+        public int GetHashCode(object? o) => Hash(o, 0);
+
+        private int Hash(object? o, int depth)
         {
             if (o == null) return 0;
             if (V.TryNumber(o, out var d)) return d.GetHashCode();
@@ -938,7 +959,14 @@ namespace Rql.Execution
             if (o is RowValue row)
             {
                 int h = row.Values.Length;
-                foreach (var v in row.Values) h = unchecked(h * 31 + GetHashCode(v));
+                foreach (var v in row.Values) h = unchecked(h * 31 + Hash(v, depth));
+                return h;
+            }
+            if (V.IsList(o))
+            {
+                int h = 17;
+                if (depth >= Compiler.MaxCompareDepth) return h;
+                foreach (var e in V.Iterate(o)) h = unchecked(h * 31 + Hash(_model.Live(e), depth + 1));
                 return h;
             }
             if (o.GetType().IsValueType) return o.GetHashCode();
@@ -974,6 +1002,28 @@ namespace Rql.Execution
         /// <summary>"members: a b c … (N more)" with at most <see cref="MaxListed"/> names.</summary>
         public static string MemberList(IReadOnlyCollection<string> names) =>
             "members: " + string.Join(" ", names.Take(MaxListed)) + (names.Count > MaxListed ? $" … ({names.Count - MaxListed} more)" : "");
+
+        /// <summary>Names ordered by their distance to <paramref name="name"/> (then ordinal): the nearest come first in a capped list.</summary>
+        public static List<string> BySimilarity(string name, IEnumerable<string> names)
+        {
+            var lower = name.ToLowerInvariant();
+            return names.Distinct().Select(c => (c, d: Distance(lower, c.ToLowerInvariant()))).OrderBy(t => t.d).ThenBy(t => t.c, StringComparer.Ordinal).Select(t => t.c).ToList();
+        }
+
+        /// <summary>
+        /// The hint of an unknown member (spec §10): the known types that have it (filter the stream to them first), then the
+        /// closest names, else the members ranked by similarity to the name.
+        /// </summary>
+        public static string MemberHint(string name, IReadOnlyCollection<string> members, IReadOnlyList<string> declaring)
+        {
+            var parts = new List<string>();
+            if (declaring.Count > 0)
+                parts.Add($"'{name}' is a member of {string.Join(", ", declaring)}: filter to those first, e.g. where $ is {declaring[0]} (or where has({name}))");
+            var close = Closest(name, members, 3);
+            if (close.Count > 0) parts.Add("did you mean " + string.Join(" / ", close) + "?");
+            else if (declaring.Count == 0 && members.Count > 0) parts.Add(MemberList(BySimilarity(name, members)));
+            return string.Join("; ", parts);
+        }
 
         /// <summary>Optimal string alignment distance: Levenshtein plus adjacent transpositions at cost 1 ("Lable" → "Label" = 1).</summary>
         internal static int Distance(string a, string b)

@@ -160,13 +160,14 @@ test('unexpected host exceptions become internal-error diagnostics', () => {
   assert.equal(r.diagnostics[0]?.code, 'internal-error');
 });
 
-test('request maxMutationTargets is capped by the host ceiling', () => {
+test('request maxMutationTargets above the host ceiling is refused, never clamped', () => {
   const xs = Array.from({ length: 5 }, (_, i) => ({ Id: i, v: 0 }));
   const e = new RqlEngine().addSource('xs', () => xs);
   e.mutations.enabled = true;
   e.mutations.hardMaxTargets = 3;
   const r = e.execute('xs | set v = 1', { maxMutationTargets: 100 }, { allowMutation: true });
-  assert.equal(r.diagnostics[0]?.code, 'mutation-limit');
+  assert.equal(r.diagnostics[0]?.code, 'invalid-value');
+  assert.ok(r.diagnostics[0]!.message.includes('must be from 1 to 3'));
   assert.ok(xs.every((x) => x.v === 0));
 });
 

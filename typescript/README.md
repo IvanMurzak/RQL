@@ -141,7 +141,9 @@ are non-owning by default; a virtual setter must round-trip its getter (rollback
   `engine.mutations.coerceText(ctor, text)` converts strings for struct / object types no adapter coerces;
   `engine.mutations.limitHint(op, limit)` replaces the `mutation-limit` hint; `engine.defaults.budgetsAdjustable
   = false` keeps hints from advising `budgets.*`; `engine.findHint` names the host's finder in `ref()` hints;
-  `engine.schemaHint` (e.g. `rql-schema`) names the host's schema tool in hints; `engine.isKnownMember(name)` declares
+  `engine.schemaHint` (e.g. `rql-schema`) names the host's schema tool in hints and `engine.mutateHint` (e.g. `rql-mutate`)
+  its mutation tool in the `permission-denied` of a `set` / `call` sent as a query; `TypeSpec.name` is the type's display
+  name and `TypeSpec.interfaces` adds names that `is` and `ref()` accept (spec §13); `engine.isKnownMember(name)` declares
   member names of types the host knows beyond static reachability, so a `set` / `call` emptied by such a name stays a
   warning instead of an `unknown-member` error.
 - `engine.mutations.maxTargets` is the host's default target limit (editor hosts with undo: e.g. 200);

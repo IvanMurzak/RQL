@@ -7046,7 +7046,7 @@
       }
     },
     {
-      "name": "list-equality-unknown",
+      "name": "list-equality-self",
       "rql": "g.Nodes | where Tags == Tags | count",
       "plan": {
         "rql": "0.1",
@@ -7083,7 +7083,7 @@
       "expect": {
         "ok": true,
         "kind": "scalar",
-        "value": 0
+        "value": 3
       }
     },
     {
@@ -19574,6 +19574,1311 @@
           ]
         ],
         "total": 3
+      }
+    },
+    {
+      "name": "cond-string-fails",
+      "rql": "g.Nodes | where Name | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "path": [
+                "Name"
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "type-mismatch"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cond-number-in-and-fails",
+      "rql": "g.Nodes | where Enabled and Value | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "and",
+              "args": [
+                {
+                  "path": [
+                    "Enabled"
+                  ]
+                },
+                {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "type-mismatch"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cond-number-in-if-fails",
+      "rql": "g.Nodes | select v = (Value ? 1 : 0)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "v",
+                "expr": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    },
+                    {
+                      "lit": 1
+                    },
+                    {
+                      "lit": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "type-mismatch"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cond-method-predicate-fails",
+      "rql": "g.Nodes | where Tags.any($) | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "call": "any",
+              "on": {
+                "path": [
+                  "Tags"
+                ]
+              },
+              "args": [
+                {
+                  "path": []
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "type-mismatch"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cond-not-fails",
+      "rql": "g.Nodes | where not Note | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "not",
+              "args": [
+                {
+                  "path": [
+                    "Note"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "type-mismatch"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cond-null-is-false",
+      "rql": "g.Nodes | where Parent | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "path": [
+                "Parent"
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 0
+      }
+    },
+    {
+      "name": "cond-missing-is-unknown",
+      "rql": "g.Nodes | where Power | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "path": [
+                "Power"
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 0,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cond-short-circuit-not-evaluated",
+      "rql": "g.Nodes | where false and Name | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "and",
+              "args": [
+                {
+                  "lit": false
+                },
+                {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 0
+      }
+    },
+    {
+      "name": "cond-one-column-row",
+      "rql": "g.Nodes | select Enabled | where $ | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Enabled",
+                "expr": {
+                  "path": [
+                    "Enabled"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "path": []
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 3
+      }
+    },
+    {
+      "name": "cond-error-in-set-value",
+      "rql": "g.Nodes | set Value = (Name ? 1 : 2)",
+      "then": "g.Nodes | sum Value",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "path": [
+                        "Name"
+                      ]
+                    },
+                    {
+                      "lit": 1
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "type-mismatch"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "sum",
+            "expr": {
+              "path": [
+                "Value"
+              ]
+            }
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 20
+      }
+    },
+    {
+      "name": "list-equality-by-value",
+      "rql": "g.Nodes | where Tags == [\"root\", \"red\"] | select Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Tags"
+                  ]
+                },
+                {
+                  "list": [
+                    {
+                      "lit": "root"
+                    },
+                    {
+                      "lit": "red"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "root-a"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "list-inequality-by-value",
+      "rql": "g.Nodes | where Tags != [\"root\"] | select Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "!=",
+              "args": [
+                {
+                  "path": [
+                    "Tags"
+                  ]
+                },
+                {
+                  "list": [
+                    {
+                      "lit": "root"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "root-a"
+          ],
+          [
+            "lonely"
+          ]
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "list-equality-order-matters",
+      "rql": "g.Nodes | where Tags == [\"red\", \"root\"] | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Tags"
+                  ]
+                },
+                {
+                  "list": [
+                    {
+                      "lit": "red"
+                    },
+                    {
+                      "lit": "root"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 0
+      }
+    },
+    {
+      "name": "list-in-list-of-lists",
+      "rql": "g.Nodes | where Tags in [[\"root\"], []] | select Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "in",
+              "args": [
+                {
+                  "path": [
+                    "Tags"
+                  ]
+                },
+                {
+                  "list": [
+                    {
+                      "list": [
+                        {
+                          "lit": "root"
+                        }
+                      ]
+                    },
+                    {
+                      "list": []
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "root-b"
+          ],
+          [
+            "lonely"
+          ]
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "list-vs-scalar-unknown",
+      "rql": "g.Nodes | where Tags == \"root\" | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Tags"
+                  ]
+                },
+                {
+                  "lit": "root"
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 0
+      }
+    },
+    {
+      "name": "group-by-list-key-merges-equal-lists",
+      "rql": "g.Nodes | recurse Children | group-by Tags",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "group-by",
+            "expr": {
+              "path": [
+                "Tags"
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "key",
+          "count"
+        ],
+        "rows": [
+          [
+            [
+              "root",
+              "red"
+            ],
+            1
+          ],
+          [
+            [
+              "leaf"
+            ],
+            1
+          ],
+          [
+            [
+              "red",
+              "blue"
+            ],
+            1
+          ],
+          [
+            [],
+            2
+          ],
+          [
+            [
+              "root"
+            ],
+            1
+          ],
+          [
+            [
+              "blue"
+            ],
+            1
+          ],
+          [
+            [
+              "green",
+              "leaf"
+            ],
+            1
+          ]
+        ],
+        "total": 7
+      }
+    },
+    {
+      "name": "group-by-literal-list-one-group",
+      "rql": "g.Nodes | group-by [1, 2]",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "group-by",
+            "expr": {
+              "list": [
+                {
+                  "lit": 1
+                },
+                {
+                  "lit": 2
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "key",
+          "count"
+        ],
+        "rows": [
+          [
+            [
+              1,
+              2
+            ],
+            3
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "distinct-list-key",
+      "rql": "g.Nodes | recurse Children | distinct Tags | select Name Tags",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "distinct",
+            "expr": {
+              "path": [
+                "Tags"
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Tags",
+                "expr": {
+                  "path": [
+                    "Tags"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "Tags"
+        ],
+        "rows": [
+          [
+            "root-a",
+            [
+              "root",
+              "red"
+            ]
+          ],
+          [
+            "a-1",
+            [
+              "leaf"
+            ]
+          ],
+          [
+            "a-2",
+            [
+              "red",
+              "blue"
+            ]
+          ],
+          [
+            "a-2-x",
+            []
+          ],
+          [
+            "root-b",
+            [
+              "root"
+            ]
+          ],
+          [
+            "b-1",
+            [
+              "blue"
+            ]
+          ],
+          [
+            "B-2",
+            [
+              "green",
+              "leaf"
+            ]
+          ]
+        ],
+        "total": 7
+      }
+    },
+    {
+      "name": "multi-key-group-by-list-column",
+      "rql": "g.Nodes | recurse Children | group-by Tags, on=Enabled",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "group-by",
+            "fields": [
+              {
+                "name": "Tags",
+                "expr": {
+                  "path": [
+                    "Tags"
+                  ]
+                }
+              },
+              {
+                "name": "on",
+                "expr": {
+                  "path": [
+                    "Enabled"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Tags",
+          "on",
+          "count"
+        ],
+        "rows": [
+          [
+            [
+              "root",
+              "red"
+            ],
+            true,
+            1
+          ],
+          [
+            [
+              "leaf"
+            ],
+            true,
+            1
+          ],
+          [
+            [
+              "red",
+              "blue"
+            ],
+            false,
+            1
+          ],
+          [
+            [],
+            true,
+            2
+          ],
+          [
+            [
+              "root"
+            ],
+            true,
+            1
+          ],
+          [
+            [
+              "blue"
+            ],
+            true,
+            1
+          ],
+          [
+            [
+              "green",
+              "leaf"
+            ],
+            false,
+            1
+          ]
+        ],
+        "total": 7
+      }
+    },
+    {
+      "name": "mut-err-limit-zero",
+      "rql": "g.Nodes | set Value = 0",
+      "then": "g.Nodes | sum Value",
+      "options": {
+        "allowMutation": true
+      },
+      "budgets": {
+        "maxMutationTargets": 0
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-value"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "sum",
+            "expr": {
+              "path": [
+                "Value"
+              ]
+            }
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 20
+      }
+    },
+    {
+      "name": "mut-err-limit-above-ceiling",
+      "rql": "g.Nodes | set Value = 0",
+      "then": "g.Nodes | sum Value",
+      "options": {
+        "allowMutation": true
+      },
+      "budgets": {
+        "maxMutationTargets": 1001
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-value"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "sum",
+            "expr": {
+              "path": [
+                "Value"
+              ]
+            }
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 20
+      }
+    },
+    {
+      "name": "mut-limit-at-ceiling-ok",
+      "rql": "g.Nodes | set Value = 1",
+      "then": "g.Nodes | sum Value",
+      "options": {
+        "allowMutation": true
+      },
+      "budgets": {
+        "maxMutationTargets": 1000
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "Value",
+            10,
+            1
+          ],
+          [
+            "Node#5",
+            "Value",
+            7,
+            1
+          ],
+          [
+            "Node#8",
+            "Value",
+            3,
+            1
+          ]
+        ],
+        "total": 3
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "sum",
+            "expr": {
+              "path": [
+                "Value"
+              ]
+            }
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 3
       }
     }
   ]

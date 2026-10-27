@@ -116,8 +116,34 @@ export class Exec {
     this.maxDepth = budgets.maxDepth ?? d.maxDepth;
     this.timeoutMs = Math.min(budgets.timeoutMs ?? d.timeoutMs, d.hardTimeoutMs);
     this.maxOutputBytes = budgets.maxOutputBytes ?? d.maxOutputBytes;
-    // Requests may change the per-request limit, but never beyond the host's hard ceiling.
+    // Requests may change the per-request limit, but never beyond the host's hard ceiling (an out-of-range request is
+    // refused by the pipeline before anything runs, spec §8).
+    this.requestedMaxTargets = budgets.maxMutationTargets;
     this.maxMutationTargets = Math.min(budgets.maxMutationTargets ?? engine.mutations.maxTargets, engine.mutations.hardMaxTargets);
+  }
+
+  /** The request's own target limit, when it set one. */
+  readonly requestedMaxTargets: number | undefined;
+
+  /** The name under which callers raise the target limit (spec §10), or undefined when they cannot. */
+  get limitArgument(): string | undefined {
+    return this.engine.mutations.limitArgument || (this.budgetsAdjustable ? 'budgets.maxMutationTargets' : undefined);
+  }
+
+  /** A request target limit outside 1 … the host ceiling is refused, never clamped (spec §8). */
+  checkTargetLimit(): void {
+    const n = this.requestedMaxTargets;
+    if (n === undefined) return;
+    const m = this.engine.mutations;
+    const ceiling = m.hardMaxTargets;
+    if (Number.isInteger(n) && n >= 1 && n <= ceiling) return;
+    throw new RqlError(
+      'invalid-value',
+      `${this.limitArgument ?? 'the target limit'} must be from 1 to ${ceiling} (the host ceiling), got ${n}; nothing was run`,
+      undefined,
+      `omit it for the host default of ${m.maxTargets}, pass at most ${ceiling}, or split a larger change into batches ` +
+        `(… | first ${ceiling} | set …, then … | skip ${ceiling} | first ${ceiling} | set …)`,
+    );
   }
 
   /** Whether any liveness source exists (adapter capability or host hook): one flag gates every check. */

@@ -477,9 +477,11 @@ namespace Rql.Tests
         public void RequestCannotExceedHardMutationCeiling()
         {
             var e = Engine(new GuardHost());
+            // A request above the ceiling is refused before anything runs, never clamped (spec §8).
             var r = Mut(e, "many | set Free.x = 1", new Budgets { MaxMutationTargets = 1000 });
             Assert.False(r.Ok);
-            Assert.Equal("mutation-limit", r.Diagnostics[0].Code);
+            Assert.Equal("invalid-value", r.Diagnostics[0].Code);
+            Assert.Contains("must be from 1 to 30", r.Diagnostics[0].Message);
         }
 
         [Theory]

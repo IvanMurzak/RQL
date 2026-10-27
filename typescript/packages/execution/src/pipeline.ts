@@ -21,14 +21,14 @@ import {
   type SortStage,
   type Stage,
 } from '@rql/contracts';
-import { mapEntries, type MapLike } from './collections.js';
-import { Compiler, compare, reduce, toText, type Eval } from './compiler.js';
+import { elements, mapEntries, type MapLike } from './collections.js';
+import { Compiler, MAX_COMPARE_DEPTH, compare, reduce, toText, type Eval } from './compiler.js';
 import { describeRun, reachableTypes } from './describe.js';
 import { Encoder } from './encoder.js';
 import type { ArgEvaluator, SourceRegistration } from './engine.js';
 import { PathNode, type Exec } from './exec.js';
 import { Mutator } from './mutator.js';
-import { closest, memberList } from './suggest.js';
+import { closest, memberHint } from './suggest.js';
 import { EnumType, EnumValue, unwrapNullable, type TypeInfo } from './types.js';
 import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, isAbsent, originOf, streamedEntry, toNumber, type EntryOrigin } from './values.js';
 
@@ -137,8 +137,9 @@ export class Pipeline {
       const typeNames = [...new Set(types.map((t) => t.shortName))].slice(0, 4).join(', ');
       const candidates = [...new Set(types.flatMap((t) => t.members.map((m) => m.name)))];
       const close = closest(site.name, candidates, 3);
-      let hint = close.length > 0 ? `did you mean ${close.join(' / ')}?` : candidates.length > 0 ? memberList(candidates) : '';
-      if (close.length === 0 && /^\p{Lu}/u.test(site.name)) {
+      const declaring = x.engine.typesDeclaring(site.name, types);
+      let hint = memberHint(site.name, candidates, declaring);
+      if (close.length === 0 && declaring.length === 0 && /^\p{Lu}/u.test(site.name)) {
         hint += (hint.length > 0 ? '; ' : '') + `if '${site.name}' is a value, quote it: "${site.name}"`;
       }
       const diag = diagnostic('warning', 'unknown-member', `no member '${site.name}' on ${typeNames}`, hint, site.span);
@@ -223,6 +224,7 @@ export class Pipeline {
   private runCore(): QueryResult {
     const x = this.x;
     const plan = x.plan;
+    x.checkTargetLimit();
     const last = plan.stages[plan.stages.length - 1];
     if (x.options.allowMutation && last?.kind !== 'set' && last?.kind !== 'call') {
       throw new RqlError(
@@ -318,6 +320,7 @@ export class Pipeline {
   private *sourceItems(reg: SourceRegistration, nav: Eval | undefined, pathText: string): Generator<Item> {
     const x = this.x;
     const root = normalize(reg.getter());
+    x.engine.noteSourceType(reg.name, root);
     let value: unknown = root;
     if (nav !== undefined) {
       x.current = root;
@@ -377,7 +380,7 @@ export class Pipeline {
   private apply(input: Iterable<Item>, st: Stage): Iterable<Item> {
     switch (st.kind) {
       case 'where':
-        return this.where(input, this.c.compile(st.pred));
+        return this.where(input, this.c.compileCondition(st.pred));
       case 'select':
         return this.select(input, st);
       case 'group-by':
@@ -774,9 +777,14 @@ function identityId(v: unknown): number {
  * One component of a composite key: string keys quoted (so a separator inside a value cannot merge two keys),
  * identity-compared values by a stable id.
  */
+/** Nesting of lists keyed by value; deeper (or self-containing) lists key by identity. */
+let listKeyDepth = 0;
+
 function keyPart(x: Exec, v: unknown): string {
   const k = distinctKey(x, v);
-  return typeof k === 'string' ? JSON.stringify(k) : 'o:' + String(identityId(k));
+  if (typeof k !== 'string') return 'o:' + String(identityId(k));
+  // Composite keys (lists, rows, structs) are built from quoted parts already: quoting them again would grow them per level.
+  return k.startsWith('l:') || k.startsWith('r:') || k.startsWith('v:') ? k : JSON.stringify(k);
 }
 
 /**
@@ -801,6 +809,15 @@ export function distinctKey(x: Exec, v: unknown): unknown {
   }
   if (typeof v === 'object') {
     const info = x.types.infoOf(v);
+    // Lists by their elements (spec §5): `group-by Tags` merges equal tag lists.
+    if (info.isList && listKeyDepth < MAX_COMPARE_DEPTH) {
+      listKeyDepth++;
+      try {
+        return `l:[${[...elements(v, info)].map((e) => keyPart(x, x.live(e ?? null))).join(',')}]`;
+      } finally {
+        listKeyDepth--;
+      }
+    }
     if (info.kind === 'struct') {
       return `v:${JSON.stringify(info.shortName)}(${info.implicitMembersOf(v).map((m) => keyPart(x, m.get(v))).join(',')})`;
     }

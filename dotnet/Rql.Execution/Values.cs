@@ -88,7 +88,10 @@ namespace Rql.Execution
             }
         }
 
-        /// <summary>Numeric value; <paramref name="single"/> is true when the source was a float (compare in float precision).</summary>
+        /// <summary>
+        /// Numeric value; <paramref name="single"/> is true when the source was a float (compare in float precision). The float
+        /// is not widened: comparisons cast it back anyway, so only the two-argument overload (arithmetic, aggregates) pays for it.
+        /// </summary>
         public static bool TryNumber(object? v, out double d, out bool single)
         {
             single = false;
@@ -109,7 +112,42 @@ namespace Rql.Execution
             }
         }
 
-        public static bool TryNumber(object? v, out double d) => TryNumber(v, out d, out _);
+        /// <summary>Numeric value as computations see it: a float is widened to its shortest decimal (<see cref="Widen"/>).</summary>
+        public static bool TryNumber(object? v, out double d)
+        {
+            if (!TryNumber(v, out d, out var single)) return false;
+            if (single) d = Widen((float)d);
+            return true;
+        }
+
+        private static readonly double[] Pow10 =
+        {
+            1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22,
+        };
+
+        /// <summary>
+        /// A float as the double of its shortest round-trip decimal (spec §1.1 number normalization): 4.2f becomes 4.2, not
+        /// 4.19999980926514, so arithmetic and aggregates over single-precision members compute with the value the member shows.
+        /// The result converts back to the same float, so float-precision comparisons are unchanged.
+        /// </summary>
+        public static double Widen(float f)
+        {
+            double d = f;
+            // Integers below 2^24 are exact; larger floats are spaced wider than 1, so their shortest decimal may differ.
+            if (float.IsNaN(f) || float.IsInfinity(f) || (Math.Abs(d) < 16777216 && d == Math.Floor(d))) return d;
+            int e = (int)Math.Floor(Math.Log10(Math.Abs(d)));
+            // Allocation-free fast path for the formatter's answer (the fallback below): 6 to 9 significant digits (fewer never need
+            // a separate try: rounding to 6 already drops trailing zeros). An integer divided (or multiplied) by an exact power of
+            // ten is the correctly rounded double of that decimal.
+            for (int p = 6; p <= 9; p++)
+            {
+                int k = p - 1 - e;
+                if (k > 22 || k < -22) break;
+                double c = k >= 0 ? Math.Round(d * Pow10[k]) / Pow10[k] : Math.Round(d / Pow10[-k]) * Pow10[-k];
+                if ((float)c == f) return c;
+            }
+            return double.Parse(FormatNumber(f), NumberStyles.Float, CultureInfo.InvariantCulture);
+        }
 
         public static bool IsString(object? v) => v is string || v is char;
         public static string AsString(object v) => v is char c ? c.ToString() : (string)v;

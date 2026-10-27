@@ -233,6 +233,31 @@ namespace Rql.Execution
             return hook == null ? null : _aliasCache.GetOrAdd(enumType, t => hook(t));
         }
 
+        private Func<Type, string?>? _displayName;
+
+        /// <summary>The engine's TypeDisplayName hook (spec §13 type display names): the host's name of a type, or null.</summary>
+        internal Func<Type, string?>? TypeDisplayName
+        {
+            get => _displayName;
+            set { _displayName = value; _cache.Clear(); }
+        }
+
+        /// <summary>The name a type is shown by: the host's display name (a hook that throws or answers empty counts as none), else its short name.</summary>
+        public string NameOf(Type t)
+        {
+            var hook = _displayName;
+            if (hook != null)
+            {
+                string? name;
+                try { name = hook(t); } catch { name = null; }
+                if (!string.IsNullOrEmpty(name)) return name!;
+            }
+            return ShortName(t);
+        }
+
+        /// <summary><see cref="FriendlyName(Type)"/> with the host's display names: List&lt;GPUParticles3D&gt;.</summary>
+        public string FriendlyNameOf(Type t) => _displayName == null ? FriendlyName(t) : Friendly(t, NameOf);
+
         private Func<object, bool>? _hostAlive;
 
         /// <summary>The engine's IsAlive hook; part of the one liveness definition (adapters first, then the hook).</summary>
@@ -328,8 +353,8 @@ namespace Rql.Execution
             var adapters = _adapters.For(t);
             var info = new TypeInfo(t)
             {
-                ShortName = ShortName(t),
-                FriendlyName = FriendlyName(t),
+                ShortName = NameOf(t),
+                FriendlyName = FriendlyNameOf(t),
                 Description = adapters.Select(a => a.Description).FirstOrDefault(d => d != null) ?? t.GetCustomAttribute<RqlDescriptionAttribute>()?.Text,
                 AdapterArray = adapters,
                 LiteralSchema = adapters.Select(a => a.LiteralSchema).FirstOrDefault(s => s != null),
@@ -342,8 +367,9 @@ namespace Rql.Execution
             };
 
             var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            for (var b = t; b != null && b != typeof(object); b = b.BaseType) names.Add(ShortName(b));
-            foreach (var i in t.GetInterfaces()) names.Add(ShortName(i));
+            // `is T` and ref("T#id") accept the runtime short names and the host's display names (spec §13).
+            for (var b = t; b != null && b != typeof(object); b = b.BaseType) { names.Add(ShortName(b)); names.Add(NameOf(b)); }
+            foreach (var i in t.GetInterfaces()) { names.Add(ShortName(i)); names.Add(NameOf(i)); }
             info.TypeNames = names;
 
             if (t.IsEnum) { info.Kind = TypeKind.Enum; return info; }
@@ -605,21 +631,21 @@ namespace Rql.Execution
         };
 
         /// <summary>C#-like readable type name: List&lt;Component&gt;, int?, Vector3.</summary>
-        public static string FriendlyName(Type t)
+        public static string FriendlyName(Type t) => Friendly(t, n => n.Name);
+
+        /// <summary>The readable name with <paramref name="leaf"/> naming the non-generic, non-alias types.</summary>
+        private static string Friendly(Type t, Func<Type, string> leaf)
         {
             if (Aliases.TryGetValue(t, out var a)) return a;
             var u = Nullable.GetUnderlyingType(t);
-            if (u != null) return FriendlyName(u) + "?";
-            if (t.IsArray) return FriendlyName(t.GetElementType()!) + "[]";
+            if (u != null) return Friendly(u, leaf) + "?";
+            if (t.IsArray) return Friendly(t.GetElementType()!, leaf) + "[]";
             // Virtual maps read like any other string-keyed map in schemas (spec §13).
             if (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(VirtualMap<>))
-                return "Dictionary<string, " + FriendlyName(t.GetGenericArguments()[0]) + ">";
+                return "Dictionary<string, " + Friendly(t.GetGenericArguments()[0], leaf) + ">";
             if (t.IsGenericType)
-            {
-                var args = string.Join(", ", t.GetGenericArguments().Select(FriendlyName));
-                return ShortName(t) + "<" + args + ">";
-            }
-            return t.Name;
+                return ShortName(t) + "<" + string.Join(", ", t.GetGenericArguments().Select(g => Friendly(g, leaf))) + ">";
+            return leaf(t);
         }
     }
 }

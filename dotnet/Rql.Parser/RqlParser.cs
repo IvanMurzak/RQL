@@ -36,9 +36,51 @@ namespace Rql
         {
             if (text == null) throw new ArgumentNullException(nameof(text));
             var p = new RqlParser(text);
-            var plan = p.ParseQuery();
+            QueryPlan plan;
+            try { plan = p.ParseQuery(); }
+            catch (RqlException ex) when (ex.Code == "syntax-error" && SecondQueryLine(text, ex.At?.Start ?? 0) is int line)
+            {
+                // Two queries pasted into one call: say so instead of only reporting the token where the second one began.
+                var hint = $"one query per call: line {line} starts another query; run each query in its own call";
+                throw new RqlException(ex.Code, ex.Message, ex.At, ex.Hint == null ? hint : hint + "; " + ex.Hint);
+            }
             PlanCodec.ValidateStructure(plan);
             return plan;
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex QueryStart =
+            new System.Text.RegularExpressions.Regex(@"^\s*([A-Za-z_][\w.\-]*)\s*(\(.*\))?\s*\|", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        // A line ending like this continues an expression on the next line.
+        private static readonly System.Text.RegularExpressions.Regex Continues =
+            new System.Text.RegularExpressions.Regex(@"([|,(\[{+\-*/%=<>!?:&]|\b(and|or|not|in|is)\s*)$",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        private static readonly HashSet<string> StageNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "where", "select", "sort", "first", "limit", "skip", "count", "get", "recurse", "distinct", "sum", "min", "max", "avg",
+            "group-by", "describe", "set", "call",
+        };
+
+        /// <summary>
+        /// The 1-based number of the first line, starting at or before <paramref name="errorAt"/>, that starts a new query (a
+        /// name that is not a stage, optionally a call, then '|') after a non-blank line that does not end like a continued
+        /// expression ('|', ',', an operator, an open bracket, and / or / not / in / is); null when there is none.
+        /// </summary>
+        internal static int? SecondQueryLine(string text, int errorAt)
+        {
+            var lines = text.Split('\n');
+            int offset = 0;
+            string? prev = null;
+            for (int i = 0; i < lines.Length && offset <= errorAt; i++)
+            {
+                var line = lines[i];
+                var m = QueryStart.Match(line);
+                if (prev != null && m.Success && !StageNames.Contains(m.Groups[1].Value) && !Continues.IsMatch(prev.TrimEnd())) return i + 1;
+                if (line.Trim().Length > 0) prev = line;
+                offset += line.Length + 1;
+            }
+            return null;
         }
 
         /// <summary>
@@ -482,7 +524,26 @@ namespace Rql
             "contains", "starts-with", "ends-with", "matches",
         };
 
+        /// <summary>A comparison followed by another comparison operator: they do not chain (spec §11), so say how to write it.</summary>
         private Expr ParseComparison()
+        {
+            int start = Peek().Start;
+            var e = ParseComparisonCore();
+            var t = Peek();
+            if (IsComparisonOperator(t))
+            {
+                var left = Slice(start, PrevEnd);
+                throw Error($"unexpected {t.Describe()}: comparisons do not chain", t,
+                    $"contains / starts-with / ends-with / matches / in / is and == < > … take one operand on each side; to negate write not ({left}), to combine use and / or");
+            }
+            return e;
+        }
+
+        private bool IsComparisonOperator(Token t) =>
+            (t.Kind == TokenKind.Punct && CompareOps.ContainsKey(t.Text))
+            || (t.Kind == TokenKind.Ident && (WordOps.Contains(t.Text) || t.IsWord("is") || t.IsWord("in") || (t.IsWord("not") && Peek(1).IsWord("in"))));
+
+        private Expr ParseComparisonCore()
         {
             int start = Peek().Start;
             var left = ParseAdditive();

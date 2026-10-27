@@ -134,6 +134,9 @@ public:
     /// How callers list types and their members on this host, e.g. "rql-schema" (a tool name); hints name it (spec §10).
     /// Empty: the hints say "the schema tool".
     std::string schema_hint;
+    /// How callers run a mutation on this host, e.g. "rql-mutate" (a tool name); the permission-denied hint of a set / call
+    /// sent as a plain query names it (spec §10). Empty: "the mutation tool".
+    std::string mutate_hint;
     /// Whether some type the host knows has a member of this name (case-insensitive), beyond the types reachable from the
     /// sources. A name known here is never reported as a certain typo: neither by the static unknown-member check nor as
     /// the cause of an empty mutation (spec §8). Unset: only the reachable types count. A throwing hook counts as false.
@@ -229,6 +232,10 @@ private:
     std::string last_error_;
     std::vector<std::unique_ptr<TypeAdapter>> adapters_;
     std::array<bool, 6> caps_{};  // some adapter implements the capability (detail::Capability order)
+    // Every type each source has produced (by source name): a source that is null right now keeps the types it had for the
+    // known member names and hints (spec §8). Guarded by source_types_mutex_.
+    std::map<std::string, std::vector<const TypeDescriptor*>> source_types_;
+    std::mutex source_types_mutex_;
     TypeExclusion excluded_;
     // Objects the engine constructed from object literals (spec §4.5) for non-dry-run queries. They may be
     // linked from anywhere (raw pointers, host undo stacks holding hook records), so the engine never frees
