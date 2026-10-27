@@ -652,6 +652,9 @@ namespace Rql
                     {
                         Next();
                         var inner = ParseExpr();
+                        if (Peek().Is(","))
+                            throw Error($"expected ')' to close '(', found {Peek().Describe()}", Peek(),
+                                "parentheses group one expression, they are not a tuple: write a struct as an object literal {X: 0, Y: 0} or a list [0, 0]");
                         Expect(")", "to close '('");
                         inner.Span = new TextSpan(start, PrevEnd);
                         return inner;

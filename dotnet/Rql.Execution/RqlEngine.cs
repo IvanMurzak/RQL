@@ -78,6 +78,13 @@ namespace Rql.Execution
         public Func<string, int, string?>? LimitHint { get; set; }
 
         /// <summary>
+        /// Host text coercion (spec §8): converts a string written to a struct or object type that no type adapter coerces,
+        /// e.g. an engine's own text form <c>"(Minimum=(X=0.5,Y=0),Maximum=(X=0.5,Y=0))"</c>. Return the value, or null when
+        /// the type is not handled (the built-in rules then report the failure); throw to refuse with the message as reason.
+        /// </summary>
+        public Func<Type, string, object?>? CoerceText { get; set; }
+
+        /// <summary>
         /// Runs after planning and before anything is written (not on dry-run): e.g. Undo.RecordObjects on the owners.
         /// Throwing vetoes the whole mutation (→ permission-denied, nothing changed).
         /// </summary>
@@ -627,7 +634,7 @@ namespace Rql.Execution
         private RqlKernel? _kernel;
 
         /// <summary>The kernel for this execution's writes: the engine's types and the host's write policy.</summary>
-        public RqlKernel Kernel => _kernel ??= new RqlKernel(Types, Engine.Mutations.CanWrite);
+        public RqlKernel Kernel => _kernel ??= new RqlKernel(Types, Engine.Mutations.CanWrite, Engine.Mutations.CoerceText);
 
         public QueryOptions Options { get; }
         public QueryPlan Plan { get; }

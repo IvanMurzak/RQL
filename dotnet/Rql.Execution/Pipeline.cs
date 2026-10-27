@@ -360,7 +360,8 @@ namespace Rql.Execution
         }
 
         /// <summary>Lists → elements, maps → entries, else the value itself; null/missing dropped.</summary>
-        private IEnumerable<Item> Expand(object? value, PathNode? path, bool countVisit)
+        /// <param name="holder">The item a map value was read from (`get`): streamed entries remember it and their map (spec §8).</param>
+        private IEnumerable<Item> Expand(object? value, PathNode? path, bool countVisit, object? holder = null, string? mapLabel = null)
         {
             if (value == null || value is Missing || value is Unknown) yield break;
             if (value is RqlError) yield break;
@@ -402,7 +403,7 @@ namespace Rql.Execution
                 {
                     if (countVisit) _x.Visit();
                     var me = (MapEntry)e!;
-                    yield return new Item(me, path?.Key(me.Key));
+                    yield return new Item(new MapEntry(me.Key, me.Value, value, holder, mapLabel), path?.Key(me.Key));
                 }
                 yield break;
             }
@@ -540,7 +541,8 @@ namespace Rql.Execution
                 if (v is RqlError err) { _x.GetterErrors++; _x.FirstGetterError ??= err.Detail ?? err.Code; continue; }
                 PathNode? p = null;
                 if (_x.TrackPaths && it.Path != null && suffix != null) p = new PathNode(it.Path, suffix);
-                foreach (var sub in Expand(v, p, true)) yield return sub;
+                var holder = it.Value is MapEntry me ? me.Holder : it.Value is RowValue ? null : it.Value;
+                foreach (var sub in Expand(v, p, true, holder, suffix?.TrimStart('.'))) yield return sub;
             }
         }
 

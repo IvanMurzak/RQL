@@ -28,10 +28,11 @@ namespace Rql.Execution
             public int Op;
         }
 
-        internal RqlKernel(TypeModel types, Func<Type, MemberAccessor, bool>? writePolicy)
+        internal RqlKernel(TypeModel types, Func<Type, MemberAccessor, bool>? writePolicy, Func<Type, string, object?>? textCoercion = null)
         {
             Types = types;
             WritePolicy = writePolicy;
+            TextCoercion = textCoercion;
         }
 
         /// <summary>The engine's type model (member tables, kinds, adapters).</summary>
@@ -39,6 +40,9 @@ namespace Rql.Execution
 
         /// <summary>The host's per-member write policy; applied by the kernel to every member a coercion assigns.</summary>
         internal Func<Type, MemberAccessor, bool>? WritePolicy { get; }
+
+        /// <summary>The host's text coercion for struct / object types no adapter handles (spec §8); null outside writes.</summary>
+        internal Func<Type, string, object?>? TextCoercion { get; }
 
         /// <summary>
         /// Coerce <paramref name="value"/> to <paramref name="target"/> exactly as a <c>set</c> would (adapters, object literals,

@@ -4911,6 +4911,326 @@
         ],
         "total": 3
       }
+    },
+    {
+      "name": "adapt-entry-set-virtual-map",
+      "rql": "ref(\"Node#1\") | get stats | where Key == \"hp\" | set Value = Value + 1",
+      "then": "ref(\"Node#1\") | select Props",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "stats"
+              ]
+            }
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Key"
+                  ]
+                },
+                {
+                  "lit": "hp"
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    },
+                    {
+                      "lit": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "stats[\"hp\"]",
+            100,
+            101
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Props",
+                "expr": {
+                  "path": [
+                    "Props"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Props"
+        ],
+        "rows": [
+          [
+            {
+              "hp": 101,
+              "mp": 5
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-entry-set-virtual-map-validated",
+      "rql": "g.Nodes | get stats | set Value = -1",
+      "then": "g.Nodes | select Props",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "stats"
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": -1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-value"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Props",
+                "expr": {
+                  "path": [
+                    "Props"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Props"
+        ],
+        "rows": [
+          [
+            {
+              "hp": 100,
+              "mp": 5
+            }
+          ],
+          [
+            {
+              "hp": 50
+            }
+          ],
+          [
+            {}
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "adapt-entry-set-read-only-map",
+      "rql": "g.Nodes | get labels | set Value = \"x\"",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "labels"
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": "x"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "readonly-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-entry-call-refused",
+      "rql": "g.Nodes | get stats | call bump()",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "stats"
+              ]
+            }
+          },
+          {
+            "op": "call",
+            "method": "bump",
+            "args": []
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-plan"
+          }
+        ]
+      }
     }
   ]
 }

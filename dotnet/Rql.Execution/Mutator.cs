@@ -53,27 +53,60 @@ namespace Rql.Execution
                 if (it.Value is RowValue)
                     throw new RqlException("invalid-plan", $"'{op}' needs objects, not projected rows; remove 'select' before '{op}'");
                 if (_x.Types.IsDead(it.Value)) continue; // destroyed objects read as null: skipped like null items
+                if (it.Value is MapEntry entry && (op != "set" || entry.Map == null))
+                    throw new RqlException("invalid-plan", op == "set"
+                            ? "'set' cannot target these map entries (they do not come from a map it can write to); set the map member with a key path instead (Stats[\"key\"] = ...)"
+                            : $"'{op}' cannot target map entries; call the method on the values instead: … | get Value | {op} …");
                 if (it.Value is MapEntry)
-                    throw new RqlException("invalid-plan", $"'{op}' cannot target map entries; set the map member with a key path instead (Stats[\"key\"] = ...)");
+                {
+                    list.Add(new Target(it, index)); // set Value… writes through the entry's map (spec §8)
+                    CheckLimit(list.Count, op);
+                    continue;
+                }
                 if ((it.Value.GetType().IsValueType && !_x.Types.Info(it.Value.GetType()).WritesThrough) || TypeModel.IsScalarType(it.Value.GetType()))
                     throw new RqlException("invalid-plan", $"'{op}' needs objects with identity; '{_x.Types.Info(it.Value.GetType()).ShortName}' items are value copies, so the change would be lost",
                         null, "set the member from its owner instead, e.g. objects | where … | set Transform.Position.x = 0");
                 list.Add(new Target(it, index));
-                if (list.Count > _x.MaxMutationTargets)
-                {
-                    throw new RqlException("mutation-limit", $"more than {_x.MaxMutationTargets} objects matched '{op}'; nothing was changed",
-                        null, _x.Engine.Mutations.LimitHint?.Invoke(op, _x.MaxMutationTargets)
-                              ?? Exec.MutationLimitHint(op, _x.MaxMutationTargets, _x.BudgetsAdjustable ? _x.Engine.Mutations.HardMaxTargets : (int?)null));
-                }
+                CheckLimit(list.Count, op);
             }
             return list;
+        }
+
+        private void CheckLimit(int count, string op)
+        {
+            if (count <= _x.MaxMutationTargets) return;
+            throw new RqlException("mutation-limit", $"more than {_x.MaxMutationTargets} objects matched '{op}'; nothing was changed",
+                null, _x.Engine.Mutations.LimitHint?.Invoke(op, _x.MaxMutationTargets)
+                      ?? Exec.MutationLimitHint(op, _x.MaxMutationTargets, _x.BudgetsAdjustable ? _x.Engine.Mutations.HardMaxTargets : (int?)null));
+        }
+
+        /// <summary>
+        /// Where a set target writes (spec §8): the item itself, or — for a map entry streamed from a writable map — the map,
+        /// with <c>Value.p</c> (or <c>p</c>, which reads through to the value like member access) rewritten to <c>[key].p</c>.
+        /// </summary>
+        private (object root, IReadOnlyList<Segment> segments) WriteRoot(object item, IReadOnlyList<Segment> segments, string label)
+        {
+            if (!(item is MapEntry e)) return (item, segments);
+            var first = segments[0];
+            if (first.Kind == SegmentKind.Member && string.Equals(first.Name, "key", StringComparison.OrdinalIgnoreCase))
+                throw new RqlException("readonly-member", $"'{label}': a map entry's key cannot be set", null,
+                    "keys are fixed: set the value (set Value… = …) or assign the whole map");
+            bool value = first.Kind == SegmentKind.Member && string.Equals(first.Name, "value", StringComparison.OrdinalIgnoreCase);
+            var rewritten = new List<Segment>(segments.Count + 1) { Segment.ForKey(e.Key!) };
+            rewritten.AddRange(value ? segments.Skip(1) : segments);
+            return (e.Map!, rewritten);
         }
 
         // ------------------------------------------------------------ set
 
         private sealed class PlannedWrite
         {
+            /// <summary>Where the write navigates from: the target, or the map of a streamed entry (<see cref="WriteRoot"/>).</summary>
             public object Item = null!;
+            /// <summary>The stream item (host records).</summary>
+            public object Target = null!;
+            /// <summary>The receipt's $ref: the target's, or for an entry the object its map was read from.</summary>
+            public string Ref = "";
             public IReadOnlyList<Segment> Segments = null!;
             public string Label = "";
             public object? Old;
@@ -83,7 +116,7 @@ namespace Rql.Execution
         }
 
         private IReadOnlyList<MutationRecord> Records(IEnumerable<PlannedWrite> writes) =>
-            writes.Select(w => new MutationRecord(w.Item, w.Owner, w.Label, w.Old, w.New, null, w.Owners)).ToList();
+            writes.Select(w => new MutationRecord(w.Target, w.Owner, w.Label, w.Old, w.New, null, w.Owners)).ToList();
 
         /// <summary>
         /// Runs a host hook (never on dry-run). Before-write failures veto the mutation (nothing written yet);
@@ -125,22 +158,36 @@ namespace Rql.Execution
             foreach (var t in targets)
             {
                 var item = t.Value;
-                foreach (var (target, value, label) in assigns)
+                var holder = (item as MapEntry)?.Holder;
+                var itemRef = item is MapEntry me ? _x.Engine.RefOf(me.Holder ?? me.Map!) : _x.Engine.RefOf(item);
+                foreach (var (target, value, assignLabel) in assigns)
                 {
+                    var (root, segments) = WriteRoot(item, target.Segments, assignLabel);
+                    var label = ReferenceEquals(root, item) ? assignLabel : ((MapEntry)item).MapLabel + Label(segments);
                     EnterScope(t);
                     var nv = value(_x);
                     if (nv is Missing || nv is Unknown)
-                        throw new RqlException("coercion-failed", $"value for '{label}' on {_x.Engine.RefOf(item)} is missing");
+                        throw new RqlException("coercion-failed", $"value for '{label}' on {itemRef} is missing");
                     if (nv is RqlError err)
-                        throw new RqlException(err.Code == "stale-ref" ? "stale-ref" : "coercion-failed", $"value for '{label}' on {_x.Engine.RefOf(item)} failed: {err.Detail ?? err.Code}");
-                    var slot = Resolve(item, target.Segments, out var container, out var owner, out var owners);
+                        throw new RqlException(err.Code == "stale-ref" ? "stale-ref" : "coercion-failed", $"value for '{label}' on {itemRef} failed: {err.Detail ?? err.Code}");
+                    var slot = Resolve(root, segments, out var container, out var owner, out var owners);
+                    if (holder != null)
+                    {
+                        // An entry's map was read from `holder`: that object owns the change unless an object inside the value does.
+                        if (ReferenceEquals(owner, root)) owner = holder;
+                        owners = owners.Where(o => !ReferenceEquals(o, root)).Append(holder).ToList();
+                    }
                     if (!slot.Writable(_x))
-                        throw new RqlException(slot.DenyCode, $"'{label}' on {_x.Engine.RefOf(item)} is not writable{slot.DenyReason}");
+                        throw new RqlException(slot.DenyCode, $"'{label}' on {itemRef} is not writable{slot.DenyReason}");
                     if (!Coerce.TryTo(_x.Kernel, nv, slot.Type, out var coerced, out var why))
                         throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' ({TypeModel.FriendlyName(slot.Type)}): {why}");
                     if (slot.Validate(container, coerced) is string rejected)
-                        throw new RqlException("invalid-value", $"invalid value {ValueText(nv)} for '{label}' on {_x.Engine.RefOf(item)}: {rejected}");
-                    writes.Add(new PlannedWrite { Item = item, Segments = target.Segments, Label = label, Old = SafeGet(slot, container, label), New = coerced, Owner = owner, Owners = owners });
+                        throw new RqlException("invalid-value", $"invalid value {ValueText(nv)} for '{label}' on {itemRef}: {rejected}");
+                    writes.Add(new PlannedWrite
+                    {
+                        Item = root, Target = item, Ref = itemRef, Segments = segments, Label = label, Old = SafeGet(slot, container, label), New = coerced,
+                        Owner = owner, Owners = owners,
+                    });
                 }
             }
 
@@ -177,7 +224,7 @@ namespace Rql.Execution
             }
 
             RunHook(_x.Engine.Mutations.Committed, records, veto: false);
-            var rows = writes.Select(w => new object?[] { _x.Engine.RefOf(w.Item), w.Label, w.Old, w.New }).ToList();
+            var rows = writes.Select(w => new object?[] { w.Ref, w.Label, w.Old, w.New }).ToList();
             var r = _enc.Rows(new[] { "$ref", "member", "old", "new" }, rows);
             r.DryRun = _x.Options.DryRun;
             return r;
@@ -680,6 +727,22 @@ namespace Rql.Execution
             }
 
             if (v is ObjectValue literal) return TryConstruct(kernel, literal, target, out result, out why);
+
+            // The host's text form for struct / object types no adapter handled (spec §8).
+            if (kernel.TextCoercion != null && V.IsString(v) && target != typeof(string) && !target.IsEnum && !target.IsPrimitive
+                && !V.IsNumericType(target) && (target.IsValueType || model.Info(target).Kind == TypeKind.Object))
+            {
+                object? parsed;
+                try { parsed = kernel.TextCoercion(target, V.AsString(v)); }
+                catch (Exception ex) when (!(ex is OutOfMemoryException)) { why = ex.Message; return false; }
+                if (parsed != null)
+                {
+                    if (!target.IsInstanceOfType(parsed))
+                        throw new InvalidOperationException($"the host's text coercion returned {parsed.GetType().Name}, not {target.Name}");
+                    result = parsed;
+                    return true;
+                }
+            }
 
             if (target.IsEnum)
             {

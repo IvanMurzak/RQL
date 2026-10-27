@@ -276,6 +276,77 @@ namespace Rql.Tests
         public sealed class Inner { public int A { get; set; } }
     }
 
+    /// <summary>Wave-2 findings: writes through streamed map entries (U5) and host text coercion (U6).</summary>
+    public class MapEntryWriteTests
+    {
+        public struct Row { public float Health; public bool IsElite; }
+        public struct Anchors { public float Min, Max; }
+        public sealed class Table
+        {
+            public Dictionary<string, Row> Rows { get; } = new Dictionary<string, Row>
+            {
+                ["Orc"] = new Row { Health = 100, IsElite = true },
+                ["Rat"] = new Row { Health = 10, IsElite = false },
+                ["Troll"] = new Row { Health = 300, IsElite = true },
+            };
+            public Anchors Slot { get; set; }
+        }
+
+        private static RqlEngine Engine(Table t, out List<MutationRecord> before)
+        {
+            var e = new RqlEngine().AddSource("table", () => t);
+            e.Mutations.Enabled = true;
+            var seen = before = new List<MutationRecord>();
+            e.Mutations.BeforeWrite = records => seen.AddRange(records);
+            return e;
+        }
+
+        private static readonly QueryOptions Mutate = new QueryOptions { AllowMutation = true };
+
+        [Fact]
+        public void SetThroughStreamedEntriesWritesBackStructValuesAndNamesTheHolderAsOwner()
+        {
+            var t = new Table();
+            var r = Engine(t, out var before).Execute("table | get Rows | where Value.IsElite | set Value.Health = Value.Health * 1.1", null, Mutate);
+            Assert.True(r.Ok, string.Join("; ", r.Diagnostics.Select(d => d.Message)));
+            Assert.Equal(110f, t.Rows["Orc"].Health, 3);
+            Assert.Equal(330f, t.Rows["Troll"].Health, 3);
+            Assert.Equal(10f, t.Rows["Rat"].Health);
+            Assert.Equal(new[] { "Rows[\"Orc\"].Health", "Rows[\"Troll\"].Health" }, before.Select(b => b.Member));
+            Assert.All(before, b => Assert.Same(t, b.Owner));
+            Assert.All(before, b => Assert.Same(t, b.Owners[b.Owners.Count - 1]));
+        }
+
+        [Fact]
+        public void HostTextCoercionConvertsStringsForStructsNoAdapterHandles()
+        {
+            var t = new Table();
+            var e = Engine(t, out _);
+            Assert.Equal("coercion-failed", e.Execute("table | set Slot = \"(Min=0.5,Max=1)\"", null, Mutate).Diagnostics[0].Code);
+            e.Mutations.CoerceText = (type, text) =>
+            {
+                if (type != typeof(Anchors)) return null;
+                var m = System.Text.RegularExpressions.Regex.Match(text, @"^\(Min=([\d.]+),Max=([\d.]+)\)$");
+                if (!m.Success) throw new FormatException("expected (Min=…,Max=…)");
+                return new Anchors { Min = float.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture), Max = float.Parse(m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture) };
+            };
+            Assert.True(e.Execute("table | set Slot = \"(Min=0.5,Max=1)\"", null, Mutate).Ok);
+            Assert.Equal(0.5f, t.Slot.Min);
+            Assert.Equal(1f, t.Slot.Max);
+            var bad = e.Execute("table | set Slot = \"nope\"", null, Mutate).Diagnostics[0];
+            Assert.Equal("coercion-failed", bad.Code);
+            Assert.Contains("expected (Min=…,Max=…)", bad.Message);
+        }
+
+        [Fact]
+        public void ParenthesizedTupleHintsAtObjectLiterals()
+        {
+            var r = Engine(new Table(), out _).Execute("table | set Slot = {Min: (0, 0)}", null, Mutate);
+            Assert.Equal("syntax-error", r.Diagnostics[0].Code);
+            Assert.Contains("object literal {X: 0, Y: 0}", r.Diagnostics[0].Hint);
+        }
+    }
+
     /// <summary>Regression tests for the independent review findings (security + robustness).</summary>
     public class HostValueApiTests
     {

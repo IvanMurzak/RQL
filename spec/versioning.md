@@ -48,5 +48,8 @@
   `split`, `trim`, `pad` (§4.3); `group-by` with several or named keys and its plan form `{fields}` (§5); batch
   validation of a whole `set` / `call` stage, dry runs included (§8); budget hints only name `budgets.*` when the
   host's callers can pass budgets, the `mutation-limit` hint suggests batches and is replaceable by the host (§10);
-  hints for an out-of-range list index in a `set` target, a computed `sort` key and a `ref()` given a name (§7);
+  `set` through map entries streamed from a writable map (§8; formerly always `invalid-plan`); host text coercion for
+  struct / object types (§8);
+  hints for an out-of-range list index in a `set` target, a computed `sort` key, a parenthesised tuple and a `ref()`
+  given a name (§7);
   `$path` is the query path, `distinct e` keeps items (§3.1, §5).

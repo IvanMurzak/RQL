@@ -15048,6 +15048,959 @@
         ],
         "total": 3
       }
+    },
+    {
+      "name": "mut-entry-set-value",
+      "rql": "g.Nodes | get Props | where Value >= 50 | set Value = Value * 2",
+      "then": "g.Nodes | select Props",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Props"
+              ]
+            }
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": ">=",
+              "args": [
+                {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                {
+                  "lit": 50
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "Props[\"hp\"]",
+            100,
+            200
+          ],
+          [
+            "Node#5",
+            "Props[\"hp\"]",
+            50,
+            100
+          ]
+        ],
+        "total": 2
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Props",
+                "expr": {
+                  "path": [
+                    "Props"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Props"
+        ],
+        "rows": [
+          [
+            {
+              "hp": 200,
+              "mp": 5
+            }
+          ],
+          [
+            {
+              "hp": 100
+            }
+          ],
+          [
+            {}
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "mut-entry-set-value-dry-run",
+      "rql": "g.Nodes | get Props | set Value = 0",
+      "then": "g.Nodes | select Props",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Props"
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": 0
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "Props[\"hp\"]",
+            100,
+            0
+          ],
+          [
+            "Node#1",
+            "Props[\"mp\"]",
+            5,
+            0
+          ],
+          [
+            "Node#5",
+            "Props[\"hp\"]",
+            50,
+            0
+          ]
+        ],
+        "total": 3,
+        "dryRun": true
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Props",
+                "expr": {
+                  "path": [
+                    "Props"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Props"
+        ],
+        "rows": [
+          [
+            {
+              "hp": 100,
+              "mp": 5
+            }
+          ],
+          [
+            {
+              "hp": 50
+            }
+          ],
+          [
+            {}
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "mut-entry-set-value-member",
+      "rql": "g | get Index | where Key != \"b\" | set Value.Value = Value.Value + 1",
+      "then": "g.Nodes | recurse Children include-self=true | where Id == 1 or Id == 3 | select Name Value",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Index"
+              ]
+            }
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "!=",
+              "args": [
+                {
+                  "path": [
+                    "Key"
+                  ]
+                },
+                {
+                  "lit": "b"
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value",
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "path": [
+                        "Value",
+                        "Value"
+                      ]
+                    },
+                    {
+                      "lit": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Graph@1",
+            "Index[\"a\"].Value",
+            10,
+            11
+          ],
+          [
+            "Graph@1",
+            "Index[\"special\"].Value",
+            -4,
+            -3
+          ]
+        ],
+        "total": 2
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "or",
+              "args": [
+                {
+                  "op": "==",
+                  "args": [
+                    {
+                      "path": [
+                        "Id"
+                      ]
+                    },
+                    {
+                      "lit": 1
+                    }
+                  ]
+                },
+                {
+                  "op": "==",
+                  "args": [
+                    {
+                      "path": [
+                        "Id"
+                      ]
+                    },
+                    {
+                      "lit": 3
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "Value"
+        ],
+        "rows": [
+          [
+            "root-a",
+            11
+          ],
+          [
+            "a-2",
+            -3
+          ]
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "mut-entry-set-delegated-member",
+      "rql": "g | get Index | where Key == \"a\" | set Note = \"via entry \" + Key",
+      "then": "ref(\"Node#1\") | select Note",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Index"
+              ]
+            }
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Key"
+                  ]
+                },
+                {
+                  "lit": "a"
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Note"
+                  ]
+                },
+                "value": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "lit": "via entry "
+                    },
+                    {
+                      "path": [
+                        "Key"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Graph@1",
+            "Index[\"a\"].Note",
+            "first",
+            "via entry a"
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Note",
+                "expr": {
+                  "path": [
+                    "Note"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Note"
+        ],
+        "rows": [
+          [
+            "via entry a"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "mut-entry-set-struct-member",
+      "rql": "g.Nodes | recurse Children include-self=true | where Id == 4 | get Props | set Value = $index + 0.5",
+      "then": "ref(\"Node#4\") | select Props",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Id"
+                  ]
+                },
+                {
+                  "lit": 4
+                }
+              ]
+            }
+          },
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Props"
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "path": [
+                        {
+                          "meta": "index"
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 0.5
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#4",
+            "Props[\"hp\"]",
+            0,
+            0.5
+          ],
+          [
+            "Node#4",
+            "Props[\"armor\"]",
+            12,
+            1.5
+          ]
+        ],
+        "total": 2
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#4"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Props",
+                "expr": {
+                  "path": [
+                    "Props"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Props"
+        ],
+        "rows": [
+          [
+            {
+              "hp": 0.5,
+              "armor": 1.5
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "mut-entry-err-key",
+      "rql": "g.Nodes | get Props | set Key = \"x\"",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Props"
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Key"
+                  ]
+                },
+                "value": {
+                  "lit": "x"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "readonly-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mut-entry-err-coercion",
+      "rql": "g.Nodes | get Props | set Value = \"big\"",
+      "then": "g.Nodes | select Props",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Props"
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": "big"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Props",
+                "expr": {
+                  "path": [
+                    "Props"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Props"
+        ],
+        "rows": [
+          [
+            {
+              "hp": 100,
+              "mp": 5
+            }
+          ],
+          [
+            {
+              "hp": 50
+            }
+          ],
+          [
+            {}
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "mut-entry-err-limit",
+      "rql": "g.Nodes | recurse Children include-self=true | get Props | set Value = 1",
+      "options": {
+        "allowMutation": true
+      },
+      "budgets": {
+        "maxMutationTargets": 3
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Props"
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "mutation-limit"
+          }
+        ]
+      }
+    },
+    {
+      "name": "syntax-err-tuple-in-object-literal",
+      "rql": "ref(\"Node#8\") | set Pos = {x: (0, 0)}",
+      "options": {
+        "allowMutation": true
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "syntax-error"
+          }
+        ]
+      }
     }
   ]
 }

@@ -34,8 +34,20 @@ namespace Rql.Execution
     public sealed class MapEntry
     {
         public MapEntry(object? key, object? value) { Key = key; Value = value; }
+
+        internal MapEntry(object? key, object? value, object? map, object? holder, string? mapLabel) : this(key, value)
+        {
+            Map = map; Holder = holder; MapLabel = mapLabel;
+        }
+
         public object? Key { get; }
         public object? Value { get; }
+        /// <summary>The map this entry was streamed from: <c>set Value… = …</c> writes through it (spec §8).</summary>
+        internal object? Map { get; }
+        /// <summary>The stream item the map was read from (by <c>get</c>), for receipts and host hooks; null for a source.</summary>
+        internal object? Holder { get; }
+        /// <summary>The member path the map was read by (<c>Props</c> for <c>get Props</c>), prefixing receipt labels; null when computed.</summary>
+        internal string? MapLabel { get; }
     }
 
     internal static class V

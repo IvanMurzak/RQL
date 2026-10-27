@@ -335,6 +335,21 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   target, and `$index`, `$path` and `$depth` are the target's as it entered the stage: `$index` is its position in the
   stream entering `set` / `call` (null and destroyed items, which are skipped, keep their positions), so
   `nodes | where class == "RigidBody3D" | set Position.X = $index * 2` spreads the matches 0, 2, 4, ….
+* **Map entries as targets**: a `set` target that is a map entry streamed from a map (`… | get Rows | where
+  Value.IsElite | set Value.Health = Value.Health * 1.1`) writes through that map: `Value.p` (and a bare `p`, which reads
+  through to the value like member access, §4.4) is the path `[key].p` on the map, and `Value` alone replaces the
+  entry's value. Everything else is the ordinary `set` on that path — coercion to the map's value type, struct values
+  written back into the map, validation of virtual-map entries, read-only maps refused (`readonly-member`), rollback,
+  dry runs, budgets. `Key` cannot be set (`readonly-member`). Receipts carry one row per entry: `$ref` is the object
+  the map was read from (by `get`; the map itself for a map source) and `member` the written path prefixed with the
+  map's member path when `get` named it (`Rows["Orc"].Health`); that object is also the owner reported to host hooks
+  unless an object inside the value owns the change. `call` on entries is `invalid-plan` (call the values:
+  `… | get Value | call …`). A map that is a copy (a copy-on-read member, §13, or a getter that builds a new map) does
+  not keep the change.
+* **Host text coercion**: a host MAY register a text coercion that converts a string written to a struct or object
+  type that no type adapter coerces (an engine's own text form, `"(Minimum=(X=0.5,Y=0),Maximum=(X=0.5,Y=0))"`). It
+  runs after the adapters and before the built-in rules, on every write coercion (`set`, `call` arguments, object
+  literal members); declining leaves the built-in rules, a refusal is `coercion-failed` with its reason.
 * **Batch validation**: a host MAY register a batch validator that receives every planned change of the stage at
   once (`set`: target, owner, member, old and coerced new value; `call`: target, method and coerced arguments) after
   every target passed its own checks and before the first write or call — **on dry runs too**. A reason it returns
