@@ -8,6 +8,8 @@ namespace Rql.Conformance
     // Native CLR mirror of fixtures/cross-runtime/graph.json "types" (declaration order matters).
     public enum NodeKind { Alpha, Beta, Gamma }
 
+    public enum Align { HAlign_Fill, HAlign_Left, VAlign_Fill, VAlign_Top }
+
     public struct Vec2
     {
         public double x;
@@ -33,6 +35,7 @@ namespace Rql.Conformance
     public sealed class Special : Node
     {
         public int Power { get; set; }
+        public Align Align { get; set; }
     }
 
     public sealed class Graph
@@ -76,7 +79,7 @@ namespace Rql.Conformance
         private static Node BuildNode(JsonElement e, Dictionary<int, Node> byId, List<(JsonElement, Node)> links)
         {
             var type = e.GetProperty("$type").GetString();
-            Node n = type == "Special" ? new Special { Power = e.GetProperty("Power").GetInt32() } : new Node();
+            Node n = type == "Special" ? new Special { Power = e.GetProperty("Power").GetInt32(), Align = (Align)System.Enum.Parse(typeof(Align), e.GetProperty("Align").GetString()!) } : new Node();
             n.Id = e.GetProperty("Id").GetInt32();
             n.Name = e.GetProperty("Name").GetString()!;
             n.Kind = (NodeKind)System.Enum.Parse(typeof(NodeKind), e.GetProperty("Kind").GetString()!);

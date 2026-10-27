@@ -689,7 +689,8 @@ export function equal(x: Exec, a: unknown, b: unknown): Truth {
 }
 
 function enumEqual(e: EnumValue, other: unknown): Truth {
-  if (typeof other === 'string') return e.name.toUpperCase() === other.toUpperCase();
+  // The entry the string resolves to (spec §8 enum name resolution); unresolved or ambiguous is not equal.
+  if (typeof other === 'string') return e.type.parse(other)?.value === e.value;
   const n = toNumber(other);
   if (n !== undefined) return e.ordinal === n;
   if (other instanceof EnumValue) return e.type === other.type && e.value === other.value;

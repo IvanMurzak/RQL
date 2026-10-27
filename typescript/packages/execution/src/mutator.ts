@@ -175,15 +175,19 @@ interface Target {
 }
 
 /**
- * The mutation-limit hint (spec §10): split the change into batches of `limit`; mention raising
- * budgets.maxMutationTargets only when the host lets callers pass budgets (`ceiling` defined).
+ * The mutation-limit hint (spec §10). When callers can raise the limit (`argument` defined) and the ceiling is above
+ * it: raise it to the `matched` count (one all-or-nothing call), or (more matched than the ceiling) to the ceiling in
+ * batches of the ceiling. Otherwise: batches of `limit`.
  */
-export function mutationLimitHint(op: string, limit: number, ceiling: number | undefined): string {
-  return (
-    `narrow the query (where / ref(...)) or split the change into batches of ${limit}: … | first ${limit} | ${op} …, ` +
-    `then … | skip ${limit} | first ${limit} | ${op} … (repeat plain first ${limit} instead when the change removes the items from your where)` +
-    (ceiling !== undefined && ceiling > limit ? `; or raise budgets.maxMutationTargets (host ceiling ${ceiling})` : '')
-  );
+export function mutationLimitHint(op: string, limit: number, matched: number | undefined, argument: string | undefined, ceiling: number): string {
+  const narrow = 'narrow the query (where / ref(...))';
+  const batches = (n: number): string =>
+    `split the change into batches of ${n}: … | first ${n} | ${op} …, then … | skip ${n} | first ${n} | ${op} … ` +
+    `(repeat plain first ${n} instead when the change removes the items from your where)`;
+  if (argument === undefined || ceiling <= limit) return `${narrow} or ${batches(limit)}`;
+  return matched !== undefined
+    ? `pass ${argument} = ${matched} (host ceiling ${ceiling}) to change all ${matched} in one all-or-nothing call (a dry run previews it); or ${narrow}`
+    : `pass ${argument} = ${ceiling} (the host ceiling) and ${batches(ceiling)}; or ${narrow}`;
 }
 
 export class Mutator {
@@ -227,7 +231,9 @@ export class Mutator {
   private targets(stream: Iterable<Item>, op: string): Target[] {
     const list: Target[] = [];
     let index = -1;
-    for (const it of stream) {
+    const rest = stream[Symbol.iterator]();
+    for (let step = rest.next(); !step.done; step = rest.next()) {
+      const it = step.value;
       index++; // skipped null/destroyed items keep their positions: $index is the position in the stage's input
       // Null and destroyed items are skipped (a destroyed object reads as null, spec §13).
       if (it.value === null || it.value === undefined || this.x.dead(it.value)) continue;
@@ -242,7 +248,7 @@ export class Mutator {
           );
         }
         list.push({ item: it, index }); // set Value… writes through the entry's map (spec §8)
-        this.checkLimit(list.length, op);
+        if (list.length > this.x.maxMutationTargets) throw this.limitExceeded(rest, list.length, op);
         continue;
       }
       const v = it.value;
@@ -256,21 +262,40 @@ export class Mutator {
         );
       }
       list.push({ item: it, index });
-      this.checkLimit(list.length, op);
+      if (list.length > this.x.maxMutationTargets) throw this.limitExceeded(rest, list.length, op);
     }
     return list;
   }
 
-  private checkLimit(count: number, op: string): void {
-    const limit = this.x.maxMutationTargets;
-    if (count <= limit) return;
+  /**
+   * mutation-limit (spec §8, §10): counts the rest of the stage's input up to the host ceiling (counting only) so the
+   * message states how many items matched, and builds the hint for the host's limit argument.
+   */
+  private limitExceeded(rest: Iterator<Item>, matched: number, op: string): RqlError {
     const m = this.x.engine.mutations;
-    throw new RqlError(
-      'mutation-limit',
-      `more than ${limit} objects matched '${op}'; nothing was changed`,
-      undefined,
-      m.limitHint?.(op, limit) ?? mutationLimitHint(op, limit, this.x.budgetsAdjustable ? m.hardMaxTargets : undefined),
-    );
+    const limit = this.x.maxMutationTargets;
+    const ceiling = Math.max(m.hardMaxTargets, limit);
+    let ended = false;
+    try {
+      while (matched <= ceiling) {
+        const step = rest.next();
+        if (step.done) {
+          ended = true;
+          break;
+        }
+        const v = step.value.value;
+        if (v !== null && v !== undefined && !this.x.dead(v)) matched++;
+      }
+    } catch (e) {
+      if (!(e instanceof RqlError)) throw e; // a budget hit while counting: report what was counted so far
+    }
+    const exact = ended ? matched : undefined;
+    const message =
+      exact !== undefined
+        ? `${matched} objects matched '${op}', more than the limit of ${limit}; nothing was changed`
+        : `more than ${matched - 1} objects matched '${op}' (the limit is ${limit}); nothing was changed`;
+    const argument = m.limitArgument ?? (this.x.budgetsAdjustable ? 'budgets.maxMutationTargets' : undefined);
+    return new RqlError('mutation-limit', message, undefined, m.limitHint?.(op, limit) ?? mutationLimitHint(op, limit, exact, argument, ceiling));
   }
 
   /**
@@ -778,11 +803,13 @@ export function coerce(model: TypeModel, v: unknown, target: TypeRef, policy?: W
   }
   if (v instanceof ObjectValue) return fromLiteral(model, v, t, target, policy, text);
   if (t instanceof EnumType) {
-    const fail: Coerced = { ok: false, why: 'expected one of ' + t.values.map((e) => e.name).join(', ') };
+    const fail: Coerced = { ok: false, why: t.expected() };
     if (v instanceof EnumValue) return v.type === t ? { ok: true, value: v } : fail;
     if (typeof v === 'string') {
-      const ev = t.parse(v);
-      return ev !== undefined && (t.isDefined(ev) || t.flags) ? { ok: true, value: ev } : fail;
+      // Enum name resolution (spec §8): exact, qualified, case-insensitive, entry prefix; ambiguity refused.
+      const r = t.resolve(v);
+      if (!('value' in r)) return { ok: false, why: r.why };
+      return t.isDefined(r.value) || t.flags ? { ok: true, value: r.value } : fail;
     }
     const n = toNumber(v);
     if (n !== undefined && Math.floor(n) === n) {

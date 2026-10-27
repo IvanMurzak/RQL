@@ -13,6 +13,7 @@
 namespace conformance {
 
 enum class NodeKind { Alpha, Beta, Gamma };
+enum class Align { HAlign_Fill, HAlign_Left, VAlign_Fill, VAlign_Top };
 
 struct Vec2 {
     double x = 0;
@@ -41,6 +42,7 @@ struct Node {
 struct Special : Node {
     rql::TypeKey rql_dynamic_type() const override { return rql::type_key<Special>(); }
     int Power = 0;
+    conformance::Align Align = conformance::Align::HAlign_Fill;
 };
 
 struct Graph {

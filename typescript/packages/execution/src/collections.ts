@@ -70,7 +70,7 @@ export function findMapKey(m: MapLike, key: unknown): { found: true; key: unknow
     const up = key.toUpperCase();
     for (const k of m.keys()) {
       if (typeof k === 'string' && k.toUpperCase() === up) return { found: true, key: k };
-      if (k instanceof EnumValue && k.name.toUpperCase() === up) return { found: true, key: k };
+      if (k instanceof EnumValue && k.type.parse(key)?.value === k.value) return { found: true, key: k };
     }
   } else if (typeof key === 'number') {
     for (const k of m.keys()) if (k instanceof EnumValue && k.ordinal === key) return { found: true, key: k };

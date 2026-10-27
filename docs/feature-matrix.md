@@ -1,7 +1,7 @@
 # Feature matrix
 
-Conformance status (latest local run): **.NET 496/496** golden checks (compiled and reflection
-accessors) · **TypeScript 496/496** · **C++ 322 passed, 33 skipped** (text-only cases; no parser
+Conformance status (latest local run): **.NET 746/746** golden checks (compiled and reflection
+accessors) · **TypeScript 746/746** · **C++ 554 passed, 46 skipped** (text-only cases; no parser
 by design, ADR-0003). Details: [TypeScript](feature-matrix-typescript.md), [C++](feature-matrix-cpp.md).
 
 | Feature | .NET | TS | C++ |
@@ -32,4 +32,5 @@ by design, ADR-0003). Details: [TypeScript](feature-matrix-typescript.md), [C++]
 | Agent table format (display numbers, raw-Unicode quoting; spec §6) | ✅ `AgentFormat` | — (JSON only) | — (JSON only; Unreal-MCP renders with the .NET sidecar) |
 | `sqrt` / `pow` / `min(a, b, …)` / `max(a, b, …)`, OSA suggestions, dotted projected columns, `invalid-regex`, aggregate warnings, row `distinct`, `call-threw` / `function-threw` / `hook-threw`, read-back receipts, mutation request needs `set`/`call`, `invalid-value` (0.2.0) | ✅ | ✅ (no regex timeout warning: JS regexes have no per-match timeout; `function-threw` as a query source pending with function sources) | ✅ |
 | Wave-2 (unreleased): target scope (`$index` / `$path` / `$depth`) in `set` / `call`, string functions and methods (`replace`, `replace-regex`, `substring`, `split`, `trim`, `pad`), multi-key / named `group-by`, `set` through streamed map entries, batch validation, host text coercion, budget-hint control (`BudgetsAdjustable`, `LimitHint`), `FindHint`, hints (list index, sort key, tuple) | ✅ | ✅ | ✅ (text-only hints n/a: no parser; regex via `std::regex` ECMAScript, ASCII case folding) |
+| Wave-3 (unreleased): enum name resolution (`Type::Name` / `Type.Name` qualifiers, case-insensitive, entry prefix `HAlign_`, ambiguity refused, host aliases) in writes, map keys and comparisons; target limit: matched count in `mutation-limit`, raise-first hint, host `LimitArgument` independent of `BudgetsAdjustable` (C++ manifest: `mutations.hardMaxTargets`) | ✅ (`RqlEngine.EnumAliases`) | ✅ (`EnumType` `aliases`) | ✅ (`EnumBuilder::alias`, `TypeDescriptor::enum_aliases`; ASCII case folding) |
 | AOT-safe accessor mode | ✅ `AccessorMode.Reflection` | n/a | n/a |

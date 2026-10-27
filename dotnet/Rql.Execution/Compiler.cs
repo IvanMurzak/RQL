@@ -311,7 +311,7 @@ namespace Rql.Execution
 
         private static object? MapLookupRaw(Exec x, object map, TypeInfo info, object? key, MemberSite? site)
         {
-            if (!TryCoerceKey(key, info.KeyType, out var k))
+            if (!TryCoerceKey(key, info.KeyType, out var k, x.Types))
             {
                 if (site != null) site.Misses++;
                 return Missing.Value;
@@ -342,7 +342,7 @@ namespace Rql.Execution
             return Missing.Value;
         }
 
-        internal static bool TryCoerceKey(object? key, Type? keyType, out object? result)
+        internal static bool TryCoerceKey(object? key, Type? keyType, out object? result, TypeModel? model = null)
         {
             result = key;
             if (keyType == null || key == null || keyType.IsInstanceOfType(key)) return true;
@@ -355,9 +355,7 @@ namespace Rql.Execution
             if (key is string s)
             {
                 if (keyType.IsEnum)
-                {
-                    try { result = Enum.Parse(keyType, s, true); return true; } catch { return false; }
-                }
+                    return EnumNames.Resolve(keyType, s, model?.AliasesOf(keyType), out result, out _) == EnumNames.Outcome.Found;
                 if (V.IsNumericType(keyType) && double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var dv))
                 {
                     try { result = Convert.ChangeType(dv, keyType, CultureInfo.InvariantCulture); return true; } catch { return false; }
@@ -531,8 +529,8 @@ namespace Rql.Execution
                 if (b is Enum eb) return Convert.ToDouble(eb, CultureInfo.InvariantCulture) == da;
                 return null;
             }
-            if (a is Enum ea) return EnumEqual(ea, b);
-            if (b is Enum eb2) return EnumEqual(eb2, a);
+            if (a is Enum ea) return EnumEqual(model, ea, b);
+            if (b is Enum eb2) return EnumEqual(model, eb2, a);
             if (V.IsString(a)) return V.IsString(b) ? string.Equals(V.AsString(a), V.AsString(b), StringComparison.Ordinal) : (bool?)null;
             if (a is bool ba) return b is bool bb ? ba == bb : (bool?)null;
             var ta = a.GetType();
@@ -583,9 +581,10 @@ namespace Rql.Execution
             return null;
         }
 
-        private static bool? EnumEqual(Enum e, object? other)
+        private static bool? EnumEqual(TypeModel? model, Enum e, object? other)
         {
-            if (other is string s) return string.Equals(e.ToString(), s, StringComparison.OrdinalIgnoreCase);
+            // The entry the string resolves to (spec §8 enum name resolution); unresolved or ambiguous is not equal.
+            if (other is string s) return TryParseEnum(model, e.GetType(), s, out var ev) && e.Equals(ev);
             if (V.TryNumber(other, out var d)) return Convert.ToDouble(e, CultureInfo.InvariantCulture) == d;
             if (other is Enum o) return e.GetType() == o.GetType() && e.Equals(o);
             return null;
@@ -615,7 +614,7 @@ namespace Rql.Execution
                 var va = Convert.ToDouble(ea, CultureInfo.InvariantCulture);
                 if (b is Enum eb && eb.GetType() == ea.GetType()) return va.CompareTo(Convert.ToDouble(eb, CultureInfo.InvariantCulture));
                 if (V.TryNumber(b, out var db2)) return va.CompareTo(db2);
-                if (b is string bs && TryParseEnum(ea.GetType(), bs, out var ev)) return va.CompareTo(Convert.ToDouble(ev, CultureInfo.InvariantCulture));
+                if (b is string bs && TryParseEnum(model, ea.GetType(), bs, out var ev)) return va.CompareTo(Convert.ToDouble(ev, CultureInfo.InvariantCulture));
                 return null;
             }
             if (V.IsString(a) && V.IsString(b)) return Math.Sign(string.CompareOrdinal(V.AsString(a), V.AsString(b)));
@@ -623,11 +622,8 @@ namespace Rql.Execution
             return null;
         }
 
-        private static bool TryParseEnum(Type t, string s, out object? value)
-        {
-            try { value = Enum.Parse(t, s, true); return true; }
-            catch { value = null; return false; }
-        }
+        private static bool TryParseEnum(TypeModel? model, Type t, string s, out object? value) =>
+            EnumNames.Resolve(t, s, model?.AliasesOf(t), out value, out _) == EnumNames.Outcome.Found;
 
         private static object Ord(TypeModel model, object? a, object? b, Func<int, bool> test)
         {

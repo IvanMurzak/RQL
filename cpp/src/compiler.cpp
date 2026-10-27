@@ -149,9 +149,9 @@ namespace {
 
 std::optional<bool> enum_equal(const Value& e, const Value& other) {
     if (other.is_string()) {
-        std::string n;
-        if (!e.type()->enum_name(e.enum_value(), n)) n = std::to_string(e.enum_value());
-        return iequals(n, other.as_string());
+        // The entry the string resolves to (spec §8 enum name resolution); unresolved or ambiguous is not equal.
+        int64_t v = 0;
+        return e.type()->enum_parse(other.as_string(), v) && v == e.enum_value();
     }
     if (other.is_number()) return static_cast<double>(e.enum_value()) == other.as_number();
     if (other.is_enum()) return e.type() == other.type() && e.enum_value() == other.enum_value();

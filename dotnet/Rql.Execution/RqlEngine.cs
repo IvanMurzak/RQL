@@ -100,10 +100,21 @@ namespace Rql.Execution
         public bool Enabled { get; set; }
         /// <summary>Optional extra allow-check per (declaring object type, member).</summary>
         public Func<Type, MemberAccessor, bool>? CanWrite { get; set; }
-        /// <summary>Default per-request target limit (requests may raise it up to <see cref="HardMaxTargets"/>).</summary>
+        /// <summary>
+        /// Default per-request target limit (spec §8 target limit): requests may raise it up to <see cref="HardMaxTargets"/>.
+        /// It guards the breadth of a change, not its correctness (all-or-nothing, rollback and dry runs hold at any size):
+        /// hosts that record a whole stage as one undo step (editors) should use a larger default, e.g. 200.
+        /// </summary>
         public int MaxTargets { get; set; } = 20;
-        /// <summary>Host ceiling no request can exceed.</summary>
+        /// <summary>Host ceiling no request can exceed (bounds one stage's planning, receipts and undo memory).</summary>
         public int HardMaxTargets { get; set; } = 1000;
+        /// <summary>
+        /// The name under which this host's callers raise the target limit, e.g. a tool argument <c>max_targets</c> that the
+        /// host maps to <see cref="Budgets.MaxMutationTargets"/> (spec §10). The mutation-limit hint advises it whether or not
+        /// <see cref="EngineDefaults.BudgetsAdjustable"/> is set. Null: <c>budgets.maxMutationTargets</c> when budgets are
+        /// adjustable, otherwise callers cannot raise the limit and the hint only suggests narrowing or batches.
+        /// </summary>
+        public string? LimitArgument { get; set; }
     }
 
     public sealed class EngineDefaults
@@ -121,7 +132,8 @@ namespace Rql.Execution
         public int HardTimeoutMs { get; set; } = 30_000;
         /// <summary>
         /// Whether the host's callers can pass request budgets (`budgets.*`). Hosts whose tools expose no budgets argument set
-        /// it to false, so error hints never advise raising a budget the caller cannot reach (spec §10).
+        /// it to false, so error hints never advise raising a budget the caller cannot reach (spec §10). The target limit has
+        /// its own switch, <see cref="MutationPolicy.LimitArgument"/>.
         /// </summary>
         public bool BudgetsAdjustable { get; set; } = true;
     }
@@ -213,6 +225,21 @@ namespace Rql.Execution
             {
                 if (ReferenceEquals(Types, TypeModel.Shared)) Types = new TypeModel(Types.Mode);
                 Types.HostAlive = value;
+            }
+        }
+
+        /// <summary>
+        /// Alias names for enum entries (spec §8 enum name resolution), e.g. an editor's display names: alias → entry name
+        /// for the given enum type, or null for none. Aliases resolve like entry names (exactly, then ignoring case) in
+        /// writes, map keys and comparisons; encoding keeps the entry name. Called once per enum type and cached.
+        /// </summary>
+        public Func<Type, IReadOnlyDictionary<string, string>?>? EnumAliases
+        {
+            get => Types.EnumAliases;
+            set
+            {
+                if (ReferenceEquals(Types, TypeModel.Shared)) Types = new TypeModel(Types.Mode);
+                Types.EnumAliases = value;
             }
         }
 
@@ -681,13 +708,21 @@ namespace Rql.Execution
         public bool BudgetsAdjustable => Engine.Defaults.BudgetsAdjustable;
 
         /// <summary>
-        /// The mutation-limit hint (spec §10): split the change into batches of <paramref name="limit"/>; mention raising
-        /// budgets.maxMutationTargets only when the host lets callers pass budgets (<paramref name="ceiling"/> non-null).
+        /// The mutation-limit hint (spec §10). When callers can raise the limit (<paramref name="argument"/> non-null) and the
+        /// ceiling is above it: raise it to the <paramref name="matched"/> count (one all-or-nothing call), or — more matched
+        /// than the ceiling — to the ceiling in batches of the ceiling. Otherwise: batches of <paramref name="limit"/>.
         /// </summary>
-        public static string MutationLimitHint(string op, int limit, int? ceiling) =>
-            $"narrow the query (where / ref(...)) or split the change into batches of {limit}: … | first {limit} | {op} …, "
-            + $"then … | skip {limit} | first {limit} | {op} … (repeat plain first {limit} instead when the change removes the items from your where)"
-            + (ceiling is int c && c > limit ? $"; or raise budgets.maxMutationTargets (host ceiling {c})" : "");
+        public static string MutationLimitHint(string op, int limit, int? matched, string? argument, int ceiling)
+        {
+            const string narrow = "narrow the query (where / ref(...))";
+            string Batches(int n) =>
+                $"split the change into batches of {n}: … | first {n} | {op} …, then … | skip {n} | first {n} | {op} … "
+                + $"(repeat plain first {n} instead when the change removes the items from your where)";
+            if (argument == null || ceiling <= limit) return $"{narrow} or {Batches(limit)}";
+            return matched is int c
+                ? $"pass {argument} = {c} (host ceiling {ceiling}) to change all {c} in one all-or-nothing call (a dry run previews it); or {narrow}"
+                : $"pass {argument} = {ceiling} (the host ceiling) and {Batches(ceiling)}; or {narrow}";
+        }
 
         public void Visit()
         {

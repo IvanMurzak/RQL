@@ -16657,6 +16657,1010 @@
         ],
         "total": 1
       }
+    },
+    {
+      "name": "enum-name-qualified",
+      "rql": "ref(\"Node#2\") | set Kind = \"NodeKind::Gamma\"",
+      "then": "ref(\"Node#2\") | select Kind",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#2"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Kind"
+                  ]
+                },
+                "value": {
+                  "lit": "NodeKind::Gamma"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#2",
+            "Kind",
+            "Beta",
+            "Gamma"
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#2"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Kind",
+                "expr": {
+                  "path": [
+                    "Kind"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Kind"
+        ],
+        "rows": [
+          [
+            "Gamma"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "enum-name-qualified-dot-ci",
+      "rql": "ref(\"Node#2\") | set Kind = \"nodekind.gamma\"",
+      "then": "ref(\"Node#2\") | select Kind",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#2"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Kind"
+                  ]
+                },
+                "value": {
+                  "lit": "nodekind.gamma"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#2",
+            "Kind",
+            "Beta",
+            "Gamma"
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#2"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Kind",
+                "expr": {
+                  "path": [
+                    "Kind"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Kind"
+        ],
+        "rows": [
+          [
+            "Gamma"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "enum-name-exact",
+      "rql": "ref(\"Node#6\") | set Align = \"VAlign_Fill\"",
+      "then": "ref(\"Node#6\") | select Align",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#6"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Align"
+                  ]
+                },
+                "value": {
+                  "lit": "VAlign_Fill"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Special#6",
+            "Align",
+            "VAlign_Top",
+            "VAlign_Fill"
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#6"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Align",
+                "expr": {
+                  "path": [
+                    "Align"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Align"
+        ],
+        "rows": [
+          [
+            "VAlign_Fill"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "enum-name-entry-prefix",
+      "rql": "ref(\"Node#3\") | set Align = \"top\"",
+      "then": "ref(\"Node#3\") | select Align",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#3"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Align"
+                  ]
+                },
+                "value": {
+                  "lit": "top"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Special#3",
+            "Align",
+            "HAlign_Left",
+            "VAlign_Top"
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#3"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Align",
+                "expr": {
+                  "path": [
+                    "Align"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Align"
+        ],
+        "rows": [
+          [
+            "VAlign_Top"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "enum-name-qualified-entry-prefix",
+      "rql": "ref(\"Node#6\") | set Align = \"EAlign::Left\"",
+      "then": "ref(\"Node#6\") | select Align",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#6"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Align"
+                  ]
+                },
+                "value": {
+                  "lit": "EAlign::Left"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Special#6",
+            "Align",
+            "VAlign_Top",
+            "HAlign_Left"
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#6"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Align",
+                "expr": {
+                  "path": [
+                    "Align"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Align"
+        ],
+        "rows": [
+          [
+            "HAlign_Left"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "enum-name-ambiguous",
+      "rql": "ref(\"Node#3\") | set Align = \"fill\"",
+      "then": "ref(\"Node#3\") | select Align",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#3"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Align"
+                  ]
+                },
+                "value": {
+                  "lit": "fill"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#3"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Align",
+                "expr": {
+                  "path": [
+                    "Align"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Align"
+        ],
+        "rows": [
+          [
+            "HAlign_Left"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "enum-name-unknown",
+      "rql": "ref(\"Node#3\") | set Align = \"Bottom\"",
+      "then": "ref(\"Node#3\") | select Align",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#3"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Align"
+                  ]
+                },
+                "value": {
+                  "lit": "Bottom"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#3"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Align",
+                "expr": {
+                  "path": [
+                    "Align"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Align"
+        ],
+        "rows": [
+          [
+            "HAlign_Left"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "enum-cmp-entry-prefix",
+      "rql": "g.Nodes | recurse Children include-self=true | where $ is Special | where Align == \"left\" | select Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "is",
+              "args": [
+                {
+                  "path": []
+                },
+                {
+                  "lit": "Special"
+                }
+              ]
+            }
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Align"
+                  ]
+                },
+                {
+                  "lit": "left"
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "a-2"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "enum-cmp-ambiguous",
+      "rql": "g.Nodes | recurse Children include-self=true | where $ is Special | select Name, fill = (Align == \"Fill\"), notFill = (Align != \"Fill\")",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "is",
+              "args": [
+                {
+                  "path": []
+                },
+                {
+                  "lit": "Special"
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "fill",
+                "expr": {
+                  "op": "==",
+                  "args": [
+                    {
+                      "path": [
+                        "Align"
+                      ]
+                    },
+                    {
+                      "lit": "Fill"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "notFill",
+                "expr": {
+                  "op": "!=",
+                  "args": [
+                    {
+                      "path": [
+                        "Align"
+                      ]
+                    },
+                    {
+                      "lit": "Fill"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "fill",
+          "notFill"
+        ],
+        "rows": [
+          [
+            "a-2",
+            false,
+            true
+          ],
+          [
+            "b-1",
+            false,
+            true
+          ]
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "enum-cmp-qualified",
+      "rql": "g.Nodes | recurse Children include-self=true | where Kind == \"NodeKind::Alpha\" | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Kind"
+                  ]
+                },
+                {
+                  "lit": "NodeKind::Alpha"
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 3
+      }
+    },
+    {
+      "name": "enum-cmp-integer-text",
+      "rql": "g.Nodes | recurse Children include-self=true | where Kind == \"2\" | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Kind"
+                  ]
+                },
+                {
+                  "lit": "2"
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 3
+      }
+    },
+    {
+      "name": "enum-order-entry-prefix",
+      "rql": "g.Nodes | recurse Children include-self=true | where $ is Special | where Align > \"Left\" | select Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "is",
+              "args": [
+                {
+                  "path": []
+                },
+                {
+                  "lit": "Special"
+                }
+              ]
+            }
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": ">",
+              "args": [
+                {
+                  "path": [
+                    "Align"
+                  ]
+                },
+                {
+                  "lit": "Left"
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "b-1"
+          ]
+        ],
+        "total": 1
+      }
     }
   ]
 }

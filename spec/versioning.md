@@ -53,3 +53,13 @@
   hints for an out-of-range list index in a `set` target, a computed `sort` key, a parenthesised tuple and a `ref()`
   given a name (§7); unquoted `$`-name object keys (`{$type: "T"}`, §4.5);
   `$path` is the query path, `distinct e` keeps items (§3.1, §5).
+* Wave-3 fixes (Unreal / Unity / Godot; unreleased, protocol stays `0.1`; additive or clarifying, no new error code):
+  **enum name resolution** (§8) wherever a string meets an enum (writes, map keys, comparisons): exact name or host
+  alias first, then the part after a `Type::` / `Type.` qualifier, then ignoring case, then without the entry prefix
+  (`"Fill"` → `HAlign_Fill`); several candidates are ambiguous (`coercion-failed` listing them, not equal in
+  comparisons) — **behaviour change**: qualified and prefix-less names were `coercion-failed` (and never equal), a
+  case-only collision picked one entry, integer text now equals an enum in TypeScript, and only flags enums take
+  comma-separated lists in .NET / TypeScript; host alias names for enum entries (§8). **Target limit** (§8, §10): its
+  safety intent and host default are specified (editor hosts with undo: e.g. 200), `mutation-limit` states how many
+  items matched (counting up to the host ceiling), its hint advises raising the host's **limit argument** to the count
+  first and is independent of whether callers can pass the other budgets; capability manifest `mutations.hardMaxTargets`.

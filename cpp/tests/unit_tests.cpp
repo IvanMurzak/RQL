@@ -1433,9 +1433,31 @@ void wave2_tests() {
         e.defaults().budgets_adjustable = adjustable;
         auto r = arun(e, set_all, true);
         std::string h = hint(r);
-        check(first_code(r) == "mutation-limit" && has(h, "first 2 | set") && has(h, "skip 2 | first 2 | set") &&
-                  has(h, "budgets.maxMutationTargets (host ceiling 30)") == adjustable && (adjustable || !has(h, "budgets")),
-              adjustable ? "mutation-limit hint: batches + budgets when adjustable" : "mutation-limit hint: no budgets when not adjustable");
+        // 3 roots, limit 2, ceiling 30: the count is exact.
+        check(first_code(r) == "mutation-limit" && r.diagnostics[0].message == "3 objects matched 'set', more than the limit of 2; nothing was changed",
+              "mutation-limit message: the matched count");
+        check(adjustable ? h == "pass budgets.maxMutationTargets = 3 (host ceiling 30) to change all 3 in one all-or-nothing call (a dry run previews it); "
+                                "or narrow the query (where / ref(...))"
+                         : has(h, "first 2 | set") && has(h, "skip 2 | first 2 | set") && !has(h, "budgets"),
+              adjustable ? "mutation-limit hint: raise to the count when adjustable" : "mutation-limit hint: batches, no budgets when not adjustable");
+        {
+            // A host limit argument is advised whatever budgets_adjustable says; more than the ceiling → batches of it.
+            rql::Engine e2(reg);
+            engine(e2);
+            e2.defaults().budgets_adjustable = adjustable;
+            e2.mutations().limit_argument = "max_targets";
+            e2.mutations().hard_max_targets = 4;
+            auto many = arun(e2, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"recurse","via":[{"path":["Children"]}]},{"op":"set","assign":[{"target":{"path":["Value"]},"value":{"lit":1}}]}]})J", true);
+            check(first_code(many) == "mutation-limit" && many.diagnostics[0].message == "more than 4 objects matched 'set' (the limit is 2); nothing was changed" &&
+                      hint(many).rfind("pass max_targets = 4 (the host ceiling) and split the change into batches of 4", 0) == 0,
+                  "mutation-limit hint: host limit argument, batches of the ceiling");
+            rql::Budgets raise;
+            raise.max_mutation_targets = 3;
+            rql::QueryOptions o;
+            o.allow_mutation = true;
+            o.dry_run = true;  // the graph is shared by the following checks
+            check(e2.execute_json(set_all, raise, o).ok, "a request raises the target limit whatever budgets_adjustable says");
+        }
         rql::Budgets b;
         b.max_visited = 2;
         auto v = e.execute_json(R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"count"}]})J", b, {});
@@ -1522,6 +1544,60 @@ void wave2_tests() {
     }
 }
 
+/// Wave-3 findings: enum name resolution (spec §8) with host aliases.
+enum class EAlign { HAlign_Fill, HAlign_Left, VAlign_Fill, VAlign_Top, Center };
+struct Widget {
+    EAlign Align = EAlign::HAlign_Left;
+    std::map<EAlign, int> Weights{{EAlign::VAlign_Top, 1}};
+};
+
+void wave3_tests() {
+    rql::TypeRegistry reg;
+    reg.enumeration<EAlign>("EAlign")
+        .value("HAlign_Fill", EAlign::HAlign_Fill)
+        .value("HAlign_Left", EAlign::HAlign_Left)
+        .value("VAlign_Fill", EAlign::VAlign_Fill)
+        .value("VAlign_Top", EAlign::VAlign_Top)
+        .value("Center", EAlign::Center);
+    reg.object<Widget>("Widget").member("Align", &Widget::Align).member("Weights", &Widget::Weights);
+    Widget w;
+    rql::Engine e(reg);
+    e.add_object_source("w", &w);
+    e.mutations().enabled = true;
+    auto set = [&](const std::string& literal) {
+        return arun(e, R"J({"rql":"0.1","source":{"path":["w"]},"stages":[{"op":"set","assign":[{"target":{"path":["Align"]},"value":{"lit":)J" + literal + "}}]}]}", true);
+    };
+    auto count = [&](const std::string& literal) {
+        auto r = arun(e, R"J({"rql":"0.1","source":{"path":["w"]},"stages":[{"op":"where","pred":{"op":"==","args":[{"path":["Align"]},{"lit":)J" + literal + "}]}},{\"op\":\"count\"}]}");
+        return r.ok && r.has_value ? static_cast<int>(r.value.as_number()) : -1;
+    };
+    const std::pair<const char*, EAlign> cases[] = {
+        {"\"VAlign_Top\"", EAlign::VAlign_Top}, {"\"valign_top\"", EAlign::VAlign_Top},   {"\"EAlign::VAlign_Fill\"", EAlign::VAlign_Fill},
+        {"\"EWhatever::Left\"", EAlign::HAlign_Left}, {"\"EAlign.center\"", EAlign::Center}, {"\"Top\"", EAlign::VAlign_Top},
+        {"\" top \"", EAlign::VAlign_Top},          {"\"3\"", EAlign::VAlign_Top},
+    };
+    for (auto& c : cases) {
+        w.Align = EAlign::HAlign_Left;
+        auto r = set(c.first);
+        check(r.ok && w.Align == c.second, std::string("enum name resolution: ") + c.first);
+    }
+    w.Align = EAlign::HAlign_Left;
+    auto amb = set("\"fill\"");
+    check(first_code(amb) == "coercion-failed" && amb.diagnostics[0].message.find("\"fill\" is ambiguous for EAlign: HAlign_Fill, VAlign_Fill") != std::string::npos &&
+              w.Align == EAlign::HAlign_Left,
+          "enum name resolution: ambiguous names are refused with the candidates");
+    check(first_code(set("\"Bottom\"")) == "coercion-failed", "enum name resolution: unknown name");
+    check(count("\"EAlign::Left\"") == 1 && count("\"Fill\"") == 0, "enum comparisons use the same resolution");
+    auto key = arun(e, R"J({"rql":"0.1","source":{"path":["w"]},"stages":[{"op":"select","fields":[{"name":"v","expr":{"path":["Weights",{"key":"Top"}]}}]}]})J");
+    check(key.ok && (*key.rows)[0][0].as_number() == 1, "enum map keys use the same resolution");
+    // Host aliases (EnumBuilder::alias / TypeDescriptor::enum_aliases) resolve like entry names, before the prefix step.
+    reg.descriptor<EAlign>()->enum_aliases = {{"Fill", static_cast<int64_t>(EAlign::HAlign_Fill)}, {"Middle", static_cast<int64_t>(EAlign::Center)}};
+    check(set("\"Fill\"").ok && w.Align == EAlign::HAlign_Fill, "enum alias decides at the exact step");
+    check(set("\"middle\"").ok && w.Align == EAlign::Center && count("\"MIDDLE\"") == 1, "enum alias ignoring case, in comparisons too");
+    auto enc = arun(e, R"J({"rql":"0.1","source":{"path":["w"]},"stages":[{"op":"select","fields":[{"name":"Align","expr":{"path":["Align"]}}]}]})J");
+    check(enc.ok && (*enc.rows)[0][0].as_string() == "Center", "enum alias: encoding keeps the entry name");
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) repo_root = argv[1];
     try {
@@ -1531,6 +1607,7 @@ int main(int argc, char** argv) {
         adapter_tests();
         port_tests();
         wave2_tests();
+        wave3_tests();
     } catch (const std::exception& ex) {
         std::cout << "FATAL " << ex.what() << "\n";
         return 2;

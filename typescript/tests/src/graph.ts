@@ -10,6 +10,13 @@ export enum NodeKind {
   Gamma,
 }
 
+export enum Align {
+  HAlign_Fill,
+  HAlign_Left,
+  VAlign_Fill,
+  VAlign_Top,
+}
+
 export class Vec2 {
   constructor(
     public x = 0,
@@ -34,6 +41,7 @@ export class Node {
 
 export class Special extends Node {
   Power = 0;
+  Align: Align = Align.HAlign_Fill;
 }
 
 export class Graph {
@@ -46,6 +54,7 @@ export class Graph {
 }
 
 export const NodeKindType = new EnumType('NodeKind', NodeKind);
+export const AlignType = new EnumType('Align', Align);
 
 /** Type descriptors for the conformance graph (shared by every engine of the suite). */
 export function conformanceModel(): TypeModel {
@@ -67,7 +76,7 @@ export function conformanceModel(): TypeModel {
         { name: 'Peer', type: t.nullable(t.of(Node)), reference: true },
       ],
     })
-    .register(Special, { members: [{ name: 'Power', type: t.int }] })
+    .register(Special, { members: [{ name: 'Power', type: t.int }, { name: 'Align', type: AlignType }] })
     .register(Graph, {
       members: [
         { name: 'Name', type: t.string },
@@ -101,6 +110,7 @@ interface NodeJson {
   Parent: Link | null;
   Peer: Link | null;
   Power?: number;
+  Align?: keyof typeof Align;
 }
 interface GraphJson {
   root: { Name: string; Version: number; Nodes: NodeJson[]; Index: Record<string, Link>; Nothing: Link | null };
@@ -113,7 +123,7 @@ export function loadGraph(json: unknown): Graph {
   const links: [NodeJson, Node][] = [];
   const link = (l: Link | null): Node | null => (l === null ? null : byId.get(l.$link)!);
   const build = (e: NodeJson): Node => {
-    const n = e.$type === 'Special' ? Object.assign(new Special(), { Power: e.Power ?? 0 }) : new Node();
+    const n = e.$type === 'Special' ? Object.assign(new Special(), { Power: e.Power ?? 0, Align: Align[e.Align ?? 'HAlign_Fill'] }) : new Node();
     n.Id = e.Id;
     n.Name = e.Name;
     n.Kind = NodeKind[e.Kind];
