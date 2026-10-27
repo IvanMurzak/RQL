@@ -95,6 +95,7 @@ dotnet add package com.IvanMurzak.Rql
 One package (`Rql.Contracts` + `Rql.Parser` + `Rql.Execution`), targets `netstandard2.1` and `net8.0`.
 
 ```csharp
+using System;
 using Rql;
 using Rql.Execution;
 
@@ -192,7 +193,7 @@ objects | where $ is Enemy | first 1 | describe
 | `select [n=]e …` | project to rows; `$ref`, `$path`, `$type` are built in |
 | `sort k [asc\|desc], …` · `first [n]` · `skip n` · `distinct [e]` | order and slice; `first` stops pulling items upstream |
 | `get e` | replace each item by `e`, flattening lists |
-| `recurse [via …] [max-depth=N]` | cycle-safe depth-first walk over owning members |
+| `recurse [via …] [max-depth=N]` | cycle-safe depth-first walk over the `via` members, or all owning members |
 | `group-by e` · `count` · `sum/min/max/avg e` | aggregate |
 | `describe` | the schema of the items' runtime types |
 | `set p = e, …` · `call m(args)` | mutation (see below) |
