@@ -644,7 +644,7 @@ class Parser {
               // `$name` keys (`{$type: "PlaneMesh"}`) read like their quoted form (spec §4.5).
               const metaKey = k.kind === 'meta' && k.text.length > 0;
               if (k.kind !== 'ident' && k.kind !== 'quoted' && k.kind !== 'string' && !metaKey) {
-                throw this.error(`expected an object key (name or string), found ${describeToken(k)}`, k, 'keys are names or strings: {Name: "x", "$type": "T"}');
+                throw this.error(`expected an object key (name, $name or string), found ${describeToken(k)}`, k, 'keys are names or strings: {Name: "x", "$type": "T"}');
               }
               this.next();
               const key = k.kind === 'string' ? (k.value as string) : metaKey ? '$' + k.text : k.text;

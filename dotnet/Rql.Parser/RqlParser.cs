@@ -684,7 +684,7 @@ namespace Rql
                                 // `$name` keys (`{$type: "PlaneMesh"}`) read like their quoted form (spec §4.5).
                                 bool metaKey = k.Kind == TokenKind.Meta && k.Text.Length > 0;
                                 if (k.Kind != TokenKind.Ident && k.Kind != TokenKind.QuotedIdent && k.Kind != TokenKind.String && !metaKey)
-                                    throw Error($"expected an object key (name or string), found {k.Describe()}", k, "keys are names or strings: {Name: \"x\", \"$type\": \"T\"}");
+                                    throw Error($"expected an object key (name, $name or string), found {k.Describe()}", k, "keys are names or strings: {Name: \"x\", \"$type\": \"T\"}");
                                 Next();
                                 var key = k.Kind == TokenKind.String ? (string)k.Value! : metaKey ? "$" + k.Text : k.Text;
                                 if (key.Length == 0) throw Error("object keys must not be empty", k);
