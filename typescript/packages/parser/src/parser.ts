@@ -613,6 +613,13 @@ class Parser {
         if (isPunct(t, '(')) {
           this.next();
           const inner = this.parseExpr();
+          if (isPunct(this.peek(), ',')) {
+            throw this.error(
+              `expected ')' to close '(', found ${describeToken(this.peek())}`,
+              this.peek(),
+              'parentheses group one expression, they are not a tuple: write a struct as an object literal {X: 0, Y: 0} or a list [0, 0]',
+            );
+          }
           this.expect(')', "to close '('");
           inner.span = { start, end: this.prevEnd };
           return inner;

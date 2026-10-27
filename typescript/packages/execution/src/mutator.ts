@@ -4,7 +4,7 @@ import { findMapKey, isMapLike, mapGet, type MapLike } from './collections.js';
 import { describeValue, type Compiler, type Eval } from './compiler.js';
 import type { Encoder } from './encoder.js';
 import { errorMessage, type Exec } from './exec.js';
-import type { MutationRecord } from './engine.js';
+import type { MutationRecord, TextCoercion } from './engine.js';
 import type { Item } from './pipeline.js';
 import { adapterName } from './adapters.js';
 import { closest, memberList } from './suggest.js';
@@ -23,10 +23,17 @@ import {
   type TypeModel,
   type TypeRef,
 } from './types.js';
-import { ErrorValue, MISSING, MapEntry, ObjectValue, RowValue, UNKNOWN, isAbsent, toNumber } from './values.js';
+import { ErrorValue, MISSING, MapEntry, ObjectValue, RowValue, UNKNOWN, entryOrigin, isAbsent, toNumber } from './values.js';
 
 interface PlannedWrite {
+  /** Where the write navigates from: the target, or the map of a streamed entry (`writeRoot`). */
   item: object;
+  /** The stream item (host records). */
+  target: object;
+  /** The declared type of `item` ('any' for a target; the map's type for an entry). */
+  rootType: TypeRef;
+  /** The receipt's $ref: the target's, or for an entry the object its map was read from. */
+  ref: string;
   /** The last reference object on the written path (host hooks mark it dirty). */
   owner: object;
   segments: readonly Segment[];
@@ -228,7 +235,17 @@ export class Mutator {
       if (it.value === null || it.value === undefined || this.x.dead(it.value)) continue;
       if (it.value instanceof RowValue) throw new RqlError('invalid-plan', `'${op}' needs objects, not projected rows; remove 'select' before '${op}'`);
       if (it.value instanceof MapEntry) {
-        throw new RqlError('invalid-plan', `'${op}' cannot target map entries; set the map member with a key path instead (Stats["key"] = ...)`);
+        if (op !== 'set' || entryOrigin(it.value) === undefined) {
+          throw new RqlError(
+            'invalid-plan',
+            op === 'set'
+              ? `'set' cannot target these map entries (they do not come from a map it can write to); set the map member with a key path instead (Stats["key"] = ...)`
+              : `'${op}' cannot target map entries; call the method on the values instead: … | get Value | ${op} …`,
+          );
+        }
+        list.push({ item: it, index }); // set Value… writes through the entry's map (spec §8)
+        this.checkLimit(list.length, op);
+        continue;
       }
       const v = it.value;
       const vi = typeof v === 'object' ? this.x.types.infoOf(v) : undefined;
@@ -241,18 +258,37 @@ export class Mutator {
         );
       }
       list.push({ item: it, index });
-      const limit = this.x.maxMutationTargets;
-      if (list.length > limit) {
-        const m = this.x.engine.mutations;
-        throw new RqlError(
-          'mutation-limit',
-          `more than ${limit} objects matched '${op}'; nothing was changed`,
-          undefined,
-          m.limitHint?.(op, limit) ?? mutationLimitHint(op, limit, this.x.budgetsAdjustable ? m.hardMaxTargets : undefined),
-        );
-      }
+      this.checkLimit(list.length, op);
     }
     return list;
+  }
+
+  private checkLimit(count: number, op: string): void {
+    const limit = this.x.maxMutationTargets;
+    if (count <= limit) return;
+    const m = this.x.engine.mutations;
+    throw new RqlError(
+      'mutation-limit',
+      `more than ${limit} objects matched '${op}'; nothing was changed`,
+      undefined,
+      m.limitHint?.(op, limit) ?? mutationLimitHint(op, limit, this.x.budgetsAdjustable ? m.hardMaxTargets : undefined),
+    );
+  }
+
+  /**
+   * Where a set target writes (spec §8): the item itself, or — for a map entry streamed from a map — the map, with
+   * `Value.p` (or `p`, which reads through to the value like member access) rewritten to `[key].p`.
+   */
+  private writeRoot(item: object, segments: readonly Segment[], lbl: string): { root: object; segments: readonly Segment[]; rootType: TypeRef } {
+    const origin = item instanceof MapEntry ? entryOrigin(item) : undefined;
+    if (origin === undefined) return { root: item, segments, rootType: 'any' };
+    const first = segments[0]!;
+    if (first.kind === 'member' && first.name.toUpperCase() === 'KEY') {
+      throw new RqlError('readonly-member', `'${lbl}': a map entry's key cannot be set`, undefined, 'keys are fixed: set the value (set Value… = …) or assign the whole map');
+    }
+    const isValue = first.kind === 'member' && first.name.toUpperCase() === 'VALUE';
+    const keySeg = { kind: 'key', key: (item as MapEntry).Key } as Segment;
+    return { root: origin.map, segments: [keySeg, ...(isValue ? segments.slice(1) : segments)], rootType: origin.type };
   }
 
   /**
@@ -310,47 +346,54 @@ export class Mutator {
     const writes: PlannedWrite[] = [];
     for (const t of targets) {
       const it = t.item;
-      for (const { target, value, label: lbl } of assigns) {
+      const item = it.value as object;
+      const origin = item instanceof MapEntry ? entryOrigin(item) : undefined;
+      const itemRef = origin !== undefined ? this.refOf(origin.holder ?? origin.map) : this.refOf(item);
+      for (const { target, value, label: assignLabel } of assigns) {
+        const { root, segments, rootType } = this.writeRoot(item, target.segments, assignLabel);
+        const lbl = origin === undefined ? assignLabel : (origin.label ?? '') + segmentsLabel(segments);
         this.enterScope(t);
         const nv = value(x);
-        if (nv === MISSING || nv === UNKNOWN) throw new RqlError('coercion-failed', `value for '${lbl}' on ${this.refOf(it.value)} is missing`);
+        if (nv === MISSING || nv === UNKNOWN) throw new RqlError('coercion-failed', `value for '${lbl}' on ${itemRef} is missing`);
         if (nv instanceof ErrorValue) {
-          throw new RqlError(nv.code === 'stale-ref' ? 'stale-ref' : 'coercion-failed', `value for '${lbl}' on ${this.refOf(it.value)} failed: ${nv.detail ?? nv.code}`);
+          throw new RqlError(nv.code === 'stale-ref' ? 'stale-ref' : 'coercion-failed', `value for '${lbl}' on ${itemRef} failed: ${nv.detail ?? nv.code}`);
         }
-        const item = it.value as object;
-        const { slot, container, owner } = this.resolve(item, target.segments);
-        if (!slot.writable(x)) throw new RqlError(slot.denyCode, `'${lbl}' on ${this.refOf(item)} is not writable${slot.denyReason}`);
-        const co = coerce(x.types, nv, slot.type, x.engine.mutations.canWrite);
+        const resolved = this.resolve(root, segments, rootType);
+        const { slot, container } = resolved;
+        // An entry's map was read from its holder: that object owns the change unless an object inside the value does.
+        const owner = origin?.holder !== undefined && resolved.owner === root ? origin.holder : resolved.owner;
+        if (!slot.writable(x)) throw new RqlError(slot.denyCode, `'${lbl}' on ${itemRef} is not writable${slot.denyReason}`);
+        const co = coerce(x.types, nv, slot.type, x.engine.mutations.canWrite, x.engine.mutations.coerceText);
         if (!co.ok) throw new RqlError(co.code ?? 'coercion-failed', `cannot assign ${describeValue(nv)} to '${lbl}' (${friendlyName(slot.type, x.types)}): ${co.why}`);
         // Validation runs while the mutation is planned, before any write (spec §13).
         const rejected = slot.validate(container, co.value);
-        if (rejected !== undefined) throw new RqlError('invalid-value', `invalid value ${valueText(nv)} for '${lbl}' on ${this.refOf(item)}: ${rejected}`);
-        writes.push({ item, owner, segments: target.segments, label: lbl, old: safeGet(slot, container, lbl), new: co.value });
+        if (rejected !== undefined) throw new RqlError('invalid-value', `invalid value ${valueText(nv)} for '${lbl}' on ${itemRef}: ${rejected}`);
+        writes.push({ item: root, target: item, rootType, ref: itemRef, owner, segments, label: lbl, old: safeGet(slot, container, lbl), new: co.value });
       }
     }
 
     const toRecords = (): MutationRecord[] =>
-      writes.map((w): MutationRecord => ({ item: w.item, owner: w.owner, member: w.label, old: w.old, new: w.new, args: [] }));
+      writes.map((w): MutationRecord => ({ item: w.target, owner: w.owner, member: w.label, old: w.old, new: w.new, args: [] }));
     this.validateBatch('set', toRecords);
     let records = once(toRecords);
     this.runHook('beforeWrite', records);
     if (!x.options.dryRun) {
       let applied = 0;
       try {
-        for (; applied < writes.length; applied++) this.assign(writes[applied]!.item, writes[applied]!.segments, writes[applied]!.new);
+        for (; applied < writes.length; applied++) this.assign(writes[applied]!.item, writes[applied]!.segments, writes[applied]!.new, writes[applied]!.rootType);
       } catch (e) {
         const failed = writes[applied]!;
         // Restore the failing write too: an adapter setter may change state before it throws.
         let selfRestored = true;
         try {
-          this.assign(failed.item, failed.segments, failed.old);
+          this.assign(failed.item, failed.segments, failed.old, failed.rootType);
         } catch {
           selfRestored = false;
         }
         let rollbackFailures = 0;
         for (let k = applied - 1; k >= 0; k--) {
           try {
-            this.assign(writes[k]!.item, writes[k]!.segments, writes[k]!.old);
+            this.assign(writes[k]!.item, writes[k]!.segments, writes[k]!.old, writes[k]!.rootType);
           } catch {
             rollbackFailures++;
           }
@@ -368,7 +411,7 @@ export class Mutator {
     }
 
     this.runHook('committed', records);
-    const rows = writes.map((w) => [x.engine.refOf(w.item), w.label, w.old, w.new]);
+    const rows = writes.map((w) => [w.ref, w.label, w.old, w.new]);
     const r = this.enc.rows(['$ref', 'member', 'old', 'new'], rows);
     if (x.options.dryRun) r.dryRun = true;
     return r;
@@ -378,7 +421,7 @@ export class Mutator {
   private readBack(w: PlannedWrite): unknown {
     try {
       let cur: object = w.item;
-      let declared: TypeRef = 'any';
+      let declared: TypeRef = w.rootType;
       for (let i = 0; ; i++) {
         const slot = this.slotOf(cur, declared, w.segments[i]!, w.label);
         const v = slot.get(cur);
@@ -434,10 +477,10 @@ export class Mutator {
     return new MemberSlot(info, m);
   }
 
-  private resolve(root: object, segs: readonly Segment[]): { slot: Slot; container: object; owner: object } {
+  private resolve(root: object, segs: readonly Segment[], rootType: TypeRef = 'any'): { slot: Slot; container: object; owner: object } {
     const lbl = segmentsLabel(segs);
     let cur: object = root;
-    let declared: TypeRef = 'any';
+    let declared: TypeRef = rootType;
     const chain: { slot: Slot; value: object }[] = [];
     for (let i = 0; i < segs.length; i++) {
       const slot = this.slotOf(cur, declared, segs[i]!, lbl);
@@ -467,12 +510,12 @@ export class Mutator {
   }
 
   /** Navigate fresh, write, then write back value-like (struct) containers up the chain. */
-  private assign(root: object, segs: readonly Segment[], value: unknown): void {
+  private assign(root: object, segs: readonly Segment[], value: unknown, rootType: TypeRef = 'any'): void {
     const lbl = segmentsLabel(segs);
     const containers: object[] = [root];
     const slots: Slot[] = [];
     let cur: object = root;
-    let declared: TypeRef = 'any';
+    let declared: TypeRef = rootType;
     for (let i = 0; i < segs.length; i++) {
       const slot = this.slotOf(cur, declared, segs[i]!, lbl);
       slots.push(slot);
@@ -529,7 +572,7 @@ export class Mutator {
             cv.push(p.default);
             continue;
           }
-          const co = coerce(x.types, vals[i], p.type ?? 'any', x.engine.mutations.canWrite);
+          const co = coerce(x.types, vals[i], p.type ?? 'any', x.engine.mutations.canWrite, x.engine.mutations.coerceText);
           if (!co.ok) {
             if (co.code !== undefined) throw new RqlError(co.code, `cannot call ${s.method} on ${x.engine.refOf(item)}: argument '${p.name}': ${co.why}`);
             ok = false;
@@ -695,7 +738,7 @@ function isInstance(model: TypeModel, v: unknown, ctor: Ctor, ti: TypeInfo | und
  * Coerces a value to a declared type (spec §8): number → int only if integral and in range,
  * string → enum by name, null only for nullable/reference types, list literal → list type.
  */
-export function coerce(model: TypeModel, v: unknown, target: TypeRef, policy?: WritePolicy): Coerced {
+export function coerce(model: TypeModel, v: unknown, target: TypeRef, policy?: WritePolicy, text?: TextCoercion): Coerced {
   if (isAbsent(v)) return { ok: false, why: 'value is ' + describeValue(v) };
   const t = unwrapNullable(target);
   if (v === null || v === undefined) {
@@ -721,8 +764,21 @@ export function coerce(model: TypeModel, v: unknown, target: TypeRef, policy?: W
       }
       return { ok: true, value: r.value };
     }
+    // The host's text form for struct / object types no adapter handled (spec §8).
+    if (text !== undefined && typeof v === 'string') {
+      let parsed: unknown;
+      try {
+        parsed = text(t.ctor, v);
+      } catch (e) {
+        return { ok: false, why: errorMessage(e) };
+      }
+      if (parsed !== undefined && parsed !== null) {
+        if (!isInstance(model, parsed, t.ctor, ti)) throw new Error(`the host's text coercion returned ${describeValue(parsed)}, not ${t.ctor.name}`);
+        return { ok: true, value: parsed };
+      }
+    }
   }
-  if (v instanceof ObjectValue) return fromLiteral(model, v, t, target, policy);
+  if (v instanceof ObjectValue) return fromLiteral(model, v, t, target, policy, text);
   if (t instanceof EnumType) {
     const fail: Coerced = { ok: false, why: 'expected one of ' + t.values.map((e) => e.name).join(', ') };
     if (v instanceof EnumValue) return v.type === t ? { ok: true, value: v } : fail;
@@ -762,7 +818,7 @@ export function coerce(model: TypeModel, v: unknown, target: TypeRef, policy?: W
       const items: unknown[] = [];
       let same = Array.isArray(v);
       for (const el of v as Iterable<unknown>) {
-        const co = coerce(model, el === undefined ? null : el, t.of, policy);
+        const co = coerce(model, el === undefined ? null : el, t.of, policy, text);
         if (!co.ok) return nested(co, 'element: ');
         const raw = rawValue(co.value, t.of);
         if (raw !== el) same = false;
@@ -772,19 +828,19 @@ export function coerce(model: TypeModel, v: unknown, target: TypeRef, policy?: W
       return { ok: true, value: same ? v : items };
     }
     case 'map':
-      return isMapLike(v) ? coerceMap(model, v, t.key, t.of, target, policy) : { ok: false, why: `expected ${friendlyName(target, model)}` };
+      return isMapLike(v) ? coerceMap(model, v, t.key, t.of, target, policy, text) : { ok: false, why: `expected ${friendlyName(target, model)}` };
     default:
       return { ok: false, why: `expected ${friendlyName(target, model)}` };
   }
 }
 
 /** A map value (or object literal) built entry by entry: keys parsed to the key type, values coerced. */
-function coerceMap(model: TypeModel, v: MapLike, keyType: TypeRef, valueType: TypeRef, target: TypeRef, policy: WritePolicy): Coerced {
+function coerceMap(model: TypeModel, v: MapLike, keyType: TypeRef, valueType: TypeRef, target: TypeRef, policy: WritePolicy, text?: TextCoercion): Coerced {
   const out = new Map<unknown, unknown>();
   for (const [k, el] of v.entries()) {
     const key = parseKey(k, keyType);
     if (key === undefined) return { ok: false, why: `invalid key '${String(k)}' for ${friendlyName(target, model)}` };
-    const co = coerce(model, el === undefined ? null : el, valueType, policy);
+    const co = coerce(model, el === undefined ? null : el, valueType, policy, text);
     if (!co.ok) return nested(co, `'${String(k)}': `);
     out.set(key, rawValue(co.value, valueType));
   }
@@ -792,10 +848,10 @@ function coerceMap(model: TypeModel, v: MapLike, keyType: TypeRef, valueType: Ty
 }
 
 /** Object literal → map or constructed object (spec §4.5); anything else cannot be built from one. */
-function fromLiteral(model: TypeModel, literal: ObjectValue, t: TypeRef, target: TypeRef, policy: WritePolicy): Coerced {
+function fromLiteral(model: TypeModel, literal: ObjectValue, t: TypeRef, target: TypeRef, policy: WritePolicy, text?: TextCoercion): Coerced {
   if (typeof t === 'object' && !(t instanceof EnumType)) {
-    if (t.kind === 'map') return coerceMap(model, literal, t.key, t.of, target, policy);
-    if (t.kind === 'class') return construct(model, literal, t.ctor, model.infoForCtor(t.ctor), policy);
+    if (t.kind === 'map') return coerceMap(model, literal, t.key, t.of, target, policy, text);
+    if (t.kind === 'class') return construct(model, literal, t.ctor, model.infoForCtor(t.ctor), policy, text);
   }
   return { ok: false, why: `an object literal cannot become ${friendlyName(target, model)}` };
 }
@@ -805,7 +861,7 @@ function fromLiteral(model: TypeModel, literal: ObjectValue, t: TypeRef, target:
  * registered subclass named by "$type"; every other key must name a writable member, whose value is coerced
  * recursively and validated. Members not named keep the constructor's defaults.
  */
-function construct(model: TypeModel, literal: ObjectValue, ctor: Ctor, ti: TypeInfo | undefined, policy: WritePolicy): Coerced {
+function construct(model: TypeModel, literal: ObjectValue, ctor: Ctor, ti: TypeInfo | undefined, policy: WritePolicy, text?: TextCoercion): Coerced {
   let concrete = ctor;
   if (literal.has('$type')) {
     const tn = literal.get('$type');
@@ -829,7 +885,7 @@ function construct(model: TypeModel, literal: ObjectValue, ctor: Ctor, ti: TypeI
     if (!m.canWrite || m.set === undefined) return { ok: false, why: `member '${m.name}' of ${ci.shortName} is read-only` };
     // Construction is a write: the host policy applies to every member assigned (spec §13).
     if (policy !== undefined && !policy(ci, m)) return { ok: false, why: `member '${m.name}' of ${ci.shortName} is denied by host policy`, code: 'permission-denied' };
-    const co = coerce(model, value === undefined ? null : value, m.type, policy);
+    const co = coerce(model, value === undefined ? null : value, m.type, policy, text);
     if (!co.ok) return nested(co, `'${m.name}': `);
     const rejected = m.validate?.(instance, co.value);
     if (rejected !== undefined) return { ok: false, why: `'${m.name}': ${rejected}` };

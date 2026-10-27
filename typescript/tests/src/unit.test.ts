@@ -238,6 +238,76 @@ test('an out-of-range list index in a set target hints at assigning the whole li
   assert.ok(r.diagnostics[0]!.hint!.includes('set kids = append(kids, value)'));
 });
 
+// ---------------------------------------------------------------- wave-2: map entries (U5), host text coercion (U6)
+
+class Row {
+  constructor(
+    public Health: number,
+    public IsElite: boolean,
+  ) {}
+}
+class Anchors {
+  constructor(
+    public Min = 0,
+    public Max = 0,
+  ) {}
+}
+class DataTable {
+  Rows = new Map<string, Row>([
+    ['Orc', new Row(100, true)],
+    ['Rat', new Row(10, false)],
+    ['Troll', new Row(300, true)],
+  ]);
+  Slot = new Anchors();
+}
+const tableEngine = (table: DataTable): RqlEngine => {
+  const model = new TypeModel()
+    .register(Row, { kind: 'struct', members: [{ name: 'Health', type: t.number }, { name: 'IsElite', type: t.bool }] })
+    .register(Anchors, { kind: 'struct', members: [{ name: 'Min', type: t.number }, { name: 'Max', type: t.number }] })
+    .register(DataTable, { members: [{ name: 'Rows', type: t.map(t.string, t.of(Row)) }, { name: 'Slot', type: t.of(Anchors) }] });
+  const e = new RqlEngine({ types: model }).addSource('table', () => table);
+  e.mutations.enabled = true;
+  return e;
+};
+
+test('set through streamed map entries writes struct values back and names the holder as owner', () => {
+  const table = new DataTable();
+  const e = tableEngine(table);
+  const owners: unknown[] = [];
+  e.mutations.beforeWrite = (records) => owners.push(...records.map((r) => [r.member, r.owner]));
+  const r = e.execute('table | get Rows | where Value.IsElite | set Value.Health = Value.Health * 2', undefined, { allowMutation: true });
+  assert.equal(r.ok, true, JSON.stringify(r.diagnostics));
+  assert.deepEqual([...table.Rows.values()].map((x) => x.Health), [200, 10, 600]);
+  assert.deepEqual(owners, [
+    ['Rows["Orc"].Health', table],
+    ['Rows["Troll"].Health', table],
+  ]);
+});
+
+test('host text coercion converts strings for structs no adapter handles', () => {
+  const table = new DataTable();
+  const e = tableEngine(table);
+  const opts = { allowMutation: true };
+  assert.equal(e.execute('table | set Slot = "(Min=0.5,Max=1)"', undefined, opts).diagnostics[0]?.code, 'coercion-failed');
+  e.mutations.coerceText = (ctor, text) => {
+    if (ctor !== Anchors) return undefined;
+    const m = /^\(Min=([\d.]+),Max=([\d.]+)\)$/.exec(text);
+    if (m === null) throw new Error('expected (Min=…,Max=…)');
+    return new Anchors(Number(m[1]), Number(m[2]));
+  };
+  assert.equal(e.execute('table | set Slot = "(Min=0.5,Max=1)"', undefined, opts).ok, true);
+  assert.deepEqual([table.Slot.Min, table.Slot.Max], [0.5, 1]);
+  const bad = e.execute('table | set Slot = "nope"', undefined, opts).diagnostics[0]!;
+  assert.equal(bad.code, 'coercion-failed');
+  assert.ok(bad.message.includes('expected (Min=…,Max=…)'));
+});
+
+test('a parenthesized tuple hints at object literals', () => {
+  const r = tableEngine(new DataTable()).execute('table | set Slot = {Min: (0, 0)}', undefined, { allowMutation: true });
+  assert.equal(r.diagnostics[0]?.code, 'syntax-error');
+  assert.ok(r.diagnostics[0]!.hint!.includes('object literal {X: 0, Y: 0}'));
+});
+
 // ---------------------------------------------------------------- live-battery findings (0.2.0)
 
 class Light {

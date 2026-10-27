@@ -1,5 +1,6 @@
 /** Runtime value kinds of the evaluator (spec §1.1) that have no native JS counterpart. */
 import type { DiagnosticCode } from '@rql/contracts';
+import type { TypeRef } from './types.js';
 
 /** The path does not exist (no such member/key/index). Distinct from null. */
 export class Missing {
@@ -43,6 +44,28 @@ export class MapEntry {
     readonly Value: unknown,
   ) {}
 }
+
+/** Where a streamed entry came from (spec §8): `set Value… = …` writes through `map`. */
+export interface EntryOrigin {
+  readonly map: object;
+  /** The stream item the map was read from (by `get`), for receipts and host hooks; undefined for a source. */
+  readonly holder: object | undefined;
+  /** The member path the map was read by (`Props` for `get Props`), prefixing receipt labels. */
+  readonly label: string | undefined;
+  /** The map's declared type (from the member `get` read), so writes coerce to its value type. */
+  readonly type: TypeRef;
+}
+
+const entryOrigins = new WeakMap<MapEntry, EntryOrigin>();
+
+/** A streamed entry remembering its map (internal: not part of the entry's members). */
+export function streamedEntry(e: MapEntry, origin: EntryOrigin): MapEntry {
+  const s = new MapEntry(e.Key, e.Value);
+  entryOrigins.set(s, origin);
+  return s;
+}
+
+export const entryOrigin = (e: MapEntry): EntryOrigin | undefined => entryOrigins.get(e);
 
 /** Projected row flowing between stages after `select`; its members are the column names. */
 export class RowValue {

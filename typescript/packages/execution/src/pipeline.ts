@@ -27,8 +27,8 @@ import type { ArgEvaluator, SourceRegistration } from './engine.js';
 import { PathNode, type Exec } from './exec.js';
 import { Mutator } from './mutator.js';
 import { closest, memberList } from './suggest.js';
-import { EnumType, EnumValue, unwrapNullable, type TypeInfo } from './types.js';
-import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, isAbsent, toNumber } from './values.js';
+import { EnumType, EnumValue, unwrapNullable, type TypeInfo, type TypeRef } from './types.js';
+import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, entryOrigin, isAbsent, streamedEntry, toNumber } from './values.js';
 
 export interface Item {
   readonly value: unknown;
@@ -301,7 +301,8 @@ export class Pipeline {
   }
 
   /** Lists → elements, maps → entries, else the value itself; null/missing and destroyed objects dropped. */
-  private *expand(value: unknown, path: PathNode | null): Generator<Item> {
+  /** `holder` / `mapLabel`: the item and member path a map value was read from (`get`); streamed entries remember them (spec §8). */
+  private *expand(value: unknown, path: PathNode | null, holder?: object, mapLabel?: string, mapType: TypeRef = 'any'): Generator<Item> {
     const x = this.x;
     if (value === null || value === undefined || value === MISSING || value === UNKNOWN || value instanceof ErrorValue || x.dead(value)) return;
     if (value instanceof RowValue && value.columns.length === 1) {
@@ -321,9 +322,10 @@ export class Pipeline {
       return;
     }
     if (info?.isMap) {
+      const origin = { map: value as object, holder, label: mapLabel, type: mapType };
       for (const e of mapEntries(value as MapLike)) {
         x.visit();
-        yield item(e, path !== null ? path.key(e.Key) : null);
+        yield item(streamedEntry(e, origin), path !== null ? path.key(e.Key) : null);
       }
       return;
     }
@@ -417,10 +419,27 @@ export class Pipeline {
   }
 
   private get(input: Iterable<Item>, e: Expr): Iterable<Item> {
-    return this.getIter(input, this.c.compile(e), pathSuffix(e));
+    const names = e.kind === 'path' && e.on === undefined && e.segments.length > 0 && e.segments.every((s) => s.kind === 'member') ? e.segments.map((s) => (s as { name: string }).name) : undefined;
+    return this.getIter(input, this.c.compile(e), pathSuffix(e), names);
   }
 
-  private *getIter(input: Iterable<Item>, ev: Eval, suffix: string | undefined): Generator<Item> {
+  /** The declared type of a member path read from `holder` (map writes through streamed entries coerce to it), else 'any'. */
+  private declaredType(holder: object, names: readonly string[]): TypeRef {
+    let info: TypeInfo | undefined = this.x.types.infoOf(holder);
+    let type: TypeRef = 'any';
+    for (let i = 0; i < names.length; i++) {
+      const m = info?.find(names[i]!, i === 0 ? holder : undefined);
+      if (m === undefined) return 'any';
+      type = m.type;
+      if (i < names.length - 1) {
+        const u = unwrapNullable(type);
+        info = typeof u === 'object' && !(u instanceof EnumType) && u.kind === 'class' ? this.x.types.infoForCtor(u.ctor) : undefined;
+      }
+    }
+    return type;
+  }
+
+  private *getIter(input: Iterable<Item>, ev: Eval, suffix: string | undefined, names?: readonly string[]): Generator<Item> {
     const x = this.x;
     let i = 0;
     for (const it of input) {
@@ -432,7 +451,10 @@ export class Pipeline {
         continue;
       }
       const p = x.trackPaths && it.path !== null && suffix !== undefined ? new PathNode(it.path, suffix) : null;
-      yield* this.expand(v, p);
+      const from = it.value;
+      const holder = from instanceof MapEntry ? entryOrigin(from)?.holder : typeof from === 'object' && from !== null && !(from instanceof RowValue) ? from : undefined;
+      const mapType = names !== undefined && from === holder && holder !== undefined && typeof v === 'object' && v !== null && x.types.infoOf(v).isMap ? this.declaredType(holder, names) : 'any';
+      yield* this.expand(v, p, holder, suffix?.replace(/^\./, ''), mapType);
     }
   }
 

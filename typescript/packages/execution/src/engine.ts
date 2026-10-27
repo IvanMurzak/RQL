@@ -31,6 +31,9 @@ export type StageHandler = (
   named: ReadonlyMap<string, ArgEvaluator>,
 ) => Iterable<unknown>;
 
+/** Host text coercion for a class target (`ctor`): the value, or undefined/null when not handled; a throw refuses. */
+export type TextCoercion = (ctor: Ctor, text: string) => unknown;
+
 export interface MutationPolicy {
   /** Host-level switch. Requests must additionally set `options.allowMutation`. */
   enabled: boolean;
@@ -52,6 +55,12 @@ export interface MutationPolicy {
    * undefined/null keeps the built-in hint. Hosts whose tools take their own limit argument name it here.
    */
   limitHint?: (op: string, limit: number) => string | null | undefined;
+  /**
+   * Host text coercion (spec §8): converts a string written to a struct / object type that no type adapter coerces
+   * (an engine's own text form). Return the value, or undefined/null when the type is not handled (the built-in rules
+   * then report the failure); throw to refuse with the message as reason.
+   */
+  coerceText?: TextCoercion;
   /**
    * Runs after planning and before anything is written (not on dry-run), e.g. to record undo state of the
    * owners. Throwing vetoes the whole mutation (→ permission-denied, nothing changed).
