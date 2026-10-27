@@ -56,3 +56,18 @@
 * Dev was used for iterative tuning and reached 100%; the dev numbers after E3 measure efficiency
   more than capability. Holdout is the honest success estimate.
 * Per-task sample sizes are small (n = 186 dev / 81 holdout runs per condition); CIs are reported.
+
+## Running it
+
+```bash
+scripts/rql-eval tasks --split all          # public task list (no answers) → evaluation/tasks/
+scripts/rql-eval reference --split all      # scripted reference agent; must be 89/89 (no LLM, no cost)
+export RQL_EVAL_API_KEY_FILE=/path/to/key   # or RQL_EVAL_API_KEY; never commit keys (.env is gitignored)
+scripts/rql-eval probe --config evaluation/configs/v2.json
+scripts/rql-eval run --config evaluation/configs/v2.json --split dev --repeats 3 --out evaluation/runs/my-run
+scripts/rql-eval run ... --set Prompt=v3 --set SchemaInPrompt=true      # one-factor overrides
+scripts/rql-eval report evaluation/runs/A evaluation/runs/B             # paired comparison
+dotnet run -c Release --project dotnet/Rql.Bench -- --size large        # Tier A benchmarks
+```
+
+Raw traces stay in the gitignored `evaluation/runs/`.
