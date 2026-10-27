@@ -17,6 +17,9 @@ namespace Rql.Execution
 
         public Compiler(Exec x) { _x = x; }
 
+        /// <summary>Depth of has() arguments being compiled: their member sites are guards (spec §8).</summary>
+        private int _guarded;
+
         public static readonly string[] CoreFunctions =
         {
             "has", "is-null", "len", "lower", "upper", "abs", "round", "floor", "ceil", "sqrt", "pow", "min", "max", "coalesce", "if", "ref",
@@ -85,7 +88,7 @@ namespace Rql.Execution
                 {
                     case SegmentKind.Member:
                     {
-                        var site = new MemberSite(seg.Name!, p.Span) { Bare = first };
+                        var site = new MemberSite(seg.Name!, p.Span) { Bare = first, Guarded = _guarded > 0 };
                         _x.Sites.Add(site);
                         if (first)
                         {
@@ -798,7 +801,10 @@ namespace Rql.Execution
                 case "has":
                 {
                     Arity(c, 1, 1);
-                    var a = Compile(c.Args[0]);
+                    Eval a;
+                    _guarded++;
+                    try { a = Compile(c.Args[0]); }
+                    finally { _guarded--; }
                     return x => V.Bool(!(a(x) is Missing));
                 }
                 case "is-null":

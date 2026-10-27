@@ -1038,6 +1038,39 @@ namespace Rql.Tests
             Assert.Equal("b", r.Rows![1][1]!.GetValue<string>());
         }
 
+        public sealed class Light { public string Name { get; set; } = ""; public float intensity { get; set; } }
+
+        [Fact]
+        public void EmptyMutationEdgesStayOk()
+        {
+            var doors = new List<Door> { new Door { Name = "X" } };
+            var e = Engine(doors);
+            // A throwing hook counts as "not known".
+            e.IsKnownMember = _ => throw new InvalidOperationException("boom");
+            Assert.False(e.Execute("doors | where intensity > 1 | set Name = \"Y\"", options: Mutate).Ok);
+            // The hook also silences the static "not evaluated" warning.
+            e.IsKnownMember = n => n == "Shine";
+            var q = e.Execute("doors | where false and Shine > 1");
+            Assert.DoesNotContain(q.Diagnostics, d => d.Code == "unknown-member");
+            // has() is a guard, not a typo.
+            Assert.True(e.Execute("doors | where has(glow) | set Name = \"Y\"", options: Mutate).Ok);
+            // A name another read found is no typo, even where it was never evaluated.
+            var things = new List<object> { new Light { Name = "l", intensity = 2 } };
+            var e2 = new RqlEngine().AddSource("things", () => things);
+            e2.Mutations.Enabled = true;
+            var r = e2.Execute("things | where intensity > 100 | set intensity = intensity + 1", options: Mutate);
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.DoesNotContain(r.Diagnostics, d => d.Code == "unknown-member");
+        }
+
+        [Fact]
+        public void UnknownCallableHintListsSeveralSources()
+        {
+            var e = Engine(new List<Door> { new Door() }).AddSource("editor2", () => new Editor());
+            var d = e.Execute("doors | call CreateThing(\"a\")", options: Mutate).Diagnostics[0];
+            Assert.Contains("sources with CreateThing: editor, editor2 (e.g. editor | call CreateThing(…))", d.Hint);
+        }
+
         [Fact]
         public void IncompleteConditionalHintsAtTheForm()
         {

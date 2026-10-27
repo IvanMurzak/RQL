@@ -102,6 +102,9 @@ export class Pipeline {
     let known: ReadonlyMap<string, string> | undefined;
     for (const site of x.sites) {
       if (!site.bare || site.hits > 0 || site.misses > 0 || reported.has(site.name)) continue;
+      // Another read of the name found it (e.g. `where X > n | set X = X + 1` on an emptied stream).
+      const upper = site.name.toUpperCase();
+      if (x.sites.some((o) => o.hits > 0 && o.name.toUpperCase() === upper)) continue;
       known ??= this.knownNames();
       if (known.has(site.name.toUpperCase()) || x.engine.hostKnowsMember(site.name)) continue;
       reported.add(site.name);
@@ -114,7 +117,6 @@ export class Pipeline {
         site.span,
       );
       result.diagnostics.push(typo);
-      this.unknownMembers.push({ name: site.name, warning: typo });
     }
     for (const site of x.sites) {
       if (site.hits > 0 || site.misses === 0 || reported.has(site.name)) continue;
@@ -141,11 +143,15 @@ export class Pipeline {
       }
       const diag = diagnostic('warning', 'unknown-member', `no member '${site.name}' on ${typeNames}`, hint, site.span);
       result.diagnostics.push(diag);
-      this.unknownMembers.push({ name: site.name, warning: diag });
+      // Misses on undeclared (dynamic) objects prove nothing about other instances.
+      if (!site.guarded && types.length > 0 && types.every((t) => t.dynamic === undefined)) this.unknownMembers.push({ name: site.name, warning: diag });
     }
   }
 
-  /** The unknown-member warnings of member sites (not of projected-row columns), see emptyMutation. */
+  /**
+   * The unknown-member warnings of member reads that missed on every item they were tested on (not projected-row columns,
+   * not has() guards, not never-evaluated names: a filter that matched nothing leaves those unevaluated), see emptyMutation.
+   */
   private readonly unknownMembers: { name: string; warning: Diagnostic }[] = [];
 
   /**
@@ -157,7 +163,8 @@ export class Pipeline {
     const x = this.x;
     const stages = x.plan.stages;
     if (this.unknownMembers.length === 0 || !x.options.allowMutation || stages.length === 0 || (result.rows?.length ?? 0) > 0) return undefined;
-    const known = this.knownNames();
+    const known = new Map(this.knownNames());
+    for (const s of x.sites) if (s.hits > 0) known.set(s.name.toUpperCase(), s.name); // another read found it
     const typos = this.unknownMembers.filter((u) => !known.has(u.name.toUpperCase()) && !x.engine.hostKnowsMember(u.name));
     if (typos.length === 0) return undefined;
     const op = stages[stages.length - 1]!.op;

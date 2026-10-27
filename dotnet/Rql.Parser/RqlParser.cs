@@ -118,7 +118,7 @@ namespace Rql
 
         private QueryPlan ParseQuery()
         {
-            if (Peek().Kind == TokenKind.End) throw Error("empty query; expected a source such as 'world' or 'ref(\"Type#1\")'", Peek());
+            if (Peek().Kind == TokenKind.End) throw Error("empty query; expected a source name, ref(\"Type#id\") or a host function", Peek());
             var source = ParsePostfix();
             var stages = new List<Stage>();
             while (true)

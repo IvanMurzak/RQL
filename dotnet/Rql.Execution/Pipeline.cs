@@ -91,6 +91,8 @@ namespace Rql.Execution
             foreach (var site in _x.Sites)
             {
                 if (!site.Bare || site.Hits > 0 || site.Misses > 0 || reported.Contains(site.Name)) continue;
+                // Another read of the name found it (e.g. `where X > n | set X = X + 1` on an emptied stream).
+                if (_x.Sites.Any(o => o.Hits > 0 && string.Equals(o.Name, site.Name, StringComparison.OrdinalIgnoreCase))) continue;
                 known ??= KnownNames();
                 if (known.Contains(site.Name) || HostKnows(site.Name)) continue;
                 reported.Add(site.Name);
@@ -99,7 +101,6 @@ namespace Rql.Execution
                     $"no type reachable from the sources has a member '{site.Name}' (not evaluated)", site.Span,
                     close.Count > 0 ? "did you mean " + string.Join(" / ", close) + "?" : $"if '{site.Name}' is a value, quote it: \"{site.Name}\"");
                 result.Diagnostics.Add(typo);
-                _unknownMembers.Add((site.Name, typo));
             }
             foreach (var site in _x.Sites)
             {
@@ -122,14 +123,17 @@ namespace Rql.Execution
                     hint += (hint.Length > 0 ? "; " : "") + $"if '{site.Name}' is a value, quote it: \"{site.Name}\"";
                 var diag = new Diagnostic(DiagnosticSeverity.Warning, "unknown-member", $"no member '{site.Name}' on {typeNames}", site.Span, hint);
                 result.Diagnostics.Add(diag);
-                _unknownMembers.Add((site.Name, diag));
+                if (!site.Guarded && types.Count > 0) _unknownMembers.Add((site.Name, diag));
             }
         }
 
         internal const string RowColumnHint =
             "select produces rows with only the listed columns; to navigate into objects select the full path (select Path.Member) or put `get Path` before the select";
 
-        /// <summary>The unknown-member warnings of member sites (not of projected-row columns), see <see cref="EmptyMutation"/>.</summary>
+        /// <summary>
+        /// The unknown-member warnings of member reads that missed on every item they were tested on (not projected-row columns,
+        /// not has() guards, not never-evaluated names: a filter that matched nothing leaves those unevaluated), see <see cref="EmptyMutation"/>.
+        /// </summary>
         private readonly List<(string Name, Diagnostic Warning)> _unknownMembers = new List<(string, Diagnostic)>();
 
         private bool HostKnows(string name)
@@ -150,6 +154,7 @@ namespace Rql.Execution
             var plan = _x.Plan;
             if (_unknownMembers.Count == 0 || !_x.Options.AllowMutation || plan.Stages.Count == 0 || (result.Rows?.Count ?? 0) > 0) return null;
             var known = KnownNames();
+            foreach (var s in _x.Sites) if (s.Hits > 0) known.Add(s.Name); // another read found it
             var typos = _unknownMembers.Where(u => !known.Contains(u.Name) && !HostKnows(u.Name)).Select(u => u.Warning).ToList();
             if (typos.Count == 0) return null;
             var op = plan.Stages[plan.Stages.Count - 1].Op;

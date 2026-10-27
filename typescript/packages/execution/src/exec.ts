@@ -53,6 +53,8 @@ export class MemberSite {
     readonly span: TextSpan | undefined,
     /** First segment of a relative bare path (no `on`, not `$`): eligible for the static name check. */
     readonly bare = false,
+    /** Read inside has(): a miss is the guard's answer, never the cause of an empty mutation (spec §8). */
+    readonly guarded = false,
   ) {}
 }
 

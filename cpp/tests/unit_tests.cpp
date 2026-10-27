@@ -1648,13 +1648,17 @@ void wave3b_tests() {
           "a mutation emptied by a typo fails");
     const std::string known = R"J({"rql":"0.1","source":{"path":["door"]},"stages":[{"op":"where","pred":{"op":">","args":[{"path":["intensity"]},{"lit":1}]}},{"op":"set","assign":[{"target":{"path":["Name"]},"value":{"lit":"Y"}}]}]})J";
     check(!arun(e, known, true).ok, "an unknown name nobody declares fails the empty mutation");
+    e.is_known_member = [](const std::string&) -> bool { throw std::runtime_error("boom"); };
+    check(!arun(e, known, true).ok, "a throwing known-member hook counts as not known");
+    const std::string guard = R"J({"rql":"0.1","source":{"path":["door"]},"stages":[{"op":"where","pred":{"call":"has","args":[{"path":["glow"]}]}},{"op":"set","assign":[{"target":{"path":["Name"]},"value":{"lit":"Y"}}]}]})J";
+    check(arun(e, guard, true).ok, "has() is a guard, not a typo");
     e.is_known_member = [](const std::string& n) { return n == "intensity"; };
     auto ok = arun(e, known, true);
     check(ok.ok && ok.rows && ok.rows->empty(), "a member the host knows keeps an empty mutation ok");
     // Unknown callable: a source that has the method is named.
     auto call = arun(e, R"J({"rql":"0.1","source":{"path":["door"]},"stages":[{"op":"call","method":"CreateThing","args":[{"lit":"a"}]}]})J", true);
     check(first_code(call) == "unknown-function" && has(call.diagnostics[0].hint, "callable: Open(") &&
-              has(call.diagnostics[0].hint, "the source 'editor' has CreateThing: editor | call CreateThing("),
+              has(call.diagnostics[0].hint, "the source 'editor' has CreateThing: editor | call CreateThing(\xE2\x80\xA6)"),
           "unknown-callable hint names a source that has it");
     // if(): lazy, the untaken branch is never evaluated.
     auto lazy = arun(e, R"J({"rql":"0.1","source":{"path":["door"]},"stages":[{"op":"select","fields":[{"name":"v","expr":{"call":"if","args":[{"lit":true},{"path":["Name"]},{"call":"ref","args":[{"lit":"W3Door#99"}]}]}}]}]})J");

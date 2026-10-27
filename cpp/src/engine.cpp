@@ -28,11 +28,15 @@ void validate_name(const std::string& name, bool require_namespace) {
 
 const char* kCoreStageNames[] = {"where", "select", "sort", "first", "skip", "count", "describe", "get", "sum",
                                  "min", "max", "avg", "group-by", "distinct", "recurse", "set", "call"};
+// Keep in sync with kCoreFunctions / kCoreMethods in compiler.cpp (the manifest lists what the compiler binds).
 const char* kFunctionNames[] = {"has", "is-null", "len", "lower", "upper", "abs", "round", "floor", "ceil", "sqrt", "pow", "min", "max",
-                                "coalesce", "ref",
+                                "coalesce", "if", "ref",
+                                "append", "insert", "remove-at", "without",
+                                "replace", "replace-regex", "substring", "split", "trim", "pad",
                                 "contains", "starts-with", "ends-with", "matches"};
 const char* kMethodNames[] = {"any", "all", "count", "sum", "min", "max", "avg", "first", "keys", "values",
-                              "contains", "starts-with", "ends-with", "matches", "lower", "upper", "len"};
+                              "contains", "starts-with", "ends-with", "matches", "lower", "upper", "len",
+                              "replace", "replace-regex", "substring", "split", "trim", "pad"};
 
 }  // namespace
 

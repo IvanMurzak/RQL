@@ -557,6 +557,7 @@ Eval Compiler::compile_path(const Expr& p) {
                 x_.sites.push_back(std::make_unique<MemberSite>(seg.name));
                 MemberSite* site = x_.sites.back().get();
                 site->bare = first;
+                site->guarded = guarded_ > 0;
                 if (first) {
                     // Lexical scope chain: inside collection-method arguments a bare name missing on the
                     // element resolves against the enclosing item(s), innermost first (spec §3).
@@ -1270,6 +1271,11 @@ Eval Compiler::compile_function(const Expr& c) {
     std::string name = ascii_lower(c.name);
     if (name == "has") {
         arity(c, 1, 1);
+        struct Guard {
+            int& depth;
+            explicit Guard(int& d) : depth(d) { ++depth; }
+            ~Guard() { --depth; }
+        } guard(guarded_);
         Eval a = compile(*c.args[0]);
         return [a](Exec& x) { return Value::boolean(!a(x).is_missing()); };
     }

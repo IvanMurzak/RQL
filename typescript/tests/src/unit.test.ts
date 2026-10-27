@@ -774,3 +774,17 @@ test('conditionals are lazy and right-associative; an incomplete one hints at th
   assert.equal(bad.code, 'syntax-error');
   assert.ok(bad.hint!.includes('cond ? then : else'));
 });
+
+test('empty-mutation edges: throwing hook, static silencing, has() guard, several sources with the method', () => {
+  const e = wave3bEngine([{ Name: 'X', Opened: 0 }]);
+  e.isKnownMember = () => {
+    throw new Error('boom');
+  };
+  assert.equal(e.execute('doors | where intensity > 1 | set Name = "Y"', {}, { allowMutation: true }).ok, false);
+  e.isKnownMember = (n) => n === 'Shine';
+  assert.ok(!e.execute('doors | where false and Shine > 1').diagnostics.some((d) => d.code === 'unknown-member'));
+  assert.equal(e.execute('doors | where has(glow) | set Name = "Y"', {}, { allowMutation: true }).ok, true);
+  e.addSource('editor2', () => e.sources.get('editor')!.getter());
+  const d = e.execute('doors | call createThing("a")', {}, { allowMutation: true }).diagnostics[0]!;
+  assert.ok(d.hint!.includes('sources with createThing: editor, editor2 (e.g. editor | call createThing(…))'), d.hint);
+});

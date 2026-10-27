@@ -1042,6 +1042,8 @@ std::vector<Diagnostic> add_warnings(Exec& x, QueryResult& r, bool only_general)
     for (auto& sp : x.sites) {
         MemberSite& site = *sp;
         if (!site.bare || site.hits > 0 || site.misses > 0 || is_reported(site.name)) continue;
+        // Another read of the name found it (e.g. `where X > n | set X = X + 1` on an emptied stream).
+        if (std::any_of(x.sites.begin(), x.sites.end(), [&](const auto& o) { return o->hits > 0 && iequals(o->name, site.name); })) continue;
         if (is_known(site.name)) continue;
         reported.push_back(site.name);
         std::vector<std::string> uniq;
@@ -1051,7 +1053,6 @@ std::vector<Diagnostic> add_warnings(Exec& x, QueryResult& r, bool only_general)
         r.diagnostics.push_back(Diagnostic::warning(
             "unknown-member", "no type reachable from the sources has a member '" + site.name + "' (not evaluated)",
             !close.empty() ? "did you mean " + join(close, " / ") + "?" : "if '" + site.name + "' is a value, quote it: \"" + site.name + "\""));
-        typos.push_back(r.diagnostics.back());
     }
     for (auto& sp : x.sites) {
         MemberSite& site = *sp;
@@ -1081,8 +1082,12 @@ std::vector<Diagnostic> add_warnings(Exec& x, QueryResult& r, bool only_general)
             hint += (hint.empty() ? "" : "; ") + std::string("if '") + site.name + "' is a value, quote it: \"" + site.name + "\"";
         r.diagnostics.push_back(Diagnostic::warning("unknown-member", "no member '" + site.name + "' on " + join(type_names, ", "), hint));
         // Missing on every evaluated item, yet another type may have it (polymorphic streams): only a name no known
-        // type declares is a certain typo. Only a mutation needs to know (see run_pipeline).
-        if (x.options.allow_mutation && !is_known(site.name)) typos.push_back(r.diagnostics.back());
+        // type declares is a certain typo; has() guards and never-evaluated names (left so by a filter that matched
+        // nothing) are not. Only a mutation needs to know (see run_pipeline).
+        bool found_elsewhere =  // another read of the name found it
+            std::any_of(x.sites.begin(), x.sites.end(), [&](const auto& o) { return o->hits > 0 && iequals(o->name, site.name); });
+        if (x.options.allow_mutation && !site.guarded && !site.miss_types.empty() && !found_elsewhere && !is_known(site.name))
+            typos.push_back(r.diagnostics.back());
     }
     return typos;
 }

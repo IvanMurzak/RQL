@@ -18929,6 +18929,652 @@
           }
         ]
       }
+    },
+    {
+      "name": "conditional-unaliased",
+      "rql": "g.Nodes | recurse Children include-self=true | where Id < 4 | select ($ is Special ? \"special\" : \"node\")",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "<",
+              "args": [
+                {
+                  "path": [
+                    "Id"
+                  ]
+                },
+                {
+                  "lit": 4
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "($ is Special ? \"special\" : \"node\")",
+                "expr": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "op": "is",
+                      "args": [
+                        {
+                          "path": []
+                        },
+                        {
+                          "lit": "Special"
+                        }
+                      ]
+                    },
+                    {
+                      "lit": "special"
+                    },
+                    {
+                      "lit": "node"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "($ is Special ? \"special\" : \"node\")"
+        ],
+        "rows": [
+          [
+            "node"
+          ],
+          [
+            "node"
+          ],
+          [
+            "special"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "conditional-lazy-then",
+      "rql": "g.Nodes | select v = if(Id > 100, ref(\"Node#999\"), 0)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "v",
+                "expr": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "op": ">",
+                      "args": [
+                        {
+                          "path": [
+                            "Id"
+                          ]
+                        },
+                        {
+                          "lit": 100
+                        }
+                      ]
+                    },
+                    {
+                      "call": "ref",
+                      "args": [
+                        {
+                          "lit": "Node#999"
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "v"
+        ],
+        "rows": [
+          [
+            0
+          ],
+          [
+            0
+          ],
+          [
+            0
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "conditional-guard-division",
+      "rql": "g.Nodes | recurse Children include-self=true | where Id < 5 | select Name, r = if(Value == 0, 0, 10 / Value)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "<",
+              "args": [
+                {
+                  "path": [
+                    "Id"
+                  ]
+                },
+                {
+                  "lit": 5
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "r",
+                "expr": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "op": "==",
+                      "args": [
+                        {
+                          "path": [
+                            "Value"
+                          ]
+                        },
+                        {
+                          "lit": 0
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 0
+                    },
+                    {
+                      "op": "/",
+                      "args": [
+                        {
+                          "lit": 10
+                        },
+                        {
+                          "path": [
+                            "Value"
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "r"
+        ],
+        "rows": [
+          [
+            "root-a",
+            1
+          ],
+          [
+            "a-1",
+            4
+          ],
+          [
+            "a-2",
+            -2.5
+          ],
+          [
+            "a-2-x",
+            0
+          ]
+        ],
+        "total": 4
+      }
+    },
+    {
+      "name": "conditional-error-condition-takes-else",
+      "rql": "g.Nodes | select v = if(Value / 0 > 1, \"a\", \"b\")",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "v",
+                "expr": {
+                  "call": "if",
+                  "args": [
+                    {
+                      "op": ">",
+                      "args": [
+                        {
+                          "op": "/",
+                          "args": [
+                            {
+                              "path": [
+                                "Value"
+                              ]
+                            },
+                            {
+                              "lit": 0
+                            }
+                          ]
+                        },
+                        {
+                          "lit": 1
+                        }
+                      ]
+                    },
+                    {
+                      "lit": "a"
+                    },
+                    {
+                      "lit": "b"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "v"
+        ],
+        "rows": [
+          [
+            "b"
+          ],
+          [
+            "b"
+          ],
+          [
+            "b"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "mut-not-evaluated-typo-stays-warning",
+      "rql": "g.Nodes | where Name == \"zzz\" | get Pear | set Value = 1",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Name"
+                  ]
+                },
+                {
+                  "lit": "zzz"
+                }
+              ]
+            }
+          },
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Pear"
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [],
+        "total": 0,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mut-has-guard-empty-ok",
+      "rql": "g.Nodes | where has(Intensity) | set Value = 1",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "call": "has",
+              "args": [
+                {
+                  "path": [
+                    "Intensity"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [],
+        "total": 0,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mut-typo-but-targets-reached",
+      "rql": "g.Nodes | where Nmae == \"x\" or Value > 5 | set Note = \"n\"",
+      "options": {
+        "allowMutation": true
+      },
+      "then": "g.Nodes | select Name Note",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "or",
+              "args": [
+                {
+                  "op": "==",
+                  "args": [
+                    {
+                      "path": [
+                        "Nmae"
+                      ]
+                    },
+                    {
+                      "lit": "x"
+                    }
+                  ]
+                },
+                {
+                  "op": ">",
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    },
+                    {
+                      "lit": 5
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Note"
+                  ]
+                },
+                "value": {
+                  "lit": "n"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "Note",
+            "first",
+            "n"
+          ],
+          [
+            "Node#5",
+            "Note",
+            "Second",
+            "n"
+          ]
+        ],
+        "total": 2,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Note",
+                "expr": {
+                  "path": [
+                    "Note"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "Note"
+        ],
+        "rows": [
+          [
+            "root-a",
+            "n"
+          ],
+          [
+            "root-b",
+            "n"
+          ],
+          [
+            "lonely",
+            null
+          ]
+        ],
+        "total": 3
+      }
     }
   ]
 }

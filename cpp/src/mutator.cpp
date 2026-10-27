@@ -796,8 +796,8 @@ std::string sources_with_callable(Exec& x, const std::string& method) {
     }
     if (names.empty()) return {};
     if (names.size() == 1)
-        return "; the source '" + names[0] + "' has " + method + ": " + names[0] + " | call " + method + "(â¦)";
-    return "; sources with " + method + ": " + join(names, ", ") + " (e.g. " + names[0] + " | call " + method + "(â¦))";
+        return "; the source '" + names[0] + "' has " + method + ": " + names[0] + " | call " + method + "(\xE2\x80\xA6)";
+    return "; sources with " + method + ": " + join(names, ", ") + " (e.g. " + names[0] + " | call " + method + "(\xE2\x80\xA6))";
 }
 
 QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s) {

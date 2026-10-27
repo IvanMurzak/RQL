@@ -200,7 +200,7 @@ export class RqlEngine {
       } catch {
         continue;
       }
-      if (typeof v !== 'object' || v === null) continue;
+      if (typeof v !== 'object' || v === null || !this.alive(v)) continue;
       const info = this.types.infoOf(v);
       if (info.isList || info.isMap) continue;
       if (info.callable.some((m) => m.name.toUpperCase() === wanted)) names.push(s.name);

@@ -151,7 +151,7 @@ modulo by zero → `error(div-by-zero)`. Other operand kinds → `error(type-mis
 | `abs(n)`, `round(n[, digits])`, `floor(n)`, `ceil(n)` | numeric. |
 | `sqrt(n)`, `pow(base, exponent)` | numeric (IEEE: `sqrt` of a negative number is NaN). |
 | `min(a, b, ...)`, `max(a, b, ...)` | the smallest / largest of two or more numbers (the `min` / `max` *stages* and *methods* aggregate a stream or a collection instead; with one argument the call is an `arity` error). |
-| `if(cond, then, else)` | `then` when `cond` is `true` as a predicate (§1.2), otherwise (`false` or unknown) `else`. **Lazy**: only the taken branch is evaluated, so it can guard an error (`if(Count > 0, Total / Count, 0)`). The text form `cond ? then : else` (lowest precedence, right-associative, §11) is the same function. |
+| `if(cond, then, else)` | `then` when `cond` is `true` as a predicate (§1.2), otherwise (`false`, `null`, unknown, an error value) `else`. **Lazy**: only the taken branch is evaluated, so it can guard an error (`if(Count > 0, Total / Count, 0)`). The text form `cond ? then : else` (lowest precedence, right-associative, §11) is the same function. |
 | `ref(s, ...)` | root scope only: resolve object references. |
 | `append(list, v, ...)` | a new list: the elements of `list` followed by the values. |
 | `insert(list, i, v)` | a new list with `v` inserted before index `i` (negative `i` counts from the end, `-1` appends). |
@@ -314,15 +314,18 @@ A request that asks for mutation (`options.allowMutation`) must end in a `set` o
 refused with `invalid-plan` before anything runs (the mutation tool never doubles as a query tool, and a forgotten
 `set` is reported instead of silently returning rows).
 
-* **Empty through a typo**: when no item reaches the `set` / `call` stage and the query has an `unknown-member` warning
-  for a name that **no known type declares** — no type statically reachable from the sources, no `select` / `group-by`
-  column and nothing the host's known-member hook accepts — that warning becomes an `unknown-member` **error** (its
-  message adds that nothing was changed): `objects | where name == "X" | get transfrom | set position = …` fails
-  instead of reporting "0 changes". A name that some known type declares stays a warning with an empty receipt, so a
-  polymorphic stream whose items happen not to have the member (`components | where intensity > 1 | set …` with no
-  light among them) is a legitimate empty change. Hosts whose type knowledge is wider than static reachability (every
-  component type of an engine) supply a **known-member hook** (name → bool); it also silences the static
-  "not evaluated" warning (§10) for those names.
+* **Empty through a typo**: when no item reaches the `set` / `call` stage, every `unknown-member` warning of a member
+  read that was **tested on items and missed on all of them** becomes an `unknown-member` **error** (its message adds
+  that nothing was changed), provided **no known type declares** the name — no type statically reachable from the
+  sources, no `select` / `group-by` column and nothing the host's known-member hook accepts:
+  `objects | where name == "X" | get transfrom | set position = …` fails instead of reporting "0 changes". These stay
+  warnings with an empty receipt: a name some known type declares, so a polymorphic stream whose items happen not to
+  have the member (`components | where intensity > 1 | set …` with no light among them) is a legitimate empty change;
+  a read inside `has(…)` (the guard's answer); misses on objects whose type the runtime does not declare (dynamic
+  objects whose members it learns per instance); and names never evaluated (§10), because a filter that matched
+  nothing leaves the later stages unevaluated. Hosts whose type knowledge is wider than static reachability (every
+  component type of an engine, items from function sources or `ref()`) SHOULD supply a **known-member hook**
+  (name → bool); it also silences the static "not evaluated" warning (§10) for those names.
 * Targets must be objects with identity; value-type or scalar items (e.g. from `get Transform.Position`)
   are rejected with `invalid-plan` because a change to a copy would be lost.
 * Writing through value types requires every value-type parent member on the path to be writable and
@@ -463,7 +466,8 @@ A host MAY replace the whole hint.
 Diagnostics: `{severity: "error"|"warning", code, message, at?: {start, end}, hint?}`. Error codes
 are a closed set per release (package 0.2.0 added `call-threw`, `function-threw`, `hook-threw`, `invalid-value` and
 `invalid-regex`, see `versioning.md`; clients should treat an unknown code as a generic error): `syntax-error`, `invalid-plan`, `version-unsupported`, `unknown-source`,
-`unknown-stage`, `unknown-function`, `unknown-member` (warning: no evaluated item had it),
+`unknown-stage`, `unknown-function`, `unknown-member` (warning: no evaluated item had it; an error when it empties a
+`set` / `call`, §8),
 `unknown-meta`, `type-mismatch`, `arity`, `div-by-zero`, `getter-threw` (a member read threw), `call-threw` (a `call`ed
 method threw, §8), `function-threw` (an extension function threw, §9), `hook-threw` (warning: a host committed hook
 threw, §13), `invalid-regex` (§4.1), `stale-ref`,
@@ -476,7 +480,8 @@ for every tested item; the hint names where `T` objects are reachable).
 `unknown-member` SHOULD carry a `hint` with the closest member names of the observed types —
 this is the main self-correction channel for agents.
 
-Hints never name a tool, source or object the host does not have. A host MAY name its **schema tool** (e.g.
+Hints never present a source or tool as available unless the host has it (syntax examples in parser hints use
+placeholder names). A host MAY name its **schema tool** (e.g.
 `rql-schema`); hints that point to the list of types say "list the types with rql-schema", otherwise "with the schema
 tool". A `call` of a method the targets do not have (`unknown-function`) lists the targets' callable methods and also
 names every source whose value is a single object that has a callable method of that name
@@ -492,7 +497,7 @@ distance, then ordinal name; at most 3 suggestions. When nothing qualifies, a hi
 12 of them followed by `… (N more)`.
 Runtimes SHOULD also report `unknown-member` for a bare name that was never evaluated (short-circuit,
 empty stream, the untaken branch of `if`) when no type statically reachable from the sources declares it, no `select`
-alias produces it and the host's known-member hook (§8) does not accept it.
+alias produces it, no other read of the name found it and the host's known-member hook (§8) does not accept it.
 
 ## 11. Lexical conveniences (normative)
 
@@ -508,7 +513,7 @@ To reduce agent errors the parser accepts, and canonicalizes away:
 * `=` as equality in expressions (`where Name = "x"`), `&&`, `||`, `!` for `and`, `or`, `not`.
 * `limit N` as an alias of `first N`; `expr as name` as an alias form in `select`.
 * `cond ? then : else` for `if(cond, then, else)` (§4.3). Like every complex expression it needs parentheses where the
-  grammar takes a `postfix` (`select kind = ($ is Light ? "light" : "other")`); a `?` without its `:` is a
+  grammar takes a `postfix` (`select kind = ($ is Light ? "light" : "other")`); a `?` whose then-branch is not followed by `:` is a
   `syntax-error` whose hint shows the form.
 * `x is null` / `x is not null` canonicalize to `==`/`!=` with a null literal; `x not in L` and
   `x is not T` to `not(...)`; a negated numeric literal folds into the literal.

@@ -274,13 +274,15 @@ namespace Rql.Execution
             if (known != null) return known;
             known = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "key", "value", "count", "Count", "Length" };
             var roots = new List<Type>();
+            bool complete = true; // a source that is null or throws now may have a type later: do not cache without it
             foreach (var s in _sources.Values)
             {
-                try { var v = s.Getter(); if (v != null) roots.Add(v.GetType()); } catch { }
+                try { var v = s.Getter(); if (v != null) roots.Add(v.GetType()); else complete = false; } catch { complete = false; }
             }
             foreach (var t in Describe.Reachable(Types, roots, 1000))
                 foreach (var m in Types.Info(t).Members) known.Add(m.Name);
-            return _knownMembers = known;
+            if (complete) _knownMembers = known;
+            return known;
         }
 
         /// <summary>Register a namespaced host function (<c>ns.fn(args)</c>); it may also start a query (spec §2).</summary>
@@ -839,6 +841,8 @@ namespace Rql.Execution
         public string[]? RowColumns;
         /// <summary>First segment of a relative bare path (eligible for the static never-evaluated check).</summary>
         public bool Bare;
+        /// <summary>Read inside has(): a miss is the guard's answer, never the cause of an empty mutation (spec §8).</summary>
+        public bool Guarded;
         public Type? CachedType;
         public MemberAccessor? CachedMember;
     }

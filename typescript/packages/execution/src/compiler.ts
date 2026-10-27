@@ -29,6 +29,9 @@ export const CORE_METHODS = [
 const isList = (x: Exec, v: unknown): v is object => typeof v === 'object' && v !== null && x.types.infoOf(v).isList;
 
 export class Compiler {
+  /** Depth of has() arguments being compiled: their member sites are guards (spec §8). */
+  private guarded = 0;
+
   constructor(private readonly x: Exec) {}
 
   compile(e: Expr): Eval {
@@ -68,7 +71,7 @@ export class Compiler {
       const first = i === 0 && relativeToItem;
       switch (s.kind) {
         case 'member': {
-          const site = new MemberSite(s.name, p.span, first);
+          const site = new MemberSite(s.name, p.span, first, this.guarded > 0);
           this.x.sites.push(site);
           if (first) {
             // Lexical scope chain: inside method arguments a bare name missing on the element
@@ -314,7 +317,13 @@ export class Compiler {
     switch (name) {
       case 'has': {
         this.arity(c, 1, 1);
-        const a = this.compile(c.args[0]!);
+        this.guarded++;
+        let a: Eval;
+        try {
+          a = this.compile(c.args[0]!);
+        } finally {
+          this.guarded--;
+        }
         return (x) => a(x) !== MISSING;
       }
       case 'is-null': {

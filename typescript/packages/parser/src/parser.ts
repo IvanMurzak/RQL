@@ -119,7 +119,7 @@ class Parser {
 
   parseQuery(): QueryPlan {
     if (this.peek().kind === 'end') {
-      throw this.error("empty query; expected a source such as 'world' or 'ref(\"Type#1\")'", this.peek());
+      throw this.error("empty query; expected a source name, ref(\"Type#id\") or a host function", this.peek());
     }
     const source = this.parsePostfix();
     const stages: Stage[] = [];
