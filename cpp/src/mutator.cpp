@@ -69,21 +69,14 @@ void validate_batch(Exec& x, const std::string& op, const std::vector<MutationRe
     const MutationPolicy& m = x.engine.mutations();
     const int limit = static_cast<int>(x.max_mutation_targets);
     const int64_t ceiling = std::max<int64_t>(m.hard_max_targets, limit);
-    bool ended = false;
-    try {
-        Item it;
-        while (matched <= ceiling) {
-            if (!rest.next(it)) {
-                ended = true;
-                break;
-            }
-            if (!it.value.is_null() && !x.is_dead(it.value)) ++matched;
-        }
-    } catch (const RqlException&) {  // a budget hit while counting: report what was counted so far
-    }
+    // A budget error while counting propagates: it, not the limit, is what the caller must fix first.
+    Item it;
+    while (matched <= ceiling && rest.next(it))
+        if (!it.value.is_null() && !x.is_dead(it.value)) ++matched;
+    const bool ended = matched <= ceiling;
     const std::string op_q = "'" + op + "'";
     std::string message = ended ? std::to_string(matched) + " objects matched " + op_q + ", more than the limit of " + std::to_string(limit) + "; nothing was changed"
-                                : "more than " + std::to_string(matched - 1) + " objects matched " + op_q + " (the limit is " + std::to_string(limit) +
+                                : "more than " + std::to_string(ceiling) + " objects matched " + op_q + " (the limit is " + std::to_string(limit) +
                                       "); nothing was changed";
     std::string hint = m.limit_hint ? m.limit_hint(op, limit) : std::string();
     if (hint.empty()) {

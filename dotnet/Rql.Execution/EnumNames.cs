@@ -68,8 +68,8 @@ namespace Rql.Execution
         private static Result Compute(Type type, string text, IReadOnlyDictionary<string, string>? aliases)
         {
             var s = text.Trim();
-            if (long.TryParse(s, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var n))
-                return new Result(Outcome.Found, Enum.ToObject(type, n), null);
+            if (TryInteger(type, s, out var number, out bool isInteger)) return new Result(Outcome.Found, number, null);
+            if (isInteger) return new Result(Outcome.NotFound, null, Expected(type)); // out of the underlying type's range
             var entries = EntriesOf.GetOrAdd(type, t => new Entries(t));
             if (s.IndexOf(',') >= 0 && type.IsDefined(typeof(FlagsAttribute), false))
             {
@@ -83,6 +83,22 @@ namespace Rql.Execution
                 return new Result(Outcome.Found, Enum.ToObject(type, acc), null);
             }
             return ResolveName(type, entries, s, aliases);
+        }
+
+        /// <summary>Integer text as a value of the enum's underlying type; <paramref name="isInteger"/> also when out of range.</summary>
+        private static bool TryInteger(Type type, string s, out object? value, out bool isInteger)
+        {
+            value = null;
+            int digits = s.Length > 0 && (s[0] == '+' || s[0] == '-') ? 1 : 0;
+            isInteger = digits < s.Length && s.Skip(digits).All(c => c >= '0' && c <= '9');
+            if (!isInteger) return false;
+            object parsed;
+            if (long.TryParse(s, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var n)) parsed = n;
+            else if (ulong.TryParse(s, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var u)) parsed = u;
+            else return false; // beyond 64 bits
+            try { value = Enum.ToObject(type, Convert.ChangeType(parsed, Enum.GetUnderlyingType(type), CultureInfo.InvariantCulture)); }
+            catch (OverflowException) { return false; }
+            return true;
         }
 
         private static Result ResolveName(Type type, Entries entries, string s, IReadOnlyDictionary<string, string>? aliases)

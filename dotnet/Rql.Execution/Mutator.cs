@@ -75,24 +75,20 @@ namespace Rql.Execution
             var m = _x.Engine.Mutations;
             int limit = _x.MaxMutationTargets;
             int ceiling = Math.Max(m.HardMaxTargets, limit);
-            bool ended = false;
-            try
+            // A budget error while counting propagates: it, not the limit, is what the caller must fix first.
+            while (matched <= ceiling && rest.MoveNext())
             {
-                while (matched <= ceiling)
-                {
-                    if (!rest.MoveNext()) { ended = true; break; }
-                    var v = rest.Current.Value;
-                    if (v != null && !_x.Types.IsDead(v)) matched++;
-                }
+                var v = rest.Current.Value;
+                if (v != null && !_x.Types.IsDead(v)) matched++;
             }
-            catch (RqlException) { } // a budget hit while counting: report what was counted so far
-            int? exact = ended ? matched : (int?)null;
+            int? exact = matched <= ceiling ? matched : (int?)null;
             string message = exact != null
                 ? $"{matched} objects matched '{op}', more than the limit of {limit}; nothing was changed"
-                : $"more than {matched - 1} objects matched '{op}' (the limit is {limit}); nothing was changed";
-            string? argument = m.LimitArgument ?? (_x.BudgetsAdjustable ? "budgets.maxMutationTargets" : null);
+                : $"more than {ceiling} objects matched '{op}' (the limit is {limit}); nothing was changed";
+            string? argument = !string.IsNullOrEmpty(m.LimitArgument) ? m.LimitArgument : _x.BudgetsAdjustable ? "budgets.maxMutationTargets" : null;
+            string? hostHint = m.LimitHint?.Invoke(op, limit);
             return new RqlException("mutation-limit", message, null,
-                m.LimitHint?.Invoke(op, limit) ?? Exec.MutationLimitHint(op, limit, exact, argument, ceiling));
+                !string.IsNullOrEmpty(hostHint) ? hostHint : Exec.MutationLimitHint(op, limit, exact, argument, ceiling));
         }
 
         /// <summary>

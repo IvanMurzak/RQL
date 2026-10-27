@@ -518,6 +518,19 @@ namespace Rql.Tests
         }
 
         [Fact]
+        public void BudgetErrorWhileCountingIsReportedAndCeilingAtLimitAdvisesBatches()
+        {
+            var e = Engine(new GuardHost());
+            var r = Mut(e, "many | set Free.x = 1", new Budgets { MaxVisited = 25 });
+            Assert.Equal("budget-exceeded", r.Diagnostics[0].Code);
+            e.Mutations.HardMaxTargets = 20; // ceiling == limit: no raise to advise
+            e.Mutations.LimitArgument = "";  // empty counts as unset
+            var d = Mut(e, "some | set Free.x = 1").Diagnostics[0];
+            Assert.Equal("more than 20 objects matched 'set' (the limit is 20); nothing was changed", d.Message);
+            Assert.StartsWith("narrow the query (where / ref(...)) or split the change into batches of 20", d.Hint);
+        }
+
+        [Fact]
         public void HostDefaultTargetLimitApplies()
         {
             var e = Engine(new GuardHost(), maxTargets: 25);
@@ -816,6 +829,28 @@ namespace Rql.Tests
     {
         public enum EAlign { HAlign_Fill, HAlign_Left, VAlign_Fill, VAlign_Top, Center }
         [System.Flags] public enum Layers { None = 0, Layer_Ground = 1, Layer_Water = 2 }
+        public enum Small : byte { X = 0, Y = 44 }
+        public enum Huge : ulong { Zero = 0, Max = ulong.MaxValue }
+
+        public sealed class Sized
+        {
+            public Small S { get; set; }
+            public Huge H { get; set; }
+        }
+
+        [Fact]
+        public void IntegerTextRespectsTheUnderlyingType()
+        {
+            var z = new Sized();
+            var e = new RqlEngine();
+            e.AddSource("z", () => z);
+            e.Mutations.Enabled = true;
+            var o = new QueryOptions { AllowMutation = true };
+            Assert.Equal("coercion-failed", e.Execute("z | set S = \"300\"", null, o).Diagnostics[0].Code); // not 300 mod 256 = Y
+            Assert.True(e.Execute("z | set H = \"18446744073709551615\"", null, o).Ok);
+            Assert.Equal(Huge.Max, z.H);
+            Assert.Equal(0, e.Execute("z | where S == \"256\" | count").Value!.GetValue<long>());
+        }
 
         public sealed class Widget
         {

@@ -62,4 +62,5 @@
   comma-separated lists in .NET / TypeScript; host alias names for enum entries (§8). **Target limit** (§8, §10): its
   safety intent and host default are specified (editor hosts with undo: e.g. 200), `mutation-limit` states how many
   items matched (counting up to the host ceiling), its hint advises raising the host's **limit argument** to the count
-  first and is independent of whether callers can pass the other budgets; capability manifest `mutations.hardMaxTargets`.
+  first and is independent of whether callers can pass the other budgets (a budget error while counting is reported
+  instead); capability manifest `mutations.hardMaxTargets`.

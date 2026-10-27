@@ -390,9 +390,12 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   keep a small one. A request MAY raise it through `budgets.maxMutationTargets` up to the host's ceiling (`HardMaxTargets`,
   default 1000), which bounds the cost of one stage (planning, receipts, undo memory); raising it is always an explicit
   per-request decision, and whether a host's callers can raise it is independent of whether they can pass the other
-  budgets (§10). On `mutation-limit` the runtime keeps counting the stage's input up to the ceiling (counting only,
-  nothing else is evaluated for the extra items) so the message states how many items matched (`160 objects matched
-  'set', more than the limit of 20`) or that more than the ceiling did.
+  budgets (§10). On `mutation-limit` the runtime keeps counting the items that reach the stage, up to the ceiling (the
+  earlier stages run for them as usual; null and destroyed items are skipped as targets are; the stage itself checks
+  and evaluates nothing for the extra items), so the message states how many items matched (`160 objects matched
+  'set', more than the limit of 20`) or that more than the ceiling did. A budget error (`budget-exceeded`, `timeout`)
+  while counting is reported instead of `mutation-limit`: it is what the caller must fix first. A limit argument or
+  hint override the host sets to an empty text counts as unset.
 * **Dry-run** (`options.dryRun`) computes and returns the receipt without writing.
 * Receipt: `kind: "rows"`, columns `["$ref", "member", "old", "new"]` (`call`: `["$ref", "method", "result"]`).
   After the writes, `new` is the value **read back** from each written member, i.e. what the host actually stored (a

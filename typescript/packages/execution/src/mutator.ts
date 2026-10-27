@@ -229,9 +229,17 @@ export class Mutator {
   }
 
   private targets(stream: Iterable<Item>, op: string): Target[] {
+    const rest = stream[Symbol.iterator]();
+    try {
+      return this.collect(rest, op);
+    } finally {
+      rest.return?.(); // like for…of: release the source (its finally blocks) on a throw or an early stop
+    }
+  }
+
+  private collect(rest: Iterator<Item>, op: string): Target[] {
     const list: Target[] = [];
     let index = -1;
-    const rest = stream[Symbol.iterator]();
     for (let step = rest.next(); !step.done; step = rest.next()) {
       const it = step.value;
       index++; // skipped null/destroyed items keep their positions: $index is the position in the stage's input
@@ -275,27 +283,20 @@ export class Mutator {
     const m = this.x.engine.mutations;
     const limit = this.x.maxMutationTargets;
     const ceiling = Math.max(m.hardMaxTargets, limit);
-    let ended = false;
-    try {
-      while (matched <= ceiling) {
-        const step = rest.next();
-        if (step.done) {
-          ended = true;
-          break;
-        }
-        const v = step.value.value;
-        if (v !== null && v !== undefined && !this.x.dead(v)) matched++;
-      }
-    } catch (e) {
-      if (!(e instanceof RqlError)) throw e; // a budget hit while counting: report what was counted so far
+    // A budget error while counting propagates: it, not the limit, is what the caller must fix first.
+    while (matched <= ceiling) {
+      const step = rest.next();
+      if (step.done) break;
+      const v = step.value.value;
+      if (v !== null && v !== undefined && !this.x.dead(v)) matched++;
     }
-    const exact = ended ? matched : undefined;
+    const exact = matched <= ceiling ? matched : undefined;
     const message =
       exact !== undefined
         ? `${matched} objects matched '${op}', more than the limit of ${limit}; nothing was changed`
-        : `more than ${matched - 1} objects matched '${op}' (the limit is ${limit}); nothing was changed`;
-    const argument = m.limitArgument ?? (this.x.budgetsAdjustable ? 'budgets.maxMutationTargets' : undefined);
-    return new RqlError('mutation-limit', message, undefined, m.limitHint?.(op, limit) ?? mutationLimitHint(op, limit, exact, argument, ceiling));
+        : `more than ${ceiling} objects matched '${op}' (the limit is ${limit}); nothing was changed`;
+    const argument = m.limitArgument || (this.x.budgetsAdjustable ? 'budgets.maxMutationTargets' : undefined);
+    return new RqlError('mutation-limit', message, undefined, m.limitHint?.(op, limit) || mutationLimitHint(op, limit, exact, argument, ceiling));
   }
 
   /**

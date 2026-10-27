@@ -224,7 +224,7 @@ export class EnumType {
     if (new Set(found.map((e) => e.value)).size > 1) {
       return { why: `"${s}" is ambiguous for ${this.name}: ${found.map((e) => e.name).join(', ')}` };
     }
-    return { value: found[0]! };
+    return { value: this.wrap(found[0]!.value) }; // the defined instance, also for an entry sharing another's value
   }
 
   /** The entries one resolution step matches (aliases take part except in the entry-prefix step), or undefined. */

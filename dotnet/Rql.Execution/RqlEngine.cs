@@ -231,7 +231,8 @@ namespace Rql.Execution
         /// <summary>
         /// Alias names for enum entries (spec §8 enum name resolution), e.g. an editor's display names: alias → entry name
         /// for the given enum type, or null for none. Aliases resolve like entry names (exactly, then ignoring case) in
-        /// writes, map keys and comparisons; encoding keeps the entry name. Called once per enum type and cached.
+        /// writes, map keys and comparisons; encoding keeps the entry name. Called once per enum type and cached: return
+        /// dictionaries that do not change afterwards (set the hook again to change them).
         /// </summary>
         public Func<Type, IReadOnlyDictionary<string, string>?>? EnumAliases
         {

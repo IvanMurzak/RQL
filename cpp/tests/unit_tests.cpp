@@ -1457,6 +1457,11 @@ void wave2_tests() {
             o.allow_mutation = true;
             o.dry_run = true;  // the graph is shared by the following checks
             check(e2.execute_json(set_all, raise, o).ok, "a request raises the target limit whatever budgets_adjustable says");
+            rql::Budgets tight;
+            tight.max_visited = 6;  // enough to collect the first 3 targets, not to count all 8 nodes
+            e2.mutations().hard_max_targets = 30;
+            auto budget = e2.execute_json(R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"recurse","via":[{"path":["Children"]}]},{"op":"set","assign":[{"target":{"path":["Value"]},"value":{"lit":1}}]}]})J", tight, o);
+            check(first_code(budget) == "budget-exceeded", "a budget error while counting is reported instead of mutation-limit");
         }
         rql::Budgets b;
         b.max_visited = 2;

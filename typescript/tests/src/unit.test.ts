@@ -215,6 +215,22 @@ for (const adjustable of [true, false]) {
   });
 }
 
+test('a budget error while counting is reported; a source is released on mutation-limit', () => {
+  const { e } = hintEngine(50);
+  assert.equal(e.execute('xs | set v = 1', { maxVisited: 25 }, { allowMutation: true }).diagnostics[0]?.code, 'budget-exceeded');
+  let released = false;
+  const g = new RqlEngine().addSource('gen', function* () {
+    try {
+      for (let i = 0; i < 2000; i++) yield { Id: i, v: 0 };
+    } finally {
+      released = true;
+    }
+  });
+  g.mutations.enabled = true;
+  assert.equal(g.execute('gen | set v = 1', undefined, { allowMutation: true }).diagnostics[0]?.code, 'mutation-limit');
+  assert.equal(released, true);
+});
+
 test('the host default target limit applies', () => {
   const { e } = hintEngine(25);
   e.mutations.maxTargets = 25;
@@ -291,6 +307,21 @@ test('enum comparisons use the same resolution', () => {
   const { e } = alignEngine();
   assert.equal(e.execute('w | where Align == "EAlign::Left" | count').value, 1);
   assert.equal(e.execute('w | where Align == "Fill" | count').value, 0);
+});
+
+test('a name for an entry sharing another entry\'s value is accepted', () => {
+  const Mode = new EnumType('Mode', { None: 0, Default: 0, Other: 1 }, { aliases: { Std: 'Default' } });
+  class M {
+    Mode = 1;
+  }
+  const m = new M();
+  const e = new RqlEngine({ types: new TypeModel().register(M, { members: [{ name: 'Mode', type: Mode }] }) }).addSource('m', () => m);
+  e.mutations.enabled = true;
+  assert.equal(e.execute('m | set Mode = "Default"', undefined, { allowMutation: true }).ok, true);
+  assert.equal(m.Mode, 0);
+  m.Mode = 1;
+  assert.equal(e.execute('m | set Mode = "std"', undefined, { allowMutation: true }).ok, true);
+  assert.equal(m.Mode, 0);
 });
 
 test('flags lists resolve each name', () => {
