@@ -1029,9 +1029,9 @@ namespace Rql.Execution
                 if (text == null) return new RqlError("type-mismatch", $"pad() needs a string or a number, got {V.Describe(vals[0])}");
                 if (!Integral(vals[1], out var width) || width < 0 || width > MaxPadWidth)
                     return new RqlError("type-mismatch", $"pad() width must be an integer from 0 to {MaxPadWidth}");
-                var fill = vals.Length > 2 && V.IsString(vals[2]) ? V.AsString(vals[2]!) : vals.Length > 2 ? null : "0";
+                var fill = vals.Length < 3 ? "0" : V.IsString(vals[2]) ? V.AsString(vals[2]!) : null;
                 if (fill == null || fill.Length != 1) return new RqlError("type-mismatch", "pad() fill must be a one-character string");
-                return text.Length >= width ? text : text.PadLeft((int)width, fill[0]);
+                return text.PadLeft((int)width, fill[0]);
             }
             if (!V.IsString(vals[0])) return new RqlError("type-mismatch", $"{name}() needs a string, got {V.Describe(vals[0])}");
             var s = V.AsString(vals[0]!);
@@ -1071,19 +1071,14 @@ namespace Rql.Execution
                 }
                 case "substring":
                 {
-                    if (!Integral(vals[1], out var start) || (vals.Length > 2 && !Integral(vals[2], out _)))
+                    long want = long.MaxValue;
+                    if (!Integral(vals[1], out var start) || (vals.Length > 2 && !Integral(vals[2], out want)))
                         return new RqlError("type-mismatch", "substring() needs integral start and length");
+                    if (want < 0) return new RqlError("type-mismatch", "substring() length must not be negative");
                     long len = s.Length;
                     if (start < 0) start += len;
                     start = Math.Max(0, Math.Min(len, start));
-                    long count = len - start;
-                    if (vals.Length > 2)
-                    {
-                        Integral(vals[2], out var want);
-                        if (want < 0) return new RqlError("type-mismatch", "substring() length must not be negative");
-                        count = Math.Min(count, want);
-                    }
-                    return s.Substring((int)start, (int)count);
+                    return s.Substring((int)start, (int)Math.Min(len - start, want));
                 }
                 default: // replace-regex
                 {

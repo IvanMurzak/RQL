@@ -24,12 +24,7 @@ struct Target {
 };
 
 /// `$`, `$index`, `$path` and `$depth` in a set value / call argument are the target's (spec §8).
-void enter_scope(Exec& x, const Target& t) {
-    x.current = t.item.value;
-    x.current_path = t.item.path;
-    x.current_depth = t.item.depth;
-    x.index = t.index;
-}
+void enter_scope(Exec& x, const Target& t) { set_scope(x, t.item, t.index); }
 
 std::string mutation_limit_hint(const std::string& op, int limit, int ceiling) {
     std::string n = std::to_string(limit);
@@ -41,11 +36,9 @@ std::string mutation_limit_hint(const std::string& op, int limit, int ceiling) {
 }
 
 /// The host's batch validation (spec §8): every planned change at once, before any write or call, dry runs too.
-void validate_batch(Exec& x, const std::string& op, const std::function<std::vector<MutationRecord>()>& records) {
+void validate_batch(Exec& x, const std::string& op, const std::vector<MutationRecord>& batch) {
     const BatchValidator& validate = x.engine.mutations().validate_batch;
-    if (!validate) return;
-    std::vector<MutationRecord> batch = records();
-    if (batch.empty()) return;
+    if (!validate || batch.empty()) return;
     std::string rejected;
     try {
         rejected = validate(batch);
@@ -708,9 +701,10 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
         for (auto& w : writes) out.push_back({w.target, w.owner, w.label, w.old_value, w.new_value, nullptr, {}});
         return out;
     };
-    validate_batch(x, "set", to_records);
-    std::vector<MutationRecord> records;  // built once, shared by both hooks
-    if (has_hooks(x)) records = to_records();
+    std::vector<MutationRecord> records;  // built once, shared by the batch validator and both hooks
+    if (x.engine.mutations().validate_batch || has_hooks(x)) records = to_records();
+    validate_batch(x, "set", records);
+    if (!has_hooks(x)) records.clear();
     before_write(x, records);
     if (!x.options.dry_run) {
         size_t applied = 0;
@@ -842,9 +836,10 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
         for (auto& p : planned) out.push_back({p.item, p.item, p.item.type()->signature(*p.method), Value(), Value(), p.method, p.args});
         return out;
     };
-    validate_batch(x, "call", call_records);
-    std::vector<MutationRecord> records;  // built once, shared by both hooks
-    if (has_hooks(x)) records = call_records();
+    std::vector<MutationRecord> records;  // built once, shared by the batch validator and both hooks
+    if (x.engine.mutations().validate_batch || has_hooks(x)) records = call_records();
+    validate_batch(x, "call", records);
+    if (!has_hooks(x)) records.clear();
     before_write(x, records);
     std::vector<std::vector<Value>> rows;
     size_t done = 0;

@@ -34,13 +34,7 @@ namespace Rql.Execution
         }
 
         /// <summary>`$`, `$index`, `$path` and `$depth` in a set value / call argument are the target's (spec §8).</summary>
-        private void EnterScope(Target t)
-        {
-            _x.Current = t.Item.Value;
-            _x.CurrentPath = t.Item.Path;
-            _x.CurrentDepth = t.Item.Depth;
-            _x.Index = t.Index;
-        }
+        private void EnterScope(Target t) => _x.Enter(t.Item, t.Index);
 
         private List<Target> Targets(IEnumerable<Item> stream, string op)
         {
@@ -53,17 +47,15 @@ namespace Rql.Execution
                 if (it.Value is RowValue)
                     throw new RqlException("invalid-plan", $"'{op}' needs objects, not projected rows; remove 'select' before '{op}'");
                 if (_x.Types.IsDead(it.Value)) continue; // destroyed objects read as null: skipped like null items
-                if (it.Value is MapEntry entry && (op != "set" || entry.Map == null))
-                    throw new RqlException("invalid-plan", op == "set"
-                            ? "'set' cannot target these map entries (they do not come from a map it can write to); set the map member with a key path instead (Stats[\"key\"] = ...)"
-                            : $"'{op}' cannot target map entries; call the method on the values instead: … | get Value | {op} …");
-                if (it.Value is MapEntry)
+                if (it.Value is MapEntry entry)
                 {
-                    list.Add(new Target(it, index)); // set Value… writes through the entry's map (spec §8)
-                    CheckLimit(list.Count, op);
-                    continue;
+                    // set Value… writes through the entry's map (spec §8)
+                    if (op != "set" || entry.Map == null)
+                        throw new RqlException("invalid-plan", op == "set"
+                                ? "'set' cannot target these map entries (they do not come from a map it can write to); set the map member with a key path instead (Stats[\"key\"] = ...)"
+                                : $"'{op}' cannot target map entries; call the method on the values instead: … | get Value | {op} …");
                 }
-                if ((it.Value.GetType().IsValueType && !_x.Types.Info(it.Value.GetType()).WritesThrough) || TypeModel.IsScalarType(it.Value.GetType()))
+                else if ((it.Value.GetType().IsValueType && !_x.Types.Info(it.Value.GetType()).WritesThrough) || TypeModel.IsScalarType(it.Value.GetType()))
                     throw new RqlException("invalid-plan", $"'{op}' needs objects with identity; '{_x.Types.Info(it.Value.GetType()).ShortName}' items are value copies, so the change would be lost",
                         null, "set the member from its owner instead, e.g. objects | where … | set Transform.Position.x = 0");
                 list.Add(new Target(it, index));
@@ -84,9 +76,9 @@ namespace Rql.Execution
         /// Where a set target writes (spec §8): the item itself, or — for a map entry streamed from a writable map — the map,
         /// with <c>Value.p</c> (or <c>p</c>, which reads through to the value like member access) rewritten to <c>[key].p</c>.
         /// </summary>
-        private (object root, IReadOnlyList<Segment> segments) WriteRoot(object item, IReadOnlyList<Segment> segments, string label)
+        private (object root, IReadOnlyList<Segment> segments) WriteRoot(object item, MapEntry? e, IReadOnlyList<Segment> segments, string label)
         {
-            if (!(item is MapEntry e)) return (item, segments);
+            if (e == null) return (item, segments);
             var first = segments[0];
             if (first.Kind == SegmentKind.Member && string.Equals(first.Name, "key", StringComparison.OrdinalIgnoreCase))
                 throw new RqlException("readonly-member", $"'{label}': a map entry's key cannot be set", null,
@@ -158,12 +150,13 @@ namespace Rql.Execution
             foreach (var t in targets)
             {
                 var item = t.Value;
-                var holder = (item as MapEntry)?.Holder;
-                var itemRef = item is MapEntry me ? _x.Engine.RefOf(me.Holder ?? me.Map!) : _x.Engine.RefOf(item);
+                var entry = item as MapEntry;
+                var holder = entry?.Holder;
+                var itemRef = _x.Engine.RefOf(entry != null ? holder ?? entry.Map! : item);
                 foreach (var (target, value, assignLabel) in assigns)
                 {
-                    var (root, segments) = WriteRoot(item, target.Segments, assignLabel);
-                    var label = ReferenceEquals(root, item) ? assignLabel : ((MapEntry)item).MapLabel + Label(segments);
+                    var (root, segments) = WriteRoot(item, entry, target.Segments, assignLabel);
+                    var label = entry == null ? assignLabel : entry.MapLabel + Label(segments);
                     EnterScope(t);
                     var nv = value(_x);
                     if (nv is Missing || nv is Unknown)
@@ -191,8 +184,9 @@ namespace Rql.Execution
                 }
             }
 
-            ValidateBatch("set", () => Records(writes));
-            var records = HooksOn ? Records(writes) : Array.Empty<MutationRecord>();
+            IReadOnlyList<MutationRecord>? planned = null;
+            ValidateBatch("set", () => planned ??= Records(writes));
+            var records = HooksOn ? planned ?? Records(writes) : Array.Empty<MutationRecord>();
             RunHook(_x.Engine.Mutations.BeforeWrite, records, veto: true);
             if (!_x.Options.DryRun)
             {
@@ -543,8 +537,9 @@ namespace Rql.Execution
 
             List<MutationRecord> CallRecords() =>
                 planned.Select(p => new MutationRecord(p.item, p.item, p.method.Signature, null, null, p.method, null, p.args)).ToList();
-            ValidateBatch("call", CallRecords);
-            var callRecords = HooksOn ? CallRecords() : new List<MutationRecord>();
+            List<MutationRecord>? plannedCalls = null;
+            ValidateBatch("call", () => plannedCalls ??= CallRecords());
+            var callRecords = HooksOn ? plannedCalls ?? CallRecords() : new List<MutationRecord>();
             RunHook(_x.Engine.Mutations.BeforeWrite, callRecords, veto: true);
             var rows = new List<object?[]>();
             int done = 0;

@@ -734,6 +734,13 @@ std::string invalid_regex_message(const std::string& pattern, const std::string&
     return "invalid regex \"" + pattern + "\": " + error;
 }
 
+/// A literal pattern that does not compile fails the query before it runs (spec §4.1).
+void check_literal_regex(Exec& x, const Expr* pattern) {
+    if (!pattern || pattern->kind != ExprKind::Lit || pattern->lit.type != Literal::Type::String) return;
+    const Exec::CachedRegex cached = compiled_regex(x, pattern->lit.s);
+    if (!cached.re) throw RqlException("invalid-regex", invalid_regex_message(pattern->lit.s, cached.error));
+}
+
 std::optional<bool> matches_op(Exec& x, const Value& a, const Value& b) {
     if (!a.is_string() || !b.is_string()) return std::nullopt;
     const std::string& pattern = b.as_string();
@@ -839,11 +846,7 @@ Eval Compiler::compile_op_args(const std::string& op, const ExprPtr& ae, const E
     if (op == "starts-with") return [a, b](Exec& x) { Value l = a(x); return tri(string_test(l, b(x), true)); };
     if (op == "ends-with") return [a, b](Exec& x) { Value l = a(x); return tri(string_test(l, b(x), false)); };
     if (op == "matches") {
-        // A literal pattern that does not compile fails the query before it runs (spec §4.1).
-        if (be && be->kind == ExprKind::Lit && be->lit.type == Literal::Type::String) {
-            const Exec::CachedRegex cached = compiled_regex(x_, be->lit.s);
-            if (!cached.re) throw RqlException("invalid-regex", invalid_regex_message(be->lit.s, cached.error));
-        }
+        check_literal_regex(x_, be.get());
         return [a, b](Exec& x) {
             Value l = a(x);
             Value r = tri(matches_op(x, l, b(x)));
@@ -941,17 +944,13 @@ size_t utf8_offset(const std::string& s, int64_t units) {
     return i;
 }
 
-char ascii_fold(char ch) { return ch >= 'a' && ch <= 'z' ? static_cast<char>(ch - 32) : ch; }
-
-/// Next occurrence of `needle` at or after `from`, ASCII case-insensitive (like contains), or npos.
-size_t ifind(const std::string& hay, const std::string& needle, size_t from) {
-    if (needle.size() > hay.size()) return std::string::npos;
-    for (size_t i = from; i + needle.size() <= hay.size(); ++i) {
-        size_t k = 0;
-        while (k < needle.size() && ascii_fold(hay[i + k]) == ascii_fold(needle[k])) ++k;
-        if (k == needle.size()) return i;
-    }
-    return std::string::npos;
+/// Start offsets of every non-overlapping occurrence of `needle` in `hay`, left to right, ASCII case-insensitive
+/// (like contains; folding ASCII keeps byte offsets).
+std::vector<size_t> ifind_all(const std::string& hay, const std::string& needle) {
+    const std::string h = ascii_lower(hay), n = ascii_lower(needle);
+    std::vector<size_t> hits;
+    for (size_t at = h.find(n); at != std::string::npos; at = h.find(n, at + n.size())) hits.push_back(at);
+    return hits;
 }
 
 /// Portable replacement text: $0-$9 insert a group (empty when absent), $$ a dollar, any other $ is literal.
@@ -1012,8 +1011,8 @@ Value string_function(Exec& x, const std::string& name, const std::vector<Value>
         if (name == "split") {
             if (from.empty()) return Value::error("type-mismatch", "split() needs a non-empty separator");
             std::vector<Value> parts;
-            size_t start = 0, at;
-            while ((at = ifind(s, from, start)) != std::string::npos) {
+            size_t start = 0;
+            for (size_t at : ifind_all(s, from)) {
                 parts.push_back(Value::string(s.substr(start, at - start)));
                 start = at + from.size();
             }
@@ -1023,8 +1022,8 @@ Value string_function(Exec& x, const std::string& name, const std::vector<Value>
         if (from.empty()) return vals[0];
         const std::string& to = vals[2].as_string();
         std::string out;
-        size_t pos = 0, hit;
-        while ((hit = ifind(s, from, pos)) != std::string::npos) {
+        size_t pos = 0;
+        for (size_t hit : ifind_all(s, from)) {
             out.append(s, pos, hit - pos);
             out += to;
             pos = hit + from.size();
@@ -1480,14 +1479,7 @@ Eval Compiler::compile_string_function(const Expr& c, const std::string& name, c
     else if (name == "substring" || name == "pad") min = 2, max = 3;
     else if (name == "split") min = max = 2;
     arity(c, min - receiver, max - receiver);
-    if (name == "replace-regex") {
-        // A literal pattern that does not compile fails the query before it runs (spec §4.3).
-        const Expr* p = argExprs[1];
-        if (p->kind == ExprKind::Lit && p->lit.type == Literal::Type::String) {
-            const Exec::CachedRegex cached = compiled_regex(x_, p->lit.s);
-            if (!cached.re) throw RqlException("invalid-regex", invalid_regex_message(p->lit.s, cached.error));
-        }
-    }
+    if (name == "replace-regex") check_literal_regex(x_, argExprs[1]);
     std::vector<Eval> args;
     for (auto* e : argExprs) args.push_back(compile(*e));
     bool regex = name == "replace-regex";

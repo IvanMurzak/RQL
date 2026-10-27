@@ -28,7 +28,7 @@ import { PathNode, type Exec } from './exec.js';
 import { Mutator } from './mutator.js';
 import { closest, memberList } from './suggest.js';
 import { EnumType, EnumValue, unwrapNullable, type TypeInfo, type TypeRef } from './types.js';
-import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, entryOrigin, isAbsent, streamedEntry, toNumber } from './values.js';
+import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, entryOrigin, isAbsent, streamedEntry, toNumber, type EntryOrigin } from './values.js';
 
 export interface Item {
   readonly value: unknown;
@@ -38,6 +38,9 @@ export interface Item {
 }
 
 const NULL_GROUP = Symbol('null');
+
+/** Where a map's streamed entries come from, except the map itself (spec §8). */
+type EntrySource = Omit<EntryOrigin, 'map'>;
 const item = (value: unknown, path: PathNode | null, depth = -1): Item => ({ value, path, depth });
 
 export class Pipeline {
@@ -300,9 +303,11 @@ export class Pipeline {
     yield* this.expand(v, null);
   }
 
-  /** Lists → elements, maps → entries, else the value itself; null/missing and destroyed objects dropped. */
-  /** `holder` / `mapLabel`: the item and member path a map value was read from (`get`); streamed entries remember them (spec §8). */
-  private *expand(value: unknown, path: PathNode | null, holder?: object, mapLabel?: string, mapType: TypeRef = 'any'): Generator<Item> {
+  /**
+   * Lists → elements, maps → entries, else the value itself; null/missing and destroyed objects dropped. With `source`
+   * (a map read by `get` before a `set`), streamed entries remember their map and where it came from (spec §8).
+   */
+  private *expand(value: unknown, path: PathNode | null, source?: EntrySource): Generator<Item> {
     const x = this.x;
     if (value === null || value === undefined || value === MISSING || value === UNKNOWN || value instanceof ErrorValue || x.dead(value)) return;
     if (value instanceof RowValue && value.columns.length === 1) {
@@ -322,10 +327,11 @@ export class Pipeline {
       return;
     }
     if (info?.isMap) {
-      const origin = { map: value as object, holder, label: mapLabel, type: mapType };
+      const from = source ?? (this.tracksEntries ? { holder: undefined, label: undefined, type: 'any' as TypeRef } : undefined);
+      const origin = from !== undefined ? { map: value as object, ...from } : undefined;
       for (const e of mapEntries(value as MapLike)) {
         x.visit();
-        yield item(streamedEntry(e, origin), path !== null ? path.key(e.Key) : null);
+        yield item(origin !== undefined ? streamedEntry(e, origin) : e, path !== null ? path.key(e.Key) : null);
       }
       return;
     }
@@ -439,8 +445,24 @@ export class Pipeline {
     return type;
   }
 
+  /** Streamed map entries remember their map only when a `set` may write through them (spec §8). */
+  private get tracksEntries(): boolean {
+    const stages = this.x.plan.stages;
+    return stages.length > 0 && stages[stages.length - 1]!.kind === 'set';
+  }
+
+  /** Where the entries of map `v`, read from item `from` by member path `names`, come from (spec §8). */
+  private entrySource(from: unknown, v: unknown, names: readonly string[] | undefined, label: string | undefined): EntrySource {
+    if (from instanceof MapEntry) return { holder: entryOrigin(from)?.holder, label, type: 'any' };
+    const holder = typeof from === 'object' && from !== null && !(from instanceof RowValue) ? from : undefined;
+    const isMap = typeof v === 'object' && v !== null && this.x.types.infoOf(v).isMap;
+    return { holder, label, type: holder !== undefined && names !== undefined && isMap ? this.declaredType(holder, names) : 'any' };
+  }
+
   private *getIter(input: Iterable<Item>, ev: Eval, suffix: string | undefined, names?: readonly string[]): Generator<Item> {
     const x = this.x;
+    const tracks = this.tracksEntries;
+    const label = suffix?.replace(/^\./, '');
     let i = 0;
     for (const it of input) {
       this.enter(it, i++);
@@ -451,10 +473,7 @@ export class Pipeline {
         continue;
       }
       const p = x.trackPaths && it.path !== null && suffix !== undefined ? new PathNode(it.path, suffix) : null;
-      const from = it.value;
-      const holder = from instanceof MapEntry ? entryOrigin(from)?.holder : typeof from === 'object' && from !== null && !(from instanceof RowValue) ? from : undefined;
-      const mapType = names !== undefined && from === holder && holder !== undefined && typeof v === 'object' && v !== null && x.types.infoOf(v).isMap ? this.declaredType(holder, names) : 'any';
-      yield* this.expand(v, p, holder, suffix?.replace(/^\./, ''), mapType);
+      yield* this.expand(v, p, tracks ? this.entrySource(it.value, v, names, label) : undefined);
     }
   }
 
@@ -485,10 +504,7 @@ export class Pipeline {
     const groups = new Map<unknown, { tuple: unknown[]; count: number }>();
     let i = 0;
     for (const it of input) {
-      x.current = it.value;
-      x.currentPath = it.path;
-      x.currentDepth = it.depth;
-      x.index = i++;
+      this.enter(it, i++);
       const tuple = keys.map((k) => {
         const v = normalize(k(x));
         return v === MISSING || v === UNKNOWN ? null : v;

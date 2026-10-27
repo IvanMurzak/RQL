@@ -403,7 +403,7 @@ namespace Rql.Execution
                 {
                     if (countVisit) _x.Visit();
                     var me = (MapEntry)e!;
-                    yield return new Item(new MapEntry(me.Key, me.Value, value, holder, mapLabel), path?.Key(me.Key));
+                    yield return new Item(TracksEntries ? new MapEntry(me.Key, me.Value, value, holder, mapLabel) : me, path?.Key(me.Key));
                 }
                 yield break;
             }
@@ -528,21 +528,22 @@ namespace Rql.Execution
 
         private IEnumerable<Item> Get(IEnumerable<Item> input, Expr e) => GetIter(input, _c.Compile(e), PathSuffix(e));
 
+        /// <summary>Streamed map entries remember their map only when a `set` may write through them (spec §8).</summary>
+        private bool TracksEntries => _x.Plan.Stages.Count > 0 && _x.Plan.Stages[_x.Plan.Stages.Count - 1] is SetStage;
+
         private IEnumerable<Item> GetIter(IEnumerable<Item> input, Eval eval, string? suffix)
         {
             long i = 0;
+            var mapLabel = suffix?.TrimStart('.');
             foreach (var it in input)
             {
-                _x.Current = it.Value;
-                _x.CurrentPath = it.Path;
-                _x.CurrentDepth = it.Depth;
-                _x.Index = i++;
+                _x.Enter(it, i++);
                 var v = eval(_x);
                 if (v is RqlError err) { _x.GetterErrors++; _x.FirstGetterError ??= err.Detail ?? err.Code; continue; }
                 PathNode? p = null;
                 if (_x.TrackPaths && it.Path != null && suffix != null) p = new PathNode(it.Path, suffix);
                 var holder = it.Value is MapEntry me ? me.Holder : it.Value is RowValue ? null : it.Value;
-                foreach (var sub in Expand(v, p, true, holder, suffix?.TrimStart('.'))) yield return sub;
+                foreach (var sub in Expand(v, p, true, holder, mapLabel)) yield return sub;
             }
         }
 
@@ -733,15 +734,13 @@ namespace Rql.Execution
         /// </summary>
         private IEnumerable<Item> GroupBy(IEnumerable<Item> input, Eval[] keys, string[] keyColumns)
         {
-            var order = new List<RowValue>();
-            var counts = new Dictionary<object, long>(DistinctComparer.Instance);
+            // The key tuple is a row of the key columns: rows hash and compare by their values, like distinct.
+            var groups = new List<(object?[] tuple, long count)>();
+            var index = new Dictionary<object, int>(DistinctComparer.Instance);
             long i = 0;
             foreach (var it in input)
             {
-                _x.Current = it.Value;
-                _x.CurrentPath = it.Path;
-                _x.CurrentDepth = it.Depth;
-                _x.Index = i++;
+                _x.Enter(it, i++);
                 var tuple = new object?[keys.Length];
                 for (int k = 0; k < keys.Length; k++)
                 {
@@ -749,12 +748,12 @@ namespace Rql.Execution
                     tuple[k] = v is Missing || v is Unknown ? null : v;
                 }
                 var row = new RowValue(keyColumns, tuple);
-                if (counts.TryGetValue(row, out var c)) counts[row] = c + 1;
-                else { counts[row] = 1; order.Add(row); }
+                if (index.TryGetValue(row, out var g)) groups[g] = (groups[g].tuple, groups[g].count + 1);
+                else { index[row] = groups.Count; groups.Add((tuple, 1)); }
             }
             var cols = keyColumns.Append("count").ToArray();
-            foreach (var row in order)
-                yield return new Item(new RowValue(cols, row.Values.Append((object?)(double)counts[row]).ToArray()), null);
+            foreach (var (tuple, count) in groups)
+                yield return new Item(new RowValue(cols, tuple.Append((object?)(double)count).ToArray()), null);
         }
 
         private QueryResult Collect(IEnumerable<Item> stream, Encoder enc)

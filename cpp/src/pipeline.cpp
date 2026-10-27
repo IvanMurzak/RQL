@@ -83,14 +83,14 @@ void Exec::warn_once(const std::string& code, const std::string& message, const 
     if (warned_.insert(key.empty() ? code + "\n" + message : key).second) diagnostics.push_back(Diagnostic::warning(code, message));
 }
 
-namespace {
-
 void set_scope(Exec& x, const Item& it, int64_t index) {
     x.current = it.value;
     x.current_path = it.path;
     x.current_depth = it.depth;
     x.index = index;
 }
+
+namespace {
 
 // ------------------------------------------------------------------ plan scan
 
@@ -418,7 +418,8 @@ private:
 class GetStream final : public Stream {
 public:
     GetStream(Exec& x, StreamPtr in, Eval eval, std::optional<std::string> suffix)
-        : x_(x), in_(std::move(in)), eval_(std::move(eval)), suffix_(std::move(suffix)) {}
+        : x_(x), in_(std::move(in)), eval_(std::move(eval)), suffix_(std::move(suffix)),
+          label_(suffix_ ? (suffix_->rfind('.', 0) == 0 ? suffix_->substr(1) : *suffix_) : std::string()) {}
     bool next(Item& out) override {
         for (;;) {
             if (sub_ && sub_->next(out)) return true;
@@ -440,8 +441,7 @@ public:
             } else if (!it.value.is_row()) {
                 holder = it.value;
             }
-            std::string label = suffix_ ? (suffix_->rfind('.', 0) == 0 ? suffix_->substr(1) : *suffix_) : std::string();
-            sub_ = std::make_unique<ExpandStream>(x_, std::move(v), std::move(p), true, std::move(holder), std::move(label));
+            sub_ = std::make_unique<ExpandStream>(x_, std::move(v), std::move(p), true, std::move(holder), label_);
         }
     }
 
@@ -450,6 +450,7 @@ private:
     StreamPtr in_;
     Eval eval_;
     std::optional<std::string> suffix_;
+    std::string label_;  // the map label of streamed entries (spec §8)
     StreamPtr sub_;
     int64_t i_ = 0;
 };
@@ -502,7 +503,7 @@ public:
             // The key tuple is a row of the key columns: rows hash and compare by their values, like distinct.
             auto key_cols = std::make_shared<const std::vector<std::string>>(key_columns_);
             std::unordered_map<Value, size_t, ValueHash, ValueEq> index(16, ValueHash{&x_}, ValueEq{&x_});
-            std::vector<std::pair<std::vector<Value>, double>> groups;
+            std::vector<std::pair<Value, double>> groups;  // key row, count
             Item it;
             int64_t i = 0;
             while (in_->next(it)) {
@@ -513,20 +514,20 @@ public:
                     if (k.is_missing() || k.is_unknown()) k = Value::null();
                     tuple.push_back(std::move(k));
                 }
-                Value row = Value::row(key_cols, tuple);
+                Value row = Value::row(key_cols, std::move(tuple));
                 auto f = index.find(row);
                 if (f != index.end()) {
                     groups[f->second].second += 1;
                 } else {
                     index.emplace(row, groups.size());
-                    groups.emplace_back(std::move(tuple), 1.0);
+                    groups.emplace_back(std::move(row), 1.0);
                 }
             }
             std::vector<std::string> names = key_columns_;
             names.push_back("count");
             auto cols = std::make_shared<const std::vector<std::string>>(std::move(names));
             for (auto& g : groups) {
-                std::vector<Value> values = g.first;
+                std::vector<Value> values = g.first.row().values;
                 values.push_back(Value::number(g.second));
                 rows_.push_back(Value::row(cols, std::move(values)));
             }

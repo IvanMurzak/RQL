@@ -921,9 +921,22 @@ function integral(v: unknown): number | undefined {
 
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+const literalRegexes = new Map<string, RegExp>();
+const globalRegexes = new Map<string, RegExp>();
+
+/** A compiled regex from a bounded cache (like `getRegex`). Global regexes are safe to share: replace / split / matchAll reset or copy `lastIndex`. */
+function cachedRegex(cache: Map<string, RegExp>, key: string, make: () => RegExp): RegExp {
+  let re = cache.get(key);
+  if (re === undefined) {
+    re = make();
+    if (cache.size < 256) cache.set(key, re);
+  }
+  return re;
+}
+
 /** Every occurrence of `needle` (ordinal case-insensitive, like `contains`), left to right, non-overlapping. */
 function literalPattern(needle: string): RegExp {
-  return new RegExp(escapeRegex(needle), 'gi');
+  return cachedRegex(literalRegexes, needle, () => new RegExp(escapeRegex(needle), 'gi'));
 }
 
 function stringFunction(x: Exec, name: string, vals: unknown[]): unknown {
@@ -978,7 +991,7 @@ function stringFunction(x: Exec, name: string, vals: unknown[]): unknown {
         x.warnOnce('invalid-regex', detail, 'invalid-regex');
         return new ErrorValue('invalid-regex', detail);
       }
-      const global = new RegExp(re.source, re.flags + 'g');
+      const global = cachedRegex(globalRegexes, pattern, () => new RegExp(re.source, re.flags + 'g'));
       let out = '';
       let last = 0;
       for (const m of s.matchAll(global)) {

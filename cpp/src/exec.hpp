@@ -306,6 +306,8 @@ QueryResult run_pipeline(Exec& x);
 
 // ---------------------------------------------------------------- mutations (mutator.cpp)
 
+/// Evaluate against `it`: $, $path, $depth and $index (its position in the stage's input).
+void set_scope(Exec& x, const Item& it, int64_t index);
 QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s);
 QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s);
 /// Coerce a value to a member/parameter type (spec §8); nullopt + why on failure.

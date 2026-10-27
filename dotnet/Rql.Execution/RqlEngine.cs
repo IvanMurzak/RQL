@@ -657,6 +657,15 @@ namespace Rql.Execution
         public readonly Dictionary<string, object?> RefCache = new Dictionary<string, object?>(StringComparer.Ordinal);
         public long Index;
 
+        /// <summary>Evaluate against <paramref name="it"/>: `$`, `$path`, `$depth` and `$index` (its position in the stage's input).</summary>
+        public void Enter(Item it, long index)
+        {
+            Current = it.Value;
+            CurrentPath = it.Path;
+            CurrentDepth = it.Depth;
+            Index = index;
+        }
+
         public long Visited;
         public long MembersRead;
         public int GetterErrors;

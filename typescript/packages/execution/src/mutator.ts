@@ -374,8 +374,8 @@ export class Mutator {
 
     const toRecords = (): MutationRecord[] =>
       writes.map((w): MutationRecord => ({ item: w.target, owner: w.owner, member: w.label, old: w.old, new: w.new, args: [] }));
-    this.validateBatch('set', toRecords);
     let records = once(toRecords);
+    this.validateBatch('set', records);
     this.runHook('beforeWrite', records);
     if (!x.options.dryRun) {
       let applied = 0;
@@ -477,7 +477,7 @@ export class Mutator {
     return new MemberSlot(info, m);
   }
 
-  private resolve(root: object, segs: readonly Segment[], rootType: TypeRef = 'any'): { slot: Slot; container: object; owner: object } {
+  private resolve(root: object, segs: readonly Segment[], rootType: TypeRef): { slot: Slot; container: object; owner: object } {
     const lbl = segmentsLabel(segs);
     let cur: object = root;
     let declared: TypeRef = rootType;
@@ -510,7 +510,7 @@ export class Mutator {
   }
 
   /** Navigate fresh, write, then write back value-like (struct) containers up the chain. */
-  private assign(root: object, segs: readonly Segment[], value: unknown, rootType: TypeRef = 'any'): void {
+  private assign(root: object, segs: readonly Segment[], value: unknown, rootType: TypeRef): void {
     const lbl = segmentsLabel(segs);
     const containers: object[] = [root];
     const slots: Slot[] = [];
