@@ -1,0 +1,98 @@
+cpp/src/engine.cpp
+  s_7bc72ecaebd05d::t_d4f5739798b392 701
+typescript/packages/execution/src/compiler.ts
+  s_7bc72ecaebd05d::t_7b7ffab8d0fd83 692-693
+cpp/tests/conformance_graph.cpp
+  s_7bc72ecaebd05d::t_e5926a61ff0643 16-20,37,268-269
+cpp/include/rql/engine.hpp
+  s_7bc72ecaebd05d::t_d4f5739798b392 62-64,66,68-72,104-105
+dotnet/Rql.Conformance/Graph.cs
+  s_7bc72ecaebd05d::t_e5926a61ff0643 11-12,38,82
+docs/feature-matrix.md
+  s_7bc72ecaebd05d::t_d2c7668e9568c8 3-4
+  s_7bc72ecaebd05d::t_13c60a70b5bf95 35
+typescript/packages/execution/src/types.ts
+  s_7bc72ecaebd05d::t_7b7ffab8d0fd83 109-114,125-126,128-131,135,144-148,163,165-174,176-185,187-227
+cpp/src/compiler.cpp
+  s_7bc72ecaebd05d::t_f068161be51317 152-154
+dotnet/Rql.Tests/Tests.cs
+  s_7bc72ecaebd05d::t_95d851df74d074 434,494-499,503-526
+  s_7bc72ecaebd05d::t_8f847ec04633ee 527,813-897
+  s_7bc72ecaebd05d::t_6500ddae668433 528
+typescript/packages/execution/src/mutator.ts
+  s_7bc72ecaebd05d::t_7b7ffab8d0fd83 806,809-812
+  s_7bc72ecaebd05d::t_819cbd7535678f 178-180,182-190,234-236,251,265,270-274,276-298
+fixtures/cross-runtime/graph.json
+  s_7bc72ecaebd05d::t_e5926a61ff0643 6,15,31,43
+cpp/include/rql/reflection.hpp
+  s_7bc72ecaebd05d::t_f068161be51317 127-130,170-180,879-881
+  s_7bc72ecaebd05d::t_2332001e0f77a5 882-883
+typescript/tests/src/unit.test.ts
+  s_7bc72ecaebd05d::t_d90c8ac6c51c82 248
+  s_7bc72ecaebd05d::t_98a1d4972f6417 185,189-194,200-231,234-247,249-300
+  s_7bc72ecaebd05d::t_dd4ad8ec4d40e0 301
+dotnet/Rql.Execution/TypeModel.cs
+  s_7bc72ecaebd05d::t_a4f7dc7a16ebdc 219-235
+dotnet/Rql.Execution/Compiler.cs
+  s_7bc72ecaebd05d::t_11aba816ba2f59 314,345,358,532-533,584,586-587,617,625-626
+typescript/tests/src/graph.ts
+  s_7bc72ecaebd05d::t_e5926a61ff0643 13-19,44,57,79,113,126
+cpp/src/mutator.cpp
+  s_7bc72ecaebd05d::t_d4f5739798b392 29-45,65-68,71-87,89-95,115,129
+  s_7bc72ecaebd05d::t_f068161be51317 612-618
+spec/semantics.md
+  s_7bc72ecaebd05d::t_db241f04ebfa7a 30,117-118,318,320,352-371,383,385-395,427-446
+dotnet/Rql.Execution/EnumNames.cs
+  s_7bc72ecaebd05d::t_1905087c4f9f9f 1-116
+cpp/tests/unit_tests.cpp
+  s_7bc72ecaebd05d::t_975bc91d0c4034 1436-1457,1459-1460,1547-1600,1610
+  s_7bc72ecaebd05d::t_ddf6fd29e8f7bf 1458
+dotnet/Rql.Execution/Mutator.cs
+  s_7bc72ecaebd05d::t_ccf035c6b487ac 774,776-777
+  s_7bc72ecaebd05d::t_9cf3d192de4b45 43-44,46,64,69-73,75-95
+  s_7bc72ecaebd05d::t_11aba816ba2f59 382,638,773,779-780,788
+dotnet/Rql.Execution/RqlEngine.cs
+  s_7bc72ecaebd05d::t_a4f7dc7a16ebdc 231-245
+  s_7bc72ecaebd05d::t_9cf3d192de4b45 103-107,109,111-117,135-136,711-713,715-725
+cpp/tests/conformance_graph.hpp
+  s_7bc72ecaebd05d::t_e5926a61ff0643 16
+  s_7bc72ecaebd05d::t_f182895302a75a 45
+fixtures/execution/cases.json
+  s_7bc72ecaebd05d::t_d91eedf825b96d 16660-17381,17402,17460-17461,17484-17663
+  s_7bc72ecaebd05d::t_d8db33d0158f91 17382-17401,17403-17459,17462-17483
+cpp/src/reflection.cpp
+  s_7bc72ecaebd05d::t_5e7a851fd09d1e 262,264-265
+  s_7bc72ecaebd05d::t_f068161be51317 230-255,258-261,263,266-285,287-310
+typescript/packages/execution/src/collections.ts
+  s_7bc72ecaebd05d::t_7b7ffab8d0fd83 73
+cpp/README.md
+  s_7bc72ecaebd05d::t_50b45ff8ea3ae8 128-132
+docs/agent-tool-contract.md
+  s_7bc72ecaebd05d::t_f602c24c0f3a9d 27-28
+docs/security-and-permissions.md
+  s_7bc72ecaebd05d::t_fed7de9ac10714 18
+spec/capability-manifest.schema.json
+  s_7bc72ecaebd05d::t_ba9aa2144daaf9 16
+spec/versioning.md
+  s_7bc72ecaebd05d::t_5a70849669f516 56-65
+typescript/README.md
+  s_7bc72ecaebd05d::t_70530d462c2048 144-148
+typescript/packages/execution/src/engine.ts
+  s_7bc72ecaebd05d::t_8c15f2f65c7e4d 42-46,48,50-56,117-118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "61d126a17a08e58d65225410333c607cc571b539",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "unknown"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
