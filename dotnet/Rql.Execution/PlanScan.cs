@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -6,49 +7,46 @@ namespace Rql.Execution
     /// <summary>Static plan analysis used for execution-time optimizations.</summary>
     internal static class PlanScan
     {
-        public static bool UsesMeta(QueryPlan plan, string meta) => AllExprs(plan).Any(e => UsesMeta(e, meta));
+        public static bool UsesMeta(QueryPlan plan, string meta) =>
+            AllExprs(plan).Any(e => UsesSegment(e, s => s.Kind == SegmentKind.Meta && s.Name == meta));
 
-        /// <summary>Whether any path of the plan names a member <paramref name="name"/> (case-insensitive).</summary>
-        public static bool UsesMember(QueryPlan plan, string name) => AllExprs(plan).Any(e => UsesMember(e, name));
-
-        private static bool UsesMember(Expr e, string name) => e switch
+        /// <summary>
+        /// Whether a stage after <paramref name="stage"/> names a member <paramref name="name"/> (case-insensitive), e.g. the
+        /// <c>items</c> of group rows (spec §5).
+        /// </summary>
+        public static bool UsesMemberAfter(QueryPlan plan, Stage stage, string name)
         {
-            PathExpr p => p.Segments.Any(s => s.Kind == SegmentKind.Member && string.Equals(s.Name, name, System.StringComparison.OrdinalIgnoreCase))
-                          || (p.On != null && UsesMember(p.On, name)),
-            OpExpr o => o.Args.Any(a => UsesMember(a, name)),
-            CallExpr c => c.Args.Any(a => UsesMember(a, name)) || (c.On != null && UsesMember(c.On, name)),
-            ListExpr l => l.Items.Any(a => UsesMember(a, name)),
-            ObjectExpr o => o.Entries.Any(kv => UsesMember(kv.Value, name)),
+            int at = -1;
+            for (int i = 0; i < plan.Stages.Count; i++) if (ReferenceEquals(plan.Stages[i], stage)) { at = i; break; }
+            return plan.Stages.Skip(at + 1).SelectMany(StageExprs)
+                .Any(e => UsesSegment(e, s => s.Kind == SegmentKind.Member && string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        private static bool UsesSegment(Expr e, Func<Segment, bool> test) => e switch
+        {
+            PathExpr p => p.Segments.Any(test) || (p.On != null && UsesSegment(p.On, test)),
+            OpExpr o => o.Args.Any(a => UsesSegment(a, test)),
+            CallExpr c => c.Args.Any(a => UsesSegment(a, test)) || (c.On != null && UsesSegment(c.On, test)),
+            ListExpr l => l.Items.Any(a => UsesSegment(a, test)),
+            ObjectExpr o => o.Entries.Any(kv => UsesSegment(kv.Value, test)),
             _ => false,
         };
 
-        private static bool UsesMeta(Expr e, string meta) => e switch
-        {
-            PathExpr p => p.Segments.Any(s => s.Kind == SegmentKind.Meta && s.Name == meta) || (p.On != null && UsesMeta(p.On, meta)),
-            OpExpr o => o.Args.Any(a => UsesMeta(a, meta)),
-            CallExpr c => c.Args.Any(a => UsesMeta(a, meta)) || (c.On != null && UsesMeta(c.On, meta)),
-            ListExpr l => l.Items.Any(a => UsesMeta(a, meta)),
-            ObjectExpr o => o.Entries.Any(kv => UsesMeta(kv.Value, meta)),
-            _ => false,
-        };
+        public static IEnumerable<Expr> AllExprs(QueryPlan plan) => new[] { plan.Source }.Concat(plan.Stages.SelectMany(StageExprs));
 
-        public static IEnumerable<Expr> AllExprs(QueryPlan plan)
+        private static IEnumerable<Expr> StageExprs(Stage st)
         {
-            yield return plan.Source;
-            foreach (var st in plan.Stages)
+            switch (st)
             {
-                switch (st)
-                {
-                    case WhereStage w: yield return w.Pred; break;
-                    case SelectStage s: foreach (var f in s.Fields) yield return f.Expr; break;
-                    case GroupByStage g: foreach (var k in g.Keys) yield return k.Expr; break;
-                    case SortStage s: foreach (var k in s.Keys) yield return k.Expr; break;
-                    case ExprStage e when e.Expr != null: yield return e.Expr; break;
-                    case RecurseStage r when r.Via != null: foreach (var v in r.Via) yield return v; break;
-                    case SetStage s: foreach (var a in s.Assignments) { yield return a.Target; yield return a.Value; } break;
-                    case CallStage c: foreach (var a in c.Args) yield return a; break;
-                    case GenericStage g: foreach (var a in g.Args.Concat(g.Named.Values)) yield return a; break;
-                }
+                case WhereStage w: yield return w.Pred; break;
+                case SelectStage s: foreach (var f in s.Fields) yield return f.Expr; break;
+                case GroupByStage g: foreach (var k in g.Keys) yield return k.Expr; break;
+                case SortStage s: foreach (var k in s.Keys) yield return k.Expr; break;
+                case ExprStage e when e.Expr != null: yield return e.Expr; break;
+                case RecurseStage r when r.Via != null: foreach (var v in r.Via) yield return v; break;
+                case SetStage s: foreach (var a in s.Assignments) { yield return a.Target; yield return a.Value; } break;
+                case CallStage c: foreach (var a in c.Args) yield return a; break;
+                case GenericStage g: foreach (var a in g.Args.Concat(g.Named.Values)) yield return a; break;
             }
         }
     }

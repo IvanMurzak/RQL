@@ -177,7 +177,6 @@ export class Pipeline {
   /** Known member names (keyed upper-cased) plus the plan's select field names. */
   private knownNames(): ReadonlyMap<string, string> {
     const names = new Map(this.x.engine.knownMemberNames());
-    if (this.x.plan.stages.some((st) => st.kind === 'group-by' || (st.kind === 'expr' && st.op === 'group-by'))) names.set('ITEMS', 'items');
     for (const st of this.x.plan.stages) {
       if (st.kind !== 'select' && st.kind !== 'group-by') continue;
       for (const f of st.kind === 'select' ? st.fields : st.keys) {
@@ -385,7 +384,7 @@ export class Pipeline {
       case 'select':
         return this.select(input, st);
       case 'group-by':
-        return this.groupBy(input, st.keys.map((k) => this.c.compile(k.expr)), st.keys.map((k) => k.name));
+        return this.groupBy(input, st.keys.map((k) => this.c.compile(k.expr)), st.keys.map((k) => k.name), st);
       case 'sort':
         return this.sort(input, st);
       case 'limit':
@@ -393,7 +392,7 @@ export class Pipeline {
       case 'expr':
         if (st.op === 'get') return this.get(input, st.expr!);
         if (st.op === 'distinct') return this.distinct(input, st.expr !== undefined ? this.c.compile(st.expr) : undefined);
-        if (st.op === 'group-by') return this.groupBy(input, [this.c.compile(st.expr!)], ['key']);
+        if (st.op === 'group-by') return this.groupBy(input, [this.c.compile(st.expr!)], ['key'], st);
         break;
       case 'recurse':
         return this.recurse(input, st);
@@ -511,11 +510,11 @@ export class Pipeline {
    * group-by: one row per distinct key tuple, in order of first appearance: the key columns, then count
    * (null/missing key values group as null).
    */
-  private *groupBy(input: Iterable<Item>, keys: readonly Eval[], keyColumns: readonly string[]): Generator<Item> {
+  private *groupBy(input: Iterable<Item>, keys: readonly Eval[], keyColumns: readonly string[], stage: Stage): Generator<Item> {
     const x = this.x;
     const groups = new Map<unknown, { tuple: unknown[]; count: number; items: unknown[] | undefined }>();
     // Per-group aggregates read the group's items: items.avg(Weight) (spec §5).
-    const keepItems = usesSegment(x.plan, (s) => s.kind === 'member' && s.name.toUpperCase() === 'ITEMS');
+    const keepItems = usesSegment(x.plan, (s) => s.kind === 'member' && s.name.toUpperCase() === 'ITEMS', stage);
     let i = 0;
     for (const it of input) {
       this.enter(it, i++);
@@ -843,8 +842,8 @@ function groupRowHint(name: string): string {
   );
 }
 
-/** Whether any path segment of the plan passes `test`. */
-function usesSegment(plan: Exec['plan'], test: (s: Segment) => boolean): boolean {
+/** Whether any path segment of the plan (only of the stages after `after`, when given) passes `test`. */
+function usesSegment(plan: Exec['plan'], test: (s: Segment) => boolean, after?: Stage): boolean {
   const inExpr = (e: Expr): boolean => {
     switch (e.kind) {
       case 'path':
@@ -861,8 +860,9 @@ function usesSegment(plan: Exec['plan'], test: (s: Segment) => boolean): boolean
         return false;
     }
   };
-  if (inExpr(plan.source)) return true;
-  for (const st of plan.stages) {
+  const from = after !== undefined ? plan.stages.indexOf(after) + 1 : 0;
+  if (from === 0 && inExpr(plan.source)) return true;
+  for (const st of plan.stages.slice(from)) {
     switch (st.kind) {
       case 'where':
         if (inExpr(st.pred)) return true;

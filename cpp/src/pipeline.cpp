@@ -133,49 +133,39 @@ namespace {
 
 // ------------------------------------------------------------------ plan scan
 
-bool uses_meta(const Expr& e, const std::string& meta) {
-    switch (e.kind) {
-        case ExprKind::Path:
-            for (auto& s : e.segments)
-                if (s.kind == SegmentKind::Meta && s.name == meta) return true;
-            return e.on && uses_meta(*e.on, meta);
-        case ExprKind::Call:
-            if (e.on && uses_meta(*e.on, meta)) return true;
-            [[fallthrough]];
-        case ExprKind::Op:
-        case ExprKind::List:
-        case ExprKind::Object:
-            for (auto& a : e.args)
-                if (uses_meta(*a, meta)) return true;
-            return false;
-        default: return false;
-    }
-}
-
-bool uses_member(const Expr& e, const std::string& name) {
-    switch (e.kind) {
-        case ExprKind::Path:
-            for (auto& s : e.segments)
-                if (s.kind == SegmentKind::Member && iequals(s.name, name)) return true;
-            return e.on && uses_member(*e.on, name);
-        case ExprKind::Call:
-            if (e.on && uses_member(*e.on, name)) return true;
-            [[fallthrough]];
-        case ExprKind::Op:
-        case ExprKind::List:
-        case ExprKind::Object:
-            for (auto& a : e.args)
-                if (uses_member(*a, name)) return true;
-            return false;
-        default: return false;
-    }
-}
-
-/// Whether any expression of the plan passes `test`.
+/// Whether any path segment of the expression passes `test`.
 template <class F>
-bool plan_uses(const QueryPlan& p, F test) {
-    if (test(*p.source)) return true;
-    for (auto& st : p.stages) {
+bool uses_segment(const Expr& e, const F& test) {
+    switch (e.kind) {
+        case ExprKind::Path:
+            for (auto& s : e.segments)
+                if (test(s)) return true;
+            return e.on && uses_segment(*e.on, test);
+        case ExprKind::Call:
+            if (e.on && uses_segment(*e.on, test)) return true;
+            [[fallthrough]];
+        case ExprKind::Op:
+        case ExprKind::List:
+        case ExprKind::Object:
+            for (auto& a : e.args)
+                if (uses_segment(*a, test)) return true;
+            return false;
+        default: return false;
+    }
+}
+
+/// Whether any path segment of the plan (only of the stages after `after`, when given) passes `test`.
+template <class F>
+bool plan_uses_segment(const QueryPlan& p, const F& test, const Stage* after = nullptr) {
+    size_t from = 0;
+    if (after) {
+        while (from < p.stages.size() && &p.stages[from] != after) ++from;
+        ++from;
+    } else if (uses_segment(*p.source, test)) {
+        return true;
+    }
+    for (size_t i = from; i < p.stages.size(); ++i) {
+        const Stage& st = p.stages[i];
         std::vector<ExprPtr> all;
         if (st.expr) all.push_back(st.expr);
         for (auto& f : st.fields) all.push_back(f.expr);
@@ -185,26 +175,13 @@ bool plan_uses(const QueryPlan& p, F test) {
         for (auto& a : st.args) all.push_back(a);
         for (auto& n : st.named) all.push_back(n.second);
         for (auto& e : all)
-            if (test(*e)) return true;
+            if (uses_segment(*e, test)) return true;
     }
     return false;
 }
 
 bool plan_uses_meta(const QueryPlan& p, const std::string& meta) {
-    if (uses_meta(*p.source, meta)) return true;
-    for (auto& st : p.stages) {
-        std::vector<ExprPtr> all;
-        if (st.expr) all.push_back(st.expr);
-        for (auto& f : st.fields) all.push_back(f.expr);
-        for (auto& k : st.keys) all.push_back(k.expr);
-        for (auto& v : st.via) all.push_back(v);
-        for (auto& a : st.assign) { all.push_back(a.target); all.push_back(a.value); }
-        for (auto& a : st.args) all.push_back(a);
-        for (auto& n : st.named) all.push_back(n.second);
-        for (auto& e : all)
-            if (uses_meta(*e, meta)) return true;
-    }
-    return false;
+    return plan_uses_segment(p, [&](const Segment& s) { return s.kind == SegmentKind::Meta && s.name == meta; });
 }
 
 /// Path text appended by get/recurse-via when the expression is a plain member/index path.
@@ -583,8 +560,9 @@ private:
 class GroupByStream final : public Stream {
 public:
     /// One row per distinct key tuple (first appearance order): the key columns, then count (spec §5).
-    GroupByStream(Exec& x, StreamPtr in, std::vector<Eval> keys, std::vector<std::string> key_columns)
-        : x_(x), in_(std::move(in)), keys_(std::move(keys)), key_columns_(std::move(key_columns)) {}
+    /// keep_items: a later stage reads the rows' `items` (per-group aggregates, spec §5).
+    GroupByStream(Exec& x, StreamPtr in, std::vector<Eval> keys, std::vector<std::string> key_columns, bool keep_items)
+        : x_(x), in_(std::move(in)), keys_(std::move(keys)), key_columns_(std::move(key_columns)), keep_items_(keep_items) {}
     bool next(Item& out) override {
         if (!done_) {
             done_ = true;
@@ -592,8 +570,7 @@ public:
             auto key_cols = std::make_shared<const std::vector<std::string>>(key_columns_);
             std::unordered_map<Value, size_t, ValueHash, ValueEq> index(16, ValueHash{&x_}, ValueEq{&x_});
             std::vector<std::pair<Value, double>> groups;  // key row, count
-            // Per-group aggregates read the group's items: items.avg(Weight) (spec §5).
-            const bool keep_items = plan_uses(x_.plan, [](const Expr& e) { return uses_member(e, "items"); });
+            const bool keep_items = keep_items_;
             std::vector<std::vector<Value>> items;
             Item it;
             int64_t i = 0;
@@ -638,6 +615,7 @@ private:
     StreamPtr in_;
     std::vector<Eval> keys_;
     std::vector<std::string> key_columns_;
+    bool keep_items_;
     bool done_ = false;
     std::vector<Value> rows_;
     size_t pos_ = 0;
@@ -897,7 +875,9 @@ StreamPtr apply_stage(Exec& x, Compiler& c, StreamPtr in, const Stage& st) {
                 keys.push_back(c.compile(*f.expr));
                 names.push_back(f.name);
             }
-            return std::make_unique<GroupByStream>(x, std::move(in), std::move(keys), std::move(names));
+            const bool keep_items = plan_uses_segment(
+                x.plan, [](const Segment& s) { return s.kind == SegmentKind::Member && iequals(s.name, "items"); }, &st);
+            return std::make_unique<GroupByStream>(x, std::move(in), std::move(keys), std::move(names), keep_items);
         }
         case StageKind::Recurse: {
             std::vector<RecurseStream::Via> via;
@@ -1115,14 +1095,12 @@ std::vector<Diagnostic> add_warnings(Exec& x, QueryResult& r, bool only_general)
     auto ensure_known = [&]() {
         if (!known_ready) {
             known_ready = true;
-            known = {"key", "value", "count", "Count", "Length"};
+            known = {"key", "value", "count", "Count", "Length", "items"};
             for (auto* t : known_types(x))
             {
                 const TypeView view = x.view(t);
                 for (auto& m : view.members()) known.push_back(m.name);
             }
-            for (auto& st : x.plan.stages)
-                if (st.kind == StageKind::GroupBy) known.push_back("items");  // group rows have their items (spec §5)
             for (auto& st : x.plan.stages)
                 if (st.kind == StageKind::Select || st.kind == StageKind::GroupBy)
                     for (auto& f : st.fields) {

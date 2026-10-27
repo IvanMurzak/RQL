@@ -175,7 +175,6 @@ namespace Rql.Execution
         private HashSet<string> KnownNames()
         {
             var names = new HashSet<string>(_x.Engine.KnownMemberNames(), StringComparer.OrdinalIgnoreCase);
-            if (_x.Plan.Stages.Any(st => st is GroupByStage || (st is ExprStage e && e.Op == "group-by"))) names.Add(GroupItems);
             foreach (var st in _x.Plan.Stages)
                 if (st is SelectStage || st is GroupByStage)
                     foreach (var f in st is SelectStage sel ? sel.Fields : ((GroupByStage)st).Keys)
@@ -479,8 +478,8 @@ namespace Rql.Execution
                 case LimitStage l: return input.Skip(l.N);
                 case ExprStage e when e.Op == "get": return Get(input, e.Expr!);
                 case ExprStage e when e.Op == "distinct": return Distinct(input, e.Expr == null ? null : _c.Compile(e.Expr));
-                case ExprStage e when e.Op == "group-by": return GroupBy(input, new[] { _c.Compile(e.Expr!) }, KeyColumns);
-                case GroupByStage g: return GroupBy(input, g.Keys.Select(k => _c.Compile(k.Expr)).ToArray(), g.Keys.Select(k => k.Name).ToArray());
+                case ExprStage e when e.Op == "group-by": return GroupBy(input, new[] { _c.Compile(e.Expr!) }, KeyColumns, e);
+                case GroupByStage g: return GroupBy(input, g.Keys.Select(k => _c.Compile(k.Expr)).ToArray(), g.Keys.Select(k => k.Name).ToArray(), g);
                 case RecurseStage r: return Recurse(input, r);
                 case GenericStage g: return Generic(input, g);
                 default: throw new RqlException("unsupported", $"stage '{st.Op}' is not supported here", st.Span);
@@ -807,12 +806,12 @@ namespace Rql.Execution
         /// group-by: one row per distinct key tuple, in order of first appearance: the key columns, then count
         /// (null/missing key values group as null).
         /// </summary>
-        private IEnumerable<Item> GroupBy(IEnumerable<Item> input, Eval[] keys, string[] keyColumns)
+        private IEnumerable<Item> GroupBy(IEnumerable<Item> input, Eval[] keys, string[] keyColumns, Stage stage)
         {
             // The key tuple is a row of the key columns: rows hash and compare by their values, like distinct.
             var groups = new List<(object?[] tuple, long count, List<object?>? items)>();
             var index = new Dictionary<object, int>(new DistinctComparer(_x.Types));
-            bool keepItems = PlanScan.UsesMember(_x.Plan, GroupItems); // per-group aggregates: items.avg(Weight) (spec §5)
+            bool keepItems = PlanScan.UsesMemberAfter(_x.Plan, stage, GroupItems); // per-group aggregates: items.avg(Weight) (spec §5)
             long i = 0;
             foreach (var it in input)
             {

@@ -827,15 +827,15 @@ export class TypeModel {
     return this.adapterRegistry.explain(ctor);
   }
 
-  /**
-   * A child model for adapters: it reads this model's descriptors and tags live (later registrations
-   * are visible), copies its current adapters, and keeps adapters added to it local.
-   */
   /** Every registered type adapter in registration order (spec §13). */
   get adapters(): readonly TypeAdapter[] {
     return this.adapterRegistry.all;
   }
 
+  /**
+   * A child model for adapters: it reads this model's descriptors and tags live (later registrations
+   * are visible), copies its current adapters, and keeps adapters added to it local.
+   */
   fork(): TypeModel {
     const m = new TypeModel();
     m.parent = this;

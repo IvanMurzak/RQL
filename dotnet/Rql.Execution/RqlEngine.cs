@@ -339,7 +339,7 @@ namespace Rql.Execution
                 version = _knownVersion;
                 roots = _sourceTypes.Where(kv => _sources.ContainsKey(kv.Key)).SelectMany(kv => kv.Value).Distinct().ToList();
             }
-            var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "key", "value", "count", "Count", "Length" };
+            var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "key", "value", "count", "Count", "Length", Pipeline.GroupItems };
             var reachable = Describe.Reachable(Types, roots, 1000);
             foreach (var t in reachable)
                 foreach (var m in Types.Info(t).Members) known.Add(m.Name);
