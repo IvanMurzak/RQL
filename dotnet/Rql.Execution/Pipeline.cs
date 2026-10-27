@@ -175,6 +175,8 @@ namespace Rql.Execution
         private HashSet<string> KnownNames()
         {
             var names = new HashSet<string>(_x.Engine.KnownMemberNames(), StringComparer.OrdinalIgnoreCase);
+            // Group rows have their items (spec §5); elsewhere `items` is an ordinary member name.
+            if (_x.Plan.Stages.Any(st => st is GroupByStage || (st is ExprStage e && e.Op == "group-by"))) names.Add(GroupItems);
             foreach (var st in _x.Plan.Stages)
                 if (st is SelectStage || st is GroupByStage)
                     foreach (var f in st is SelectStage sel ? sel.Fields : ((GroupByStage)st).Keys)

@@ -429,9 +429,10 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   hint override the host sets to an empty text counts as unset.
 * **Dry-run** (`options.dryRun`) computes and returns the receipt without writing.
 * Receipt: `kind: "rows"`, columns `["$ref", "member", "old", "new"]` (`call`: `["$ref", "method", "result"]`). A `set`
-  receipt lists only the assignments that changed the value: one whose `new` equals its `old` by `==` (§4.1; after the
-  read-back below, or the planned value on a dry run) is a **no-op** — it is still written (setters and host hooks see
-  it) but omitted from `rows`, and the result's `unchanged` field counts the omitted assignments (absent when none), so
+  receipt lists only the assignments that changed the value: one whose planned (coerced) value **and** read-back `new`
+  (below; the planned value on a dry run) both equal its `old` by `==` (§4.1) is a **no-op** — a write the host refused or
+  clamped back to the old value is not, it stays listed so the caller sees that it did not take; a no-op is still
+  written (setters and host hooks see it) and omitted from `rows`, and the result's `unchanged` field counts the omitted assignments (absent when none), so
   `set y = (y < 0 ? 0.5 : y)` over 40 items reports the 4 that changed plus `unchanged: 36`. A receipt with no rows but
   `unchanged > 0` is not an empty mutation (the typo rule above does not apply).
   After the writes, `new` is the value **read back** from each written member, i.e. what the host actually stored (a

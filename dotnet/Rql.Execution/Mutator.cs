@@ -124,6 +124,8 @@ namespace Rql.Execution
             public string Label = "";
             public object? Old;
             public object? New;
+            /// <summary>The coerced value the query asked for (New becomes the read-back after the write).</summary>
+            public object? Planned;
             public object Owner = null!;
             public IReadOnlyList<object> Owners = null!;
         }
@@ -228,7 +230,7 @@ namespace Rql.Execution
                         throw new RqlException("invalid-value", $"invalid value {ValueText(nv)} for '{label}' on {itemRef}: {rejected}");
                     writes.Add(new PlannedWrite
                     {
-                        Item = root, Target = item, Ref = entry != null ? _x.Engine.RefOf(owner) : itemRef, Segments = segments, Label = label, Old = SafeGet(slot, container, label), New = coerced,
+                        Item = root, Target = item, Ref = entry != null ? _x.Engine.RefOf(owner) : itemRef, Segments = segments, Label = label, Old = SafeGet(slot, container, label), New = coerced, Planned = coerced,
                         Owner = owner, Owners = owners,
                     });
                 }
@@ -268,8 +270,9 @@ namespace Rql.Execution
             }
 
             RunHook(_x.Engine.Mutations.Committed, records, veto: false);
-            // No-op assignments (the value read back equals the old one) are counted, not listed (spec §8 receipt).
-            var changed = writes.Where(w => Compiler.Equal(_x.Types, w.Old, w.New) != true).ToList();
+            // No-op assignments (the asked-for value and the stored one both equal the old one) are counted, not listed
+            // (spec §8 receipt); a write the host refused or clamped back to the old value stays listed.
+            var changed = writes.Where(w => !(Compiler.Equal(_x.Types, w.Old, w.Planned) == true && Compiler.Equal(_x.Types, w.Old, w.New) == true)).ToList();
             var rows = changed.Select(w => new object?[] { w.Ref, w.Label, w.Old, w.New }).ToList();
             var r = _enc.Rows(new[] { "$ref", "member", "old", "new" }, rows);
             r.DryRun = _x.Options.DryRun;

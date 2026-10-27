@@ -1095,7 +1095,12 @@ std::vector<Diagnostic> add_warnings(Exec& x, QueryResult& r, bool only_general)
     auto ensure_known = [&]() {
         if (!known_ready) {
             known_ready = true;
-            known = {"key", "value", "count", "Count", "Length", "items"};
+            known = {"key", "value", "count", "Count", "Length"};
+            for (auto& st : x.plan.stages)
+                if (st.kind == StageKind::GroupBy) {
+                    known.push_back("items");  // group rows have their items (spec §5)
+                    break;
+                }
             for (auto* t : known_types(x))
             {
                 const TypeView view = x.view(t);

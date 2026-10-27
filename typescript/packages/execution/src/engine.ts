@@ -421,7 +421,7 @@ export class RqlEngine {
     }
     const cached = this.knownMembers;
     if (cached !== undefined && cached.version === this.types.version) return cached.names;
-    const names = new Map<string, string>(['key', 'value', 'count', 'Count', 'Length', 'items'].map((n) => [n.toUpperCase(), n]));
+    const names = new Map<string, string>(['key', 'value', 'count', 'Count', 'Length'].map((n) => [n.toUpperCase(), n]));
     const add = (n: string): void => {
       if (!names.has(n.toUpperCase())) names.set(n.toUpperCase(), n);
     };

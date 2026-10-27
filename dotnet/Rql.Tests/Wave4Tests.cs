@@ -261,6 +261,28 @@ namespace Rql.Tests
             Assert.Contains("(1 unchanged assignment(s) not listed)", AgentFormat.Render(r, OutputFormat.Table));
         }
 
+        public sealed class Stubborn
+        {
+            private string _tag = "Untagged";
+            public string Name { get; set; } = "s";
+            public string Tag { get => _tag; set { if (value == "Untagged" || value == "Hero") _tag = value; } }
+        }
+
+        [Fact]
+        public void AWriteTheHostRefusedStaysInTheReceipt()
+        {
+            var s = new Stubborn();
+            var e = new RqlEngine().AddSource("s", () => s);
+            e.Mutations.Enabled = true;
+            var r = e.Execute("s | set Tag = \"Typo\"", options: Mutate);
+            Assert.Single(r.Rows!);
+            Assert.Null(r.Unchanged);
+            Assert.Equal("Untagged", r.Rows![0][3]!.GetValue<string>());
+            Assert.Equal(1, e.Execute("s | set Tag = \"Untagged\"", options: Mutate).Unchanged);
+            Assert.False(e.Execute("s | where itmes.count() > 0 | set Name = \"x\"", options: Mutate).Ok);
+            Assert.False(e.Execute("s | where items.count() > 0 | set Name = \"x\"", options: Mutate).Ok); // items is a member name only on group rows
+        }
+
         [Fact]
         public void EngineListsItsAdapters()
         {

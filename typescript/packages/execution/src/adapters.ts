@@ -180,7 +180,7 @@ export class AdapterRegistry {
 
   /** The registered adapters in registration order. */
   get all(): readonly TypeAdapter[] {
-    return this.list as unknown as readonly TypeAdapter[];
+    return [...this.list] as unknown as readonly TypeAdapter[]; // a snapshot, like C++
   }
 
   /** Whether any registered adapter implements the capability (gates the hot paths). */

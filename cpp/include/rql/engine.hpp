@@ -164,7 +164,7 @@ public:
     bool has_adapters() const noexcept { return !adapters_.empty(); }
     /// Every registered type adapter in registration order, e.g. for a host known-member hook that also accepts
     /// adapter-defined members (spec §13).
-    std::vector<const TypeAdapter*> adapters() const noexcept {
+    std::vector<const TypeAdapter*> adapters() const {
         std::vector<const TypeAdapter*> out;
         for (auto& a : adapters_) out.push_back(a.get());
         return out;

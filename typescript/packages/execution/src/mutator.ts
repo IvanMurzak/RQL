@@ -38,6 +38,8 @@ interface PlannedWrite {
   label: string;
   old: unknown;
   new: unknown;
+  /** The coerced value the query asked for (`new` becomes the read-back after the write). */
+  planned: unknown;
 }
 
 abstract class Slot {
@@ -419,7 +421,7 @@ export class Mutator {
         // Validation runs while the mutation is planned, before any write (spec §13).
         const rejected = slot.validate(container, co.value);
         if (rejected !== undefined) throw new RqlError('invalid-value', `invalid value ${valueText(nv)} for '${lbl}' on ${itemRef}: ${rejected}`);
-        writes.push({ item: root, target: item, ref: origin !== undefined ? this.refOf(owner) : itemRef, owner, segments, label: lbl, old: safeGet(slot, container, lbl), new: co.value });
+        writes.push({ item: root, target: item, ref: origin !== undefined ? this.refOf(owner) : itemRef, owner, segments, label: lbl, old: safeGet(slot, container, lbl), new: co.value, planned: co.value });
       }
     }
 
@@ -462,8 +464,9 @@ export class Mutator {
     }
 
     this.runHook('committed', records);
-    // No-op assignments (the value read back equals the old one) are counted, not listed (spec §8 receipt).
-    const changed = writes.filter((w) => equal(x, w.old, w.new) !== true);
+    // No-op assignments (the asked-for value and the stored one both equal the old one) are counted, not listed
+    // (spec §8 receipt); a write the host refused or clamped back to the old value stays listed.
+    const changed = writes.filter((w) => !(equal(x, w.old, w.planned) === true && equal(x, w.old, w.new) === true));
     const rows = changed.map((w) => [w.ref, w.label, w.old, w.new]);
     const r = this.enc.rows(['$ref', 'member', 'old', 'new'], rows);
     if (x.options.dryRun) r.dryRun = true;

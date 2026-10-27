@@ -177,6 +177,8 @@ export class Pipeline {
   /** Known member names (keyed upper-cased) plus the plan's select field names. */
   private knownNames(): ReadonlyMap<string, string> {
     const names = new Map(this.x.engine.knownMemberNames());
+    // Group rows have their items (spec §5); elsewhere `items` is an ordinary member name.
+    if (this.x.plan.stages.some((st) => st.kind === 'group-by' || (st.kind === 'expr' && st.op === 'group-by'))) names.set('ITEMS', 'items');
     for (const st of this.x.plan.stages) {
       if (st.kind !== 'select' && st.kind !== 'group-by') continue;
       for (const f of st.kind === 'select' ? st.fields : st.keys) {
