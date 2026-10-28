@@ -58,6 +58,29 @@ namespace Rql.Execution
         /// <summary>Components smaller than this print as 0 (float noise such as cos(90°) = -4.371139E-08).</summary>
         protected const double DisplayZero = 1e-6;
 
+        /// <summary>
+        /// Opt in to component-wise arithmetic (spec §4.2): <c>Scale * 1.5</c>, <c>Position + [0, 1, 0]</c>, <c>-Velocity</c> with the
+        /// components of <see cref="Part"/> / <see cref="Make"/>. True for vectors and colors; leave false for quaternions, whose
+        /// product is not component-wise.
+        /// </summary>
+        protected virtual bool Arithmetic => false;
+
+        protected override double[]? Components(T value)
+        {
+            if (!Arithmetic) return null;
+            var parts = new double[Width];
+            for (int i = 0; i < parts.Length; i++) parts[i] = V.Widen(Part(value, i));
+            return parts;
+        }
+
+        protected override object? FromComponents(double[] components)
+        {
+            if (!Arithmetic) return null;
+            var parts = new float[components.Length];
+            for (int i = 0; i < parts.Length; i++) parts[i] = (float)components[i];
+            return Make(parts);
+        }
+
         /// <summary>Extra textual forms (e.g. "#rrggbb" for colors); null = not this form.</summary>
         protected virtual T? ParseExtra(string text) => null;
 

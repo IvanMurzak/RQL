@@ -115,6 +115,14 @@ interface AdapterCapabilities<T extends object> {
   stableId?(value: T): string | undefined;
   /** Liveness verdict (destroyed objects → stale-ref); `undefined` defers. */
   isAlive?(value: T): boolean | undefined;
+  /**
+   * Component-wise arithmetic (spec §4.2, §13 "Arithmetic"): the numeric components of a value (always the same count for
+   * the type, in a fixed order), or `undefined` when the type does not take part. Opt in only for types whose arithmetic is
+   * component-wise (vectors, colors), never quaternions or matrices. Requires `fromComponents`.
+   */
+  components?(value: T): readonly number[] | undefined;
+  /** A value of `target` built from components in the order `components` returns them; `undefined` when it cannot be built. */
+  fromComponents?(components: readonly number[], target: Ctor): T | undefined;
 }
 
 /** Adapter for a class and its subclasses. */
@@ -138,14 +146,14 @@ export type AnyAdapter = AdapterCapabilities<object> & { target?: Ctor; interfac
 const INTERFACE_RANK = 10000;
 
 /** Value capabilities an adapter may implement (member shaping is applied at type build time). */
-export const CAPABILITIES = ['equals', 'compare', 'encode', 'coerce', 'stableId', 'isAlive'] as const;
+export const CAPABILITIES = ['equals', 'compare', 'encode', 'coerce', 'stableId', 'isAlive', 'components'] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
 /** Applicable adapters of one type split per capability, most specific first. */
 export type AdapterSet = { readonly [C in Capability]: readonly AnyAdapter[] };
 
 const EMPTY: readonly AnyAdapter[] = [];
-export const NO_ADAPTERS: AdapterSet = { equals: EMPTY, compare: EMPTY, encode: EMPTY, coerce: EMPTY, stableId: EMPTY, isAlive: EMPTY };
+export const NO_ADAPTERS: AdapterSet = { equals: EMPTY, compare: EMPTY, encode: EMPTY, coerce: EMPTY, stableId: EMPTY, isAlive: EMPTY, components: EMPTY };
 
 export function adapterSet(adapters: readonly AnyAdapter[]): AdapterSet {
   if (adapters.length === 0) return NO_ADAPTERS;
@@ -153,7 +161,15 @@ export function adapterSet(adapters: readonly AnyAdapter[]): AdapterSet {
     const l = adapters.filter((a) => typeof a[c] === 'function');
     return l.length > 0 ? l : EMPTY;
   };
-  return { equals: pick('equals'), compare: pick('compare'), encode: pick('encode'), coerce: pick('coerce'), stableId: pick('stableId'), isAlive: pick('isAlive') };
+  return {
+    equals: pick('equals'),
+    compare: pick('compare'),
+    encode: pick('encode'),
+    coerce: pick('coerce'),
+    stableId: pick('stableId'),
+    isAlive: pick('isAlive'),
+    components: pick('components'),
+  };
 }
 
 /** First defined answer of `ask` over `adapters` (most specific first); undefined when all defer. */
@@ -169,7 +185,7 @@ export function firstAnswer<R>(adapters: readonly AnyAdapter[], ask: (a: AnyAdap
 export class AdapterRegistry {
   private readonly list: AnyAdapter[] = [];
   private readonly byCtor = new Map<Ctor, readonly AnyAdapter[]>();
-  private readonly any: Record<Capability, boolean> = { equals: false, compare: false, encode: false, coerce: false, stableId: false, isAlive: false };
+  private readonly any: Record<Capability, boolean> = { equals: false, compare: false, encode: false, coerce: false, stableId: false, isAlive: false, components: false };
 
   /** @param internal engine-internal classes (rows, map entries, absent markers, errors): never adapted. */
   constructor(private readonly internal: ReadonlySet<object>) {}

@@ -30,6 +30,7 @@ namespace Rql.Sample
             Engine.IsAlive = IsAlive;
             Engine.ResolveStableRef = Resolve;
             Engine.SchemaHint = "rql_schema"; // the evaluation agent's schema tool (docs/agent-tool-contract.md)
+            Engine.AddAdapter(new Vector3Arithmetic());
             BuildIndex();
         }
 
@@ -83,5 +84,20 @@ namespace Rql.Sample
             Engine.Execute(text, budgets, new QueryOptions { AllowMutation = true, DryRun = dryRun });
 
         public string Schema(string? type = null) => AgentFormat.Schema(Engine, type);
+
+        /// <summary>
+        /// Component-wise arithmetic for Vector3 (spec 4.2): Scale * 1.5, Position + [0, 2, 0]. Arithmetic only: encoding,
+        /// coercion and comparison stay the built-in ones.
+        /// </summary>
+        private sealed class Vector3Arithmetic : RqlTypeAdapter<Vector3>
+        {
+            protected override double[]? Components(Vector3 v) => new[] { Widen(v.x), Widen(v.y), Widen(v.z) };
+
+            protected override object? FromComponents(double[] c) =>
+                c.Length == 3 ? new Vector3((float)c[0], (float)c[1], (float)c[2]) : (object?)null;
+
+            /// <summary>A float as the double of its shortest decimal, as RQL reads float members (spec 1.1).</summary>
+            internal static double Widen(float f) => double.Parse(f.ToString("R", CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
+        }
     }
 }

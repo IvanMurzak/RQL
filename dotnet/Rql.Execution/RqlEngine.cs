@@ -866,6 +866,8 @@ namespace Rql.Execution
         public readonly List<IsSite> IsSites = new List<IsSite>();
         public readonly Dictionary<string, object?> RefCache = new Dictionary<string, object?>(StringComparer.Ordinal);
         public long Index;
+        /// <summary>Inside has(): an absent map key reads as missing instead of null (spec §3, §4.3).</summary>
+        public int KeyProbe;
 
         /// <summary>Evaluate against <paramref name="it"/>: `$`, `$path`, `$depth` and `$index` (its position in the stage's input).</summary>
         public void Enter(Item it, long index)

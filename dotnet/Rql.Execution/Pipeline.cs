@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Globalization;
 using System.Text.Json.Nodes;
 
 namespace Rql.Execution
@@ -121,9 +122,10 @@ namespace Rql.Execution
                 var types = site.MissTypes.ToList();
                 var typeNames = string.Join(", ", types.Select(t => t.ShortName).Distinct().Take(4));
                 var candidates = types.SelectMany(t => t.Members.Select(m => m.Name)).Distinct().ToList();
-                var close = Suggest.Closest(site.Name, candidates, 3);
+                var nested = Suggest.NestedMembers(_x.Types, types);
+                var close = Suggest.ClosestMembers(site.Name, candidates, nested, 3);
                 var declaring = _x.Engine.TypesDeclaring(site.Name, types);
-                string hint = Suggest.MemberHint(site.Name, candidates, declaring);
+                string hint = Suggest.MemberHint(site.Name, candidates, declaring, nested);
                 if (close.Count == 0 && declaring.Count == 0 && char.IsUpper(site.Name[0]))
                     hint += (hint.Length > 0 ? "; " : "") + $"if '{site.Name}' is a value, quote it: \"{site.Name}\"";
                 var diag = new Diagnostic(DiagnosticSeverity.Warning, "unknown-member", $"no member '{site.Name}' on {typeNames}", site.Span, hint);
@@ -1049,8 +1051,45 @@ namespace Rql.Execution
                     if (!Equals(_model.Live(ea[i]), _model.Live(eb[i]), depth + 1)) return false;
                 return true;
             }
-            if (a.GetType().IsValueType && a.GetType() == b.GetType()) return a.Equals(b);
+            if (a.GetType().IsValueType && a.GetType() == b.GetType())
+                return _model.Info(a.GetType()).IsStruct ? StructEquals(a, b, depth) : a.Equals(b);
             return ReferenceEquals(a, b);
+        }
+
+        /// <summary>Structs by their members, numbers rounded for display (spec §5 "Struct keys").</summary>
+        private bool StructEquals(object a, object b, int depth)
+        {
+            if (depth >= Compiler.MaxCompareDepth) return a.Equals(b);
+            foreach (var m in _model.Info(a.GetType()).ImplicitMembers)
+            {
+                object? va = Read(m, a), vb = Read(m, b);
+                if (V.TryNumber(va, out var da, out var sa) && V.TryNumber(vb, out var db, out var sb))
+                {
+                    if (!Rounded(da, sa).Equals(Rounded(db, sb))) return false;
+                }
+                else if (!Equals(va, vb, depth + 1)) return false;
+            }
+            return true;
+        }
+
+        private static readonly object Threw = new object();
+
+        private object? Read(MemberAccessor m, object owner)
+        {
+            try { return _model.Live(m.Getter(owner)); }
+            catch (Exception ex) when (!(ex is OutOfMemoryException)) { return Threw; }
+        }
+
+        /// <summary>
+        /// A number as numeric tuples display it (spec §5, §13): single precision to 6 significant digits, others to 12, tiny
+        /// magnitudes (below 1e-6 / 1e-9) and -0 as 0. NaN stays NaN (double.Equals groups NaN with NaN).
+        /// </summary>
+        internal static double Rounded(double d, bool single)
+        {
+            if (double.IsNaN(d) || double.IsInfinity(d)) return d;
+            if (Math.Abs(d) < (single ? 1e-6 : 1e-9)) return 0d;
+            var text = single ? ((double)(float)d).ToString("G6", CultureInfo.InvariantCulture) : d.ToString("G12", CultureInfo.InvariantCulture);
+            return double.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture);
         }
 
         public int GetHashCode(object? o) => Hash(o, 0);
@@ -1073,7 +1112,17 @@ namespace Rql.Execution
                 foreach (var e in V.Iterate(o)) h = unchecked(h * 31 + Hash(_model.Live(e), depth + 1));
                 return h;
             }
-            if (o.GetType().IsValueType) return o.GetHashCode();
+            if (o.GetType().IsValueType)
+            {
+                if (!_model.Info(o.GetType()).IsStruct || depth >= Compiler.MaxCompareDepth) return o.GetHashCode();
+                int h = o.GetType().GetHashCode();
+                foreach (var m in _model.Info(o.GetType()).ImplicitMembers)
+                {
+                    var v = Read(m, o);
+                    h = unchecked(h * 31 + (V.TryNumber(v, out var n, out var single) ? Rounded(n, single).GetHashCode() : ReferenceEquals(v, Threw) ? 1 : Hash(v, depth + 1)));
+                }
+                return h;
+            }
             return System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o);
         }
     }
@@ -1114,16 +1163,69 @@ namespace Rql.Execution
             return names.Distinct().Select(c => (c, d: Distance(lower, c.ToLowerInvariant()))).OrderBy(t => t.d).ThenBy(t => t.c, StringComparer.Ordinal).Select(t => t.c).ToList();
         }
 
+        /// <summary>Nested paths offered per type (spec §10): bounds the static walk over struct-typed members.</summary>
+        public const int MaxNested = 200;
+
+        /// <summary>
+        /// Members of the types' struct-typed members, one and two levels down, as dotted paths ("BodyInstance.CollisionProfileName"),
+        /// from static type information only (spec §10 "Nested members"); at most <see cref="MaxNested"/> per type.
+        /// </summary>
+        public static List<string> NestedMembers(TypeModel model, IEnumerable<TypeInfo> types)
+        {
+            var result = new List<string>();
+            foreach (var t in types)
+            {
+                int budget = MaxNested;
+                Walk(model, t, "", 1, ref budget, result);
+            }
+            return result.Distinct().ToList();
+        }
+
+        private static void Walk(TypeModel model, TypeInfo info, string prefix, int level, ref int budget, List<string> result)
+        {
+            foreach (var m in info.Members)
+            {
+                var type = Nullable.GetUnderlyingType(m.Type) ?? m.Type;
+                if (!type.IsValueType || TypeModel.IsScalarType(type)) continue;
+                var inner = model.Info(type);
+                if (!inner.IsStruct) continue;
+                var path = prefix + m.Name + ".";
+                foreach (var im in inner.Members)
+                {
+                    if (budget-- <= 0) return;
+                    result.Add(path + im.Name);
+                }
+                if (level < 2) Walk(model, inner, path, level + 1, ref budget, result);
+            }
+        }
+
+        /// <summary>
+        /// <see cref="Closest"/> over a type's members plus nested paths (spec §10): a nested path qualifies and ranks by its last
+        /// segment; among equal ranks direct members first, then shallower paths, then ordinal.
+        /// </summary>
+        public static List<string> ClosestMembers(string name, IReadOnlyCollection<string> members, IReadOnlyCollection<string>? nested, int max)
+        {
+            if (nested == null || nested.Count == 0) return Closest(name, members, max);
+            var lower = name.ToLowerInvariant();
+            int limit = Math.Max(1, name.Length / 3);
+            return members.Select(c => (c, leaf: c, depth: 0))
+                .Concat(nested.Select(c => (c, leaf: c.Substring(c.LastIndexOf('.') + 1), depth: c.Count(ch => ch == '.'))))
+                .Select(t => (t.c, t.depth, d: Distance(lower, t.leaf.ToLowerInvariant()), sub: Contains(name, t.leaf)))
+                .Where(t => t.sub || t.d <= limit)
+                .OrderBy(t => t.sub ? 0 : 1).ThenBy(t => t.d).ThenBy(t => t.depth).ThenBy(t => t.c, StringComparer.Ordinal)
+                .Select(t => t.c).Distinct().Take(max).ToList();
+        }
+
         /// <summary>
         /// The hint of an unknown member (spec §10): the known types that have it (filter the stream to them first), then the
-        /// closest names, else the members ranked by similarity to the name.
+        /// closest names (nested struct members included), else the members ranked by similarity to the name.
         /// </summary>
-        public static string MemberHint(string name, IReadOnlyCollection<string> members, IReadOnlyList<string> declaring)
+        public static string MemberHint(string name, IReadOnlyCollection<string> members, IReadOnlyList<string> declaring, IReadOnlyCollection<string>? nested = null)
         {
             var parts = new List<string>();
             if (declaring.Count > 0)
                 parts.Add($"'{name}' is a member of {string.Join(", ", declaring)}: filter to those first, e.g. where $ is {declaring[0]} (or where has({name}))");
-            var close = Closest(name, members, 3);
+            var close = ClosestMembers(name, members, nested, 3);
             if (close.Count > 0) parts.Add("did you mean " + string.Join(" / ", close) + "?");
             else if (declaring.Count == 0 && members.Count > 0) parts.Add(MemberList(BySimilarity(name, members)));
             return string.Join("; ", parts);

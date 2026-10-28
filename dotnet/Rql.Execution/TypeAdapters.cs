@@ -11,7 +11,7 @@ namespace Rql.Execution
 
     /// <summary>Capabilities an adapter overrides (detected at registration, so hot paths skip adapters that never answer).</summary>
     [Flags]
-    internal enum AdapterCaps { None = 0, Encode = 1, Coerce = 2, Equality = 4, Ordering = 8, Identity = 16, Liveness = 32 }
+    internal enum AdapterCaps { None = 0, Encode = 1, Coerce = 2, Equality = 4, Ordering = 8, Identity = 16, Liveness = 32, Arithmetic = 64 }
 
     /// <summary>
     /// A host extension that customises how values of a type family are read, shown, written and compared (spec §13).
@@ -71,6 +71,16 @@ namespace Rql.Execution
         /// <summary>Liveness (e.g. Unity's destroyed-but-not-null objects, Unreal's pending-kill); null defers.</summary>
         public virtual bool? IsAlive(object value) => null;
 
+        /// <summary>
+        /// Component-wise arithmetic (spec §4.2, §13 "Arithmetic"): the numeric components of <paramref name="value"/> (always the
+        /// same count for the type, in a fixed order), or null when the type does not take part. Opt in only for types whose
+        /// arithmetic is component-wise (vectors, colors), never quaternions or matrices.
+        /// </summary>
+        public virtual double[]? GetComponents(object value) => null;
+
+        /// <summary>A value of <paramref name="type"/> built from components in the order <see cref="GetComponents"/> returns them; null when it cannot be built.</summary>
+        public virtual object? MakeFromComponents(Type type, double[] components) => null;
+
         /// <summary>One line for schemas and <c>describe</c>, e.g. how agents should write literals of the type.</summary>
         public virtual string? Description => null;
 
@@ -88,6 +98,7 @@ namespace Rql.Execution
             if (Overrides("Compare", "Order")) caps |= AdapterCaps.Ordering;
             if (Overrides("StableId", "Id")) caps |= AdapterCaps.Identity;
             if (Overrides("IsAlive", "Alive")) caps |= AdapterCaps.Liveness;
+            if (Overrides("GetComponents", "Components")) caps |= AdapterCaps.Arithmetic;
             Caps = caps;
         }
 
@@ -126,6 +137,14 @@ namespace Rql.Execution
 
         public sealed override bool? IsAlive(object value) => value is T t ? Alive(t) : null;
         protected virtual bool? Alive(T value) => null;
+
+        public sealed override double[]? GetComponents(object value) => value is T t ? Components(t) : null;
+        /// <summary>Component-wise arithmetic (spec §4.2): the value's numeric components, or null when the type does not take part.</summary>
+        protected virtual double[]? Components(T value) => null;
+
+        public sealed override object? MakeFromComponents(Type type, double[] components) => FromComponents(components);
+        /// <summary>A boxed <typeparamref name="T"/> built from components (the order of <see cref="Components(T)"/>); null when it cannot be built.</summary>
+        protected virtual object? FromComponents(double[] components) => null;
     }
 
     /// <summary>What an <see cref="RqlTypeAdapter.Encode"/> implementation can use.</summary>

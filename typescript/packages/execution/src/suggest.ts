@@ -1,4 +1,5 @@
 /** "Did you mean" suggestions and capped member listings (spec §10), as in the .NET reference. */
+import { unwrapNullable, type TypeInfo, type TypeModel } from './types.js';
 
 /** Members listed by a hint when no suggestion qualifies. */
 export const MAX_LISTED = 12;
@@ -13,6 +14,57 @@ export function closest(name: string, candidates: Iterable<string>, max: number)
     if (sub || d <= limit) scored.push({ c, d, sub });
   }
   scored.sort((a, b) => (a.sub === b.sub ? 0 : a.sub ? -1 : 1) || a.d - b.d || (a.c < b.c ? -1 : a.c > b.c ? 1 : 0));
+  return [...new Set(scored.map((s) => s.c))].slice(0, max);
+}
+
+/** Nested paths offered per type (spec §10): bounds the static walk over struct-typed members. */
+export const MAX_NESTED = 200;
+
+/**
+ * Members of the types' struct-typed members, one and two levels down, as dotted paths ("BodyInstance.CollisionProfileName"),
+ * from static type information only (spec §10 "Nested members"); at most {@link MAX_NESTED} per type.
+ */
+export function nestedMembers(model: TypeModel, types: Iterable<TypeInfo>): string[] {
+  const result = new Set<string>();
+  for (const t of types) {
+    const budget = { left: MAX_NESTED };
+    walk(model, t, '', 1, budget, result);
+  }
+  return [...result];
+}
+
+function walk(model: TypeModel, info: TypeInfo, prefix: string, level: number, budget: { left: number }, result: Set<string>): void {
+  for (const m of info.members) {
+    const r = unwrapNullable(m.type);
+    if (typeof r !== 'object' || !('kind' in r) || r.kind !== 'class') continue;
+    const inner = model.infoForCtor(r.ctor);
+    if (inner === undefined || inner.kind !== 'struct') continue;
+    const path = prefix + m.name + '.';
+    for (const im of inner.members) {
+      if (budget.left-- <= 0) return;
+      result.add(path + im.name);
+    }
+    if (level < 2) walk(model, inner, path, level + 1, budget, result);
+  }
+}
+
+/**
+ * {@link closest} over a type's members plus nested paths (spec §10): a nested path qualifies and ranks by its last
+ * segment; among equal ranks direct members first, then shallower paths, then ordinal.
+ */
+export function closestMembers(name: string, members: readonly string[], nested: readonly string[] | undefined, max: number): string[] {
+  if (nested === undefined || nested.length === 0) return closest(name, members, max);
+  const lower = name.toLowerCase();
+  const limit = Math.max(1, Math.floor(name.length / 3));
+  const scored: { c: string; d: number; sub: boolean; depth: number }[] = [];
+  const consider = (c: string, leaf: string, depth: number): void => {
+    const d = distance(lower, leaf.toLowerCase());
+    const sub = contains(name, leaf);
+    if (sub || d <= limit) scored.push({ c, d, sub, depth });
+  };
+  for (const c of members) consider(c, c, 0);
+  for (const c of nested) consider(c, c.slice(c.lastIndexOf('.') + 1), c.split('.').length - 1);
+  scored.sort((a, b) => (a.sub === b.sub ? 0 : a.sub ? -1 : 1) || a.d - b.d || a.depth - b.depth || (a.c < b.c ? -1 : a.c > b.c ? 1 : 0));
   return [...new Set(scored.map((s) => s.c))].slice(0, max);
 }
 
@@ -42,14 +94,14 @@ export function bySimilarity(name: string, names: Iterable<string>): string[] {
 
 /**
  * The hint of an unknown member (spec §10): the known types that have it (filter the stream to them first), then the
- * closest names, else the members ranked by similarity to the name.
+ * closest names (nested struct members included), else the members ranked by similarity to the name.
  */
-export function memberHint(name: string, members: readonly string[], declaring: readonly string[]): string {
+export function memberHint(name: string, members: readonly string[], declaring: readonly string[], nested?: readonly string[]): string {
   const parts: string[] = [];
   if (declaring.length > 0) {
     parts.push(`'${name}' is a member of ${declaring.join(', ')}: filter to those first, e.g. where $ is ${declaring[0]} (or where has(${name}))`);
   }
-  const close = closest(name, members, 3);
+  const close = closestMembers(name, members, nested, 3);
   if (close.length > 0) parts.push(`did you mean ${close.join(' / ')}?`);
   else if (declaring.length === 0 && members.length > 0) parts.push(memberList(bySimilarity(name, members)));
   return parts.join('; ');

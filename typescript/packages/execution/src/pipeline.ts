@@ -30,7 +30,7 @@ import { Encoder } from './encoder.js';
 import type { ArgEvaluator, SourceRegistration } from './engine.js';
 import { PathNode, type Exec } from './exec.js';
 import { Mutator } from './mutator.js';
-import { closest, memberHint } from './suggest.js';
+import { closest, closestMembers, memberHint, nestedMembers } from './suggest.js';
 import { EnumType, EnumValue, unwrapNullable, type TypeInfo } from './types.js';
 import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, isAbsent, originOf, streamedEntry, toNumber, type EntryOrigin } from './values.js';
 
@@ -143,9 +143,10 @@ export class Pipeline {
       const types = [...site.missTypes];
       const typeNames = [...new Set(types.map((t) => t.shortName))].slice(0, 4).join(', ');
       const candidates = [...new Set(types.flatMap((t) => t.members.map((m) => m.name)))];
-      const close = closest(site.name, candidates, 3);
+      const nested = nestedMembers(x.types, types);
+      const close = closestMembers(site.name, candidates, nested, 3);
       const declaring = x.engine.typesDeclaring(site.name, types);
-      let hint = memberHint(site.name, candidates, declaring);
+      let hint = memberHint(site.name, candidates, declaring, nested);
       if (close.length === 0 && declaring.length === 0 && /^\p{Lu}/u.test(site.name)) {
         hint += (hint.length > 0 ? '; ' : '') + `if '${site.name}' is a value, quote it: "${site.name}"`;
       }
@@ -938,11 +939,29 @@ export function distinctKey(x: Exec, v: unknown): unknown {
       }
     }
     if (info.kind === 'struct') {
-      return `v:${JSON.stringify(info.shortName)}(${info.implicitMembersOf(v).map((m) => keyPart(x, m.get(v))).join(',')})`;
+      // Structs by their members with numbers rounded as numeric tuples print (spec §5 "Struct keys"): values that print alike group.
+      return `v:${JSON.stringify(info.shortName)}(${info
+        .implicitMembersOf(v)
+        .map((m) => {
+          const mv = x.live(m.get(v));
+          const n = toNumber(mv);
+          return n !== undefined ? 'd:' + String(roundedForKey(n)) : keyPart(x, mv);
+        })
+        .join(',')})`;
     }
     return v;
   }
   return v;
+}
+
+/**
+ * A number as numeric tuples display it (spec §5, §13): 12 significant digits (JavaScript has no single-precision members),
+ * magnitudes below 1e-9 and -0 as 0; NaN and the infinities unchanged.
+ */
+export function roundedForKey(n: number): number {
+  if (!Number.isFinite(n)) return n;
+  if (Math.abs(n) < 1e-9) return 0;
+  return Number(n.toPrecision(12));
 }
 
 /** Whether any expression of the plan uses the meta member `$name`. */

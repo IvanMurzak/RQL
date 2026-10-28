@@ -40,8 +40,8 @@ PathPtr path_key(const PathPtr& parent, const Value& key);
 
 // ---------------------------------------------------------------- adapted types (spec §13)
 
-enum class Capability : uint8_t { Encode, Coerce, Equals, Compare, StableId, IsAlive };
-constexpr size_t kCapabilities = 6;
+enum class Capability : uint8_t { Encode, Coerce, Equals, Compare, StableId, IsAlive, Components };
+constexpr size_t kCapabilities = 7;
 
 /// What adapters change for one type in one engine. Only built when some adapter applies; members are
 /// copied only when an adapter configures them.
@@ -170,6 +170,8 @@ public:
     PathPtr current_path;
     int current_depth = -1;
     int64_t index = 0;
+    /// Inside has(): an absent map key reads as missing instead of null (spec §3, §4.3).
+    int key_probe = 0;
     std::vector<Value> outer;  // enclosing items while evaluating collection-method arguments
 
     int64_t visited = 0;
@@ -259,7 +261,16 @@ using Eval = std::function<Value(Exec&)>;
 std::string path_text(const Expr& e);
 /// The hint of an unknown member (spec §10): the known types that have it, then the closest names, else the members
 /// ranked by similarity to the name.
-std::string member_hint(const std::string& name, const std::vector<std::string>& members, const std::vector<std::string>& declaring);
+/// `nested`: dotted paths of the members of struct-typed members (nested_members), ranked by their last segment.
+std::string member_hint(const std::string& name, const std::vector<std::string>& members, const std::vector<std::string>& declaring,
+                        const std::vector<std::string>& nested = {});
+/// Members of the types' struct-typed members, one and two levels down, as dotted paths ("BodyInstance.CollisionProfileName"),
+/// from static type information only (spec §10 "Nested members"); at most 200 per type.
+std::vector<std::string> nested_members(Exec& x, const std::vector<const TypeDescriptor*>& types);
+/// suggest_closest over members plus nested paths (spec §10): nested paths rank by their last segment; among equal ranks
+/// direct members first, then shallower paths, then ordinal.
+std::vector<std::string> suggest_members(const std::string& name, const std::vector<std::string>& members,
+                                         const std::vector<std::string>& nested, size_t max);
 /// Names of the known object types (reachable from the sources) that have a member of this name, at most max, base types
 /// before their subclasses; types in `except` are skipped (pipeline.cpp).
 std::vector<std::string> types_declaring(Exec& x, const std::string& member, const std::vector<const TypeDescriptor*>& except, size_t max = 3);

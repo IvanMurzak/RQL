@@ -5,9 +5,9 @@
  */
 import { RqlError, diagnostic, formatNumber, segmentToString, type CallExpr, type Expr, type OpExpr, type PathExpr } from '@rql/contracts';
 import { elements, findMapKey, indexAt, isMapLike, mapEntries, mapGet, sizeOf, type MapLike } from './collections.js';
-import { firstAnswer } from './adapters.js';
+import { firstAnswer, type AnyAdapter } from './adapters.js';
 import { Exec, IsSite, MemberSite, errorMessage } from './exec.js';
-import { EnumValue, type TypeInfo, type TypeModel } from './types.js';
+import { EnumValue, type Ctor, type TypeInfo, type TypeModel } from './types.js';
 import { ErrorValue, MISSING, MapEntry, ObjectValue, RowValue, UNKNOWN, isAbsent, toNumber } from './values.js';
 
 export type Eval = (x: Exec) => unknown;
@@ -264,14 +264,14 @@ export class Compiler {
         };
       }
       case 'neg':
-        return (x) => arith('neg', a(x), 0);
+        return (x) => arith('neg', a(x), 0, x.types);
       case '+':
       case '-':
       case '*':
       case '/':
       case '%': {
         const op = o.op;
-        return (x) => arith(op, a(x), b(x));
+        return (x) => arith(op, a(x), b(x), x.types);
       }
       case 'index':
         return (x) => {
@@ -340,7 +340,14 @@ export class Compiler {
         } finally {
           this.guarded--;
         }
-        return (x) => a(x) !== MISSING;
+        return (x) => {
+          x.keyProbe++;
+          try {
+            return a(x) !== MISSING;
+          } finally {
+            x.keyProbe--;
+          }
+        };
       }
       case 'is-null': {
         this.arity(c, 1, 1);
@@ -675,7 +682,8 @@ export function member(x: Exec, v: unknown, site: MemberSite): unknown {
 export function mapLookup(x: Exec, map: MapLike, key: unknown, site?: MemberSite): unknown {
   x.membersRead++;
   const k = findMapKey(map, key);
-  if (!k.found) return MISSING;
+  // An absent key reads as null (spec §3); inside has() it is missing, so has(M["k"]) tests the key.
+  if (!k.found) return x.keyProbe > 0 ? MISSING : null;
   if (site !== undefined) site.hits++;
   const v = mapGet(map, k.key);
   return v === undefined ? null : x.live(v);
@@ -949,14 +957,20 @@ function isType(x: Exec, a: unknown, b: unknown): Truth {
 
 // ------------------------------------------------------------------ arithmetic and text
 
-export function arith(op: string, a: unknown, b: unknown): unknown {
+export function arith(op: string, a: unknown, b: unknown, model?: TypeModel): unknown {
   if (a === MISSING || b === MISSING) return MISSING;
   if (a instanceof ErrorValue) return a;
   if (b instanceof ErrorValue) return b;
   if (op === '+' && (typeof a === 'string' || typeof b === 'string')) return toText(undefined, a) + toText(undefined, b);
   const l = toNumber(a);
   const r = toNumber(b);
-  if (l === undefined || r === undefined) return new ErrorValue('type-mismatch', `cannot apply '${op}' to ${describeValue(a)} and ${describeValue(b)}`);
+  if (l === undefined || r === undefined) {
+    if (model !== undefined && model.hasCapability('components')) {
+      const v = structArith(model, op, a, b);
+      if (v !== undefined) return v;
+    }
+    return arithMismatch(model, op, a, b);
+  }
   switch (op) {
     case 'neg':
       return -l;
@@ -973,6 +987,110 @@ export function arith(op: string, a: unknown, b: unknown): unknown {
     default:
       return new ErrorValue('type-mismatch');
   }
+}
+
+function arithMismatch(model: TypeModel | undefined, op: string, a: unknown, b: unknown, why?: string): ErrorValue {
+  const message = `cannot apply '${op}' to ${describeValue(a)} and ${describeValue(b)}`;
+  if (why === undefined && model !== undefined) {
+    // A struct without declared components: say why (spec §4.2), so `Scale * 1.5` is not a mystery.
+    const s = isStruct(model, a) ? a : op !== 'neg' && isStruct(model, b) ? b : undefined;
+    if (s !== undefined && componentsOf(model, s) === undefined) why = `${describeValue(s)} has no component-wise arithmetic`;
+  }
+  return new ErrorValue('type-mismatch', why === undefined ? message : `${message} (${why})`);
+}
+
+function isStruct(model: TypeModel, v: unknown): boolean {
+  return typeof v === 'object' && v !== null && !isAbsent(v) && model.infoOf(v).kind === 'struct';
+}
+
+/** The arithmetic components of a struct whose type adapter declares them (spec §4.2, §13), with that adapter. */
+function componentsOf(model: TypeModel, v: unknown): { parts: readonly number[]; adapter: AnyAdapter } | undefined {
+  if (typeof v !== 'object' || v === null || isAbsent(v)) return undefined;
+  for (const adapter of model.infoOf(v).adapterSet.components) {
+    const parts = adapter.components!(v);
+    if (parts !== undefined) return { parts, adapter };
+  }
+  return undefined;
+}
+
+/** A list of exactly `width` numbers read as components (spec §4.2), else undefined. */
+function listParts(model: TypeModel, v: unknown, width: number): number[] | undefined {
+  if (typeof v !== 'object' || v === null || isAbsent(v)) return undefined;
+  const info = model.infoOf(v);
+  if (!info.isList) return undefined;
+  const parts: number[] = [];
+  for (const e of elements(v, info)) {
+    const n = toNumber(e);
+    if (n === undefined || parts.length === width) return undefined;
+    parts.push(n);
+  }
+  return parts.length === width ? parts : undefined;
+}
+
+/**
+ * Component-wise arithmetic on structs whose adapter declares components (spec §4.2): v * n, n * v, v / n, v ± w, v * w,
+ * v / w (w of the same type, or a list of as many numbers), -v. Undefined when neither operand has components.
+ */
+function structArith(model: TypeModel, op: string, a: unknown, b: unknown): unknown {
+  const ca = componentsOf(model, a);
+  const cb = op === 'neg' ? undefined : componentsOf(model, b);
+  if (ca === undefined && cb === undefined) return undefined;
+  if (op === '%') return arithMismatch(model, op, a, b, "'%' is not component-wise");
+  const vectorLeft = ca !== undefined;
+  const own = vectorLeft ? ca : cb!;
+  const vector = (vectorLeft ? a : b) as object;
+  let parts = own.parts;
+  let other: readonly number[];
+  if (op === 'neg') {
+    other = parts;
+    parts = parts.map(() => 0); // -v = 0 - v
+    op = '-';
+  } else if (ca !== undefined && cb !== undefined) {
+    if ((a as object).constructor !== (b as object).constructor || ca.parts.length !== cb.parts.length) return arithMismatch(model, op, a, b, 'different types');
+    other = cb.parts;
+  } else {
+    const operand = vectorLeft ? b : a;
+    const n = toNumber(operand);
+    if (n !== undefined) {
+      // v * n, n * v and v / n scale; a number added to a vector, or divided by one, is not defined.
+      if (!(op === '*' || (op === '/' && vectorLeft)))
+        return arithMismatch(
+          model,
+          op,
+          a,
+          b,
+          op === '/' ? 'a number cannot be divided by a vector' : `add a value of the same type or a list of ${parts.length} numbers; multiply or divide by a number`,
+        );
+      other = parts.map(() => n);
+    } else {
+      const lp = listParts(model, operand, parts.length);
+      if (lp === undefined) {
+        const list = typeof operand === 'object' && operand !== null && !isAbsent(operand) && model.infoOf(operand).isList;
+        return arithMismatch(model, op, a, b, list ? `the list must hold exactly ${parts.length} numbers, one per component` : undefined);
+      }
+      other = lp;
+    }
+    if (!vectorLeft) [parts, other] = [other, parts];
+  }
+  const result: number[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const l = parts[i]!;
+    const r = other[i]!;
+    if (op === '+') result.push(l + r);
+    else if (op === '-') result.push(l - r);
+    else if (op === '*') result.push(l * r);
+    else {
+      if (r === 0) return new ErrorValue('div-by-zero');
+      result.push(l / r);
+    }
+  }
+  let built: unknown;
+  try {
+    built = own.adapter.fromComponents?.(result, vector.constructor as Ctor);
+  } catch {
+    built = undefined;
+  }
+  return built ?? arithMismatch(model, op, a, b, `cannot build ${describeValue(vector)} from components`);
 }
 
 /** Text form used for concatenation, map keys in output and sort fallbacks. */

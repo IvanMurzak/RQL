@@ -238,7 +238,7 @@ private:
     int64_t next_handle_ = 0;
     std::string last_error_;
     std::vector<std::unique_ptr<TypeAdapter>> adapters_;
-    std::array<bool, 6> caps_{};  // some adapter implements the capability (detail::Capability order)
+    std::array<bool, 7> caps_{};  // some adapter implements the capability (detail::Capability order)
     // Every type each source has produced (by source name): a source that is null right now keeps the types it had for the
     // known member names and hints (spec §8). Guarded by source_types_mutex_.
     std::map<std::string, std::vector<const TypeDescriptor*>> source_types_;
