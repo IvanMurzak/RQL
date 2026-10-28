@@ -192,6 +192,11 @@ export interface CallStage extends StageBase {
   readonly op: 'call';
   readonly method: string;
   readonly args: readonly Expr[];
+  /**
+   * The receiver of a source-qualified call (`call editor.Create(…)`, spec §8): a source expression evaluated once, whose
+   * single object the method runs on once per stream item. Absent: the method runs on each item.
+   */
+  readonly on?: Expr;
 }
 
 /** Extension stage (namespaced name), accepted structurally and bound by the host. */

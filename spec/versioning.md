@@ -90,3 +90,15 @@
   **no-op assignments** — a `set` receipt omits assignments whose value stayed the same and counts them in the new
   optional result field `unchanged` (§6, §8; **behaviour change**: such rows were listed); engines list their adapters
   (§13).
+* Bulk create, ADR-0008 (unreleased; protocol stays `0.1`, no new error code): the core source function
+  **`range(start, end[, step])`** (lazy, bounded by `maxVisited`; also a list function in expressions) and **list literals
+  as sources** (§2; **behaviour change**: both were `unknown-source`); the **source-qualified call** `call q.m(args)`,
+  which runs the one object's method once per stream item with the item's `$` / `$index` / `$path` / `$depth` in the
+  arguments, under every `call` guarantee, the target limit counting invocations (§8). Plan shape: the `call` stage gains
+  the optional field `on` (the source expression); every codec is strict about unknown properties, so a runtime without
+  this change refuses such a plan with `invalid-plan` ("unexpected property 'on'") instead of calling the method on the
+  items. Receipts of a source-qualified call carry the returned object's `$ref` (§8). An unqualified `call` on items that
+  are not objects hints the qualified form, and the unknown-callable hint shows both forms (§10). Encoding: a list or map
+  nested in itself encodes the repetition as `"…"` (§6; .NET recursed without end). Known names include the members of
+  type adapters' target types (§8, §13). The host-independent language rules ship as text with every runtime
+  (`fixtures/guide/language-rules.txt`). The group-row hint names the rows' own key columns (§5; it showed `select key` and `items.avg(key)` after a named key).

@@ -21790,6 +21790,1410 @@
         "total": 0,
         "unchanged": 3
       }
+    },
+    {
+      "name": "range-source",
+      "rql": "range(0, 5)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 5
+            }
+          ]
+        },
+        "stages": []
+      },
+      "expect": {
+        "ok": true,
+        "kind": "items",
+        "items": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "total": 5
+      }
+    },
+    {
+      "name": "range-step-down",
+      "rql": "range(10, 4, -2) | select $index, $",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 10
+            },
+            {
+              "lit": 4
+            },
+            {
+              "lit": -2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "$index",
+                "expr": {
+                  "path": [
+                    {
+                      "meta": "index"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "$",
+                "expr": {
+                  "path": []
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$index",
+          "$"
+        ],
+        "rows": [
+          [
+            0,
+            10
+          ],
+          [
+            1,
+            8
+          ],
+          [
+            2,
+            6
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "range-fraction",
+      "rql": "range(0, 1, 0.25)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 1
+            },
+            {
+              "lit": 0.25
+            }
+          ]
+        },
+        "stages": []
+      },
+      "expect": {
+        "ok": true,
+        "kind": "items",
+        "items": [
+          0,
+          0.25,
+          0.5,
+          0.75
+        ],
+        "total": 4
+      }
+    },
+    {
+      "name": "range-empty",
+      "rql": "range(5, 0) | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 5
+            },
+            {
+              "lit": 0
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 0
+      }
+    },
+    {
+      "name": "range-path",
+      "rql": "range(0, 3) | select $path",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 3
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "$path",
+                "expr": {
+                  "path": [
+                    {
+                      "meta": "path"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$path"
+        ],
+        "rows": [
+          [
+            "range(…)[0]"
+          ],
+          [
+            "range(…)[1]"
+          ],
+          [
+            "range(…)[2]"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "range-lazy-first",
+      "rql": "range(0, 1000000000) | first 2",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 1000000000
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "first",
+            "n": 2
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "items",
+        "items": [
+          0,
+          1
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "range-budget",
+      "rql": "range(0, 1000000000) | count",
+      "budgets": {
+        "maxVisited": 100
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 1000000000
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "budget-exceeded"
+          }
+        ]
+      }
+    },
+    {
+      "name": "range-step-zero",
+      "rql": "range(0, 5, 0)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 5
+            },
+            {
+              "lit": 0
+            }
+          ]
+        },
+        "stages": []
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "type-mismatch"
+          }
+        ]
+      }
+    },
+    {
+      "name": "range-not-a-number",
+      "rql": "range(0, \"x\")",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": "x"
+            }
+          ]
+        },
+        "stages": []
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "type-mismatch"
+          }
+        ]
+      }
+    },
+    {
+      "name": "range-arity",
+      "rql": "range(1)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 1
+            }
+          ]
+        },
+        "stages": []
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "arity"
+          }
+        ]
+      }
+    },
+    {
+      "name": "range-function",
+      "rql": "g.Nodes | select Name, xs = range(0, len(Tags)), n = range(0, Value).count()",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "xs",
+                "expr": {
+                  "call": "range",
+                  "args": [
+                    {
+                      "lit": 0
+                    },
+                    {
+                      "call": "len",
+                      "args": [
+                        {
+                          "path": [
+                            "Tags"
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "n",
+                "expr": {
+                  "call": "count",
+                  "on": {
+                    "call": "range",
+                    "args": [
+                      {
+                        "lit": 0
+                      },
+                      {
+                        "path": [
+                          "Value"
+                        ]
+                      }
+                    ]
+                  },
+                  "args": []
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "xs",
+          "n"
+        ],
+        "rows": [
+          [
+            "root-a",
+            [
+              0,
+              1
+            ],
+            10
+          ],
+          [
+            "root-b",
+            [
+              0
+            ],
+            7
+          ],
+          [
+            "lonely",
+            [],
+            3
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "range-function-budget",
+      "rql": "g | select n = range(0, 1000).count()",
+      "budgets": {
+        "maxVisited": 100
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "n",
+                "expr": {
+                  "call": "count",
+                  "on": {
+                    "call": "range",
+                    "args": [
+                      {
+                        "lit": 0
+                      },
+                      {
+                        "lit": 1000
+                      }
+                    ]
+                  },
+                  "args": []
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "budget-exceeded"
+          }
+        ]
+      }
+    },
+    {
+      "name": "range-math",
+      "rql": "range(0, 6) | select x = (($ % 3) * 2), z = (floor($ / 3) * 2)",
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "x",
+          "z"
+        ],
+        "rows": [
+          [
+            0,
+            0
+          ],
+          [
+            2,
+            0
+          ],
+          [
+            4,
+            0
+          ],
+          [
+            0,
+            2
+          ],
+          [
+            2,
+            2
+          ],
+          [
+            4,
+            2
+          ]
+        ],
+        "total": 6
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 6
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "x",
+                "expr": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "op": "%",
+                      "args": [
+                        {
+                          "path": []
+                        },
+                        {
+                          "lit": 3
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "z",
+                "expr": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "call": "floor",
+                      "args": [
+                        {
+                          "op": "/",
+                          "args": [
+                            {
+                              "path": []
+                            },
+                            {
+                              "lit": 3
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "list-source",
+      "rql": "[[\"a\", 1], [\"b\", 2], 3] | select $index, v = $",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "list": [
+            {
+              "list": [
+                {
+                  "lit": "a"
+                },
+                {
+                  "lit": 1
+                }
+              ]
+            },
+            {
+              "list": [
+                {
+                  "lit": "b"
+                },
+                {
+                  "lit": 2
+                }
+              ]
+            },
+            {
+              "lit": 3
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "$index",
+                "expr": {
+                  "path": [
+                    {
+                      "meta": "index"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "v",
+                "expr": {
+                  "path": []
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$index",
+          "v"
+        ],
+        "rows": [
+          [
+            0,
+            [
+              "a",
+              1
+            ]
+          ],
+          [
+            1,
+            [
+              "b",
+              2
+            ]
+          ],
+          [
+            2,
+            3
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "list-source-filter",
+      "rql": "[5, 1, 4] | where $ > 2 | sort $",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "list": [
+            {
+              "lit": 5
+            },
+            {
+              "lit": 1
+            },
+            {
+              "lit": 4
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": ">",
+              "args": [
+                {
+                  "path": []
+                },
+                {
+                  "lit": 2
+                }
+              ]
+            }
+          },
+          {
+            "op": "sort",
+            "keys": [
+              {
+                "expr": {
+                  "path": []
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "items",
+        "items": [
+          4,
+          5
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "call-qualified-no-method",
+      "rql": "range(0, 2) | call g.bump($)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "path": [
+                "g"
+              ]
+            },
+            "args": [
+              {
+                "path": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "unknown-function"
+          }
+        ]
+      }
+    },
+    {
+      "name": "call-qualified-empty-stream-unknown-method",
+      "rql": "range(0, 0) | call g.bump($)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 0
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "path": [
+                "g"
+              ]
+            },
+            "args": [
+              {
+                "path": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "unknown-function"
+          }
+        ]
+      }
+    },
+    {
+      "name": "call-qualified-list-target",
+      "rql": "range(0, 2) | call g.Nodes.bump($)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "path": [
+                "g",
+                "Nodes"
+              ]
+            },
+            "args": [
+              {
+                "path": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-plan"
+          }
+        ]
+      }
+    },
+    {
+      "name": "call-qualified-null-target",
+      "rql": "range(0, 2) | call g.Nothing.bump($)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "path": [
+                "g",
+                "Nothing"
+              ]
+            },
+            "args": [
+              {
+                "path": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-plan"
+          }
+        ]
+      }
+    },
+    {
+      "name": "call-qualified-unknown-source",
+      "rql": "g.Nodes | call Children.bump(1)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "path": [
+                "Children"
+              ]
+            },
+            "args": [
+              {
+                "lit": 1
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "unknown-source"
+          }
+        ]
+      }
+    },
+    {
+      "name": "call-qualified-range-target",
+      "rql": "[1] | call range(0, 2).bump($)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "list": [
+            {
+              "lit": 1
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "call": "range",
+              "args": [
+                {
+                  "lit": 0
+                },
+                {
+                  "lit": 2
+                }
+              ]
+            },
+            "args": [
+              {
+                "path": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-plan"
+          }
+        ]
+      }
+    },
+    {
+      "name": "call-qualified-needs-mutation",
+      "rql": "range(0, 2) | call g.bump($)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "path": [
+                "g"
+              ]
+            },
+            "args": [
+              {
+                "path": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "permission-denied"
+          }
+        ]
+      }
+    },
+    {
+      "name": "call-unqualified-on-numbers",
+      "rql": "range(0, 2) | call bump($)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "args": [
+              {
+                "path": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-plan"
+          }
+        ]
+      }
+    },
+    {
+      "name": "group-by-named-key-missing-key",
+      "rql": "g.Nodes | group-by mat=Kind | select key",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "group-by",
+            "fields": [
+              {
+                "name": "mat",
+                "expr": {
+                  "path": [
+                    "Kind"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "key",
+                "expr": {
+                  "path": [
+                    "key"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "key"
+        ],
+        "rows": [
+          [
+            null
+          ],
+          [
+            null
+          ],
+          [
+            null
+          ]
+        ],
+        "total": 3,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "range-end-excluded-fraction",
+      "rql": "range(0, 2.1, 0.3) | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2.1
+            },
+            {
+              "lit": 0.3
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 7
+      }
+    },
+    {
+      "name": "range-end-excluded-down",
+      "rql": "range(2.1, 0, -0.3) | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 2.1
+            },
+            {
+              "lit": 0
+            },
+            {
+              "lit": -0.3
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 7
+      }
+    },
+    {
+      "name": "list-source-error-element",
+      "rql": "[1 / 0, 2]",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "list": [
+            {
+              "op": "/",
+              "args": [
+                {
+                  "lit": 1
+                },
+                {
+                  "lit": 0
+                }
+              ]
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": []
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "div-by-zero"
+          }
+        ]
+      }
+    },
+    {
+      "name": "list-source-bare-path-dropped",
+      "rql": "[nothing, 2] | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "list": [
+            {
+              "path": [
+                "nothing"
+              ]
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 1
+      }
+    },
+    {
+      "name": "call-qualified-read-request-checks-policy-first",
+      "rql": "range(0, 2) | call nosuch.bump($)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "path": [
+                "nosuch"
+              ]
+            },
+            "args": [
+              {
+                "path": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "permission-denied"
+          }
+        ]
+      }
+    },
+    {
+      "name": "call-qualified-non-source-target",
+      "rql": "[1] | call lower(\"x\").bump($)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "list": [
+            {
+              "lit": 1
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "call": "lower",
+              "args": [
+                {
+                  "lit": "x"
+                }
+              ]
+            },
+            "args": [
+              {
+                "path": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "unknown-source"
+          }
+        ]
+      }
     }
   ]
 }

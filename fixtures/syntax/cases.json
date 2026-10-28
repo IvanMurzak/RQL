@@ -6610,6 +6610,183 @@
           }
         ]
       }
+    },
+    {
+      "rql": "range(0, 3) | call editor.Create(\"n\" + $, $index)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 3
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "Create",
+            "on": {
+              "path": [
+                "editor"
+              ]
+            },
+            "args": [
+              {
+                "op": "+",
+                "args": [
+                  {
+                    "lit": "n"
+                  },
+                  {
+                    "path": []
+                  }
+                ]
+              },
+              {
+                "path": [
+                  {
+                    "meta": "index"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "rql": "[[\"a\", 1], [\"b\", 2]] | call g.Factory.Make($[0], $[1])",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "list": [
+            {
+              "list": [
+                {
+                  "lit": "a"
+                },
+                {
+                  "lit": 1
+                }
+              ]
+            },
+            {
+              "list": [
+                {
+                  "lit": "b"
+                },
+                {
+                  "lit": 2
+                }
+              ]
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "Make",
+            "on": {
+              "path": [
+                "g",
+                "Factory"
+              ]
+            },
+            "args": [
+              {
+                "path": [
+                  {
+                    "index": 0
+                  }
+                ]
+              },
+              {
+                "path": [
+                  {
+                    "index": 1
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "rql": "range(0, 10, 2) | call ref(\"Node#8\").bump($)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 10
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#8"
+                }
+              ]
+            },
+            "args": [
+              {
+                "path": []
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "rql": "g | select xs = range(1, 4)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "xs",
+                "expr": {
+                  "call": "range",
+                  "args": [
+                    {
+                      "lit": 1
+                    },
+                    {
+                      "lit": 4
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }

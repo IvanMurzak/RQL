@@ -15,7 +15,7 @@ type Truth = boolean | undefined;
 
 export const CORE_FUNCTIONS = [
   'has', 'is-null', 'len', 'lower', 'upper', 'abs', 'round', 'floor', 'ceil', 'sqrt', 'pow', 'min', 'max', 'coalesce', 'if', 'ref',
-  'append', 'insert', 'remove-at', 'without',
+  'append', 'insert', 'remove-at', 'without', 'range',
   'replace', 'replace-regex', 'substring', 'split', 'trim', 'pad',
   'contains', 'starts-with', 'ends-with', 'matches',
 ];
@@ -397,6 +397,20 @@ export class Compiler {
           const dd = digits !== undefined ? toNumber(digits(x)) : undefined;
           if (dd !== undefined) dg = Math.max(0, Math.min(15, Math.trunc(dd)));
           return num(a(x), (v) => roundAwayFromZero(v, dg));
+        };
+      }
+      case 'range': {
+        this.arity(c, 2, 3);
+        const args = c.args.map((e) => this.compile(e));
+        return (x) => {
+          const r = rangeOf(args[0]!(x), args[1]!(x), args.length > 2 ? args[2]!(x) : 1);
+          if (r instanceof ErrorValue) return r;
+          const list: number[] = [];
+          for (let k = 0; k < r.count; k++) {
+            x.visit(); // a range is bounded by maxVisited like any stream (spec §2)
+            list.push(r.start + k * r.step);
+          }
+          return list;
         };
       }
       // List editing (spec §4.3): pure functions returning a new list; assign the result with `set`.
@@ -976,6 +990,28 @@ export function toText(x: Exec | undefined, v: unknown): string {
     return x !== undefined ? x.types.infoOf(v).shortName : (v.constructor?.name ?? 'Object');
   }
   return String(v);
+}
+
+/**
+ * The numbers of range(start, end[, step]) (spec §2, §4.3): start + k * step for k = 0 … count - 1, while below end (step
+ * above 0) or above it (step below 0). An error argument is returned; a non-number, a non-finite number or a zero step is a
+ * type-mismatch error value.
+ */
+export function rangeOf(a: unknown, b: unknown, c: unknown): { start: number; step: number; count: number } | ErrorValue {
+  const nums: number[] = [];
+  for (const v of [a, b, c]) {
+    if (v instanceof ErrorValue) return v;
+    const d = toNumber(v);
+    if (d === undefined) return new ErrorValue('type-mismatch', `range() expects numbers, got ${describeValue(v)}`);
+    if (!Number.isFinite(d)) return new ErrorValue('type-mismatch', `range() expects finite numbers, got ${formatNumber(d)}`);
+    nums.push(d);
+  }
+  const [start, end, step] = nums as [number, number, number];
+  if (step === 0) return new ErrorValue('type-mismatch', 'range() step must not be 0');
+  let count = Math.max(0, Math.ceil((end - start) / step));
+  // end is excluded: rounding in (end - start) / step can count one number too many (range(0, 2.1, 0.3)).
+  while (count > 0 && Number.isFinite(count) && (step > 0 ? start + (count - 1) * step >= end : start + (count - 1) * step <= end)) count--;
+  return { start, step, count };
 }
 
 export function describeValue(v: unknown): string {

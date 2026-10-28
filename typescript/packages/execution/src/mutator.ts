@@ -230,16 +230,20 @@ export class Mutator {
     }
   }
 
-  private targets(stream: Iterable<Item>, op: string): Target[] {
+  /**
+   * `method`: for `call`, the method (hints). `perItem`: a source-qualified call, whose items are only the scope of its
+   * arguments, so any value may be one (spec §8).
+   */
+  private targets(stream: Iterable<Item>, op: string, method?: string, perItem = false): Target[] {
     const rest = stream[Symbol.iterator]();
     try {
-      return this.collect(rest, op);
+      return this.collect(rest, op, method, perItem);
     } finally {
       rest.return?.(); // like for…of: release the source (its finally blocks) on a throw or an early stop
     }
   }
 
-  private collect(rest: Iterator<Item>, op: string): Target[] {
+  private collect(rest: Iterator<Item>, op: string, method: string | undefined, perItem: boolean): Target[] {
     const list: Target[] = [];
     let index = -1;
     for (let step = rest.next(); !step.done; step = rest.next()) {
@@ -247,6 +251,11 @@ export class Mutator {
       index++; // skipped null/destroyed items keep their positions: $index is the position in the stage's input
       // Null and destroyed items are skipped (a destroyed object reads as null, spec §13).
       if (it.value === null || it.value === undefined || this.x.dead(it.value)) continue;
+      if (perItem) {
+        list.push({ item: it, index });
+        if (list.length > this.x.maxMutationTargets) throw this.limitExceeded(rest, list.length, op, 'items reached');
+        continue;
+      }
       if (it.value instanceof RowValue) throw new RqlError('invalid-plan', `'${op}' needs objects, not projected rows; remove 'select' before '${op}'`);
       if (it.value instanceof MapEntry) {
         if (op !== 'set' || entryOrigin(it.value) === undefined) {
@@ -268,7 +277,7 @@ export class Mutator {
           'invalid-plan',
           `'${op}' needs objects with identity; '${this.x.types.infoOf(v).shortName}' items are value copies, so the change would be lost`,
           undefined,
-          'set the member from its owner instead, e.g. objects | where … | set Transform.Position.x = 0',
+          method !== undefined ? this.x.engine.perItemCallHint(method) : 'set the member from its owner instead, e.g. objects | where … | set Transform.Position.x = 0',
         );
       }
       list.push({ item: it, index });
@@ -281,7 +290,7 @@ export class Mutator {
    * mutation-limit (spec §8, §10): counts the rest of the stage's input up to the host ceiling (counting only) so the
    * message states how many items matched, and builds the hint for the host's limit argument.
    */
-  private limitExceeded(rest: Iterator<Item>, matched: number, op: string): RqlError {
+  private limitExceeded(rest: Iterator<Item>, matched: number, op: string, matchedText = 'objects matched'): RqlError {
     const m = this.x.engine.mutations;
     const limit = this.x.maxMutationTargets;
     const ceiling = Math.max(m.hardMaxTargets, limit);
@@ -295,8 +304,8 @@ export class Mutator {
     const exact = matched <= ceiling ? matched : undefined;
     const message =
       exact !== undefined
-        ? `${matched} objects matched '${op}', more than the limit of ${limit}; nothing was changed`
-        : `more than ${ceiling} objects matched '${op}' (the limit is ${limit}); nothing was changed`;
+        ? `${matched} ${matchedText} '${op}', more than the limit of ${limit}; nothing was changed`
+        : `more than ${ceiling} ${matchedText} '${op}' (the limit is ${limit}); nothing was changed`;
     const argument = this.x.limitArgument;
     return new RqlError('mutation-limit', message, undefined, m.limitHint?.(op, limit) || mutationLimitHint(op, limit, exact, argument, ceiling));
   }
@@ -591,35 +600,51 @@ export class Mutator {
 
   // ---------------------------------------------------------------- call
 
-  call(stream: Iterable<Item>, s: CallStage): QueryResult {
+  /**
+   * `receiver`: a source-qualified call's object (spec §8): its method runs once per stream item, with `$` and the other
+   * metas the item's; undefined: the method runs on each item.
+   */
+  call(stream: Iterable<Item>, s: CallStage, resolveReceiver?: () => object): QueryResult {
     const x = this.x;
     this.checkPolicy('call');
+    const receiver = resolveReceiver?.(); // after the policy check: a read request never evaluates the target
     const args: Eval[] = s.args.map((a) => this.c.compile(a));
-    const targets = this.targets(stream, 'call');
-    const planned: { item: object; method: MethodAccessor; args: unknown[] }[] = [];
     const wanted = s.method.toUpperCase();
-    for (const t of targets) {
-      const item = t.item.value as object;
+    // The callable overloads of the method on a target; none: unknown-function (or permission-denied for a method the host
+    // does not expose), naming the targets' types and the sources that have it (spec §10).
+    const candidatesOf = (item: object, stream: readonly Target[] | undefined): MethodAccessor[] => {
       const info = x.types.infoOf(item);
-      const candidates = info.callable.filter((m) => m.name.toUpperCase() === wanted);
-      if (candidates.length === 0) {
-        const all = info.callable.map((m) => m.signature(x.types));
-        const exists = hasMethod(item, wanted);
-        // In a mixed stream, name the targets' types that do have the method (filter to them first).
-        const having = [...new Set(targets.map((o) => x.types.infoOf(o.item.value as object)))]
-          .filter((o) => o.callable.some((m) => m.name.toUpperCase() === wanted))
-          .map((o) => o.shortName)
-          .slice(0, 3);
-        const filter = having.length > 0 ? filterHint(having, s.method, `call ${s.method}(…)`) + '; ' : '';
-        throw new RqlError(
-          exists ? 'permission-denied' : 'unknown-function',
-          `no callable method '${s.method}' on ${info.shortName}`,
-          undefined,
-          filter +
-            (all.length > 0 ? 'callable: ' + all.join(', ') : `${info.shortName} has no callable methods`) +
-            (exists ? '' : x.engine.sourcesWithCallable(s.method)),
-        );
-      }
+      const found = info.callable.filter((m) => m.name.toUpperCase() === wanted);
+      if (found.length > 0) return found;
+      const all = info.callable.map((m) => m.signature(x.types));
+      const exists = hasMethod(item, wanted);
+      // In a mixed stream, name the targets' types that do have the method (filter to them first).
+      const having =
+        stream === undefined
+          ? []
+          : [...new Set(stream.map((o) => x.types.infoOf(o.item.value as object)))]
+              .filter((o) => o.callable.some((m) => m.name.toUpperCase() === wanted))
+              .map((o) => o.shortName)
+              .slice(0, 3);
+      const filter = having.length > 0 ? filterHint(having, s.method, `call ${s.method}(…)`) + '; ' : '';
+      throw new RqlError(
+        exists ? 'permission-denied' : 'unknown-function',
+        `no callable method '${s.method}' on ${stream === undefined ? x.engine.refOf(item) : info.shortName}`,
+        undefined,
+        filter +
+          (all.length > 0 ? 'callable: ' + all.join(', ') : `${info.shortName} has no callable methods`) +
+          (exists ? '' : x.engine.sourcesWithCallable(s.method)),
+      );
+    };
+    // A source-qualified call checks its receiver's method before reading the stream: a typo fails even with no items.
+    const fixed = receiver !== undefined ? candidatesOf(receiver, undefined) : undefined;
+    const targets = this.targets(stream, 'call', s.method, receiver !== undefined);
+    const planned: { item: object; method: MethodAccessor; args: unknown[]; index: number }[] = [];
+    // Where a failure is: the target, or for a source-qualified call the receiver and the item's position.
+    const at = (item: object, index: number): string => x.engine.refOf(item) + (receiver !== undefined ? ` for item ${index}` : '');
+    for (const t of targets) {
+      const item = receiver ?? (t.item.value as object);
+      const candidates = fixed ?? candidatesOf(item, targets);
       this.enterScope(t);
       const vals = args.map((a) => a(x));
       let chosen: { method: MethodAccessor; args: unknown[] } | undefined;
@@ -640,7 +665,7 @@ export class Mutator {
           }
           const co = coerce(x.types, vals[i], p.type ?? 'any', x.engine.mutations.canWrite, x.engine.mutations.coerceText);
           if (!co.ok) {
-            if (co.code !== undefined) throw new RqlError(co.code, `cannot call ${s.method} on ${x.engine.refOf(item)}: argument '${p.name}': ${co.why}`);
+            if (co.code !== undefined) throw new RqlError(co.code, `cannot call ${s.method} on ${at(item, t.index)}: argument '${p.name}': ${co.why}`);
             ok = false;
             why = `argument '${p.name}': ${co.why}`;
             break;
@@ -653,7 +678,7 @@ export class Mutator {
         }
       }
       if (chosen === undefined) {
-        throw new RqlError('coercion-failed', `cannot call ${s.method} on ${x.engine.refOf(item)}: ${why}`, undefined, 'signature: ' + candidates.map((m) => m.signature(x.types)).join(', '));
+        throw new RqlError('coercion-failed', `cannot call ${s.method} on ${at(item, t.index)}: ${why}`, undefined, 'signature: ' + candidates.map((m) => m.signature(x.types)).join(', '));
       }
       // The method's own check, for every target before the first call (and on dry runs): all-or-nothing (spec §8).
       const check = chosen.method.validate;
@@ -665,10 +690,10 @@ export class Mutator {
           rejected = `its check threw ${e instanceof Error ? e.name : typeof e}: ${errorMessage(e)}`;
         }
         if (rejected !== null && rejected !== undefined) {
-          throw new RqlError('invalid-value', `cannot call ${chosen.method.signature(x.types)} on ${x.engine.refOf(item)}: ${rejected}; nothing was called`);
+          throw new RqlError('invalid-value', `cannot call ${chosen.method.signature(x.types)} on ${at(item, t.index)}: ${rejected}; nothing was called`);
         }
       }
-      planned.push({ item, ...chosen });
+      planned.push({ item, ...chosen, index: t.index });
     }
 
     const callRecords = once(() =>
@@ -691,16 +716,24 @@ export class Mutator {
           // Completed calls are not rolled back, so the host still learns about them.
           const completed = done;
           this.runHook('committed', () => callRecords().slice(0, completed));
-          throw new RqlError('call-threw', `${p.method.name} on ${x.engine.refOf(p.item)} threw ${name}: ${errorMessage(e)}; ${done} earlier call(s) completed and are NOT rolled back`);
+          throw new RqlError('call-threw', `${p.method.name} on ${at(p.item, p.index)} threw ${name}: ${errorMessage(e)}; ${done} earlier call(s) completed and are NOT rolled back`);
         }
       }
       done++;
-      rows.push([x.engine.refOf(p.item), p.method.signature(x.types), result]);
+      // A source-qualified call reports what each invocation returned (the created object, spec §8).
+      const refOf = receiver !== undefined && !x.options.dryRun && this.identified(result) ? (result as object) : p.item;
+      rows.push([x.engine.refOf(refOf), p.method.signature(x.types), result]);
     }
     this.runHook('committed', callRecords);
     const r = this.enc.rows(['$ref', 'method', 'result'], rows);
     if (x.options.dryRun) r.dryRun = true;
     return r;
+  }
+
+  /** An object with identity (not a list, map, struct or scalar): a receipt row can carry its $ref. */
+  private identified(v: unknown): boolean {
+    if (v === null || typeof v !== 'object' || v instanceof EnumValue || v instanceof Date || v instanceof ErrorValue) return false;
+    return this.x.types.infoOf(v).kind === 'object';
   }
 }
 

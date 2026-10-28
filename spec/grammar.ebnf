@@ -8,7 +8,8 @@
    structurally; the binder/executor decides whether they exist and are allowed. *)
 
 query           = source , { "|" , stage } ;
-source          = postfix ;                       (* e.g. world.scenes[0].objects, ref("GameObject#12") *)
+source          = postfix ;                       (* e.g. world.scenes[0].objects, ref("GameObject#12"),
+                                                     range(0, 10), [1, 2, 3] *)
 
 (* ---------- stages ---------- *)
 stage           = where | select | sort | first | skip | count | get | recurse
@@ -31,7 +32,10 @@ group_by        = "group-by" , select_item , { [ "," ] , select_item } ;
                   (* one unnamed key → plan {expr} (rows key, count); several keys or a named key → plan {fields} *)
 set             = "set" , assignment , { "," , assignment } ;
 assignment      = postfix , "=" , expr ;
-call            = "call" , name , "(" , [ expr , { "," , expr } ] , ")" ;
+call            = "call" , ( name , [ call_args ]                (* call Heal(10), call Destroy *)
+                           | postfix ) ;                         (* source-qualified: call editor.Create("Cube"),
+                                                                    call ref("Node#8").bump($); the postfix must end
+                                                                    in a method call; plan {method, on, args} *)
 describe        = "describe" ;
 generic_stage   = name , { "." , name } , { option | postfix } ;   (* any other (possibly namespaced) stage *)
 option          = name , "=" , postfix ;         (* max-depth=4, include-self=false *)

@@ -329,6 +329,10 @@ public:
 private:
     Exec& x_;
     Json inline_object(const Value& obj, int depth);
+    /// The lists and maps being encoded: one nested in itself, or nested deeper than 32 levels, encodes as "…"
+    /// instead of recursing forever (spec §6).
+    std::vector<const void*> open_;
+    bool enter(const void* collection);
 };
 
 // ---------------------------------------------------------------- streams (pipeline.cpp)
@@ -349,7 +353,15 @@ void set_scope(Exec& x, const Item& it, int64_t index);
 /// Whether `s` is the member `name` (ASCII case-insensitive).
 inline bool is_member(const Segment& s, const char* name) { return s.kind == SegmentKind::Member && iequals(s.name, name); }
 QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s);
-QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s);
+/// The numbers of range(start, end[, step]) (spec §2, §4.3): start + k * step for k = 0 … count - 1; false with `error`
+/// (an error argument, or a type-mismatch for a non-number, non-finite number or zero step).
+bool range_of(const Value& a, const Value& b, const Value& c, double& start, double& step, int64_t& count, Value& error);
+/// The k-th number of a range: start + k * step, rounded like .NET and JavaScript (no fused multiply-add).
+double range_at(double start, double step, int64_t k);
+
+/// `receiver`: a source-qualified call's object (spec §8), whose method runs once per stream item; null: on each item.
+/// Resolved after the policy check, so a read request never evaluates the target.
+QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s, const std::function<Value()>& resolve_receiver = {});
 /// Coerce a value to a member/parameter type (spec §8); nullopt + why on failure.
 std::optional<Value> coerce(Exec& x, const Value& v, const TypeDescriptor* target, bool nullable, std::string& why);
 

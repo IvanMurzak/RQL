@@ -704,13 +704,14 @@ namespace Rql.Eval.Tasks
         {
             "holdout" => HoldoutSeeds,
             "holdout2" => Holdout2Seeds,
+            "bulk" => BulkSeeds,
             _ => DevSeeds,
         };
 
         public static List<TaskInstance> Build(string split)
         {
             var list = new List<TaskInstance>();
-            foreach (var t in Templates().Concat(TemplatesV2()).Where(t => t.Split == split || split == "all"))
+            foreach (var t in Templates().Concat(TemplatesV2()).Concat(TemplatesBulk()).Where(t => t.Split == split || split == "all"))
             {
                 foreach (var seed in SeedsFor(t.Split))
                 {

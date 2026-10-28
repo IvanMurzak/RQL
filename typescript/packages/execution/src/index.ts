@@ -45,3 +45,4 @@ export {
   type TypeAdapter,
   type VirtualMemberSpec,
 } from './adapters.js';
+export { LANGUAGE_RULES } from './guide.js';

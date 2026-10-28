@@ -151,7 +151,8 @@ void register_test_adapters(rql::Engine& engine, rql::TypeRegistry& reg) {
         if (!n) return std::nullopt;
         return std::find(n->Tags.begin(), n->Tags.end(), "destroyed") == n->Tags.end();
     };
-    node.configure_members = [](rql::MemberTable& t) {
+    rql::TypeDescriptor* node_type = reg.descriptor<Node>();
+    node.configure_members = [r, node_type](rql::MemberTable& t) {
         t.computed<Node>("childCount", [](Node& n) { return static_cast<int>(n.Children.size()); }, "number of direct children")
             .property<Node>(
                 "title", [](Node& n) { return ascii_case(n.Name, true); },
@@ -196,6 +197,21 @@ void register_test_adapters(rql::Engine& engine, rql::TypeRegistry& reg) {
                     if (args[0].as_number() < 0) return "by must be non-negative";
                     return n.Id == 5 ? "node 5 is frozen" : "";
                 })
+            .method<Node>(
+                "spawn", {rql::ParamDescriptor{"name", rql::builtin::string_type(), false, false, rql::Value()}}, node_type,
+                [r](Node& n, const std::vector<rql::Value>& args) {
+                    // The fixture's creation method: a child with Id = parent Id * 100 + its position (from 1).
+                    auto child = std::make_shared<Node>();
+                    child->Id = n.Id * 100 + static_cast<int>(n.Children.size()) + 1;
+                    child->Name = args[0].as_string();
+                    child->Kind = NodeKind::Alpha;
+                    child->Enabled = true;
+                    child->Parent = &n;
+                    n.Children.push_back(child);
+                    return r->wrap(child.get());
+                },
+                "append a new child node named name; returns it",
+                [](Node&, const std::vector<rql::Value>& args) -> std::string { return args[0].as_string().empty() ? "name must not be empty" : ""; })
             .method<Node>(
                 "greet", {rql::ParamDescriptor{"who", rql::builtin::string_type(), false, false, rql::Value()}},
                 rql::builtin::string_type(),

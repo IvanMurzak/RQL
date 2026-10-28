@@ -123,6 +123,7 @@ function stageToJson(s: Stage): JsonObject {
       break;
     case 'call':
       o.method = s.method;
+      if (s.on !== undefined) o.on = exprToJson(s.on);
       o.args = s.args.map(exprToJson);
       break;
     case 'generic':
@@ -456,10 +457,11 @@ export function readStage(s: Json): Stage {
       return { kind: 'set', op, assign };
     }
     case 'call': {
-      allowOnly(s, ctx, 'op', 'method', 'args');
+      allowOnly(s, ctx, 'op', 'method', 'on', 'args');
       const m = required(s, 'method', ctx);
       if (typeof m !== 'string' || m.length === 0) throw invalid('call.method must be a non-empty string');
-      return { kind: 'call', op, method: m, args: readExprArray(required(s, 'args', ctx), 'args') };
+      const args = readExprArray(required(s, 'args', ctx), 'args');
+      return has(s, 'on') ? { kind: 'call', op, method: m, on: readExpr(s['on']), args } : { kind: 'call', op, method: m, args };
     }
     default: {
       if (!op.includes('.')) {

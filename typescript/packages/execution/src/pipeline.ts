@@ -10,6 +10,8 @@ import {
   failResult,
   isTerminal as isTerminalStage,
   segmentToString,
+  type CallExpr,
+  type CallStage,
   type Diagnostic,
   type Expr,
   type GenericStage,
@@ -21,8 +23,8 @@ import {
   type SortStage,
   type Stage,
 } from '@rql/contracts';
-import { elements, mapEntries, type MapLike } from './collections.js';
-import { Compiler, MAX_COMPARE_DEPTH, compare, reduce, toText, type Eval } from './compiler.js';
+import { elements, mapEntries, sizeOf, type MapLike } from './collections.js';
+import { Compiler, MAX_COMPARE_DEPTH, compare, pathText, rangeOf, reduce, toText, type Eval } from './compiler.js';
 import { describeRun, reachableTypes } from './describe.js';
 import { Encoder } from './encoder.js';
 import type { ArgEvaluator, SourceRegistration } from './engine.js';
@@ -31,6 +33,11 @@ import { Mutator } from './mutator.js';
 import { closest, memberHint } from './suggest.js';
 import { EnumType, EnumValue, unwrapNullable, type TypeInfo } from './types.js';
 import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, isAbsent, originOf, streamedEntry, toNumber, type EntryOrigin } from './values.js';
+
+/** The core source function range(start, end[, step]) (spec §2). */
+function isRange(e: Expr): boolean {
+  return e.kind === 'call' && e.on === undefined && e.name.toLowerCase() === 'range';
+}
 
 export interface Item {
   readonly value: unknown;
@@ -127,7 +134,7 @@ export class Pipeline {
             'warning',
             'unknown-member',
             `no column '${site.name}' in the projected rows (columns: ${site.rowColumns.join(', ')})`,
-            site.groupRows ? groupRowHint(site.name) : ROW_COLUMN_HINT,
+            site.groupRows ? groupRowHint(site.name, site.rowColumns) : ROW_COLUMN_HINT,
             site.span,
           ),
         );
@@ -264,7 +271,7 @@ export class Pipeline {
       case 'set':
         return new Mutator(x, this.c, encoder).set(stream, terminal);
       case 'call':
-        return new Mutator(x, this.c, encoder).call(stream, terminal);
+        return new Mutator(x, this.c, encoder).call(stream, terminal, terminal.on !== undefined ? () => this.callReceiver(terminal) : undefined);
       default:
         throw new RqlError('unsupported', `stage '${terminal.op}' is not supported`);
     }
@@ -285,6 +292,16 @@ export class Pipeline {
   // ---------------------------------------------------------------- source
 
   private compileSource(src: Expr): Iterable<Item> {
+    if (isRange(src)) return this.rangeItems(src as CallExpr);
+    const b = this.bindSource(src);
+    return this.sourceStream(b);
+  }
+
+  /**
+   * A source expression (spec §2) as a deferred value: a registered source with navigation, ref(…) or a list literal.
+   * `quiet`: an error value was already reported (ref()), so the stream is just empty.
+   */
+  private bindSource(src: Expr): { value: () => unknown; pathText: string; quiet: boolean } {
     const x = this.x;
     if (src.kind === 'path' && src.on === undefined && src.segments.length > 0 && src.segments[0]!.kind === 'member') {
       // Longest dotted prefix that matches a registered source (exact, then case-insensitive).
@@ -296,18 +313,138 @@ export class Pipeline {
         if (reg === undefined) continue;
         const rest: PathExpr = { kind: 'path', segments: src.segments.slice(len), ...(src.span !== undefined ? { span: src.span } : {}) };
         const nav = rest.segments.length > 0 ? this.c.compile(rest) : undefined;
-        return this.sourceItems(reg, nav, reg.name + pathSuffixText(rest));
+        return { value: () => this.sourceValue(reg, nav), pathText: reg.name + pathSuffixText(rest), quiet: false };
       }
       const head = memberName(src.segments[0]!);
       const names = [...x.engine.sources.keys()];
       const close = closest(head, names, 3);
       throw new RqlError('unknown-source', `unknown source '${head}'`, src.span, (close.length > 0 ? `did you mean ${close.join(' / ')}? ` : '') + 'sources: ' + names.join(' '));
     }
-    if (src.kind === 'call' && src.on === undefined && src.name.toLowerCase() === 'ref') {
-      return this.refItems(this.c.compile(src));
+    if (src.kind === 'call' && src.on === undefined && src.name.toLowerCase() === 'ref') return { value: this.rootValue(this.c.compile(src)), pathText: 'ref(…)', quiet: true };
+    // A list literal streams its elements, evaluated with no current item (spec §2).
+    // An error element fails the query; an element that reads nothing (a bare path) is dropped like null.
+    if (src.kind === 'list') {
+      const list = this.rootValue(this.c.compile(src));
+      return {
+        value: () => {
+          const l = list();
+          if (!Array.isArray(l)) return l;
+          return l.find((e) => e instanceof ErrorValue) ?? l.filter((e) => e !== MISSING && e !== UNKNOWN);
+        },
+        pathText: '[…]',
+        quiet: false,
+      };
     }
     const example = x.engine.exampleSource;
-    throw new RqlError('unknown-source', `query must start with a source name${example !== undefined ? ` (e.g. ${example})` : ''} or ref("Type#id")`, src.span, 'sources: ' + [...x.engine.sources.keys()].join(' '));
+    throw new RqlError(
+      'unknown-source',
+      `query must start with a source name${example !== undefined ? ` (e.g. ${example})` : ''}, ref("Type#id"), range(…) or a list`,
+      src.span,
+      'sources: ' + [...x.engine.sources.keys()].join(' '),
+    );
+  }
+
+  private sourceValue(reg: SourceRegistration, nav: Eval | undefined): unknown {
+    const x = this.x;
+    const root = normalize(reg.getter());
+    x.engine.noteSourceType(reg.name, root);
+    if (nav === undefined) return root;
+    x.current = root;
+    x.currentPath = null;
+    return nav(x);
+  }
+
+  /** An expression evaluated in root scope (no current item). */
+  private rootValue(ev: Eval): () => unknown {
+    return () => {
+      this.x.current = null;
+      this.x.currentPath = null;
+      return ev(this.x);
+    };
+  }
+
+  private *sourceStream(b: { value: () => unknown; pathText: string; quiet: boolean }): Generator<Item> {
+    const x = this.x;
+    const value = b.value();
+    if (value instanceof ErrorValue) {
+      if (b.quiet) return; // diagnostic already recorded (ref)
+      throw new RqlError(value.code, `source '${b.pathText}' failed: ${value.detail ?? value.code}`);
+    }
+    if (value === MISSING) return;
+    yield* this.expand(value, x.trackPaths && !b.quiet ? new PathNode(null, b.pathText) : null);
+  }
+
+  /** range(start, end[, step]) as a source: lazy, every number counts against maxVisited (spec §2). */
+  private rangeItems(c: CallExpr): Iterable<Item> {
+    if (c.args.length < 2 || c.args.length > 3) {
+      throw new RqlError('arity', `'range' takes 2-3 argument(s), got ${c.args.length}`, c.span, 'example: range(0, 10) or range(10, 0, -2)');
+    }
+    const args = c.args.map((a) => this.c.compile(a));
+    const x = this.x;
+    return (function* (): Generator<Item> {
+      x.current = null;
+      x.currentPath = null;
+      const vals = args.map((a) => a(x));
+      const r = rangeOf(vals[0], vals[1], vals.length > 2 ? vals[2] : 1);
+      if (r instanceof ErrorValue) throw new RqlError(r.code, `source range(…) failed: ${r.detail ?? r.code}`, c.span);
+      const base = x.trackPaths ? new PathNode(null, 'range(…)') : null;
+      for (let k = 0; k < r.count; k++) {
+        x.visit();
+        yield item(r.start + k * r.step, base !== null ? base.at(k) : null);
+      }
+    })();
+  }
+
+  /** The receiver of a source-qualified call (spec §8): the source expression evaluated once, which must be one object. */
+  private callReceiver(s: CallStage): object {
+    const x = this.x;
+    const on = s.on!;
+    if (isRange(on)) {
+      throw new RqlError('invalid-plan', `call range(…).${s.method}: range() gives numbers, not an object to call ${s.method} on`, on.span, `stream the numbers into a source's method instead: range(…) | call <source>.${s.method}(… $ …)`);
+    }
+    let b: { value: () => unknown; pathText: string; quiet: boolean };
+    try {
+      b = this.bindSource(on);
+    } catch (e) {
+      if (!(e instanceof RqlError) || e.code !== 'unknown-source') throw e;
+      const text = pathText(on);
+      if (text === undefined || on.kind !== 'path') {
+        throw new RqlError(
+          'unknown-source',
+          `call ….${s.method}: the call target must be a source or ref(…)`,
+          on.span,
+          `a qualified call runs a method of one source object (sources: ${[...x.engine.sources.keys()].join(' ')}), e.g. … | call ${x.engine.exampleSource ?? 'editor'}.${s.method}(…)`,
+        );
+      }
+      throw new RqlError(
+        'unknown-source',
+        `call ${text}.${s.method}: '${memberName(on.segments[0]!)}' is not a source`,
+        on.span,
+        `a qualified call runs a method of a source (sources: ${[...x.engine.sources.keys()].join(' ')}); ` +
+          `to call a method of each item's member, get it first: … | get ${text} | call ${s.method}(…)`,
+      );
+    }
+    const label = b.pathText;
+    const perItem = `… | call ${label}.${s.method}(…) runs the method of one object once per stream item`;
+    const v = b.value();
+    if (v instanceof ErrorValue) throw new RqlError(v.code, `call target ${label} failed: ${v.detail ?? v.code}; nothing was called`, on.span);
+    if (v === null || v === undefined || v === MISSING || v === UNKNOWN || x.dead(v)) {
+      throw new RqlError('invalid-plan', `call target ${label} is null: there is no object to call ${s.method} on; nothing was called`, on.span);
+    }
+    const info = x.types.infoOf(v);
+    if (info.isList || info.isMap) {
+      const n = sizeOf(v, x.types) ?? 0;
+      throw new RqlError(
+        'invalid-plan',
+        `call target ${label} is a ${info.isList ? 'list' : 'map'} of ${n} item(s), not one object; nothing was called`,
+        on.span,
+        `to call ${s.method} on each of them: ${label} | call ${s.method}(…); ${perItem}`,
+      );
+    }
+    if (typeof v !== 'object' || v instanceof RowValue || v instanceof EnumValue || v instanceof Date || (info.kind === 'struct' && !info.writesThrough) || info.kind === 'scalar') {
+      throw new RqlError('invalid-plan', `call target ${label} is a ${info.shortName} value, not an object with identity; nothing was called`, on.span, perItem);
+    }
+    return v;
   }
 
   private findSource(name: string): SourceRegistration | undefined {
@@ -317,29 +454,6 @@ export class Pipeline {
     const up = name.toUpperCase();
     const ci = [...sources.values()].filter((s) => s.name.toUpperCase() === up);
     return ci.length === 1 ? ci[0] : undefined;
-  }
-
-  private *sourceItems(reg: SourceRegistration, nav: Eval | undefined, pathText: string): Generator<Item> {
-    const x = this.x;
-    const root = normalize(reg.getter());
-    x.engine.noteSourceType(reg.name, root);
-    let value: unknown = root;
-    if (nav !== undefined) {
-      x.current = root;
-      x.currentPath = null;
-      value = nav(x);
-    }
-    if (value instanceof ErrorValue) throw new RqlError(value.code, `source '${pathText}' failed: ${value.detail ?? value.code}`);
-    if (value === MISSING) return;
-    yield* this.expand(value, x.trackPaths ? new PathNode(null, pathText) : null);
-  }
-
-  private *refItems(ev: Eval): Generator<Item> {
-    const x = this.x;
-    x.current = null;
-    const v = ev(x);
-    if (v instanceof ErrorValue) return; // diagnostic already recorded
-    yield* this.expand(v, null);
   }
 
   /**
@@ -836,11 +950,17 @@ function usesMeta(plan: Exec['plan'], meta: string): boolean {
   return usesSegment(plan, (s) => s.kind === 'meta' && s.name === meta);
 }
 
-/** A member missing on group-by rows: aggregate the group's items (spec §5). */
-function groupRowHint(name: string): string {
+/**
+ * A member missing on group-by rows: aggregate the group's items (spec §5). The example names the rows' own key columns
+ * (key, or the named keys such as mat), and a missing key column is not offered as a member to aggregate.
+ */
+function groupRowHint(name: string, columns: readonly string[]): string {
+  const keys = columns.filter((c) => c.toLowerCase() !== 'count');
+  const keyText = keys.length > 0 ? keys.join(', ') : 'key';
+  const member = name.toLowerCase() !== 'key';
   return (
-    "group-by rows have their key column(s), count and the group's items: aggregate per group with items, e.g. " +
-    `select key, count, avg = items.avg(${name}) (also items.sum(…), items.min(…), items.max(…), items.count(…), items.first().${name})`
+    `group-by rows have their key column(s) (${keyText}), count and the group's items: aggregate per group with items, e.g. ` +
+    `select ${keyText}, count, avg = items.avg(${member ? name : '…'}) (also items.sum(…), items.min(…), items.max(…), items.count(…), items.first()${member ? '.' + name : ''})`
   );
 }
 

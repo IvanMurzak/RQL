@@ -231,9 +231,15 @@ namespace Rql
 
     public sealed class CallStage : Stage
     {
-        public CallStage(string method, IReadOnlyList<Expr> args) : base("call") { Method = method; Args = args; }
+        public CallStage(string method, IReadOnlyList<Expr> args, Expr? on = null) : base("call") { Method = method; Args = args; On = on; }
         public string Method { get; }
         public IReadOnlyList<Expr> Args { get; }
+
+        /// <summary>
+        /// The receiver of a source-qualified call (<c>call editor.Create(…)</c>, spec §8): a source expression evaluated once,
+        /// whose single object the method runs on once per stream item. Null: the method runs on each item.
+        /// </summary>
+        public Expr? On { get; }
         public override bool IsTerminal => true;
         public override bool IsMutation => true;
     }

@@ -8,6 +8,8 @@
 namespace rql {
 namespace detail {
 
+std::string per_item_call_hint(Exec& x, const std::string& method);
+
 namespace {
 
 void check_policy(Exec& x, const std::string& op) {
@@ -66,7 +68,7 @@ void validate_batch(Exec& x, const std::string& op, const std::vector<MutationRe
 /// mutation-limit (spec §8, §10) once `matched` targets passed the limit: counts the rest of the stage's input up to the
 /// host ceiling (counting only) so the message states how many items matched, and builds the hint for the host's limit
 /// argument.
-[[noreturn]] void limit_exceeded(Exec& x, Stream& rest, int64_t matched, const std::string& op) {
+[[noreturn]] void limit_exceeded(Exec& x, Stream& rest, int64_t matched, const std::string& op, const std::string& matched_text = "objects matched") {
     const MutationPolicy& m = x.engine.mutations();
     const int limit = static_cast<int>(x.max_mutation_targets);
     const int64_t ceiling = std::max<int64_t>(m.hard_max_targets, limit);
@@ -76,8 +78,9 @@ void validate_batch(Exec& x, const std::string& op, const std::vector<MutationRe
         if (!it.value.is_null() && !x.is_dead(it.value)) ++matched;
     const bool ended = matched <= ceiling;
     const std::string op_q = "'" + op + "'";
-    std::string message = ended ? std::to_string(matched) + " objects matched " + op_q + ", more than the limit of " + std::to_string(limit) + "; nothing was changed"
-                                : "more than " + std::to_string(ceiling) + " objects matched " + op_q + " (the limit is " + std::to_string(limit) +
+    std::string message = ended ? std::to_string(matched) + " " + matched_text + " " + op_q + ", more than the limit of " + std::to_string(limit) +
+                                      "; nothing was changed"
+                                : "more than " + std::to_string(ceiling) + " " + matched_text + " " + op_q + " (the limit is " + std::to_string(limit) +
                                       "); nothing was changed";
     std::string hint = m.limit_hint ? m.limit_hint(op, limit) : std::string();
     if (hint.empty()) {
@@ -87,7 +90,9 @@ void validate_batch(Exec& x, const std::string& op, const std::vector<MutationRe
     throw RqlException("mutation-limit", message, hint);
 }
 
-std::vector<Target> targets(Exec& x, Stream& stream, const std::string& op) {
+/// `method`: for `call`, the method (hints); `per_item`: a source-qualified call, whose items are only the scope of its
+/// arguments, so any value may be one (spec §8).
+std::vector<Target> targets(Exec& x, Stream& stream, const std::string& op, const std::string& method = std::string(), bool per_item = false) {
     std::vector<Target> list;
     Item it;
     int64_t index = -1;
@@ -95,6 +100,11 @@ std::vector<Target> targets(Exec& x, Stream& stream, const std::string& op) {
         ++index;  // skipped null/destroyed items keep their positions: $index is the position in the stage's input
         // Null and destroyed items are skipped (spec §13: a destroyed object reads as null).
         if (it.value.is_null() || x.is_dead(it.value)) continue;
+        if (per_item) {
+            list.push_back({it, index});
+            if (static_cast<int64_t>(list.size()) > x.max_mutation_targets) limit_exceeded(x, stream, static_cast<int64_t>(list.size()), op, "items reached");
+            continue;
+        }
         if (it.value.is_row())
             throw RqlException("invalid-plan", "'" + op + "' needs objects, not projected rows; remove 'select' before '" + op + "'");
         if (it.value.is_entry()) {
@@ -116,7 +126,8 @@ std::vector<Target> targets(Exec& x, Stream& stream, const std::string& op) {
         if ((v.is_struct() && !handle) || v.is_number() || v.is_string() || v.is_bool() || v.is_enum())
             throw RqlException("invalid-plan",
                                "'" + op + "' needs objects with identity; '" + type_name_of(v) + "' items are value copies, so the change would be lost",
-                               "set the member from its owner instead, e.g. objects | where ... | set Transform.Position.x = 0");
+                               !method.empty() ? per_item_call_hint(x, method)
+                                               : "set the member from its owner instead, e.g. objects | where ... | set Transform.Position.x = 0");
         list.push_back({it, index});
         if (static_cast<int64_t>(list.size()) > x.max_mutation_targets) limit_exceeded(x, stream, static_cast<int64_t>(list.size()), op);
     }
@@ -828,8 +839,16 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
     return r;
 }
 
-/// Sources whose value is a single object with a callable method of this name, as hint text, or "" (spec §10).
-std::string sources_with_callable(Exec& x, const std::string& method) {
+namespace {
+
+/// The source-qualified call text of a hint: … | call src.M(… $ …).
+std::string per_item_form(const std::string& source, const std::string& method) {
+    const std::string ell = "\xE2\x80\xA6";
+    return ell + " | call " + source + "." + method + "(" + ell + " $ " + ell + ")";
+}
+
+/// The sources whose value is a single object with a callable method of this name.
+std::vector<std::string> source_names_with_callable(Exec& x, const std::string& method) {
     std::vector<std::string> names;
     for (auto& s : x.engine.sources()) {
         Value v;
@@ -846,25 +865,45 @@ std::string sources_with_callable(Exec& x, const std::string& method) {
                 break;
             }
     }
-    if (names.empty()) return {};
-    if (names.size() == 1)
-        return "; the source '" + names[0] + "' has " + method + ": " + names[0] + " | call " + method + "(\xE2\x80\xA6)";
-    return "; sources with " + method + ": " + join(names, ", ") + " (e.g. " + names[0] + " | call " + method + "(\xE2\x80\xA6))";
+    return names;
 }
 
-QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s) {
+}  // namespace
+
+/// Sources whose value is a single object with a callable method of this name, as hint text, or "" (spec §10).
+std::string sources_with_callable(Exec& x, const std::string& method) {
+    const std::vector<std::string> names = source_names_with_callable(x, method);
+    if (names.empty()) return {};
+    const std::string ell = "\xE2\x80\xA6";
+    const std::string per_item = per_item_form(names[0], method) + " once per item";
+    if (names.size() == 1)
+        return "; the source '" + names[0] + "' has " + method + ": " + names[0] + " | call " + method + "(" + ell + ") calls it once, " + per_item;
+    return "; sources with " + method + ": " + join(names, ", ") + " (e.g. " + names[0] + " | call " + method + "(" + ell + ") once, " + per_item + ")";
+}
+
+/// The hint of an unqualified `call` on items that are not objects (numbers from range(), strings, structs): qualify the
+/// method with the source that has it, so it runs once per item (spec §8, §10).
+std::string per_item_call_hint(Exec& x, const std::string& method) {
+    const std::string ell = "\xE2\x80\xA6";
+    const std::vector<std::string> having = source_names_with_callable(x, method);
+    if (!having.empty()) return "to run a source's method once per item, qualify it with the source: " + per_item_form(having[0], method) + " ($ is the item)";
+    std::vector<std::string> names;
+    for (auto& src : x.engine.sources()) names.push_back(src.name);
+    return "call runs a method of each item, and these items have none; to run a source's method once per item qualify it: " + ell + " | call <source>." +
+           method + "(" + ell + " $ " + ell + ") ($ is the item; sources: " + join(names, " ") + ")";
+}
+
+QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s, const std::function<Value()>& resolve_receiver) {
     check_policy(x, "call");
+    // After the policy check: a read request never evaluates the target.
+    std::optional<Value> resolved;
+    if (resolve_receiver) resolved = resolve_receiver();
+    const Value* receiver = resolved ? &*resolved : nullptr;
     std::vector<Eval> args;
     for (auto& a : s.args) args.push_back(c.compile(*a));
-    std::vector<Target> items = targets(x, stream, "call");
-    struct Planned {
-        Value item;
-        const MethodDescriptor* method;
-        std::vector<Value> args;
-    };
-    std::vector<Planned> planned;
-    for (auto& target : items) {
-        const Value& item = target.item.value;
+    // The callable overloads of the method on a target, by arity; none: unknown-function (or permission-denied for a method
+    // the host does not expose), naming the targets' types and the sources that have it (spec §10).
+    auto candidates_of = [&](const Value& item, const std::vector<Target>* stream_items) {
         const TypeDescriptor* t = (item.is_object() || item.is_struct()) ? item.type() : nullptr;
         std::vector<const MethodDescriptor*> candidates;
         bool exists = false;
@@ -884,11 +923,12 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
                              [](const MethodDescriptor* a, const MethodDescriptor* b) { return a->params.size() < b->params.size(); });
             for (auto* m : candidates) sigs.push_back(t->signature(*m));
         }
+        if (!candidates.empty()) return candidates;
         std::string tn = type_name_of(item);
-        if (candidates.empty()) {
-            // In a mixed stream, name the targets' types that do have the method (filter to them first).
-            std::vector<std::string> having;
-            for (auto& o : items) {
+        // In a mixed stream, name the targets' types that do have the method (filter to them first).
+        std::vector<std::string> having;
+        if (stream_items)
+            for (auto& o : *stream_items) {
                 const Value& ov = o.item.value;
                 if (!(ov.is_object() || ov.is_struct()) || having.size() >= 3) continue;
                 if (std::find(having.begin(), having.end(), ov.type()->name) != having.end()) continue;
@@ -899,11 +939,31 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
                         break;
                     }
             }
-            std::string filter = having.empty() ? std::string() : filter_hint(having, s.method, "call " + s.method + "(\xE2\x80\xA6)") + "; ";
-            throw RqlException(exists ? "permission-denied" : "unknown-function", "no callable method '" + s.method + "' on " + tn,
-                               filter + (!sigs.empty() ? "callable: " + join(sigs, ", ") : tn + " has no callable methods") +
-                                   (exists ? std::string() : sources_with_callable(x, s.method)));
-        }
+        std::string filter = having.empty() ? std::string() : filter_hint(having, s.method, "call " + s.method + "(\xE2\x80\xA6)") + "; ";
+        throw RqlException(exists ? "permission-denied" : "unknown-function",
+                           "no callable method '" + s.method + "' on " + (stream_items ? tn : x.ref_of(item)),
+                           filter + (!sigs.empty() ? "callable: " + join(sigs, ", ") : tn + " has no callable methods") +
+                               (exists ? std::string() : sources_with_callable(x, s.method)));
+    };
+    // A source-qualified call checks its receiver's method before reading the stream: a typo fails even with no items.
+    std::vector<const MethodDescriptor*> fixed;
+    if (receiver) fixed = candidates_of(*receiver, nullptr);
+    std::vector<Target> items = targets(x, stream, "call", s.method, receiver != nullptr);
+    struct Planned {
+        Value item;
+        const MethodDescriptor* method;
+        std::vector<Value> args;
+        int64_t index;
+    };
+    std::vector<Planned> planned;
+    // Where a failure is: the target, or for a source-qualified call the receiver and the item's position.
+    auto at = [&](const Value& item, int64_t index) { return x.ref_of(item) + (receiver ? " for item " + std::to_string(index) : std::string()); };
+    std::vector<const MethodDescriptor*> own;
+    for (auto& target : items) {
+        const Value& item = receiver ? *receiver : target.item.value;
+        const TypeDescriptor* t = item.type();
+        if (!receiver) own = candidates_of(item, &items);
+        const std::vector<const MethodDescriptor*>& candidates = receiver ? fixed : own;
         enter_scope(x, target);
         std::vector<Value> vals;
         for (auto& a : args) vals.push_back(a(x));
@@ -944,8 +1004,7 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
         if (!chosen) {
             std::vector<std::string> cs;
             for (auto* m : candidates) cs.push_back(t->signature(*m));
-            throw RqlException("coercion-failed", "cannot call " + s.method + " on " + x.ref_of(item) + ": " + why,
-                               "signature: " + join(cs, ", "));
+            throw RqlException("coercion-failed", "cannot call " + s.method + " on " + at(item, target.index) + ": " + why, "signature: " + join(cs, ", "));
         }
         // The method's own check, for every target before the first call (and on dry runs): all-or-nothing (spec §8).
         if (chosen->validate) {
@@ -953,10 +1012,9 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
             if (auto failure = capture_failure([&] { rejected = chosen->validate(item.ptr(), coerced); }))
                 rejected = "its check threw: " + *failure;
             if (!rejected.empty())
-                throw RqlException("invalid-value", "cannot call " + t->signature(*chosen) + " on " + x.ref_of(item) + ": " + rejected +
-                                                        "; nothing was called");
+                throw RqlException("invalid-value", "cannot call " + t->signature(*chosen) + " on " + at(item, target.index) + ": " + rejected + "; nothing was called");
         }
-        planned.push_back({item, chosen, std::move(coerced)});
+        planned.push_back({item, chosen, std::move(coerced), target.index});
     }
 
     auto call_records = [&] {
@@ -977,12 +1035,14 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
             if (auto failure = capture_failure([&] { result = p.method->invoke(p.item.ptr(), p.args); })) {
                 // Completed calls are not rolled back, so the host still learns about them.
                 if (!records.empty()) committed(x, std::vector<MutationRecord>(records.begin(), records.begin() + static_cast<std::ptrdiff_t>(done)));
-                throw RqlException("call-threw", p.method->name + " on " + x.ref_of(p.item) + " threw: " + *failure + "; " +
-                                                       std::to_string(done) + " earlier call(s) completed and are NOT rolled back");
+                throw RqlException("call-threw", p.method->name + " on " + at(p.item, p.index) + " threw: " + *failure + "; " + std::to_string(done) +
+                                                       " earlier call(s) completed and are NOT rolled back");
             }
         }
         ++done;
-        rows.push_back({Value::string(x.ref_of(p.item)), Value::string(p.item.type()->signature(*p.method)), result});
+        // A source-qualified call reports what each invocation returned (the created object, spec §8).
+        const bool created = receiver && !x.options.dry_run && result.is_object() && !x.is_dead(result);
+        rows.push_back({Value::string(x.ref_of(created ? result : p.item)), Value::string(p.item.type()->signature(*p.method)), result});
     }
     committed(x, records);
     QueryResult r = enc.rows({"$ref", "method", "result"}, rows);

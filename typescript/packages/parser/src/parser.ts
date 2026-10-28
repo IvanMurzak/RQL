@@ -389,6 +389,13 @@ class Parser {
   private parseCallStage(): Stage {
     const t = this.peek();
     if (!this.isName(t)) throw this.error("expected a method name after 'call'", t, 'example: call Heal(10)');
+    const after = this.peek(1);
+    if (t.kind === 'ident' && (isPunct(after, '.') || (isPunct(after, '(') && !after.spaceBefore))) {
+      // call M(args), or a source-qualified call: call editor.Create(args), call ref("T#1").M(args) (spec §8).
+      const e = this.parsePostfix();
+      if (e.kind === 'call') return e.on !== undefined ? { kind: 'call', op: 'call', method: e.name, on: e.on, args: e.args } : { kind: 'call', op: 'call', method: e.name, args: e.args };
+      throw this.error('a source-qualified call needs parentheses', this.peek(), 'example: … | call editor.Create("Cube") runs the source\'s method once per item');
+    }
     this.next();
     const args = isPunct(this.peek(), '(') ? this.parseArgs() : [];
     return { kind: 'call', op: 'call', method: t.text, args };

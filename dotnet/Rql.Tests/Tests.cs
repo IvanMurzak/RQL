@@ -958,8 +958,8 @@ namespace Rql.Tests
         }
 
         [Theory]
-        [InlineData("[0, 1, 2] | select $")]
-        [InlineData("range(0, 3)")]
+        [InlineData("\"doors\" | select $")]
+        [InlineData("(1 + 2)")]
         public void UnknownSourceExampleNamesARegisteredSource(string q)
         {
             var r = Engine(new List<Door>()).Execute(q);
@@ -1070,7 +1070,7 @@ namespace Rql.Tests
         {
             var e = Engine(new List<Door> { new Door() }).AddSource("editor2", () => new Editor());
             var d = e.Execute("doors | call CreateThing(\"a\")", options: Mutate).Diagnostics[0];
-            Assert.Contains("sources with CreateThing: editor, editor2 (e.g. editor | call CreateThing(…))", d.Hint);
+            Assert.Contains("sources with CreateThing: editor, editor2 (e.g. editor | call CreateThing(…) once, … | call editor.CreateThing(… $ …) once per item)", d.Hint);
         }
 
         [Fact]

@@ -36,7 +36,9 @@ namespace Rql.Execution
         /// <summary>`$`, `$index`, `$path` and `$depth` in a set value / call argument are the target's (spec §8).</summary>
         private void EnterScope(Target t) => _x.Enter(t.Item, t.Index);
 
-        private List<Target> Targets(IEnumerable<Item> stream, string op)
+        /// <param name="method">For <c>call</c>: the method (hints); <paramref name="perItem"/>: a source-qualified call, whose
+        /// items are only the scope of its arguments, so any value may be one (spec §8).</param>
+        private List<Target> Targets(IEnumerable<Item> stream, string op, string? method = null, bool perItem = false)
         {
             var list = new List<Target>();
             long index = -1;
@@ -46,6 +48,13 @@ namespace Rql.Execution
                 var it = rest.Current;
                 index++; // skipped null/destroyed items keep their positions: $index is the position in the stage's input
                 if (it.Value == null) continue;
+                if (perItem)
+                {
+                    if (_x.Types.IsDead(it.Value)) continue;
+                    list.Add(new Target(it, index));
+                    if (list.Count > _x.MaxMutationTargets) throw LimitExceeded(rest, list.Count, op, "items reached");
+                    continue;
+                }
                 if (it.Value is RowValue)
                     throw new RqlException("invalid-plan", $"'{op}' needs objects, not projected rows; remove 'select' before '{op}'");
                 if (_x.Types.IsDead(it.Value)) continue; // destroyed objects read as null: skipped like null items
@@ -59,7 +68,8 @@ namespace Rql.Execution
                 }
                 else if ((it.Value.GetType().IsValueType && !_x.Types.Info(it.Value.GetType()).WritesThrough) || TypeModel.IsScalarType(it.Value.GetType()))
                     throw new RqlException("invalid-plan", $"'{op}' needs objects with identity; '{_x.Types.Info(it.Value.GetType()).ShortName}' items are value copies, so the change would be lost",
-                        null, "set the member from its owner instead, e.g. objects | where … | set Transform.Position.x = 0");
+                        null, method != null ? _x.Engine.PerItemCallHint(method)
+                            : "set the member from its owner instead, e.g. objects | where … | set Transform.Position.x = 0");
                 list.Add(new Target(it, index));
                 if (list.Count > _x.MaxMutationTargets) throw LimitExceeded(rest, list.Count, op);
             }
@@ -70,7 +80,7 @@ namespace Rql.Execution
         /// mutation-limit (spec §8, §10): counts the rest of the stage's input up to the host ceiling (counting only) so the
         /// message states how many items matched, and builds the hint for the host's limit argument.
         /// </summary>
-        private RqlException LimitExceeded(IEnumerator<Item> rest, int matched, string op)
+        private RqlException LimitExceeded(IEnumerator<Item> rest, int matched, string op, string matchedText = "objects matched")
         {
             var m = _x.Engine.Mutations;
             int limit = _x.MaxMutationTargets;
@@ -83,8 +93,8 @@ namespace Rql.Execution
             }
             int? exact = matched <= ceiling ? matched : (int?)null;
             string message = exact != null
-                ? $"{matched} objects matched '{op}', more than the limit of {limit}; nothing was changed"
-                : $"more than {ceiling} objects matched '{op}' (the limit is {limit}); nothing was changed";
+                ? $"{matched} {matchedText} '{op}', more than the limit of {limit}; nothing was changed"
+                : $"more than {ceiling} {matchedText} '{op}' (the limit is {limit}); nothing was changed";
             string? argument = _x.LimitArgument;
             string? hostHint = m.LimitHint?.Invoke(op, limit);
             return new RqlException("mutation-limit", message, null,
@@ -536,31 +546,23 @@ namespace Rql.Execution
 
         // ------------------------------------------------------------ call
 
-        public QueryResult Call(IEnumerable<Item> stream, CallStage s)
+        /// <param name="resolveReceiver">A source-qualified call's object (spec §8): its method runs once per stream item, with `$` and
+        /// the other metas the item's; null: the method runs on each item.</param>
+        public QueryResult Call(IEnumerable<Item> stream, CallStage s, Func<object>? resolveReceiver = null)
         {
             CheckPolicy("call");
+            var receiver = resolveReceiver?.Invoke(); // after the policy check: a read request never evaluates the target
             var args = s.Args.Select(_c.Compile).ToArray();
-            var targets = Targets(stream, "call");
-            var planned = new List<(object item, CallableMethod method, object?[] args)>();
+            // A source-qualified call checks its receiver's method before reading the stream: a typo fails even with no items.
+            var fixedCandidates = receiver != null ? Candidates(receiver, null) : null;
+            var targets = Targets(stream, "call", s.Method, perItem: receiver != null);
+            var planned = new List<(object item, CallableMethod method, object?[] args, long index)>();
+            // Where a failure is: the target, or for a source-qualified call the receiver and the item's position.
+            string At(object item, long index) => _x.Engine.RefOf(item) + (receiver != null ? $" for item {index}" : "");
             foreach (var t in targets)
             {
-                var item = t.Value;
-                var info = _x.Types.Info(item.GetType());
-                var candidates = info.Callable.Where(m => string.Equals(m.Name, s.Method, StringComparison.OrdinalIgnoreCase)).ToList();
-                if (candidates.Count == 0)
-                {
-                    var all = info.Callable.Select(m => m.Signature).ToList();
-                    bool exists = item.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                        .Any(m => string.Equals(m.Name, s.Method, StringComparison.OrdinalIgnoreCase));
-                    // In a mixed stream, name the targets' types that do have the method (filter to them first).
-                    var having = targets.Select(o => _x.Types.Info(o.Value.GetType())).Distinct()
-                        .Where(o => o.Callable.Any(m => string.Equals(m.Name, s.Method, StringComparison.OrdinalIgnoreCase))).Select(o => o.ShortName).Take(3).ToList();
-                    var filter = having.Count > 0 ? FilterHint(having, s.Method, $"call {s.Method}(…)") + "; " : "";
-                    throw new RqlException(exists ? "permission-denied" : "unknown-function",
-                        $"no callable method '{s.Method}' on {info.ShortName}", null,
-                        filter + (all.Count > 0 ? "callable: " + string.Join(", ", all) : $"{info.ShortName} has no callable methods")
-                        + (exists ? "" : _x.Engine.SourcesWithCallable(s.Method)));
-                }
+                var item = receiver ?? t.Value;
+                var candidates = fixedCandidates ?? Candidates(item, targets);
                 EnterScope(t);
                 var vals = args.Select(a => a(_x)).ToArray();
                 CallableMethod? chosen = null;
@@ -580,7 +582,7 @@ namespace Rql.Execution
                     if (ok) { chosen = m; coerced = cv; break; }
                 }
                 if (chosen == null)
-                    throw new RqlException("coercion-failed", $"cannot call {s.Method} on {_x.Engine.RefOf(item)}: {why}", null,
+                    throw new RqlException("coercion-failed", $"cannot call {s.Method} on {At(item, t.Index)}: {why}", null,
                         "signature: " + string.Join(", ", candidates.Select(m => m.Signature)));
                 // The method's own check, for every target before the first call (and on dry runs): all-or-nothing (spec §8).
                 if (chosen.Validate != null)
@@ -589,9 +591,9 @@ namespace Rql.Execution
                     try { rejected = chosen.Validate(item, coerced!); }
                     catch (Exception ex) when (!(ex is OutOfMemoryException)) { rejected = $"its check threw {ex.GetType().Name}: {ex.Message}"; }
                     if (rejected != null)
-                        throw new RqlException("invalid-value", $"cannot call {chosen.Signature} on {_x.Engine.RefOf(item)}: {rejected}; nothing was called");
+                        throw new RqlException("invalid-value", $"cannot call {chosen.Signature} on {At(item, t.Index)}: {rejected}; nothing was called");
                 }
-                planned.Add((item, chosen, coerced!));
+                planned.Add((item, chosen, coerced!, t.Index));
             }
 
             List<MutationRecord> CallRecords() =>
@@ -602,7 +604,7 @@ namespace Rql.Execution
             RunHook(_x.Engine.Mutations.BeforeWrite, callRecords, veto: true);
             var rows = new List<object?[]>();
             int done = 0;
-            foreach (var (item, method, cargs) in planned)
+            foreach (var (item, method, cargs, index) in planned)
             {
                 object? result = "(dry-run)";
                 if (!_x.Options.DryRun)
@@ -616,16 +618,44 @@ namespace Rql.Execution
                         // Completed calls are not rolled back, so the host still learns about them.
                         int completed = done;
                         RunHook(_x.Engine.Mutations.Committed, callRecords.Take(completed).ToList(), veto: false);
-                        throw new RqlException("call-threw", $"{method.Name} on {_x.Engine.RefOf(item)} threw {ex.GetType().Name}: {ex.Message}; {done} earlier call(s) completed and are NOT rolled back");
+                        throw new RqlException("call-threw", $"{method.Name} on {At(item, index)} threw {ex.GetType().Name}: {ex.Message}; {done} earlier call(s) completed and are NOT rolled back");
                     }
                 }
                 done++;
-                rows.Add(new object?[] { _x.Engine.RefOf(item), method.Signature, result });
+                // A source-qualified call reports what each invocation returned (the created object, spec §8).
+                var refOf = receiver != null && result != null && !_x.Options.DryRun && IsIdentified(result) ? result : item;
+                rows.Add(new object?[] { _x.Engine.RefOf(refOf), method.Signature, result });
             }
             RunHook(_x.Engine.Mutations.Committed, callRecords, veto: false);
             var r = _enc.Rows(new[] { "$ref", "method", "result" }, rows);
             r.DryRun = _x.Options.DryRun;
             return r;
+
+            // The callable overloads of the method on a target; none: unknown-function (or permission-denied for a public method
+            // the host does not expose), naming the targets' types and the sources that have it (spec §10).
+            List<CallableMethod> Candidates(object item, List<Target>? stream)
+            {
+                var info = _x.Types.Info(item.GetType());
+                var found = info.Callable.Where(m => string.Equals(m.Name, s.Method, StringComparison.OrdinalIgnoreCase)).ToList();
+                if (found.Count > 0) return found;
+                var all = info.Callable.Select(m => m.Signature).ToList();
+                bool exists = item.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .Any(m => string.Equals(m.Name, s.Method, StringComparison.OrdinalIgnoreCase));
+                // In a mixed stream, name the targets' types that do have the method (filter to them first).
+                var having = stream == null ? new List<string>() : stream.Select(o => _x.Types.Info(o.Value.GetType())).Distinct()
+                    .Where(o => o.Callable.Any(m => string.Equals(m.Name, s.Method, StringComparison.OrdinalIgnoreCase))).Select(o => o.ShortName).Take(3).ToList();
+                var filter = having.Count > 0 ? FilterHint(having, s.Method, $"call {s.Method}(…)") + "; " : "";
+                throw new RqlException(exists ? "permission-denied" : "unknown-function",
+                    $"no callable method '{s.Method}' on {(stream == null ? _x.Engine.RefOf(item) : info.ShortName)}", null,
+                    filter + (all.Count > 0 ? "callable: " + string.Join(", ", all) : $"{info.ShortName} has no callable methods")
+                    + (exists ? "" : _x.Engine.SourcesWithCallable(s.Method)));
+            }
+        }
+
+        /// <summary>An object with identity (not a list, map, struct or scalar): a receipt row can carry its $ref.</summary>
+        private bool IsIdentified(object v)
+        {
+            return !v.GetType().IsValueType && !TypeModel.IsScalarType(v.GetType()) && _x.Types.Info(v.GetType()).IsObject;
         }
     }
 

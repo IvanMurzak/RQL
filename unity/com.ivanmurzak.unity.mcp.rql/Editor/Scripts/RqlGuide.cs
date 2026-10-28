@@ -6,7 +6,8 @@
 namespace com.IvanMurzak.Unity.MCP.Rql.Editor
 {
     /// <summary>
-    /// Agent-facing texts. The language section is the evaluated prompt v4 (RQL evaluation, RESULTS.md) adapted to Unity:
+    /// Agent-facing texts. The language section is the evaluated prompt v4 (RQL evaluation, RESULTS.md) adapted to Unity,
+    /// followed by the host-independent rules every RQL host shares (<see cref="global::Rql.Execution.RqlLanguageGuide.Rules"/>):
     /// the AI Game Dev App cannot carry a system prompt for one tool, so the guide travels in the tool description, which
     /// the agent loads (ToolSearch) before first use; the one-line blurbs are what the always-visible tool catalog shows.
     /// </summary>
@@ -48,7 +49,8 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
             "{x: 1, y: 2, z: 3}; colors also \"#ff8800\". Material shader properties: properties[\"_Color\"]. Destroyed objects read as " +
             "null (missing references: where target == null). Navigate with paths or get; select only projects output columns.\n" +
             "Results come back as compact rows (header line, then col|col). Long results are truncated — refine with where/first or use count. " +
-            "Unknown members produce warnings with suggestions; rql-schema(type) lists a type's members.";
+            "Unknown members produce warnings with suggestions; rql-schema(type) lists a type's members.\n" +
+            global::Rql.Execution.RqlLanguageGuide.Rules;
 
         public const string QueryDescription =
             "Run a read-only RQL query against the live Unity Editor scene and return compact rows. One precise query beats many " +
@@ -77,6 +79,8 @@ namespace com.IvanMurzak.Unity.MCP.Rql.Editor
             "  objects | where name == \"Crate\" | call AddComponent(\"Rigidbody\")           add a component by type name\n" +
             "  objects | where name == \"Old\" | call Destroy()                             remove a GameObject (components: get components | where $ is X | call Destroy())\n" +
             "  objects | where name == \"Lamp\" | set transform.parent = ref(\"GameObject#1234\")   reparent (keeps the world position)\n" +
+            "  range(0, 10) | call editor.CreateGameObject(\"Crate_\" + $, null, \"Cube\")   ten objects in one call (once per item)\n" +
+            "  [\"Red\", \"Blue\"] | call editor.CreateGameObject($ + \"Team\")              one object per list entry\n" +
             "Object literals build values: set settings = {speed: 2, \"$type\": \"FastSettings\"}. At most 20 targets per call.\n\n" +
             "Query syntax:\n" + Language;
 

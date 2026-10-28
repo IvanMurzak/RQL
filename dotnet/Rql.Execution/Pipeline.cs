@@ -115,7 +115,7 @@ namespace Rql.Execution
                 {
                     result.Diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, "unknown-member",
                         $"no column '{site.Name}' in the projected rows (columns: {string.Join(", ", site.RowColumns)})", site.Span,
-                        site.GroupRows ? GroupRowHint(site.Name) : RowColumnHint));
+                        site.GroupRows ? GroupRowHint(site.Name, site.RowColumns) : RowColumnHint));
                     continue;
                 }
                 var types = site.MissTypes.ToList();
@@ -132,10 +132,19 @@ namespace Rql.Execution
             }
         }
 
-        /// <summary>A member missing on group-by rows: aggregate the group's items (spec §5).</summary>
-        internal static string GroupRowHint(string name) =>
-            $"group-by rows have their key column(s), count and the group's items: aggregate per group with items, e.g. "
-            + $"select key, count, avg = items.avg({name}) (also items.sum(…), items.min(…), items.max(…), items.count(…), items.first().{name})";
+        /// <summary>
+        /// A member missing on group-by rows: aggregate the group's items (spec §5). The example names the rows' own key columns
+        /// (key, or the named keys such as mat), and a missing key column is not offered as a member to aggregate.
+        /// </summary>
+        internal static string GroupRowHint(string name, IReadOnlyList<string> columns)
+        {
+            var keys = columns.Where(c => !string.Equals(c, "count", StringComparison.OrdinalIgnoreCase)).ToList();
+            var keyText = keys.Count > 0 ? string.Join(", ", keys) : "key";
+            bool member = !string.Equals(name, "key", StringComparison.OrdinalIgnoreCase);
+            var arg = member ? name : "…";
+            return $"group-by rows have their key column(s) ({keyText}), count and the group's items: aggregate per group with items, e.g. "
+                + $"select {keyText}, count, avg = items.avg({arg}) (also items.sum(…), items.min(…), items.max(…), items.count(…), items.first(){(member ? "." + name : "")})";
+        }
 
         internal const string RowColumnHint =
             "select produces rows with only the listed columns; to navigate into objects select the full path (select Path.Member) or put `get Path` before the select";
@@ -310,7 +319,7 @@ namespace Rql.Execution
                 case SetStage s:
                     return new Mutator(_x, _c, encoder).Set(stream, s);
                 case CallStage s:
-                    return new Mutator(_x, _c, encoder).Call(stream, s);
+                    return new Mutator(_x, _c, encoder).Call(stream, s, s.On != null ? () => CallReceiver(s) : (Func<object>?)null);
                 default:
                     throw new RqlException("unsupported", $"stage '{terminal.Op}' is not supported");
             }
@@ -338,6 +347,21 @@ namespace Rql.Execution
 
         private IEnumerable<Item> CompileSource(Expr src)
         {
+            if (IsRange(src)) return RangeItems((CallExpr)src);
+            var (value, pathText, quiet) = BindSource(src);
+            return SourceStream(value, pathText, quiet);
+        }
+
+        /// <summary>The core source function range(start, end[, step]) (spec §2), unless the host registered a function of that name.</summary>
+        private bool IsRange(Expr src) =>
+            src is CallExpr c && c.On == null && string.Equals(c.Name, "range", StringComparison.OrdinalIgnoreCase) && Compiler.ExtensionName(c, _x.Engine.Functions) == null;
+
+        /// <summary>
+        /// A source expression (spec §2) as a deferred value: a registered source with navigation, ref(…), a host function or a
+        /// list literal. <c>quiet</c>: an error value was already reported (ref()), so the stream is just empty.
+        /// </summary>
+        private (Func<object?> value, string pathText, bool quiet) BindSource(Expr src)
+        {
             if (src is PathExpr p && p.On == null && p.Segments.Count > 0 && p.Segments[0].Kind == SegmentKind.Member)
             {
                 // Longest dotted prefix that matches a registered source (exact, then case-insensitive).
@@ -350,7 +374,7 @@ namespace Rql.Execution
                     var rest = new PathExpr(p.Segments.Skip(len).ToList()) { Span = p.Span };
                     var nav = rest.Segments.Count > 0 ? _c.Compile(rest) : null;
                     var restText = string.Concat(rest.Segments.Select(s => s.Kind == SegmentKind.Member ? "." + s.Name : s.ToString()));
-                    return SourceItems(reg, nav, reg.Name + restText);
+                    return (() => SourceValue(reg, nav), reg.Name + restText, false);
                 }
                 var head = p.Segments[0].Name!;
                 var close = Suggest.Closest(head, _x.Engine.Sources.Keys.ToList(), 3);
@@ -358,16 +382,20 @@ namespace Rql.Execution
                     (close.Count > 0 ? "did you mean " + string.Join(" / ", close) + "? " : "") + "sources: " + string.Join(" ", _x.Engine.Sources.Keys));
             }
             if (src is CallExpr c && c.On == null && string.Equals(c.Name, "ref", StringComparison.OrdinalIgnoreCase))
-            {
-                var ev = _c.Compile(src);
-                return RefItems(ev);
-            }
+                return (RootValue(_c.Compile(src)), "ref(…)", true);
             // A host extension function may produce the input too, e.g. unity.assets("t:Material") (spec §2).
             if (src is CallExpr fn && Compiler.ExtensionName(fn, _x.Engine.Functions) is string fnName)
-                return FunctionItems(_c.Compile(src), fnName);
+                return (RootValue(_c.Compile(src)), fnName + "(…)", false);
+            // A list literal streams its elements, evaluated with no current item (spec §2): an error element fails the query,
+            // an element that reads nothing (a bare path) is dropped like null.
+            if (src is ListExpr)
+            {
+                var list = RootValue(_c.Compile(src));
+                return (() => list() is List<object?> l ? (object?)l.FirstOrDefault(e => e is RqlError) ?? l.Where(e => !V.IsAbsent(e)).ToList() : null, "[…]", false);
+            }
             var example = _x.Engine.ExampleSource;
             throw new RqlException("unknown-source",
-                $"query must start with a source name{(example != null ? $" (e.g. {example})" : "")}, ref(\"Type#id\") or a host function", src.Span,
+                $"query must start with a source name{(example != null ? $" (e.g. {example})" : "")}, ref(\"Type#id\"), range(…), a list or a host function", src.Span,
                 "sources: " + string.Join(" ", _x.Engine.Sources.Keys)
                 + (_x.Engine.Functions.Count > 0 ? "; functions: " + string.Join(" ", _x.Engine.Functions.Keys) : ""));
         }
@@ -379,39 +407,97 @@ namespace Rql.Execution
             return ci.Count == 1 ? ci[0] : null;
         }
 
-        private IEnumerable<Item> SourceItems(SourceRegistration reg, Eval? nav, string pathText)
+        private object? SourceValue(SourceRegistration reg, Eval? nav)
         {
             var root = _x.Types.Live(reg.Getter());
             _x.Engine.NoteSourceType(reg.Name, root);
-            object? value = root;
-            if (nav != null)
-            {
-                _x.Current = root;
-                _x.CurrentPath = null;
-                value = nav(_x);
-            }
-            if (value is RqlError err) throw new RqlException(err.Code, $"source '{pathText}' failed: {err.Detail ?? err.Code}");
-            if (value is Missing) yield break;
-            var basePath = _x.TrackPaths ? new PathNode(null, pathText) : null;
-            foreach (var it in Expand(value, basePath, true)) yield return it;
+            if (nav == null) return root;
+            _x.Current = root;
+            _x.CurrentPath = null;
+            return nav(_x);
         }
 
-        private IEnumerable<Item> FunctionItems(Eval ev, string name)
+        /// <summary>An expression evaluated in root scope (no current item).</summary>
+        private Func<object?> RootValue(Eval ev) => () =>
         {
             _x.Current = null;
             _x.CurrentPath = null;
-            var v = _x.Types.Live(ev(_x));
-            if (v is RqlError err) throw new RqlException(err.Code, $"source {name}(...) failed: {err.Detail ?? err.Code}");
-            var basePath = _x.TrackPaths ? new PathNode(null, name + "(…)") : null;
+            return _x.Types.Live(ev(_x));
+        };
+
+        private IEnumerable<Item> SourceStream(Func<object?> value, string pathText, bool quiet)
+        {
+            var v = value();
+            if (v is RqlError err)
+            {
+                if (quiet) yield break; // diagnostic already recorded (ref)
+                throw new RqlException(err.Code, $"source '{pathText}' failed: {err.Detail ?? err.Code}");
+            }
+            if (v is Missing) yield break;
+            var basePath = _x.TrackPaths && !quiet ? new PathNode(null, pathText) : null;
             foreach (var it in Expand(v, basePath, true)) yield return it;
         }
 
-        private IEnumerable<Item> RefItems(Eval ev)
+        /// <summary>range(start, end[, step]) as a source: lazy, every number counts against maxVisited (spec §2).</summary>
+        private IEnumerable<Item> RangeItems(CallExpr c)
         {
-            _x.Current = null;
-            var v = ev(_x);
-            if (v is RqlError) yield break; // diagnostic already recorded
-            foreach (var it in Expand(v, null, true)) yield return it;
+            if (c.Args.Count < 2 || c.Args.Count > 3)
+                throw new RqlException("arity", $"'range' takes 2-3 argument(s), got {c.Args.Count}", c.Span, "example: range(0, 10) or range(10, 0, -2)");
+            var args = c.Args.Select(_c.Compile).ToArray();
+            return Lazy();
+
+            IEnumerable<Item> Lazy()
+            {
+                _x.Current = null;
+                _x.CurrentPath = null;
+                var vals = args.Select(a => a(_x)).ToArray();
+                if (Compiler.RangeOf(vals[0], vals[1], vals.Length > 2 ? vals[2] : 1d, out var start, out var step, out var count) is RqlError err)
+                    throw new RqlException(err.Code, $"source range(…) failed: {err.Detail ?? err.Code}", c.Span);
+                var basePath = _x.TrackPaths ? new PathNode(null, "range(…)") : null;
+                for (long k = 0; k < count; k++)
+                {
+                    _x.Visit();
+                    yield return new Item(start + k * step, basePath?.At(k));
+                }
+            }
+        }
+
+        /// <summary>
+        /// The receiver of a source-qualified call (spec §8): the source expression evaluated once, which must be one object.
+        /// </summary>
+        private object CallReceiver(CallStage s)
+        {
+            var on = s.On!;
+            if (IsRange(on))
+                throw new RqlException("invalid-plan", $"call range(…).{s.Method}: range() gives numbers, not an object to call {s.Method} on", on.Span,
+                    $"stream the numbers into a source's method instead: range(…) | call <source>.{s.Method}(… $ …)");
+            (Func<object?> value, string pathText, bool quiet) bound;
+            try { bound = BindSource(on); }
+            catch (RqlException ex) when (ex.Code == "unknown-source")
+            {
+                var sources = string.Join(" ", _x.Engine.Sources.Keys);
+                if (!(on is PathExpr p && Compiler.PathText(p) is string text))
+                    throw new RqlException("unknown-source", $"call ….{s.Method}: the call target must be a source, ref(…) or a host function", on.Span,
+                        $"a qualified call runs a method of one source object (sources: {sources}), e.g. … | call {_x.Engine.ExampleSource ?? "editor"}.{s.Method}(…)");
+                throw new RqlException("unknown-source", $"call {text}.{s.Method}: '{p.Segments[0].Name}' is not a source", on.Span,
+                    $"a qualified call runs a method of a source (sources: {sources}); "
+                    + $"to call a method of each item's member, get it first: … | get {text} | call {s.Method}(…)");
+            }
+            var label = bound.pathText;
+            var perItem = $"… | call {label}.{s.Method}(…) runs the method of one object once per stream item";
+            var v = bound.value();
+            if (v is RqlError err)
+                throw new RqlException(err.Code, $"call target {label} failed: {err.Detail ?? err.Code}; nothing was called", on.Span);
+            if (v == null || v is Missing || v is Unknown || _x.Types.IsDead(v))
+                throw new RqlException("invalid-plan", $"call target {label} is null: there is no object to call {s.Method} on; nothing was called", on.Span);
+            var info = _x.Types.Info(v.GetType());
+            if (info.IsList || info.IsMap)
+                throw new RqlException("invalid-plan",
+                    $"call target {label} is a {(info.IsList ? "list" : "map")} of {V.Count(v) ?? 0} item(s), not one object; nothing was called", on.Span,
+                    $"to call {s.Method} on each of them: {label} | call {s.Method}(…); {perItem}");
+            if (v is RowValue || (v.GetType().IsValueType && !info.WritesThrough) || TypeModel.IsScalarType(v.GetType()))
+                throw new RqlException("invalid-plan", $"call target {label} is a {info.ShortName} value, not an object with identity; nothing was called", on.Span, perItem);
+            return v;
         }
 
         /// <summary>Lists → elements, maps → entries, else the value itself; null/missing dropped.</summary>

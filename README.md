@@ -197,14 +197,15 @@ objects | where $ is Enemy | first 1 | describe
 | `recurse [via …] [max-depth=N]` | cycle-safe depth-first walk over the `via` members, or all owning members |
 | `group-by e[, e …]` · `count` · `sum/min/max/avg e` | aggregate (one key: `key`, `count`; several or named keys: one column each, then `count`) |
 | `describe` | the schema of the items' runtime types |
-| `set p = e, …` · `call m(args)` | mutation (see below) |
+| `set p = e, …` · `call m(args)` · `call src.m(args)` | mutation (see below); `call src.m(…)` runs one source object's method once per item |
 
 Operators include `== != < <= > >=`, `and or not`, `in`, `is Type`, `is null`, `contains`, `starts-with`, `ends-with`,
 `matches`, `+ - * / %`. Collection methods: `any all count sum min max avg first keys values`. Functions include
-`len lower upper abs round floor ceil sqrt pow min max has if ref append insert remove-at without` (`if(c, a, b)` is also
+`len lower upper abs round floor ceil sqrt pow min max has if ref append insert remove-at without range` (`if(c, a, b)` is also
 written `c ? a : b`), and string functions
 `replace replace-regex substring split trim pad` (also as methods: `Name.replace("a", "b")`). Hosts register their
-own sources and add namespaced functions and stages (`myapp.fn(...)`).
+own sources and add namespaced functions and stages (`myapp.fn(...)`). Besides sources, a query may start with
+`ref("Type#id")`, `range(start, end[, step])` (numbers, lazy) or a list literal.
 
 Mistakes come back as diagnostics the agent can act on:
 
@@ -219,6 +220,7 @@ Full grammar and semantics: [`spec/grammar.ebnf`](spec/grammar.ebnf), [`spec/sem
 ```text
 ref("Enemy#233") | set Health = MaxHealth, Transform.Position.y = Transform.Position.y + 2
 objects | where $ is Enemy and Health < 5 | first 2 | call Heal(25)
+range(0, 300) | call editor.CreateObject("Cube", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})
 ```
 
 ```text
@@ -233,6 +235,9 @@ Enemy#233|Transform.Position.y|25.52|27.52
   restored if a later write fails. `call` validates every target before the first call; calls already made are not
   undone. A host batch validator sees the whole stage first, dry runs included. Dry runs return the receipt without
   changing anything. In values and arguments `$index` is the target's position in the stream entering `set` / `call`.
+- Bulk create: `call src.m(args)` runs the method of the one object `src` yields once per stream item, with `$` and
+  `$index` the item's, so `range(…)` or a list creates many objects in one validated, undoable call; every invocation
+  counts against the target limit and the receipt lists the created objects' `$ref`s.
 - `get Rows | where … | set Value.Health = …` writes through the map the entries came from.
 - Identity members are read-only, `call` only reaches allowlisted methods, and budgets cap targets, rows, depth and
   time. See [docs/security-and-permissions.md](docs/security-and-permissions.md).

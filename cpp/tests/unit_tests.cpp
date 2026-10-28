@@ -2,6 +2,9 @@
 // cover (call stage, extensions, session handles, liveness, unordered maps, shared_ptr, rollback).
 #include <cmath>
 #include <cstdlib>
+#include <fstream>
+#include <iterator>
+#include <memory>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -1628,7 +1631,7 @@ void wave3b_tests() {
     e.mutations().enabled = true;
     auto has = [](const std::string& s, const std::string& part) { return s.find(part) != std::string::npos; };
     // Unknown source: the example is a registered source, never an invented one.
-    auto src = arun(e, R"J({"rql":"0.1","source":{"list":[{"lit":0}]},"stages":[]})J");
+    auto src = arun(e, R"J({"rql":"0.1","source":{"lit":0},"stages":[]})J");
     check(first_code(src) == "unknown-source" && has(src.diagnostics[0].message, "(e.g. door)") && !has(src.diagnostics[0].message, "world") &&
               has(src.diagnostics[0].hint, "sources: door editor"),
           "unknown-source example names a registered source");
@@ -1756,6 +1759,92 @@ void wave4_tests() {
     check(lists.ok && lists.rows && lists.rows->size() == 1, "group-by a literal list: one group");
 }
 
+/// A list that contains itself (encoder cycle guard).
+class SelfList final : public rql::IListAdapter, public std::enable_shared_from_this<SelfList> {
+public:
+    size_t size() const override { return 2; }
+    rql::Value at(size_t i) const override {
+        if (i == 0) return rql::Value::number(1);
+        return rql::Value::list(std::const_pointer_cast<SelfList>(shared_from_this()));
+    }
+    const rql::TypeDescriptor* type() const override { return nullptr; }
+};
+
+/// ADR-0008 bulk create (range, list sources, source-qualified call), the encoder cycle guard, adapter members as known
+/// names and the shared language rules. The fixtures cover the semantics; these check messages and host-facing text.
+void bulk_tests() {
+    auto has = [](const std::string& s, const std::string& part) { return s.find(part) != std::string::npos; };
+    rql::TypeRegistry greg;
+    conformance::register_types(greg);
+    auto g = conformance::load_graph(repo_root + "/fixtures/cross-runtime/graph.json");
+    rql::Engine ge(greg);
+    ge.add_object_source("g", g.get());
+    ge.mutations().enabled = true;
+    conformance::register_test_adapters(ge, greg);
+    const std::string ell = "\xE2\x80\xA6";
+    // Created objects: the receipt carries their $ref.
+    auto spawn = arun(ge, R"J({"rql":"0.1","source":{"call":"range","args":[{"lit":0},{"lit":2}]},"stages":[{"op":"call","method":"spawn","on":{"call":"ref","args":[{"lit":"Node#8"}]},"args":[{"op":"+","args":[{"lit":"k"},{"path":[]}]}]}]})J", true);
+    check(spawn.ok && spawn.rows && spawn.rows->size() == 2 && (*spawn.rows)[1][0].as_string() == "Node#802", "qualified call: receipt has the created object's $ref");
+    // Limit counts invocations ("items reached"), validators name the item.
+    auto limit = arun(ge, R"J({"rql":"0.1","source":{"call":"range","args":[{"lit":0},{"lit":25}]},"stages":[{"op":"call","method":"greet","on":{"call":"ref","args":[{"lit":"Node#8"}]},"args":[{"lit":"x"}]}]})J", true);
+    check(first_code(limit) == "mutation-limit" && has(limit.diagnostics[0].message, "25 items reached 'call'"), "qualified call: the limit counts items");
+    auto bad = arun(ge, R"J({"rql":"0.1","source":{"list":[{"lit":"a"},{"lit":""}]},"stages":[{"op":"call","method":"spawn","on":{"call":"ref","args":[{"lit":"Node#8"}]},"args":[{"path":[]}]}]})J", true);
+    check(first_code(bad) == "invalid-value" && has(bad.diagnostics[0].message, "for item 1"), "qualified call: a rejection names the item");
+    // An unqualified call on numbers hints the qualified form; a member path is not a source.
+    auto numbers = arun(ge, R"J({"rql":"0.1","source":{"call":"range","args":[{"lit":0},{"lit":2}]},"stages":[{"op":"call","method":"bump","args":[]}]})J", true);
+    check(first_code(numbers) == "invalid-plan" && has(numbers.diagnostics[0].hint, "call <source>.bump(" + ell + " $ " + ell + ")"), "unqualified call on numbers: qualified hint");
+    auto member = arun(ge, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"call","method":"bump","on":{"path":["Children"]},"args":[]}]})J", true);
+    check(first_code(member) == "unknown-source" && has(member.diagnostics[0].hint, "get Children | call bump(" + ell + ")"), "qualified call on a member: get hint");
+    auto list = arun(ge, R"J({"rql":"0.1","source":{"call":"range","args":[{"lit":0},{"lit":2}]},"stages":[{"op":"call","method":"bump","on":{"path":["g","Nodes"]},"args":[]}]})J", true);
+    check(first_code(list) == "invalid-plan" && has(list.diagnostics[0].message, "is a list of 3 item(s)"), "qualified call on a list: invalid-plan");
+    // range() as a source and a function; the $path of its items.
+    auto paths = arun(ge, R"J({"rql":"0.1","source":{"call":"range","args":[{"lit":10},{"lit":4},{"lit":-2}]},"stages":[{"op":"select","fields":[{"name":"p","expr":{"path":[{"meta":"path"}]}},{"name":"v","expr":{"path":[]}}]}]})J");
+    check(paths.ok && paths.rows && paths.rows->size() == 3 && (*paths.rows)[2][0].as_string() == "range(" + ell + ")[2]" && (*paths.rows)[2][1].as_number() == 6, "range: numbers and $path");
+    // A self-containing list encodes the repetition as "…".
+    {
+        rql::TypeRegistry reg;
+        rql::Engine e(reg);
+        auto self = std::make_shared<SelfList>();
+        e.add_source("ls", [self]() { return rql::Value::list(self); });
+        auto r = arun(e, R"J({"rql":"0.1","source":{"path":["ls"]},"stages":[]})J");
+        check(r.ok && r.items && r.items->size() == 2 && (*r.items)[1].is_array() && (*r.items)[1].size() == 2 && (*r.items)[1].at(1).as_string() == ell,
+              "self-containing list encodes");
+    }
+    // Members of adapters' target types are known names without a host hook.
+    {
+        rql::TypeRegistry reg;
+        reg.object<W4Item>("W4Item").member("Name", &W4Item::Name);
+        rql::Engine e(reg);
+        e.add_source("objs", []() { return rql::Value::list_of({}); });
+        e.mutations().enabled = true;
+        const std::string plan = R"J({"rql":"0.1","source":{"path":["objs"]},"stages":[{"op":"where","pred":{"op":">","args":[{"path":["glow"]},{"lit":0}]}},{"op":"set","assign":[{"target":{"path":["Name"]},"value":{"lit":"x"}}]}]})J";
+        check(has_diag(arun(e, plan, true), "unknown-member", rql::Severity::Warning), "glow unknown before its adapter");
+        rql::TypeAdapter ad;
+        ad.name = "Glow";
+        ad.target = reg.descriptor<W4Item>();
+        ad.configure_members = [](rql::MemberTable& t) { t.computed<W4Item>("glow", [](W4Item&) { return 1.0; }, "a glow"); };
+        e.add_adapter(std::move(ad));
+        check(!has_diag(arun(e, plan, true), "unknown-member", rql::Severity::Warning), "adapter members are known names");
+    }
+    // The group-row hint names the rows' own key columns and never offers a missing key column to aggregate.
+    {
+        auto grp = arun(ge, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"group-by","fields":[{"name":"mat","expr":{"path":["Kind"]}}]},{"op":"select","fields":[{"name":"key","expr":{"path":["key"]}}]}]})J");
+        bool ok = false;
+        for (auto& d : grp.diagnostics)
+            if (d.code == "unknown-member") ok = has(d.hint, "select mat, count, avg = items.avg(" + ell + ")") && !has(d.hint, "items.avg(key)");
+        check(ok, "group-row hint names the key columns");
+    }
+    // The language rules are the shared fixture text.
+    {
+        std::ifstream in(repo_root + "/fixtures/guide/language-rules.txt", std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::string lf;
+        for (char ch : text)
+            if (ch != '\r') lf += ch;
+        check(!lf.empty() && lf == rql::language_rules(), "language rules match fixtures/guide/language-rules.txt");
+    }
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) repo_root = argv[1];
     try {
@@ -1768,6 +1857,7 @@ int main(int argc, char** argv) {
         wave3_tests();
         wave3b_tests();
         wave4_tests();
+        bulk_tests();
     } catch (const std::exception& ex) {
         std::cout << "FATAL " << ex.what() << "\n";
         return 2;

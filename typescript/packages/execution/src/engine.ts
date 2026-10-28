@@ -202,6 +202,15 @@ export class RqlEngine {
 
   /** Sources whose value is a single object with a callable method of this name, as hint text, or '' (spec §10). */
   sourcesWithCallable(method: string): string {
+    const names = this.sourceNamesWithCallable(method);
+    if (names.length === 0) return '';
+    return names.length === 1
+      ? `; the source '${names[0]}' has ${method}: ${names[0]} | call ${method}(…) calls it once, ${perItemForm(names[0]!, method)} once per item`
+      : `; sources with ${method}: ${names.join(', ')} (e.g. ${names[0]} | call ${method}(…) once, ${perItemForm(names[0]!, method)} once per item)`;
+  }
+
+  /** The sources whose value is a single object with a callable method of this name. */
+  private sourceNamesWithCallable(method: string): string[] {
     const wanted = method.toUpperCase();
     const names: string[] = [];
     for (const s of this.sourceMap.values()) {
@@ -216,10 +225,20 @@ export class RqlEngine {
       if (info.isList || info.isMap) continue;
       if (info.callable.some((m) => m.name.toUpperCase() === wanted)) names.push(s.name);
     }
-    if (names.length === 0) return '';
-    return names.length === 1
-      ? `; the source '${names[0]}' has ${method}: ${names[0]} | call ${method}(…)`
-      : `; sources with ${method}: ${names.join(', ')} (e.g. ${names[0]} | call ${method}(…))`;
+    return names;
+  }
+
+  /**
+   * The hint of an unqualified `call` on items that are not objects (numbers from range(), strings, structs): qualify the
+   * method with the source that has it, so it runs once per item (spec §8, §10).
+   */
+  perItemCallHint(method: string): string {
+    const names = this.sourceNamesWithCallable(method);
+    if (names.length > 0) return `to run a source's method once per item, qualify it with the source: ${perItemForm(names[0]!, method)} ($ is the item)`;
+    return (
+      `call runs a method of each item, and these items have none; to run a source's method once per item qualify it: ` +
+      `… | call <source>.${method}(… $ …) ($ is the item; sources: ${[...this.sourceMap.keys()].join(' ')})`
+    );
   }
 
   /** The hint of a ref() that did not resolve: malformed text is usually a name, not a $ref. */
@@ -454,6 +473,17 @@ export class RqlEngine {
     for (const [name, seen] of this.sourceTypes) if (this.sourceMap.has(name)) for (const info of seen) if (!roots.includes(info)) roots.push(info);
     const types = reachableTypes(this.types, roots, 1000);
     for (const t of types) for (const m of t.members) add(m.name);
+    // Adapters' target classes count as known too (their virtual members included), reachable or not (spec §8): hosts add
+    // only names of their own through isKnownMember.
+    for (const a of this.types.adapters) {
+      if (a.target === undefined) continue;
+      try {
+        const info = this.types.infoForCtor(a.target);
+        if (info !== undefined) for (const m of info.members) add(m.name);
+      } catch {
+        // a class the model cannot describe adds no names
+      }
+    }
     this.knownMembers = { version: this.types.version, names, types };
     return names;
   }
@@ -629,4 +659,9 @@ function validateName(name: string, namespaced: boolean): void {
     if (part.length === 0 || !isIdentStart(part.charCodeAt(0))) throw new Error(`invalid name '${name}'`);
   }
   if (namespaced && !name.includes('.')) throw new Error(`extension names must be namespaced (ns.name): '${name}'`);
+}
+
+/** The source-qualified call text of a hint: … | call src.M(… $ …). */
+function perItemForm(source: string, method: string): string {
+  return `… | call ${source}.${method}(… $ …)`;
 }
