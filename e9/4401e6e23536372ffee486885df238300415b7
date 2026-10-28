@@ -1,0 +1,49 @@
+dotnet/Rql.Execution/Mutator.cs
+  s_7bc72ecaebd05d::t_4e50c80af0f0f0 822-823
+  s_7bc72ecaebd05d::t_1e573659601332 824
+  s_7bc72ecaebd05d::t_094aa469c140dc 748-749,751-755
+  s_7bc72ecaebd05d::t_b5a10ff6a1e513 671-675,678-680,684-686,688-690,692,696,699-713,715-720,722,724-725,727-728,730-745,756-759,761-764,766
+  s_7bc72ecaebd05d::t_c4f788a3c34ca1 570,572-573
+  s_7bc72ecaebd05d::t_83d59b91e905b2 786
+dotnet/Rql.Tests/OverloadTests.cs
+  s_7bc72ecaebd05d::t_bf76b62482f5fc 165-177
+  s_7bc72ecaebd05d::t_8bc1241dc60c31 33-38
+  s_7bc72ecaebd05d::t_5a43c2478020c9 63-71
+typescript/packages/execution/src/mutator.ts
+  s_7bc72ecaebd05d::t_e022fe3a73a454 734-737,747-750,761,767-776,779-782,784-791,793-808,811-823,839,883-885
+cpp/tests/unit_tests.cpp
+  s_7bc72ecaebd05d::t_013f1eda077196 2098-2103
+  s_7bc72ecaebd05d::t_5ac3dafe9c0efd 2082
+cpp/include/rql/engine.hpp
+  s_7bc72ecaebd05d::t_b6f28865e22b31 87-88
+cpp/src/mutator.cpp
+  s_7bc72ecaebd05d::t_4e6615ad265571 1019-1030,1032,1034-1037,1045-1054,1063-1082,1084,1087,1093,1095-1097,1104,1107-1110,1117-1121,1123,1222-1224
+docs/decisions/0010-overloads-named-arguments-receipts.md
+  s_7bc72ecaebd05d::t_740610abce17aa 25-37,41-42,55-57,66-67,74-76
+dotnet/Rql.Execution/RqlEngine.cs
+  s_7bc72ecaebd05d::t_11f7d38544aecf 92-93
+fixtures/adapters/cases.json
+  s_7bc72ecaebd05d::t_6fd1d7c3f9a2db 18
+spec/semantics.md
+  s_7bc72ecaebd05d::t_1e4fadaa57f7e9 438,440-454,463-469
+typescript/packages/execution/src/engine.ts
+  s_7bc72ecaebd05d::t_a01adf5c41feaf 80-81
+typescript/tests/src/overloads.test.ts
+  s_7bc72ecaebd05d::t_763aacff7b07e8 23,141,157-208
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e94401e6e23536372ffee486885df238300415b7",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
