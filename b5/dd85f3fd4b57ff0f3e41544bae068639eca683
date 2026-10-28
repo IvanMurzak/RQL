@@ -1,0 +1,105 @@
+docs/decisions/0009-wave5-struct-and-map-semantics.md
+  s_7bc72ecaebd05d::t_2c0de88d387701 1-83
+dotnet/Rql.Tests/Wave5Tests.cs
+  s_7bc72ecaebd05d::t_0f3f523f776e08 1-167
+dotnet/Rql.Conformance/TestAdapters.cs
+  s_7bc72ecaebd05d::t_ea1841e7fa8502 80-85
+cpp/src/compiler.cpp
+  s_7bc72ecaebd05d::t_ac6b26e4a5c2e8 151-156
+  s_7bc72ecaebd05d::t_c6f5b701ec1fbb 148-150,157-207,212,386-398,414-415,419-424,466-467,580-581,982-1081,1087-1091,1194,1198,1634-1641
+cpp/tests/unit_tests.cpp
+  s_7bc72ecaebd05d::t_22ce1d68784e1e 1848-1927
+  s_7bc72ecaebd05d::t_10f0ebb03c5f68 1941
+evaluation/runner/Rql.Eval/Tasks/CatalogWave5.cs
+  s_7bc72ecaebd05d::t_4857d456d72aed 1-90
+dotnet/Rql.Execution/Compiler.cs
+  s_7bc72ecaebd05d::t_f8237803b9874b 353,530
+  s_7bc72ecaebd05d::t_82bef4a22574a7 796,803-807
+  s_7bc72ecaebd05d::t_3902bb52c7f11b 538
+  s_7bc72ecaebd05d::t_0fae64f31b9052 352,820-927,1024,1028
+  s_7bc72ecaebd05d::t_a713d52e2ad399 337,348,351,1025-1027,1029
+typescript/tests/src/wave5.test.ts
+  s_7bc72ecaebd05d::t_54fb8d49493037 1-118
+typescript/tests/src/test-adapters.ts
+  s_7bc72ecaebd05d::t_286d4a9b9c2f0a 49-51
+cpp/include/rql/adapters.hpp
+  s_7bc72ecaebd05d::t_007bc7d89bc51c 301-307
+cpp/include/rql/engine.hpp
+  s_7bc72ecaebd05d::t_64fcba04e8e945 241
+cpp/include/rql/guide.hpp
+  s_7bc72ecaebd05d::t_845debd5868704 19-20
+cpp/src/adapters.cpp
+  s_7bc72ecaebd05d::t_f9936e4d092a4d 327
+cpp/src/engine.cpp
+  s_7bc72ecaebd05d::t_3ead021d436bbb 119-120
+cpp/src/exec.hpp
+  s_7bc72ecaebd05d::t_21cdc43a4ee595 43-44,173-174,264-273
+cpp/src/mutator.cpp
+  s_7bc72ecaebd05d::t_f318f45eec36b2 267
+cpp/src/pipeline.cpp
+  s_7bc72ecaebd05d::t_aa03cfa07054b1 1305-1306,1308
+cpp/tests/conformance_graph.cpp
+  s_7bc72ecaebd05d::t_bd90e7db32f115 142-152
+docs/feature-matrix.md
+  s_7bc72ecaebd05d::t_ae92583584d6da 40
+docs/type-adapters.md
+  s_7bc72ecaebd05d::t_e57a37523276df 57,73-74,126-127
+dotnet/Rql.Execution/Mutator.cs
+  s_7bc72ecaebd05d::t_40cc47f01180d2 443-444
+dotnet/Rql.Execution/NumericTupleAdapter.cs
+  s_7bc72ecaebd05d::t_f9b8c4b450df2f 61-83
+dotnet/Rql.Execution/Pipeline.cs
+  s_7bc72ecaebd05d::t_03f3b55242eca5 5,125-126,128,1054-1055,1059-1094,1115-1125,1166-1218,1221,1223,1228
+dotnet/Rql.Execution/RqlEngine.cs
+  s_7bc72ecaebd05d::t_6e82370ce825f2 869-870
+dotnet/Rql.Execution/RqlLanguageGuide.cs
+  s_7bc72ecaebd05d::t_066c83e54cf344 19-21
+dotnet/Rql.Execution/TypeAdapters.cs
+  s_7bc72ecaebd05d::t_4d2259b4eee4ef 14,74-83,101,140-147
+dotnet/Rql.Execution/TypeModel.cs
+  s_7bc72ecaebd05d::t_7ca7db13e05434 141,371
+dotnet/Rql.SampleRuntime/SampleHost.cs
+  s_7bc72ecaebd05d::t_261d675ba63e8b 33,87-101
+evaluation/runner/Rql.Eval/Tasks/Catalog.cs
+  s_7bc72ecaebd05d::t_b12a511ab97968 708,715
+fixtures/adapters/cases.json
+  s_7bc72ecaebd05d::t_554006c3c9fb58 12-13,6680-7935
+fixtures/execution/cases.json
+  s_7bc72ecaebd05d::t_dc54d74f24b8d6 23197-23994
+fixtures/guide/language-rules.txt
+  s_7bc72ecaebd05d::t_b45a1b8857fdfa 9-10
+spec/semantics.md
+  s_7bc72ecaebd05d::t_d38c4994879ee9 26,32,96-101,159-161,172-190,195,293,302-311,598-604,691,704-705,765-766
+spec/versioning.md
+  s_7bc72ecaebd05d::t_5321c3a3f3114e 105-112
+typescript/packages/execution/src/adapters.ts
+  s_7bc72ecaebd05d::t_6265aa1f4c77a5 118-125,149,156,164-172,188
+typescript/packages/execution/src/compiler.ts
+  s_7bc72ecaebd05d::t_721247427a692a 8,10,267,274,343-350,685-686,960,967-973,992-1095
+typescript/packages/execution/src/exec.ts
+  s_7bc72ecaebd05d::t_328c37adc4d334 92-93
+typescript/packages/execution/src/guide.ts
+  s_7bc72ecaebd05d::t_7d7301f306ec71 15-17
+typescript/packages/execution/src/mutator.ts
+  s_7bc72ecaebd05d::t_d965c110a1f1b4 10,541-546
+typescript/packages/execution/src/pipeline.ts
+  s_7bc72ecaebd05d::t_4a9fd91792aee5 33,146-147,149,942-950,957-966
+typescript/packages/execution/src/suggest.ts
+  s_7bc72ecaebd05d::t_3d9c7be59b6217 2,20-70,97,99,104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b5dd85f3fd4b57ff0f3e41544bae068639eca683",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
