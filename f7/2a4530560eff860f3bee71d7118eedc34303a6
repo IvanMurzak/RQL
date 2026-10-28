@@ -1,0 +1,35 @@
+cpp/src/pipeline.cpp
+  s_7bc72ecaebd05d::t_4546f32af5af4c 1125-1138,1272
+cpp/tests/unit_tests.cpp
+  s_7bc72ecaebd05d::t_c2fbe797d9e1eb 1829-1836
+dotnet/Rql.Execution/Pipeline.cs
+  s_7bc72ecaebd05d::t_3c868a61bef78c 118,135-147
+dotnet/Rql.Tests/BulkCreateTests.cs
+  s_7bc72ecaebd05d::t_1b48f979f3f92c 325-335
+fixtures/execution/cases.json
+  s_7bc72ecaebd05d::t_e4b2ec000e149d 22917-22982
+spec/semantics.md
+  s_7bc72ecaebd05d::t_4b930cce998511 269
+spec/versioning.md
+  s_7bc72ecaebd05d::t_7e257bd30680dc 104
+typescript/packages/execution/src/pipeline.ts
+  s_7bc72ecaebd05d::t_f3f48485882a0e 137,933-940,942-943
+typescript/tests/src/bulk.test.ts
+  s_7bc72ecaebd05d::t_33fc546cf196f8 188-196
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f72a4530560eff860f3bee71d7118eedc34303a6",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
