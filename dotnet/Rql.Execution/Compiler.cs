@@ -793,7 +793,7 @@ namespace Rql.Execution
             return x.Types.Info(a.GetType()).IsA(name);
         }
 
-        internal static object? Arith(TypeModel? model, string op, object? a, object? b)
+        internal static object? Arith(TypeModel model, string op, object? a, object? b)
         {
             if (a is Missing || b is Missing) return Missing.Value;
             if (a is RqlError) return a;
@@ -802,7 +802,7 @@ namespace Rql.Execution
                 return ToText(a) + ToText(b);
             if (!V.TryNumber(a, out var x) || !V.TryNumber(b, out var y))
             {
-                if (model != null && (model.Caps & AdapterCaps.Arithmetic) != 0 && StructArith(model, op, a, b) is object r) return r;
+                if ((model.Caps & AdapterCaps.Arithmetic) != 0 && StructArith(model, op, a, b) is object r) return r;
                 return ArithMismatch(model, op, a, b, null);
             }
             switch (op)
@@ -817,10 +817,10 @@ namespace Rql.Execution
             }
         }
 
-        private static RqlError ArithMismatch(TypeModel? model, string op, object? a, object? b, string? why)
+        private static RqlError ArithMismatch(TypeModel model, string op, object? a, object? b, string? why)
         {
             var message = $"cannot apply '{op}' to {V.Describe(a)} and {V.Describe(b)}";
-            if (why == null && model != null)
+            if (why == null)
             {
                 // A struct without declared components: say why (spec §4.2), so `Scale * 1.5` is not a mystery.
                 var s = IsStruct(model, a) ? a : op != "neg" && IsStruct(model, b) ? b : null;
@@ -845,16 +845,16 @@ namespace Rql.Execution
         }
 
         /// <summary>A list of exactly <paramref name="width"/> numbers read as components (spec §4.2), else null.</summary>
-        private static double[]? ListParts(object? v, int width)
+        private static double[]? ListParts(object list, int width)
         {
-            if (v == null || V.IsString(v) || !V.IsList(v)) return null;
-            var parts = new List<double>(width);
-            foreach (var e in V.Iterate(v))
+            var parts = new double[width];
+            int n = 0;
+            foreach (var e in V.Iterate(list))
             {
-                if (parts.Count == width || !V.TryNumber(e, out var d)) return null;
-                parts.Add(d);
+                if (n == width || !V.TryNumber(e, out var d)) return null;
+                parts[n++] = d;
             }
-            return parts.Count == width ? parts.ToArray() : null;
+            return n == width ? parts : null;
         }
 
         /// <summary>
@@ -897,11 +897,9 @@ namespace Rql.Execution
                     other = new double[parts.Length];
                     for (int i = 0; i < other.Length; i++) other[i] = n;
                 }
+                else if (operand == null || V.IsString(operand) || !V.IsList(operand)) return ArithMismatch(model, op, a, b, null);
                 else if (ListParts(operand, parts.Length) is double[] lp) other = lp;
-                else
-                    return ArithMismatch(model, op, a, b, operand != null && !V.IsString(operand) && V.IsList(operand)
-                        ? $"the list must hold exactly {parts.Length} numbers, one per component"
-                        : null);
+                else return ArithMismatch(model, op, a, b, $"the list must hold exactly {parts.Length} numbers, one per component");
                 if (!vectorLeft) (parts, other) = (other, parts);
             }
             var result = new double[parts.Length];

@@ -264,14 +264,14 @@ export class Compiler {
         };
       }
       case 'neg':
-        return (x) => arith('neg', a(x), 0, x.types);
+        return (x) => arith(x.types, 'neg', a(x), 0);
       case '+':
       case '-':
       case '*':
       case '/':
       case '%': {
         const op = o.op;
-        return (x) => arith(op, a(x), b(x), x.types);
+        return (x) => arith(x.types, op, a(x), b(x));
       }
       case 'index':
         return (x) => {
@@ -957,7 +957,7 @@ function isType(x: Exec, a: unknown, b: unknown): Truth {
 
 // ------------------------------------------------------------------ arithmetic and text
 
-export function arith(op: string, a: unknown, b: unknown, model?: TypeModel): unknown {
+export function arith(model: TypeModel, op: string, a: unknown, b: unknown): unknown {
   if (a === MISSING || b === MISSING) return MISSING;
   if (a instanceof ErrorValue) return a;
   if (b instanceof ErrorValue) return b;
@@ -965,7 +965,7 @@ export function arith(op: string, a: unknown, b: unknown, model?: TypeModel): un
   const l = toNumber(a);
   const r = toNumber(b);
   if (l === undefined || r === undefined) {
-    if (model !== undefined && model.hasCapability('components')) {
+    if (model.hasCapability('components')) {
       const v = structArith(model, op, a, b);
       if (v !== undefined) return v;
     }
@@ -989,9 +989,9 @@ export function arith(op: string, a: unknown, b: unknown, model?: TypeModel): un
   }
 }
 
-function arithMismatch(model: TypeModel | undefined, op: string, a: unknown, b: unknown, why?: string): ErrorValue {
+function arithMismatch(model: TypeModel, op: string, a: unknown, b: unknown, why?: string): ErrorValue {
   const message = `cannot apply '${op}' to ${describeValue(a)} and ${describeValue(b)}`;
-  if (why === undefined && model !== undefined) {
+  if (why === undefined) {
     // A struct without declared components: say why (spec §4.2), so `Scale * 1.5` is not a mystery.
     const s = isStruct(model, a) ? a : op !== 'neg' && isStruct(model, b) ? b : undefined;
     if (s !== undefined && componentsOf(model, s) === undefined) why = `${describeValue(s)} has no component-wise arithmetic`;
@@ -1013,11 +1013,15 @@ function componentsOf(model: TypeModel, v: unknown): { parts: readonly number[];
   return undefined;
 }
 
-/** A list of exactly `width` numbers read as components (spec §4.2), else undefined. */
-function listParts(model: TypeModel, v: unknown, width: number): number[] | undefined {
+/** The list info of `v`, or undefined when it is not a list. */
+function listInfo(model: TypeModel, v: unknown): TypeInfo | undefined {
   if (typeof v !== 'object' || v === null || isAbsent(v)) return undefined;
   const info = model.infoOf(v);
-  if (!info.isList) return undefined;
+  return info.isList ? info : undefined;
+}
+
+/** A list of exactly `width` numbers read as components (spec §4.2), else undefined. */
+function listParts(v: object, info: TypeInfo, width: number): number[] | undefined {
   const parts: number[] = [];
   for (const e of elements(v, info)) {
     const n = toNumber(e);
@@ -1063,11 +1067,10 @@ function structArith(model: TypeModel, op: string, a: unknown, b: unknown): unkn
         );
       other = parts.map(() => n);
     } else {
-      const lp = listParts(model, operand, parts.length);
-      if (lp === undefined) {
-        const list = typeof operand === 'object' && operand !== null && !isAbsent(operand) && model.infoOf(operand).isList;
-        return arithMismatch(model, op, a, b, list ? `the list must hold exactly ${parts.length} numbers, one per component` : undefined);
-      }
+      const info = listInfo(model, operand);
+      if (info === undefined) return arithMismatch(model, op, a, b);
+      const lp = listParts(operand as object, info, parts.length);
+      if (lp === undefined) return arithMismatch(model, op, a, b, `the list must hold exactly ${parts.length} numbers, one per component`);
       other = lp;
     }
     if (!vectorLeft) [parts, other] = [other, parts];

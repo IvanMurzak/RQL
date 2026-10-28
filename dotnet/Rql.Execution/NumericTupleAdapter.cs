@@ -69,7 +69,7 @@ namespace Rql.Execution
         {
             if (!Arithmetic) return null;
             var parts = new double[Width];
-            for (int i = 0; i < parts.Length; i++) parts[i] = V.Widen(Part(value, i));
+            for (int i = 0; i < parts.Length; i++) parts[i] = Widen(Part(value, i));
             return parts;
         }
 

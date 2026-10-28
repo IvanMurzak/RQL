@@ -1052,15 +1052,18 @@ namespace Rql.Execution
                 return true;
             }
             if (a.GetType().IsValueType && a.GetType() == b.GetType())
-                return _model.Info(a.GetType()).IsStruct ? StructEquals(a, b, depth) : a.Equals(b);
+            {
+                var info = _model.Info(a.GetType());
+                return info.IsStruct ? StructEquals(info, a, b, depth) : a.Equals(b);
+            }
             return ReferenceEquals(a, b);
         }
 
         /// <summary>Structs by their members, numbers rounded for display (spec §5 "Struct keys").</summary>
-        private bool StructEquals(object a, object b, int depth)
+        private bool StructEquals(TypeInfo info, object a, object b, int depth)
         {
             if (depth >= Compiler.MaxCompareDepth) return a.Equals(b);
-            foreach (var m in _model.Info(a.GetType()).ImplicitMembers)
+            foreach (var m in info.ImplicitMembers)
             {
                 object? va = Read(m, a), vb = Read(m, b);
                 if (V.TryNumber(va, out var da, out var sa) && V.TryNumber(vb, out var db, out var sb))
@@ -1114,9 +1117,10 @@ namespace Rql.Execution
             }
             if (o.GetType().IsValueType)
             {
-                if (!_model.Info(o.GetType()).IsStruct || depth >= Compiler.MaxCompareDepth) return o.GetHashCode();
+                var info = _model.Info(o.GetType());
+                if (!info.IsStruct || depth >= Compiler.MaxCompareDepth) return o.GetHashCode();
                 int h = o.GetType().GetHashCode();
-                foreach (var m in _model.Info(o.GetType()).ImplicitMembers)
+                foreach (var m in info.ImplicitMembers)
                 {
                     var v = Read(m, o);
                     h = unchecked(h * 31 + (V.TryNumber(v, out var n, out var single) ? Rounded(n, single).GetHashCode() : ReferenceEquals(v, Threw) ? 1 : Hash(v, depth + 1)));
@@ -1133,16 +1137,7 @@ namespace Rql.Execution
         /// <summary>Members listed by a hint when no suggestion qualifies.</summary>
         public const int MaxListed = 12;
 
-        public static List<string> Closest(string name, IReadOnlyCollection<string> candidates, int max)
-        {
-            var lower = name.ToLowerInvariant();
-            int limit = Math.Max(1, name.Length / 3);
-            return candidates
-                .Select(c => (c, d: Distance(lower, c.ToLowerInvariant()), sub: Contains(name, c)))
-                .Where(t => t.sub || t.d <= limit)
-                .OrderBy(t => t.sub ? 0 : 1).ThenBy(t => t.d).ThenBy(t => t.c, StringComparer.Ordinal)
-                .Select(t => t.c).Distinct().Take(max).ToList();
-        }
+        public static List<string> Closest(string name, IReadOnlyCollection<string> candidates, int max) => ClosestMembers(name, candidates, null, max);
 
         /// <summary>
         /// Containment that signals a typo or a partial name: the candidate contains the name (at least 3 characters), or the
@@ -1205,11 +1200,11 @@ namespace Rql.Execution
         /// </summary>
         public static List<string> ClosestMembers(string name, IReadOnlyCollection<string> members, IReadOnlyCollection<string>? nested, int max)
         {
-            if (nested == null || nested.Count == 0) return Closest(name, members, max);
             var lower = name.ToLowerInvariant();
             int limit = Math.Max(1, name.Length / 3);
-            return members.Select(c => (c, leaf: c, depth: 0))
-                .Concat(nested.Select(c => (c, leaf: c.Substring(c.LastIndexOf('.') + 1), depth: c.Count(ch => ch == '.'))))
+            var all = members.Select(c => (c, leaf: c, depth: 0));
+            if (nested != null) all = all.Concat(nested.Select(c => (c, leaf: c.Substring(c.LastIndexOf('.') + 1), depth: c.Count(ch => ch == '.'))));
+            return all
                 .Select(t => (t.c, t.depth, d: Distance(lower, t.leaf.ToLowerInvariant()), sub: Contains(name, t.leaf)))
                 .Where(t => t.sub || t.d <= limit)
                 .OrderBy(t => t.sub ? 0 : 1).ThenBy(t => t.d).ThenBy(t => t.depth).ThenBy(t => t.c, StringComparer.Ordinal)

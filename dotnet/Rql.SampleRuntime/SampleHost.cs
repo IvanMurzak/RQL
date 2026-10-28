@@ -95,9 +95,6 @@ namespace Rql.Sample
 
             protected override object? FromComponents(double[] c) =>
                 c.Length == 3 ? new Vector3((float)c[0], (float)c[1], (float)c[2]) : (object?)null;
-
-            /// <summary>A float as the double of its shortest decimal, as RQL reads float members (spec 1.1).</summary>
-            internal static double Widen(float f) => double.Parse(f.ToString("R", CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
         }
     }
 }

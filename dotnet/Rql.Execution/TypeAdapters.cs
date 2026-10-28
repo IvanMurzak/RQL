@@ -81,6 +81,9 @@ namespace Rql.Execution
         /// <summary>A value of <paramref name="type"/> built from components in the order <see cref="GetComponents"/> returns them; null when it cannot be built.</summary>
         public virtual object? MakeFromComponents(Type type, double[] components) => null;
 
+        /// <summary>A float as RQL computes with it: the double of its shortest decimal (spec §1.1). Use it for single-precision components.</summary>
+        protected static double Widen(float f) => V.Widen(f);
+
         /// <summary>One line for schemas and <c>describe</c>, e.g. how agents should write literals of the type.</summary>
         public virtual string? Description => null;
 

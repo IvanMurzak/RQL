@@ -76,30 +76,14 @@ std::string member_list_hint(const std::vector<std::string>& names) {
     return s;
 }
 
+/// Containment signals a typo or a partial name: the candidate contains the name (at least 3 characters), or the name
+/// contains a candidate at least half its length (so "NoSuchType" does not suggest "Type").
+static bool signals_typo(const std::string& name, const std::string& c) {
+    return (name.size() >= 3 && icontains(c, name)) || (c.size() * 2 >= name.size() && icontains(name, c));
+}
+
 std::vector<std::string> suggest_closest(const std::string& name, const std::vector<std::string>& candidates, size_t max) {
-    struct C { std::string c; size_t d; bool sub; };
-    std::vector<C> cs;
-    std::string lower = ascii_lower(name);
-    size_t limit = std::max<size_t>(1, name.size() / 3);
-    for (auto& c : candidates) {
-        size_t d = osa_distance(lower, ascii_lower(c));
-        // Containment signals a typo or a partial name: the candidate contains the name (at least 3 characters),
-        // or the name contains a candidate at least half its length (so "NoSuchType" does not suggest "Type").
-        bool sub = (name.size() >= 3 && icontains(c, name)) || (c.size() * 2 >= name.size() && icontains(name, c));
-        if (sub || d <= limit) cs.push_back({c, d, sub});
-    }
-    std::stable_sort(cs.begin(), cs.end(), [](const C& a, const C& b) {
-        if (a.sub != b.sub) return a.sub;
-        if (a.d != b.d) return a.d < b.d;
-        return a.c < b.c;
-    });
-    std::vector<std::string> out;
-    for (auto& c : cs) {
-        if (std::find(out.begin(), out.end(), c.c) != out.end()) continue;
-        out.push_back(c.c);
-        if (out.size() >= max) break;
-    }
-    return out;
+    return suggest_members(name, candidates, {}, max);
 }
 
 bool try_number(const Value& v, double& d, bool& single) {
@@ -157,7 +141,7 @@ void walk_nested(Exec& x, const TypeDescriptor* type, const std::string& prefix,
         const TypeView inner_view = x.view(inner);
         for (auto& im : inner_view.members()) {
             if (budget-- <= 0) return;
-            if (std::find(out.begin(), out.end(), path + im.name) == out.end()) out.push_back(path + im.name);
+            out.push_back(path + im.name);
         }
         if (level < 2) walk_nested(x, inner, path, level + 1, budget, out);
     }
@@ -171,19 +155,23 @@ std::vector<std::string> nested_members(Exec& x, const std::vector<const TypeDes
         int budget = kMaxNested;
         walk_nested(x, t, "", 1, budget, out);
     }
-    return out;
+    // Several miss types may share a member type: keep each path once, in first-seen order.
+    std::vector<std::string> unique;
+    std::unordered_set<std::string> seen;
+    for (auto& p : out)
+        if (seen.insert(p).second) unique.push_back(std::move(p));
+    return unique;
 }
 
 std::vector<std::string> suggest_members(const std::string& name, const std::vector<std::string>& members,
                                          const std::vector<std::string>& nested, size_t max) {
-    if (nested.empty()) return suggest_closest(name, members, max);
     struct C { std::string c; size_t d; bool sub; size_t depth; };
     std::vector<C> cs;
     const std::string lower = ascii_lower(name);
     const size_t limit = std::max<size_t>(1, name.size() / 3);
     auto consider = [&](const std::string& c, const std::string& leaf, size_t depth) {
         size_t d = osa_distance(lower, ascii_lower(leaf));
-        bool sub = (name.size() >= 3 && icontains(leaf, name)) || (leaf.size() * 2 >= name.size() && icontains(name, leaf));
+        const bool sub = signals_typo(name, leaf);
         if (sub || d <= limit) cs.push_back({c, d, sub, depth});
     };
     for (auto& c : members) consider(c, c, 0);
@@ -1031,15 +1019,15 @@ std::optional<Value> struct_arith(Exec& x, std::string op, const Value& a, const
     const bool vector_left = ha;
     const TypeAdapter* adapter = vector_left ? ada : adb;
     const Value& vector = vector_left ? a : b;
-    std::vector<double> parts = vector_left ? pa : pb;
+    std::vector<double> parts = vector_left ? std::move(pa) : std::move(pb);
     std::vector<double> other;
     if (op == "neg") {
         other = parts;
         parts.assign(other.size(), 0.0);  // -v = 0 - v
         op = "-";
     } else if (ha && hb) {
-        if (a.type() != b.type() || pa.size() != pb.size()) return arith_mismatch(x, op, a, b, "different types");
-        other = pb;
+        if (a.type() != b.type() || parts.size() != pb.size()) return arith_mismatch(x, op, a, b, "different types");
+        other = std::move(pb);
     } else {
         const Value& operand = vector_left ? b : a;
         if (operand.is_number()) {

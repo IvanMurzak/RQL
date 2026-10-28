@@ -5,16 +5,7 @@ import { unwrapNullable, type TypeInfo, type TypeModel } from './types.js';
 export const MAX_LISTED = 12;
 
 export function closest(name: string, candidates: Iterable<string>, max: number): string[] {
-  const lower = name.toLowerCase();
-  const limit = Math.max(1, Math.floor(name.length / 3));
-  const scored: { c: string; d: number; sub: boolean }[] = [];
-  for (const c of candidates) {
-    const d = distance(lower, c.toLowerCase());
-    const sub = contains(name, c);
-    if (sub || d <= limit) scored.push({ c, d, sub });
-  }
-  scored.sort((a, b) => (a.sub === b.sub ? 0 : a.sub ? -1 : 1) || a.d - b.d || (a.c < b.c ? -1 : a.c > b.c ? 1 : 0));
-  return [...new Set(scored.map((s) => s.c))].slice(0, max);
+  return closestMembers(name, candidates, undefined, max);
 }
 
 /** Nested paths offered per type (spec §10): bounds the static walk over struct-typed members. */
@@ -52,8 +43,7 @@ function walk(model: TypeModel, info: TypeInfo, prefix: string, level: number, b
  * {@link closest} over a type's members plus nested paths (spec §10): a nested path qualifies and ranks by its last
  * segment; among equal ranks direct members first, then shallower paths, then ordinal.
  */
-export function closestMembers(name: string, members: readonly string[], nested: readonly string[] | undefined, max: number): string[] {
-  if (nested === undefined || nested.length === 0) return closest(name, members, max);
+export function closestMembers(name: string, members: Iterable<string>, nested: readonly string[] | undefined, max: number): string[] {
   const lower = name.toLowerCase();
   const limit = Math.max(1, Math.floor(name.length / 3));
   const scored: { c: string; d: number; sub: boolean; depth: number }[] = [];
@@ -63,7 +53,7 @@ export function closestMembers(name: string, members: readonly string[], nested:
     if (sub || d <= limit) scored.push({ c, d, sub, depth });
   };
   for (const c of members) consider(c, c, 0);
-  for (const c of nested) consider(c, c.slice(c.lastIndexOf('.') + 1), c.split('.').length - 1);
+  for (const c of nested ?? []) consider(c, c.slice(c.lastIndexOf('.') + 1), c.split('.').length - 1);
   scored.sort((a, b) => (a.sub === b.sub ? 0 : a.sub ? -1 : 1) || a.d - b.d || a.depth - b.depth || (a.c < b.c ? -1 : a.c > b.c ? 1 : 0));
   return [...new Set(scored.map((s) => s.c))].slice(0, max);
 }
