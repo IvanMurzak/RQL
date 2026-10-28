@@ -286,6 +286,7 @@ namespace Rql.Execution
             var rows = changed.Select(w => new object?[] { w.Ref, w.Label, w.Old, w.New }).ToList();
             var r = _enc.Rows(new[] { "$ref", "member", "old", "new" }, rows);
             r.DryRun = _x.Options.DryRun;
+            r.Receipt = true;
             if (changed.Count < writes.Count) r.Unchanged = writes.Count - changed.Count;
             return r;
         }
@@ -566,25 +567,10 @@ namespace Rql.Execution
                 var candidates = fixedCandidates ?? Candidates(item, targets);
                 EnterScope(t);
                 var vals = args.Select(a => a(_x)).ToArray();
-                CallableMethod? chosen = null;
-                object?[]? coerced = null;
-                string why = "";
-                foreach (var m in candidates)
-                {
-                    var ps = m.Parameters;
-                    if (ps.Count < vals.Length || ps.Skip(vals.Length).Any(p => !p.HasDefault)) { why = $"expects {ps.Count} argument(s)"; continue; }
-                    var cv = new object?[ps.Count];
-                    bool ok = true;
-                    for (int i = 0; i < ps.Count; i++)
-                    {
-                        if (i >= vals.Length) { cv[i] = ps[i].Default; continue; }
-                        if (!Coerce.TryTo(_x.Kernel, vals[i], ps[i].Type, out cv[i], out var w)) { ok = false; why = $"argument '{ps[i].Name}': {w}"; break; }
-                    }
-                    if (ok) { chosen = m; coerced = cv; break; }
-                }
+                var (chosen, coerced, why, denied) = Overloads.Resolve(_x.Kernel, candidates, vals);
                 if (chosen == null)
-                    throw new RqlException("coercion-failed", $"cannot call {s.Method} on {At(item, t.Index)}: {why}", null,
-                        "signature: " + string.Join(", ", candidates.Select(m => m.Signature)));
+                    throw new RqlException(denied ? "permission-denied" : "coercion-failed", $"cannot call {s.Method} on {At(item, t.Index)}: {why}", null,
+                        denied ? null : "signature: " + string.Join(", ", candidates.Select(m => m.Signature)));
                 // The method's own check, for every target before the first call (and on dry runs): all-or-nothing (spec §8).
                 if (chosen.Validate != null)
                 {
@@ -630,6 +616,7 @@ namespace Rql.Execution
             RunHook(_x.Engine.Mutations.Committed, callRecords, veto: false);
             var r = _enc.Rows(new[] { "$ref", "method", "result" }, rows);
             r.DryRun = _x.Options.DryRun;
+            r.Receipt = true;
             return r;
 
             // The callable overloads of the method on a target; none: unknown-function (or permission-denied for a public method
@@ -660,6 +647,192 @@ namespace Rql.Execution
         }
     }
 
+    /// <summary>
+    /// Overload resolution and argument binding for <c>call</c> (spec §8 "Overloads"): candidates are checked with the
+    /// side-effect-free <see cref="Coerce.CanConvert"/>, only the chosen one's arguments are coerced; a single object literal
+    /// that no overload takes binds by parameter name; a failure reports the best-matching candidate.
+    /// </summary>
+    internal static class Overloads
+    {
+        /// <summary>Why one candidate does not fit, ranked by how close it came.</summary>
+        private readonly struct Miss
+        {
+            public Miss(CallableMethod method, bool arityFits, int matched, int depth, string why)
+            { Method = method; ArityFits = arityFits; Matched = matched; Depth = depth; Why = why; }
+            public CallableMethod Method { get; }
+            public bool ArityFits { get; }
+            public int Matched { get; }
+            public int Depth { get; }
+            public string Why { get; }
+            public int CompareTo(Miss o) =>
+                ArityFits != o.ArityFits ? (ArityFits ? 1 : -1) : Matched != o.Matched ? Matched.CompareTo(o.Matched) : Depth.CompareTo(o.Depth);
+        }
+
+        /// <summary>
+        /// The chosen overload and its coerced arguments (defaults filled in); or none, with the reason and whether it is a
+        /// host policy denial (permission-denied) rather than a coercion failure.
+        /// </summary>
+        public static (CallableMethod? method, object?[]? args, string why, bool denied) Resolve(RqlKernel kernel, IReadOnlyList<CallableMethod> candidates, object?[] given)
+        {
+            var misses = new List<Miss>();
+            string? denied = null;
+            // 1. Positional: in order, each candidate whose arity fits is checked without side effects; the first that passes
+            //    is coerced for real, and only when that fails is the next one tried.
+            foreach (var m in candidates)
+            {
+                var ps = m.Parameters;
+                if (ps.Count < given.Length || ps.Skip(given.Length).Any(p => !p.HasDefault)) { misses.Add(new Miss(m, false, 0, 0, "")); continue; }
+                var slots = Enumerable.Range(0, given.Length).ToArray();
+                if (Bind(kernel, m, given, slots, "argument", misses, ref denied) is object?[] args) return (m, args, "", false);
+            }
+            // 2. By name: a single object literal that no overload took positionally names the parameters (missing ones take
+            //    their defaults).
+            if (given.Length == 1 && given[0] is ObjectValue literal)
+            {
+                var vals = literal.Values.ToArray();
+                foreach (var m in candidates)
+                {
+                    var slots = BindNames(m, literal, misses);
+                    if (slots != null && Bind(kernel, m, vals, slots, "parameter", misses, ref denied) is object?[] args) return (m, args, "", false);
+                }
+            }
+            // A host policy denial met on the way is what blocked the call; otherwise the best candidate's reason.
+            return denied != null ? (null, null, denied, true) : (null, null, Explain(misses, given.Length), false);
+        }
+
+        /// <summary>
+        /// Checks every bound value against its parameter without side effects, then coerces them for real; the coerced
+        /// arguments (defaults filled in), or null with a miss recorded. A policy denial is remembered (the first one), not
+        /// thrown, so an overload that would not be chosen cannot veto the call.
+        /// </summary>
+        private static object?[]? Bind(RqlKernel kernel, CallableMethod m, object?[] vals, int[] slots, string kind, List<Miss> misses, ref string? denied)
+        {
+            var ps = m.Parameters;
+            int matched = 0, depth = 0;
+            string? first = null;
+            for (int k = 0; k < slots.Length; k++)
+            {
+                var p = ps[slots[k]];
+                bool ok;
+                string w;
+                int d;
+                try { ok = Coerce.CanConvert(kernel, vals[k], p.Type, out w, out d); }
+                catch (RqlException ex) when (ex.Code == "permission-denied")
+                {
+                    denied ??= $"{kind} '{p.Name}': {ex.Message}";
+                    ok = false;
+                    w = ex.Message;
+                    d = 0;
+                }
+                if (ok) { matched++; continue; }
+                if (first == null) { first = $"{kind} '{p.Name}': {w}"; depth = d; }
+            }
+            if (first != null)
+            {
+                misses.Add(new Miss(m, true, matched, depth, first));
+                return null;
+            }
+            var cv = ps.Select(p => p.Default).ToArray();
+            for (int k = 0; k < slots.Length; k++)
+            {
+                var p = ps[slots[k]];
+                if (Coerce.TryTo(kernel, vals[k], p.Type, out cv[slots[k]], out var w)) continue;
+                // Only the real coercion sees what the probe cannot (member validators, constructors that throw); a candidate
+                // that passed the probe is the closest match, so its reason is the one reported.
+                misses.Add(new Miss(m, true, int.MaxValue, 0, $"{kind} '{p.Name}': {w}"));
+                return null;
+            }
+            return cv;
+        }
+
+        /// <summary>The fewest arguments a call can pass: up to the last parameter without a default.</summary>
+        private static int MinArity(IReadOnlyList<CallableParameter> ps)
+        {
+            int min = 0;
+            for (int i = 0; i < ps.Count; i++) if (!ps[i].HasDefault) min = i + 1;
+            return min;
+        }
+
+        private static bool AsciiEqualsIgnoreCase(string a, string b)
+        {
+            if (a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; i++)
+            {
+                char x = a[i], y = b[i];
+                if (x >= 'A' && x <= 'Z') x = (char)(x + 32);
+                if (y >= 'A' && y <= 'Z') y = (char)(y + 32);
+                if (x != y) return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// The parameter index of each literal key (exact name, else the only case-insensitive match), or null with a miss
+        /// when a key names no parameter or a parameter without a default is not named.
+        /// </summary>
+        private static int[]? BindNames(CallableMethod m, ObjectValue literal, List<Miss> misses)
+        {
+            var ps = m.Parameters;
+            var slots = new int[literal.Count];
+            var named = new bool[ps.Count];
+            int k = 0, known = 0;
+            string? unknown = null;
+            foreach (var key in literal.Keys)
+            {
+                int i = -1;
+                for (int j = 0; j < ps.Count; j++) if (ps[j].Name == key) { i = j; break; }
+                if (i < 0)
+                {
+                    var ci = Enumerable.Range(0, ps.Count).Where(j => AsciiEqualsIgnoreCase(ps[j].Name, key)).ToList();
+                    if (ci.Count == 1) i = ci[0];
+                }
+                if (i < 0) { unknown ??= key; slots[k++] = -1; continue; }
+                if (named[i])
+                {
+                    misses.Add(new Miss(m, true, known, 0, $"parameter '{ps[i].Name}' is named twice"));
+                    return null;
+                }
+                named[i] = true;
+                slots[k++] = i;
+                known++;
+            }
+            string all = string.Join(", ", ps.Select(p => p.Name));
+            if (unknown != null)
+            {
+                var close = Suggest.Closest(unknown, ps.Select(p => p.Name).ToList(), 1);
+                misses.Add(new Miss(m, true, known, 0, $"no parameter '{unknown}'" + (close.Count > 0 ? $" (did you mean '{close[0]}'?)" : "")
+                    + (ps.Count > 0 ? $"; parameters: {all}" : "; it takes no parameters")));
+                return null;
+            }
+            for (int j = 0; j < ps.Count; j++)
+            {
+                if (named[j] || ps[j].HasDefault) continue;
+                misses.Add(new Miss(m, true, known, 0, $"missing parameter '{ps[j].Name}'; parameters: {all}"));
+                return null;
+            }
+            return slots;
+        }
+
+        /// <summary>The best candidate's reason; candidates that came equally close are listed with their signatures.</summary>
+        private static string Explain(List<Miss> misses, int given)
+        {
+            var fits = misses.Where(x => x.ArityFits).ToList();
+            if (fits.Count == 0)
+            {
+                // Each overload accepts from its last parameter without a default up to all of them.
+                var counts = misses.Select(x => (min: MinArity(x.Method.Parameters), max: x.Method.Parameters.Count))
+                    .Distinct().OrderBy(r => r.min).ThenBy(r => r.max).Select(r => r.min == r.max ? $"{r.min}" : $"{r.min} to {r.max}");
+                return $"expects {string.Join(" or ", counts)} argument(s), got {given}";
+            }
+            var best = fits[0];
+            foreach (var x in fits) if (x.CompareTo(best) > 0) best = x;
+            // One entry per method (a single literal argument can miss both positionally and by name).
+            var tied = fits.Where(x => x.CompareTo(best) == 0).GroupBy(x => x.Method).Select(g => g.First()).ToList();
+            if (tied.Count == 1) return best.Why;
+            return "no overload fits: " + string.Join("; ", tied.Select(x => x.Method.Signature + ": " + x.Why));
+        }
+    }
+
     internal static class Coerce
     {
         // Per target type: public concrete assignable types by full and short name (spec §4.5 "$type"); rebuilt when new
@@ -675,18 +848,34 @@ namespace Rql.Execution
                                        || ex is NotSupportedException || ex is ArgumentException || ex is InvalidOperationException)
             {
                 instance = null!;
-                why = $"cannot construct {TypeModel.FriendlyName(t)} (needs a public parameterless constructor, or an adapter that coerces literals)";
+                why = NotConstructible(t);
                 return false;
             }
         }
 
-        /// <summary>Build <paramref name="target"/> from an object literal: concrete type, construction, member assignment (spec §4.5).</summary>
-        private static bool TryConstruct(RqlKernel kernel, ObjectValue literal, Type target, out object? result, out string why)
+        private static string NotConstructible(Type t) =>
+            $"cannot construct {TypeModel.FriendlyName(t)} (needs a public parameterless constructor, or an adapter that coerces literals)";
+
+        /// <summary>What <see cref="TryInstantiate"/> needs, checked without constructing anything (probe mode).</summary>
+        private static bool Instantiable(Type t, out string why)
+        {
+            why = "";
+            if (t.IsValueType || t.GetConstructor(Type.EmptyTypes) != null) return true;
+            why = NotConstructible(t);
+            return false;
+        }
+
+        /// <summary>
+        /// Build <paramref name="target"/> from an object literal: concrete type, construction, member assignment (spec §4.5).
+        /// A <paramref name="probe"/> checks the same rules without constructing, assigning or validating anything.
+        /// </summary>
+        private static bool TryConstruct(RqlKernel kernel, ObjectValue literal, Type target, bool probe, out object? result, out string why, out int depth)
         {
             var model = kernel.Types;
             var policy = kernel.WritePolicy;
             result = null;
             why = "";
+            depth = 0;
             var info = model.Info(target);
             if (info.IsMap)
             {
@@ -694,13 +883,21 @@ namespace Rql.Execution
                 var valueType = info.ElementType ?? typeof(object);
                 var concreteMap = target.IsInterface || target.IsAbstract ? typeof(Dictionary<,>).MakeGenericType(keyType, valueType) : target;
                 if (!target.IsAssignableFrom(concreteMap) || !typeof(IDictionary).IsAssignableFrom(concreteMap)) { why = "unsupported map type " + TypeModel.FriendlyName(target); return false; }
-                if (!TryInstantiate(concreteMap, out var mapObj, out why)) return false;
-                var map = (IDictionary)mapObj;
+                IDictionary? map = null;
+                if (probe)
+                {
+                    if (!Instantiable(concreteMap, out why)) return false;
+                }
+                else
+                {
+                    if (!TryInstantiate(concreteMap, out var mapObj, out why)) return false;
+                    map = (IDictionary)mapObj;
+                }
                 foreach (var kv in literal)
                 {
-                    if (!Compiler.TryCoerceKey(kv.Key, keyType, out var key, kernel.Types) || key == null) { why = $"invalid key '{kv.Key}' for {TypeModel.FriendlyName(target)}"; return false; }
-                    if (!TryTo(kernel, kv.Value, valueType, out var mv, out var w)) { why = $"'{kv.Key}': {w}"; return false; }
-                    map[key] = mv;
+                    if (!Compiler.TryCoerceKey(kv.Key, keyType, out var key, kernel.Types) || key == null) { why = $"invalid key '{kv.Key}' for {TypeModel.FriendlyName(target)}"; depth = 1; return false; }
+                    if (!Convert(kernel, kv.Value, valueType, probe, out var mv, out var w, out var d)) { why = $"'{kv.Key}': {w}"; depth = d + 1; return false; }
+                    if (map != null) map[key] = mv;
                 }
                 result = map;
                 return true;
@@ -730,22 +927,36 @@ namespace Rql.Execution
                 why = $"{TypeModel.FriendlyName(concrete)} is abstract; add \"$type\" to choose a concrete type";
                 return false;
             }
-            if (!TryInstantiate(concrete, out var instance, out why)) return false;
+            // Engine objects are never built from literals (spec §4.5): only existing ones can be passed.
+            if (!kernel.CanConstruct(concrete))
+            {
+                why = $"{model.Info(concrete).ShortName} is an engine object and cannot be built from an object literal; pass an existing one (e.g. ref(\"…\"))";
+                return false;
+            }
+            object? instance = null;
+            if (probe)
+            {
+                if (!Instantiable(concrete, out why)) return false;
+            }
+            else if (!TryInstantiate(concrete, out instance, out why)) return false;
             var ci = model.Info(concrete);
             foreach (var kv in literal)
             {
                 if (kv.Key == "$type") continue;
+                depth = 1;
                 var m = ci.Find(kv.Key);
                 if (m == null) { why = $"no member '{kv.Key}' on {ci.ShortName}"; return false; }
                 if (!m.CanWrite) { why = $"member '{m.Name}' of {ci.ShortName} is read-only"; return false; }
                 // Building a value assigns members, so the host's per-member write policy applies as for `set`.
                 if (policy != null && !policy(concrete, m))
                     throw new RqlException("permission-denied", $"member '{m.Name}' of {ci.ShortName} may not be written (denied by host policy)");
-                if (!TryTo(kernel, kv.Value, m.Type, out var mv, out var w)) { why = $"'{m.Name}': {w}"; return false; }
-                if (m.Validate?.Invoke(instance, mv) is string rejected) { why = $"'{m.Name}': {rejected}"; return false; }
-                try { m.SetValue(instance, mv); }
+                if (!Convert(kernel, kv.Value, m.Type, probe, out var mv, out var w, out var d)) { why = $"'{m.Name}': {w}"; depth = d + 1; return false; }
+                if (probe) continue;
+                if (m.Validate?.Invoke(instance!, mv) is string rejected) { why = $"'{m.Name}': {rejected}"; return false; }
+                try { m.SetValue(instance!, mv); }
                 catch (Exception ex) when (!(ex is OutOfMemoryException)) { why = $"'{m.Name}': {ex.Message}"; return false; }
             }
+            depth = 0;
             result = instance;
             return true;
         }
@@ -773,11 +984,24 @@ namespace Rql.Execution
         }
 
         /// <summary>The one coercion pipeline (spec §8, §13): adapters, object literals, lists, scalars. Nested coercions reuse the kernel.</summary>
-        internal static bool TryTo(RqlKernel kernel, object? v, Type target, out object? result, out string why)
+        internal static bool TryTo(RqlKernel kernel, object? v, Type target, out object? result, out string why) =>
+            Convert(kernel, v, target, probe: false, out result, out why, out _);
+
+        /// <summary>
+        /// Whether <paramref name="v"/> converts to <paramref name="target"/>, checked without side effects (overload resolution,
+        /// spec §8): nothing is constructed, assigned or validated (member validators need the instance); adapters and the
+        /// host's text coercion answer as usual. On failure <paramref name="depth"/> is how deep inside the value it failed
+        /// (0: the value itself, 1: a member or element of it, …).
+        /// </summary>
+        internal static bool CanConvert(RqlKernel kernel, object? v, Type target, out string why, out int depth) =>
+            Convert(kernel, v, target, probe: true, out _, out why, out depth);
+
+        private static bool Convert(RqlKernel kernel, object? v, Type target, bool probe, out object? result, out string why, out int depth)
         {
             var model = kernel.Types;
             why = "";
             result = null;
+            depth = 0;
             if (v is Missing || v is Unknown || v is RqlError) { why = "value is " + V.Describe(v); return false; }
             var under = Nullable.GetUnderlyingType(target);
             if (v == null)
@@ -814,7 +1038,7 @@ namespace Rql.Execution
                 }
             }
 
-            if (v is ObjectValue literal) return TryConstruct(kernel, literal, target, out result, out why);
+            if (v is ObjectValue literal) return TryConstruct(kernel, literal, target, probe, out result, out why, out depth);
 
             // The host's text form for struct / object types no adapter handled (spec §8).
             if (kernel.TextCoercion != null && V.IsString(v) && target != typeof(string) && !target.IsEnum && !target.IsPrimitive
@@ -863,7 +1087,7 @@ namespace Rql.Execution
                 if (integral && Math.Floor(d) != d) { why = "expected an integer"; return false; }
                 try
                 {
-                    result = code == TypeCode.Single ? (float)d : Convert.ChangeType(d, target, CultureInfo.InvariantCulture);
+                    result = code == TypeCode.Single ? (float)d : System.Convert.ChangeType(d, target, CultureInfo.InvariantCulture);
                     return true;
                 }
                 catch (OverflowException) { why = "out of range for " + TypeModel.FriendlyName(target); return false; }
@@ -885,8 +1109,17 @@ namespace Rql.Execution
                 var items = new List<object?>();
                 foreach (var el in src)
                 {
-                    if (!TryTo(kernel, el, elem, out var ce, out var w)) { why = $"[{items.Count}]: " + w; return false; }
+                    if (!Convert(kernel, el, elem, probe, out var ce, out var w, out var d)) { why = $"[{items.Count}]: " + w; depth = d + 1; return false; }
                     items.Add(ce);
+                }
+                if (probe)
+                {
+                    if (target.IsArray) return true;
+                    var probed = target.IsInterface ? typeof(List<>).MakeGenericType(elem) : target;
+                    if (!target.IsAssignableFrom(probed)) { why = "unsupported collection type"; return false; }
+                    if (!Instantiable(probed, out why)) return false;
+                    if (probed.GetMethod("Add", new[] { elem }) == null) { why = "collection has no Add"; return false; }
+                    return true;
                 }
                 if (target.IsArray)
                 {

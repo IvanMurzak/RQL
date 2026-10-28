@@ -163,7 +163,8 @@ void register_test_adapters(rql::Engine& engine, rql::TypeRegistry& reg) {
         return std::find(n->Tags.begin(), n->Tags.end(), "destroyed") == n->Tags.end();
     };
     rql::TypeDescriptor* node_type = reg.descriptor<Node>();
-    node.configure_members = [r, node_type](rql::MemberTable& t) {
+    rql::TypeDescriptor* vec_type = reg.descriptor<Vec2>();
+    node.configure_members = [r, node_type, vec_type](rql::MemberTable& t) {
         t.computed<Node>("childCount", [](Node& n) { return static_cast<int>(n.Children.size()); }, "number of direct children")
             .property<Node>(
                 "title", [](Node& n) { return ascii_case(n.Name, true); },
@@ -223,6 +224,52 @@ void register_test_adapters(rql::Engine& engine, rql::TypeRegistry& reg) {
                 },
                 "append a new child node named name; returns it",
                 [](Node&, const std::vector<rql::Value>& args) -> std::string { return args[0].as_string().empty() ? "name must not be empty" : ""; })
+            // Overloads (spec §8): an object literal never builds a Node (an engine object here: it has a liveness adapter),
+            // so probe({x: 1, y: 2}) resolves to the Vec2 overload without constructing anything.
+            .method<Node>(
+                "probe", {rql::ParamDescriptor{"peer", node_type, false, false, rql::Value()}}, rql::builtin::double_type(),
+                [r](Node&, const std::vector<rql::Value>& args) { return rql::Value::number(rql::value_as<Node>(*r, args[0])->Id); },
+                "the peer's Id")
+            .method<Node>(
+                "probe",
+                {rql::ParamDescriptor{"at", vec_type, false, false, rql::Value()},
+                 rql::ParamDescriptor{"scale", rql::builtin::double_type(), false, true, rql::Value::number(1)}},
+                rql::builtin::double_type(),
+                [r](Node&, const std::vector<rql::Value>& args) {
+                    const Vec2* at = rql::value_as<Vec2>(*r, args[0]);
+                    return rql::Value::number((at->x + at->y) * args[1].as_number());
+                },
+                "(at.x + at.y) * scale")
+            .method<Node>(
+                "pin", {rql::ParamDescriptor{"peer", node_type, false, false, rql::Value()}}, rql::builtin::double_type(),
+                [r](Node&, const std::vector<rql::Value>& args) { return rql::Value::number(rql::value_as<Node>(*r, args[0])->Id); },
+                "the peer's Id")
+            // Arguments by name: place({name: "box", side: "up"}).
+            .method<Node>(
+                "place",
+                {rql::ParamDescriptor{"name", rql::builtin::string_type(), false, false, rql::Value()},
+                 rql::ParamDescriptor{"side", rql::builtin::string_type(), false, true, rql::Value::string("left")},
+                 rql::ParamDescriptor{"weight", rql::builtin::double_type(), false, true, rql::Value::number(1)}},
+                rql::builtin::string_type(),
+                [](Node&, const std::vector<rql::Value>& args) { return rql::Value::string(args[0].as_string() + "/" + args[1].as_string()); },
+                "name/side",
+                [](Node&, const std::vector<rql::Value>& args) -> std::string {
+                    return args[2].as_number() < 0 ? "weight must be non-negative" : "";
+                })
+            .method<Node>(
+                "scale", {rql::ParamDescriptor{"by", vec_type, false, false, rql::Value()}}, rql::builtin::double_type(),
+                [r](Node&, const std::vector<rql::Value>& args) {
+                    const Vec2* by = rql::value_as<Vec2>(*r, args[0]);
+                    return rql::Value::number(by->x * by->y);
+                },
+                "by.x * by.y")
+            .method<Node>(
+                "scale",
+                {rql::ParamDescriptor{"x", rql::builtin::double_type(), false, false, rql::Value()},
+                 rql::ParamDescriptor{"y", rql::builtin::double_type(), false, false, rql::Value()}},
+                rql::builtin::double_type(),
+                [](Node&, const std::vector<rql::Value>& args) { return rql::Value::number(args[0].as_number() + args[1].as_number()); },
+                "x + y")
             .method<Node>(
                 "greet", {rql::ParamDescriptor{"who", rql::builtin::string_type(), false, false, rql::Value()}},
                 rql::builtin::string_type(),

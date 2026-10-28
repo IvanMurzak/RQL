@@ -123,7 +123,7 @@ struct handle — e.g. the material when setting through a mesh component) for u
 Host controls for agent-facing tools (spec §8, §10): `MutationPolicy::validate_batch` sees every planned
 change of a `set` / `call` stage (call records carry the coerced `args`) before anything runs, dry runs
 included, and refuses the stage by returning a reason; `MutationPolicy::coerce_text` converts a string
-written to a struct / object type that no adapter coerces (e.g. `ExportText` forms);
+written to a struct / object type that no adapter coerces (e.g. `ExportText` forms); `MutationPolicy::can_construct_from_literal` decides which types object literals may build (default: `constructible()` types without a `stable_id` / `is_alive` adapter, so engine objects never are, spec §4.5);
 `MutationPolicy::limit_hint` replaces the `mutation-limit` hint; `EngineDefaults::budgets_adjustable =
 false` keeps hints from advising `budgets.*` when the host's tool takes no budgets; `MutationPolicy::max_targets`
 is the host's default target limit (editor hosts with undo: e.g. 200) and `MutationPolicy::limit_argument` names the

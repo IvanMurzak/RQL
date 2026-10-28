@@ -27,6 +27,8 @@ namespace Rql.Sample
             Engine.AddSource("app", () => Sandbox.App, "application data (users, orders, products)");
             Engine.AddSource("objects", () => WorldGenerator.AllObjects(Sandbox.World), "every GameObject in every scene, flattened depth-first (includes Characters: Player, Enemy, Npc)");
             Engine.Mutations.Enabled = allowMutations;
+            // Scene objects and components are engine objects: only the scene's methods create them, never an object literal.
+            Engine.Mutations.CanConstructFromLiteral = t => typeof(GameObject).IsAssignableFrom(t) || typeof(Component).IsAssignableFrom(t) ? false : (bool?)null;
             Engine.IsAlive = IsAlive;
             Engine.ResolveStableRef = Resolve;
             Engine.SchemaHint = "rql_schema"; // the evaluation agent's schema tool (docs/agent-tool-contract.md)

@@ -85,6 +85,16 @@ namespace Rql.Execution
         public Func<Type, string, object?>? CoerceText { get; set; }
 
         /// <summary>
+        /// Whether an object literal may build a value of a type (spec §4.5): true or false decides, null keeps the default.
+        /// The default builds plain data (structs, records, settings objects) and never an engine object, i.e. a type with an
+        /// identity or a liveness adapter (spec §13). Return false for types only the engine may create or whose constructors
+        /// have side effects (Unity's UnityEngine.Object, Godot's GodotObject): a literal written to such a type is then
+        /// coercion-failed and nothing is constructed, on dry runs and during overload resolution alike. Hosts that mark
+        /// liveness only through <see cref="RqlEngine.IsAlive"/> (no adapter) get no default protection and set this hook.
+        /// </summary>
+        public Func<Type, bool?>? CanConstructFromLiteral { get; set; }
+
+        /// <summary>
         /// Runs after planning and before anything is written (not on dry-run): e.g. Undo.RecordObjects on the owners.
         /// Throwing vetoes the whole mutation (→ permission-denied, nothing changed).
         /// </summary>
@@ -844,7 +854,7 @@ namespace Rql.Execution
         private RqlKernel? _kernel;
 
         /// <summary>The kernel for this execution's writes: the engine's types and the host's write policy.</summary>
-        public RqlKernel Kernel => _kernel ??= new RqlKernel(Types, Engine.Mutations.CanWrite, Engine.Mutations.CoerceText);
+        public RqlKernel Kernel => _kernel ??= new RqlKernel(Types, Engine.Mutations.CanWrite, Engine.Mutations.CoerceText, Engine.Mutations.CanConstructFromLiteral);
 
         public QueryOptions Options { get; }
         public QueryPlan Plan { get; }

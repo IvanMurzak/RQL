@@ -15,7 +15,7 @@
     "Node": {
       "members": "virtual member `childCount` (int, read-only) = Children count; virtual writable member `title` (string): get = Name upper-cased (ASCII), set = Name := value lower-cased (ASCII); validation rejects an empty string with reason \"title must not be empty\" (before any write); the setter itself THROWS \"node 3 is locked\" when the node's Id is 3 (exercises rollback); member `Note` is HIDDEN; member `Children` is EXPLICIT-ONLY (generic recurse does not follow it); virtual map `stats` (map<string, number>): keys = Props keys in order, get = Props[key], set = Props[key] := value, validation rejects a key not in Props with reason \"unknown stat '<key>'\" and a negative value with \"stats must be non-negative\"; read-only virtual map `labels` (map<string, string>): keys \"name\", \"kind\" -> Name, Kind (enum name); virtual member `tagsCopy` (list<string>): get = a NEW copy of Tags, set = Tags := value, marked COPY-ON-READ; mixed-type virtual map `fields`: keys \"Name\", \"Value\", \"Enabled\" with entry types string / double / bool, get/set the corresponding member",
       "describe": "Node: a conformance graph node",
-      "methods": "callable `bump(number by = 1)`: Value += by, returns the new Value; its VALIDATOR rejects by < 0 with reason \"by must be non-negative\" and the node with Id 5 with \"node 5 is frozen\"; callable `greet(string who)`: returns \"hi <who>, I am <Name>\", no state change; callable `fail(string why)`: always THROWS with message <why> (call-threw); callable `spawn(string name)`: appends a new Node to this node's Children and returns it — Id = this Id * 100 + Children count + 1 (counted before adding), Name = name, Kind Alpha, Value 0, Enabled true, Note null, Pos (0, 0), Tags [], Props {}, Children [], Parent = this node, Peer null; its VALIDATOR rejects an empty name with reason \"name must not be empty\"",
+      "methods": "callable `bump(number by = 1)`: Value += by, returns the new Value; its VALIDATOR rejects by < 0 with reason \"by must be non-negative\" and the node with Id 5 with \"node 5 is frozen\"; callable `greet(string who)`: returns \"hi <who>, I am <Name>\", no state change; callable `fail(string why)`: always THROWS with message <why> (call-threw); callable `spawn(string name)`: appends a new Node to this node's Children and returns it — Id = this Id * 100 + Children count + 1 (counted before adding), Name = name, Kind Alpha, Value 0, Enabled true, Note null, Pos (0, 0), Tags [], Props {}, Children [], Parent = this node, Peer null; its VALIDATOR rejects an empty name with reason \"name must not be empty\"; overloads `probe(Node peer)` (returns peer.Id) and `probe(Vec2 at, number scale = 1)` (returns (at.x + at.y) * scale); callable `pin(Node peer)`: returns peer.Id (an object literal never builds a Node here: Node has a liveness adapter, so it is an engine object, spec §4.5); callable `place(string name, string side = \"left\", number weight = 1)`: returns \"<name>/<side>\", no state change; its VALIDATOR rejects weight < 0 with reason \"weight must be non-negative\"; overloads `scale(Vec2 by)` (returns by.x * by.y) and `scale(number x, number y)` (returns x + y).",
       "liveness": "IsAlive = Tags does not contain \"destroyed\" (destroyed nodes read as null)"
     },
     "Special": {
@@ -1878,6 +1878,12 @@
               "bump(double by) — Value += by; returns the new Value",
               "fail(string why) — always throws (call-threw)",
               "greet(string who) — a greeting (no state change)",
+              "pin(Node peer) — the peer's Id",
+              "place(string name, string side, double weight) — name/side",
+              "probe(Node peer) — the peer's Id",
+              "probe(Vec2 at, double scale) — (at.x + at.y) * scale",
+              "scale(Vec2 by) — by.x * by.y",
+              "scale(double x, double y) — x + y",
               "spawn(string name) — append a new child node named name; returns it"
             ]
           }
@@ -7932,6 +7938,1047 @@
         "ok": true,
         "kind": "scalar",
         "value": 2
+      }
+    },
+    {
+      "name": "adapt-overload-literal-skips-engine-object",
+      "rql": "ref(\"Node#8\") | call probe({x: 1, y: 2})",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "probe",
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "x",
+                    "value": {
+                      "lit": 1
+                    }
+                  },
+                  {
+                    "key": "y",
+                    "value": {
+                      "lit": 2
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "probe(Vec2 at, double scale)",
+            3
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-overload-literal-dry-run",
+      "rql": "ref(\"Node#8\") | call probe({x: 1, y: 2})",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "probe",
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "x",
+                    "value": {
+                      "lit": 1
+                    }
+                  },
+                  {
+                    "key": "y",
+                    "value": {
+                      "lit": 2
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "probe(Vec2 at, double scale)",
+            "(dry-run)"
+          ]
+        ],
+        "total": 1,
+        "dryRun": true
+      }
+    },
+    {
+      "name": "adapt-overload-ref-arg",
+      "rql": "ref(\"Node#8\") | call probe(ref(\"Node#5\"))",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "probe",
+            "args": [
+              {
+                "call": "ref",
+                "args": [
+                  {
+                    "lit": "Node#5"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "probe(Node peer)",
+            5
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-overload-literal-default-arg",
+      "rql": "ref(\"Node#8\") | call probe({x: 1, y: 2}, 2)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "probe",
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "x",
+                    "value": {
+                      "lit": 1
+                    }
+                  },
+                  {
+                    "key": "y",
+                    "value": {
+                      "lit": 2
+                    }
+                  }
+                ]
+              },
+              {
+                "lit": 2
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "probe(Vec2 at, double scale)",
+            6
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-overload-literal-typo",
+      "rql": "ref(\"Node#8\") | call probe({x: 1, z: 2})",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "probe",
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "x",
+                    "value": {
+                      "lit": 1
+                    }
+                  },
+                  {
+                    "key": "z",
+                    "value": {
+                      "lit": 2
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-literal-engine-object-refused",
+      "rql": "ref(\"Node#8\") | call pin({Name: \"ghost\"})",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "pin",
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "Name",
+                    "value": {
+                      "lit": "ghost"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-literal-engine-object-refused-dry-run",
+      "rql": "ref(\"Node#8\") | call pin({Name: \"ghost\"})",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "pin",
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "Name",
+                    "value": {
+                      "lit": "ghost"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-literal-engine-object-set-refused",
+      "rql": "ref(\"Node#8\") | set Peer = {Name: \"ghost\"}",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Peer"
+                  ]
+                },
+                "value": {
+                  "object": [
+                    {
+                      "key": "Name",
+                      "value": {
+                        "lit": "ghost"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-named-args",
+      "rql": "ref(\"Node#8\") | call place({name: \"box\"})",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "place",
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "name",
+                    "value": {
+                      "lit": "box"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "place(string name, string side, double weight)",
+            "box/left"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-named-args-any-order",
+      "rql": "ref(\"Node#8\") | call place({side: \"right\", name: \"box\"})",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "place",
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "side",
+                    "value": {
+                      "lit": "right"
+                    }
+                  },
+                  {
+                    "key": "name",
+                    "value": {
+                      "lit": "box"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "place(string name, string side, double weight)",
+            "box/right"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-named-args-case-insensitive",
+      "rql": "ref(\"Node#8\") | call place({Name: \"box\", SIDE: \"up\"})",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "place",
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "Name",
+                    "value": {
+                      "lit": "box"
+                    }
+                  },
+                  {
+                    "key": "SIDE",
+                    "value": {
+                      "lit": "up"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "place(string name, string side, double weight)",
+            "box/up"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-named-args-unknown",
+      "rql": "ref(\"Node#8\") | call place({name: \"box\", sid: \"right\"})",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "place",
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "name",
+                    "value": {
+                      "lit": "box"
+                    }
+                  },
+                  {
+                    "key": "sid",
+                    "value": {
+                      "lit": "right"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-named-args-missing-required",
+      "rql": "ref(\"Node#8\") | call place({side: \"right\"})",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "place",
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "side",
+                    "value": {
+                      "lit": "right"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-named-args-coerce-fail",
+      "rql": "ref(\"Node#8\") | call place({name: \"box\", weight: \"heavy\"})",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "place",
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "name",
+                    "value": {
+                      "lit": "box"
+                    }
+                  },
+                  {
+                    "key": "weight",
+                    "value": {
+                      "lit": "heavy"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-named-args-validate-dry-run",
+      "rql": "ref(\"Node#8\") | call place({name: \"box\", weight: -1})",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "place",
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "name",
+                    "value": {
+                      "lit": "box"
+                    }
+                  },
+                  {
+                    "key": "weight",
+                    "value": {
+                      "lit": -1
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-value"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-named-args-qualified-range",
+      "rql": "range(0, 2) | call ref(\"Node#8\").place({name: \"n\" + $, side: \"up\"})",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "place",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#8"
+                }
+              ]
+            },
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "name",
+                    "value": {
+                      "op": "+",
+                      "args": [
+                        {
+                          "lit": "n"
+                        },
+                        {
+                          "path": []
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "key": "side",
+                    "value": {
+                      "lit": "up"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "place(string name, string side, double weight)",
+            "n0/up"
+          ],
+          [
+            "Node#8",
+            "place(string name, string side, double weight)",
+            "n1/up"
+          ]
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "adapt-named-args-positional-unchanged",
+      "rql": "ref(\"Node#8\") | call place(\"box\", \"up\")",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "place",
+            "args": [
+              {
+                "lit": "box"
+              },
+              {
+                "lit": "up"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "place(string name, string side, double weight)",
+            "box/up"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-named-args-positional-wins",
+      "rql": "ref(\"Node#8\") | call scale({x: 2, y: 3})",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "scale",
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "x",
+                    "value": {
+                      "lit": 2
+                    }
+                  },
+                  {
+                    "key": "y",
+                    "value": {
+                      "lit": 3
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "scale(Vec2 by)",
+            6
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-named-args-literal-not-alone",
+      "rql": "ref(\"Node#8\") | call scale({x: 2, y: 3}, 1)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "scale",
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "x",
+                    "value": {
+                      "lit": 2
+                    }
+                  },
+                  {
+                    "key": "y",
+                    "value": {
+                      "lit": 3
+                    }
+                  }
+                ]
+              },
+              {
+                "lit": 1
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
       }
     }
   ]

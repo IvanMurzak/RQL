@@ -379,6 +379,10 @@ double range_at(double start, double step, int64_t k);
 QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s, const std::function<Value()>& resolve_receiver = {});
 /// Coerce a value to a member/parameter type (spec §8); nullopt + why on failure.
 std::optional<Value> coerce(Exec& x, const Value& v, const TypeDescriptor* target, bool nullable, std::string& why);
+/// Whether `v` converts to `target`, checked without side effects (overload resolution, spec §8): nothing is constructed,
+/// assigned or validated (member validators need the instance); adapters and the host's text coercion answer as usual.
+/// On failure `depth` is how deep inside the value it failed (0: the value itself, 1: a member or element of it, …).
+bool can_coerce(Exec& x, const Value& v, const TypeDescriptor* target, bool nullable, std::string& why, int& depth);
 
 // ---------------------------------------------------------------- describe (encoder.cpp)
 QueryResult run_describe(Exec& x, Stream& stream);

@@ -71,6 +71,42 @@ namespace Rql.Sample
         }
 
         public string? ValidateCreateObject(string name, float x, float y, float z) => string.IsNullOrWhiteSpace(name) ? "name must not be empty" : null;
+
+        // Spawn overloads (ADR-0010): an existing parent, a placement, or named options with defaults.
+        [RqlCallable("Spawn an object named name as a child of an existing object parent (pass it with ref(...)); returns it.")]
+        public GameObject Spawn(string name, GameObject parent)
+        {
+            var go = CreateObject(name);
+            go.SetParent(parent);
+            return go;
+        }
+
+        [RqlCallable("Spawn a root object named name at a placement {Position: {x, y, z}, Tag}; returns it.")]
+        public GameObject Spawn(string name, Placement placement)
+        {
+            var go = CreateObject(name, placement.Position.x, placement.Position.y, placement.Position.z);
+            go.Tag = placement.Tag;
+            return go;
+        }
+
+        [RqlCallable("Spawn a root object named name with optional tag, layer and position x, y, z; pass them by name: Spawn({name: \"A\", layer: 2, y: 5}). Returns it.")]
+        public GameObject Spawn(string name, string tag = "Untagged", int layer = 0, float x = 0, float y = 0, float z = 0)
+        {
+            var go = CreateObject(name, x, y, z);
+            go.Tag = tag;
+            go.Layer = layer;
+            return go;
+        }
+
+        public string? ValidateSpawn(string name, string tag, int layer, float x, float y, float z) =>
+            string.IsNullOrWhiteSpace(name) ? "name must not be empty" : layer < 0 || layer > 31 ? "layer must be 0 to 31" : null;
+    }
+
+    [RqlDescription("Where Scene.Spawn places a new root object.")]
+    public sealed class Placement
+    {
+        public Vector3 Position { get; set; }
+        public string Tag { get; set; } = "Untagged";
     }
 
     public class GameObject

@@ -17,6 +17,13 @@ recommended for MCP integrations.
   `{k:v,…}`, lists as `[a,b]`, strings unquoted unless ambiguous (quoted strings escape only `"`, `\` and control
   characters; other Unicode, emoji included, stays raw). Fractional numbers show at most 15 significant digits
   (display numbers, spec §6: `0.1 + 0.2` shows `0.3`); the json rendering keeps the exact values.
+  **Receipts** (`set` / `call` rows, spec §8) are compacted: when a `call` receipt has two or more rows that all share
+  one method, a `method: <signature>` line follows the header and the `method` column is left out; when every row's
+  `$ref` equals the reference of its result (a source-qualified call that created objects), the `$ref` column is left
+  out too (the result still shows `Type#id(Name)`); and only the first 50 rows are listed, followed by
+  `… N more row(s) not shown (the json format lists every row)`. So `range(0, 300) | call editor.CreateNode(…)`
+  prints the signature once and 50 short result cells instead of 300 rows of `$ref|signature|result`. Hosts that need
+  every row pass a larger limit (`AgentFormat.Render(result, format, maxReceiptRows)`, 0 = all) or use json.
 * **json**: the conformance `QueryResult` without stats.
 
 Experiment E5 compared both (see `RESULTS.md`).
