@@ -1,0 +1,37 @@
+cpp/src/mutator.cpp
+  s_7bc72ecaebd05d::t_3b3fdf4a5477ec 842-851,868-875,878,888-889,952,955-957,961-962,1003,1011,1013,1034
+cpp/src/pipeline.cpp
+  s_7bc72ecaebd05d::t_ecbc26b59ae46d 914
+dotnet/Rql.Execution/Compiler.cs
+  s_7bc72ecaebd05d::t_d197c0e20e001a 871-872,877-883
+dotnet/Rql.Execution/Encoder.cs
+  s_7bc72ecaebd05d::t_a73fd332b484e8 73
+dotnet/Rql.Execution/Mutator.cs
+  s_7bc72ecaebd05d::t_caaf605b5ebaa9 559-560,584,593,620,657
+dotnet/Rql.Execution/Pipeline.cs
+  s_7bc72ecaebd05d::t_a1052bf71c780d 465
+dotnet/Rql.Execution/RqlEngine.cs
+  s_7bc72ecaebd05d::t_49f22c8db512d2 640-651,663,672-674
+typescript/packages/execution/src/engine.ts
+  s_7bc72ecaebd05d::t_25c577d8ed44f1 205-213,228,236-237,663-667
+typescript/packages/execution/src/mutator.ts
+  s_7bc72ecaebd05d::t_b48bd03b2a2aa3 641-643,667,680,692,695,718
+typescript/packages/execution/src/pipeline.ts
+  s_7bc72ecaebd05d::t_01afe9bc21df4c 26-27,398,416
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f60d92ea72083d42fad554939398f67407109de9",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
