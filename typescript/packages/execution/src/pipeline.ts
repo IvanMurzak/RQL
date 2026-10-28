@@ -134,7 +134,7 @@ export class Pipeline {
             'warning',
             'unknown-member',
             `no column '${site.name}' in the projected rows (columns: ${site.rowColumns.join(', ')})`,
-            site.groupRows ? groupRowHint(site.name) : ROW_COLUMN_HINT,
+            site.groupRows ? groupRowHint(site.name, site.rowColumns) : ROW_COLUMN_HINT,
             site.span,
           ),
         );
@@ -930,11 +930,17 @@ function usesMeta(plan: Exec['plan'], meta: string): boolean {
   return usesSegment(plan, (s) => s.kind === 'meta' && s.name === meta);
 }
 
-/** A member missing on group-by rows: aggregate the group's items (spec §5). */
-function groupRowHint(name: string): string {
+/**
+ * A member missing on group-by rows: aggregate the group's items (spec §5). The example names the rows' own key columns
+ * (key, or the named keys such as mat), and a missing key column is not offered as a member to aggregate.
+ */
+function groupRowHint(name: string, columns: readonly string[]): string {
+  const keys = columns.filter((c) => c.toLowerCase() !== 'count');
+  const keyText = keys.length > 0 ? keys.join(', ') : 'key';
+  const member = name.toLowerCase() !== 'key';
   return (
-    "group-by rows have their key column(s), count and the group's items: aggregate per group with items, e.g. " +
-    `select key, count, avg = items.avg(${name}) (also items.sum(…), items.min(…), items.max(…), items.count(…), items.first().${name})`
+    `group-by rows have their key column(s) (${keyText}), count and the group's items: aggregate per group with items, e.g. ` +
+    `select ${keyText}, count, avg = items.avg(${member ? name : '…'}) (also items.sum(…), items.min(…), items.max(…), items.count(…), items.first()${member ? '.' + name : ''})`
   );
 }
 

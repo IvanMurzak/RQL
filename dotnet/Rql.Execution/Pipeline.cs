@@ -115,7 +115,7 @@ namespace Rql.Execution
                 {
                     result.Diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, "unknown-member",
                         $"no column '{site.Name}' in the projected rows (columns: {string.Join(", ", site.RowColumns)})", site.Span,
-                        site.GroupRows ? GroupRowHint(site.Name) : RowColumnHint));
+                        site.GroupRows ? GroupRowHint(site.Name, site.RowColumns) : RowColumnHint));
                     continue;
                 }
                 var types = site.MissTypes.ToList();
@@ -132,10 +132,19 @@ namespace Rql.Execution
             }
         }
 
-        /// <summary>A member missing on group-by rows: aggregate the group's items (spec §5).</summary>
-        internal static string GroupRowHint(string name) =>
-            $"group-by rows have their key column(s), count and the group's items: aggregate per group with items, e.g. "
-            + $"select key, count, avg = items.avg({name}) (also items.sum(…), items.min(…), items.max(…), items.count(…), items.first().{name})";
+        /// <summary>
+        /// A member missing on group-by rows: aggregate the group's items (spec §5). The example names the rows' own key columns
+        /// (key, or the named keys such as mat), and a missing key column is not offered as a member to aggregate.
+        /// </summary>
+        internal static string GroupRowHint(string name, IReadOnlyList<string> columns)
+        {
+            var keys = columns.Where(c => !string.Equals(c, "count", StringComparison.OrdinalIgnoreCase)).ToList();
+            var keyText = keys.Count > 0 ? string.Join(", ", keys) : "key";
+            bool member = !string.Equals(name, "key", StringComparison.OrdinalIgnoreCase);
+            var arg = member ? name : "…";
+            return $"group-by rows have their key column(s) ({keyText}), count and the group's items: aggregate per group with items, e.g. "
+                + $"select {keyText}, count, avg = items.avg({arg}) (also items.sum(…), items.min(…), items.max(…), items.count(…), items.first(){(member ? "." + name : "")})";
+        }
 
         internal const string RowColumnHint =
             "select produces rows with only the listed columns; to navigate into objects select the full path (select Path.Member) or put `get Path` before the select";

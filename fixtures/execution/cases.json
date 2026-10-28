@@ -22914,6 +22914,72 @@
           }
         ]
       }
+    },
+    {
+      "name": "group-by-named-key-missing-key",
+      "rql": "g.Nodes | group-by mat=Kind | select key",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "group-by",
+            "fields": [
+              {
+                "name": "mat",
+                "expr": {
+                  "path": [
+                    "Kind"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "key",
+                "expr": {
+                  "path": [
+                    "key"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "key"
+        ],
+        "rows": [
+          [
+            null
+          ],
+          [
+            null
+          ],
+          [
+            null
+          ]
+        ],
+        "total": 3,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      }
     }
   ]
 }

@@ -101,4 +101,4 @@
   are not objects hints the qualified form, and the unknown-callable hint shows both forms (§10). Encoding: a list or map
   nested in itself encodes the repetition as `"…"` (§6; .NET recursed without end). Known names include the members of
   type adapters' target types (§8, §13). The host-independent language rules ship as text with every runtime
-  (`fixtures/guide/language-rules.txt`).
+  (`fixtures/guide/language-rules.txt`). The group-row hint names the rows' own key columns (§5; it showed `select key` and `items.avg(key)` after a named key).

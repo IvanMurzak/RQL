@@ -1122,6 +1122,20 @@ std::vector<const TypeDescriptor*> reachable_types(Exec& x, std::vector<std::pai
     return types;
 }
 
+/// A member missing on group-by rows: aggregate the group's items (spec §5). The example names the rows' own key columns
+/// (key, or the named keys such as mat), and a missing key column is not offered as a member to aggregate.
+std::string group_row_hint(const std::string& name, const std::vector<std::string>& columns) {
+    const std::string ell = "\xE2\x80\xA6";
+    std::vector<std::string> keys;
+    for (auto& c : columns)
+        if (!iequals(c, "count")) keys.push_back(c);
+    const std::string key_text = keys.empty() ? std::string("key") : join(keys, ", ");
+    const bool member = !iequals(name, "key");
+    return "group-by rows have their key column(s) (" + key_text + "), count and the group's items: aggregate per group with items, e.g. select " +
+           key_text + ", count, avg = items.avg(" + (member ? name : ell) + ") (also items.sum(" + ell + "), items.min(" + ell + "), items.max(" + ell +
+           "), items.count(" + ell + "), items.first()" + (member ? "." + name : std::string()) + ")";
+}
+
 /// reachable_types without roots, computed once per query.
 const std::vector<const TypeDescriptor*>& known_types(Exec& x) {
     if (!x.reachable_cache) x.reachable_cache = reachable_types(x, nullptr);
@@ -1255,8 +1269,7 @@ std::vector<Diagnostic> add_warnings(Exec& x, QueryResult& r, bool only_general)
             r.diagnostics.push_back(Diagnostic::warning(
                 "unknown-member", "no column '" + site.name + "' in the projected rows (columns: " + join(site.row_columns, ", ") + ")",
                 site.group_rows
-                    ? "group-by rows have their key column(s), count and the group's items: aggregate per group with items, e.g. select key, "
-                      "count, avg = items.avg(" + site.name + ") (also items.sum(\xE2\x80\xA6), items.min(\xE2\x80\xA6), items.max(\xE2\x80\xA6), items.count(\xE2\x80\xA6), items.first()." + site.name + ")"
+                    ? group_row_hint(site.name, site.row_columns)
                     : std::string("select produces rows with only the listed columns; to navigate into objects select the full path (select "
                                   "Path.Member) or put `get Path` before the select")));
             continue;

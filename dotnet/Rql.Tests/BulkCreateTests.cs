@@ -323,6 +323,17 @@ namespace Rql.Tests
         }
 
         [Fact]
+        public void GroupRowHintNamesTheKeyColumns()
+        {
+            var (e, _, _) = Host();
+            var d = e.Execute("things | group-by n=Name | select key").Diagnostics.First(x => x.Code == "unknown-member");
+            Assert.Contains("select n, count, avg = items.avg(…)", d.Hint);
+            Assert.DoesNotContain("items.avg(key)", d.Hint);
+            d = e.Execute("things | group-by Name | select key, Z").Diagnostics.First(x => x.Code == "unknown-member");
+            Assert.Contains("select key, count, avg = items.avg(Z)", d.Hint);
+        }
+
+        [Fact]
         public void LanguageRulesMatchTheSharedFixture()
         {
             var dir = AppContext.BaseDirectory;

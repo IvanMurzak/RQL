@@ -1826,6 +1826,14 @@ void bulk_tests() {
         e.add_adapter(std::move(ad));
         check(!has_diag(arun(e, plan, true), "unknown-member", rql::Severity::Warning), "adapter members are known names");
     }
+    // The group-row hint names the rows' own key columns and never offers a missing key column to aggregate.
+    {
+        auto grp = arun(ge, R"J({"rql":"0.1","source":{"path":["g","Nodes"]},"stages":[{"op":"group-by","fields":[{"name":"mat","expr":{"path":["Kind"]}}]},{"op":"select","fields":[{"name":"key","expr":{"path":["key"]}}]}]})J");
+        bool ok = false;
+        for (auto& d : grp.diagnostics)
+            if (d.code == "unknown-member") ok = has(d.hint, "select mat, count, avg = items.avg(" + ell + ")") && !has(d.hint, "items.avg(key)");
+        check(ok, "group-row hint names the key columns");
+    }
     // The language rules are the shared fixture text.
     {
         std::ifstream in(repo_root + "/fixtures/guide/language-rules.txt", std::ios::binary);

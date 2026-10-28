@@ -185,6 +185,15 @@ test('adapter targets are known members', () => {
   assert.ok(!e.execute('objs | where glow > 0 | set Name = "x"', {}, M).diagnostics.some((d) => d.code === 'unknown-member'));
 });
 
+test('the group-row hint names the key columns', () => {
+  const { e } = host();
+  const d = e.execute('things | group-by n=Name | select key').diagnostics.find((x) => x.code === 'unknown-member')!;
+  assert.ok(d.hint!.includes('select n, count, avg = items.avg(…)'), d.hint);
+  assert.ok(!d.hint!.includes('items.avg(key)'), d.hint);
+  const z = e.execute('things | group-by Name | select key, Z').diagnostics.find((x) => x.code === 'unknown-member')!;
+  assert.ok(z.hint!.includes('select key, count, avg = items.avg(Z)'), z.hint);
+});
+
 test('the language rules match the shared fixture', () => {
   const text = readFileSync(resolve(repoRoot, 'fixtures', 'guide', 'language-rules.txt'), 'utf8').replace(/\r\n/g, '\n');
   assert.equal(LANGUAGE_RULES, text);
