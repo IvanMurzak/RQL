@@ -567,10 +567,10 @@ namespace Rql.Execution
                 var candidates = fixedCandidates ?? Candidates(item, targets);
                 EnterScope(t);
                 var vals = args.Select(a => a(_x)).ToArray();
-                var (chosen, coerced, why) = Overloads.Resolve(_x.Kernel, candidates, vals);
+                var (chosen, coerced, why, denied) = Overloads.Resolve(_x.Kernel, candidates, vals);
                 if (chosen == null)
-                    throw new RqlException("coercion-failed", $"cannot call {s.Method} on {At(item, t.Index)}: {why}", null,
-                        "signature: " + string.Join(", ", candidates.Select(m => m.Signature)));
+                    throw new RqlException(denied ? "permission-denied" : "coercion-failed", $"cannot call {s.Method} on {At(item, t.Index)}: {why}", null,
+                        denied ? null : "signature: " + string.Join(", ", candidates.Select(m => m.Signature)));
                 // The method's own check, for every target before the first call (and on dry runs): all-or-nothing (spec §8).
                 if (chosen.Validate != null)
                 {
@@ -668,65 +668,102 @@ namespace Rql.Execution
                 ArityFits != o.ArityFits ? (ArityFits ? 1 : -1) : Matched != o.Matched ? Matched.CompareTo(o.Matched) : Depth.CompareTo(o.Depth);
         }
 
-        public static (CallableMethod? method, object?[]? args, string why) Resolve(RqlKernel kernel, IReadOnlyList<CallableMethod> candidates, object?[] given)
+        /// <summary>
+        /// The chosen overload and its coerced arguments (defaults filled in); or none, with the reason and whether it is a
+        /// host policy denial (permission-denied) rather than a coercion failure.
+        /// </summary>
+        public static (CallableMethod? method, object?[]? args, string why, bool denied) Resolve(RqlKernel kernel, IReadOnlyList<CallableMethod> candidates, object?[] given)
         {
             var misses = new List<Miss>();
-            var vals = given;
-            string kind = "argument";
-            // 1. Positional: every candidate whose arity fits is checked without side effects; the first that fits is coerced.
-            var fitting = new List<(CallableMethod m, int[] slots)>();
+            string? denied = null;
+            // 1. Positional: in order, each candidate whose arity fits is checked without side effects; the first that passes
+            //    is coerced for real, and only when that fails is the next one tried.
             foreach (var m in candidates)
             {
                 var ps = m.Parameters;
-                if (ps.Count < vals.Length || ps.Skip(vals.Length).Any(p => !p.HasDefault)) { misses.Add(new Miss(m, false, 0, 0, "")); continue; }
-                var slots = Enumerable.Range(0, vals.Length).ToArray();
-                if (Probe(kernel, m, vals, slots, kind, misses)) fitting.Add((m, slots));
+                if (ps.Count < given.Length || ps.Skip(given.Length).Any(p => !p.HasDefault)) { misses.Add(new Miss(m, false, 0, 0, "")); continue; }
+                var slots = Enumerable.Range(0, given.Length).ToArray();
+                if (Bind(kernel, m, given, slots, "argument", misses, ref denied) is object?[] args) return (m, args, "", false);
             }
-            // 2. By name: a single object literal that no overload takes positionally names the parameters (missing ones
-            //    take their defaults).
-            if (fitting.Count == 0 && given.Length == 1 && given[0] is ObjectValue literal)
+            // 2. By name: a single object literal that no overload took positionally names the parameters (missing ones take
+            //    their defaults).
+            if (given.Length == 1 && given[0] is ObjectValue literal)
             {
-                vals = literal.Values.ToArray();
-                kind = "parameter";
+                var vals = literal.Values.ToArray();
                 foreach (var m in candidates)
                 {
                     var slots = BindNames(m, literal, misses);
-                    if (slots != null && Probe(kernel, m, vals, slots, kind, misses)) fitting.Add((m, slots));
+                    if (slots != null && Bind(kernel, m, vals, slots, "parameter", misses, ref denied) is object?[] args) return (m, args, "", false);
                 }
             }
-            foreach (var (m, slots) in fitting)
-            {
-                var ps = m.Parameters;
-                var cv = ps.Select(p => p.Default).ToArray();
-                bool ok = true;
-                for (int k = 0; k < slots.Length && ok; k++)
-                {
-                    var p = ps[slots[k]];
-                    if (Coerce.TryTo(kernel, vals[k], p.Type, out cv[slots[k]], out var w)) continue;
-                    // Only the real coercion sees what the probe cannot (member validators, constructors that throw); a
-                    // candidate that passed the probe is the closest match, so its reason is the one reported.
-                    misses.Add(new Miss(m, true, int.MaxValue, 0, $"{kind} '{p.Name}': {w}"));
-                    ok = false;
-                }
-                if (ok) return (m, cv, "");
-            }
-            return (null, null, Explain(misses, given.Length));
+            // A host policy denial met on the way is what blocked the call; otherwise the best candidate's reason.
+            return denied != null ? (null, null, denied, true) : (null, null, Explain(misses, given.Length), false);
         }
 
-        /// <summary>Checks every bound value against its parameter (no side effects); records a miss and returns false when one fails.</summary>
-        private static bool Probe(RqlKernel kernel, CallableMethod m, object?[] vals, int[] slots, string kind, List<Miss> misses)
+        /// <summary>
+        /// Checks every bound value against its parameter without side effects, then coerces them for real; the coerced
+        /// arguments (defaults filled in), or null with a miss recorded. A policy denial is remembered (the first one), not
+        /// thrown, so an overload that would not be chosen cannot veto the call.
+        /// </summary>
+        private static object?[]? Bind(RqlKernel kernel, CallableMethod m, object?[] vals, int[] slots, string kind, List<Miss> misses, ref string? denied)
         {
+            var ps = m.Parameters;
             int matched = 0, depth = 0;
             string? first = null;
             for (int k = 0; k < slots.Length; k++)
             {
-                var p = m.Parameters[slots[k]];
-                if (Coerce.CanConvert(kernel, vals[k], p.Type, out var w, out var d)) { matched++; continue; }
+                var p = ps[slots[k]];
+                bool ok;
+                string w;
+                int d;
+                try { ok = Coerce.CanConvert(kernel, vals[k], p.Type, out w, out d); }
+                catch (RqlException ex) when (ex.Code == "permission-denied")
+                {
+                    denied ??= $"{kind} '{p.Name}': {ex.Message}";
+                    ok = false;
+                    w = ex.Message;
+                    d = 0;
+                }
+                if (ok) { matched++; continue; }
                 if (first == null) { first = $"{kind} '{p.Name}': {w}"; depth = d; }
             }
-            if (first == null) return true;
-            misses.Add(new Miss(m, true, matched, depth, first));
-            return false;
+            if (first != null)
+            {
+                misses.Add(new Miss(m, true, matched, depth, first));
+                return null;
+            }
+            var cv = ps.Select(p => p.Default).ToArray();
+            for (int k = 0; k < slots.Length; k++)
+            {
+                var p = ps[slots[k]];
+                if (Coerce.TryTo(kernel, vals[k], p.Type, out cv[slots[k]], out var w)) continue;
+                // Only the real coercion sees what the probe cannot (member validators, constructors that throw); a candidate
+                // that passed the probe is the closest match, so its reason is the one reported.
+                misses.Add(new Miss(m, true, int.MaxValue, 0, $"{kind} '{p.Name}': {w}"));
+                return null;
+            }
+            return cv;
+        }
+
+        /// <summary>The fewest arguments a call can pass: up to the last parameter without a default.</summary>
+        private static int MinArity(IReadOnlyList<CallableParameter> ps)
+        {
+            int min = 0;
+            for (int i = 0; i < ps.Count; i++) if (!ps[i].HasDefault) min = i + 1;
+            return min;
+        }
+
+        private static bool AsciiEqualsIgnoreCase(string a, string b)
+        {
+            if (a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; i++)
+            {
+                char x = a[i], y = b[i];
+                if (x >= 'A' && x <= 'Z') x = (char)(x + 32);
+                if (y >= 'A' && y <= 'Z') y = (char)(y + 32);
+                if (x != y) return false;
+            }
+            return true;
         }
 
         /// <summary>
@@ -746,7 +783,7 @@ namespace Rql.Execution
                 for (int j = 0; j < ps.Count; j++) if (ps[j].Name == key) { i = j; break; }
                 if (i < 0)
                 {
-                    var ci = Enumerable.Range(0, ps.Count).Where(j => string.Equals(ps[j].Name, key, StringComparison.OrdinalIgnoreCase)).ToList();
+                    var ci = Enumerable.Range(0, ps.Count).Where(j => AsciiEqualsIgnoreCase(ps[j].Name, key)).ToList();
                     if (ci.Count == 1) i = ci[0];
                 }
                 if (i < 0) { unknown ??= key; slots[k++] = -1; continue; }
@@ -782,7 +819,9 @@ namespace Rql.Execution
             var fits = misses.Where(x => x.ArityFits).ToList();
             if (fits.Count == 0)
             {
-                var counts = misses.Select(x => x.Method.Parameters.Count).Distinct().OrderBy(n => n).ToList();
+                // Each overload accepts from its last parameter without a default up to all of them.
+                var counts = misses.Select(x => (min: MinArity(x.Method.Parameters), max: x.Method.Parameters.Count))
+                    .Distinct().OrderBy(r => r.min).ThenBy(r => r.max).Select(r => r.min == r.max ? $"{r.min}" : $"{r.min} to {r.max}");
                 return $"expects {string.Join(" or ", counts)} argument(s), got {given}";
             }
             var best = fits[0];

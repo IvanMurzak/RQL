@@ -22,16 +22,24 @@ the shared fixtures and `docs/agent-tool-contract.md`. Source: plugin integratio
 
 ### 1. Select the overload with a side-effect-free check, then coerce only the chosen one
 
-Each arity-fitting overload is checked with a **probe** of the coercion pipeline (.NET `Coerce.CanConvert`, TS
-`coerce(…, {probe: true})`, C++ `can_coerce`): the same rules, but nothing is constructed, assigned or validated.
-Adapters and the host's text coercion still answer (they convert values; spec §13 already treats them as conversions).
-Object literals are checked for a concrete, constructible type, known writable members, the write policy and the
-member values, recursively. The first overload that passes is coerced for real; if the real coercion fails (a member
-validator, a throwing constructor), the next passing overload is tried.
+Overloads are tried in order (fewest parameters first, then declaration order, as before). Each arity-fitting one is
+first checked with a **probe** of the coercion pipeline (.NET `Coerce.CanConvert`, TS `coerce(…, {probe: true})`, C++
+`can_coerce`): the same rules, but nothing is constructed, assigned or validated. Object literals are checked for a
+concrete, constructible type, known writable members, the write policy and the member values, recursively. An overload
+that passes is coerced for real and chosen when that succeeds; otherwise the next one is tried. The search stops at the
+first success, so later overloads are not even checked.
+
+- **What the probe does not cover:** type adapters' coercion and the host's text coercion still run (they convert
+  values; spec §13 treats them as conversions), including an adapter's nested kernel coercions, which are real ones.
+  Adapters must therefore be free of side effects; engine objects stay protected on both paths (decision 2).
+- **Policy denials do not veto:** a write-policy denial met while checking an overload is remembered, not raised. It is
+  the stage's error (`permission-denied`, naming the argument) only when no overload is chosen, so an overload that
+  would never be picked cannot block one that fits.
 
 - **Why not keep coercing every candidate and only stop constructing engine objects (decision 2)?** Constructors of
   plain data can have side effects too (a host may allow a type whose constructor registers itself), and a pure check
-  is cheaper than building and discarding values. The probe makes "an overload not chosen runs nothing" a guarantee.
+  is cheaper than building and discarding values. With the probe, an overload that is not chosen runs no constructor,
+  setter or member validator.
 - The probe cannot see member validators (they need the instance), so a value that only a validator rejects is found
   in the real coercion, which then falls back to the next overload as before.
 
@@ -44,7 +52,9 @@ The host's **literal-construction hook** (`MutationPolicy.CanConstructFromLitera
 
 - **Why identity / liveness adapters as the default signal:** they are exactly how a host marks objects the engine owns
   (stable ids, destroyed-but-not-null). An identity *member* alone (a data record with an `Id`) does not count, so
-  `set Peer = {"$type": "Special", Name: "made"}` on plain data keeps working.
+  `set Peer = {"$type": "Special", Name: "made"}` on plain data keeps working. A host that marks liveness only through
+  the engine-wide liveness hook (no adapter) gets no default protection and sets the literal-construction hook, as the
+  sample host does.
 - **Why refuse instead of constructing silently:** an engine object built by its constructor joins the scene; there is
   no generic way to undo that or to keep it out of a dry run. The error says to pass an existing object (`ref(…)`).
 
@@ -53,15 +63,17 @@ The host's **literal-construction hook** (`MutationPolicy.CanConstructFromLitera
 Every failing candidate is ranked: arity fits, then the number of arguments that convert, then how deep inside a value
 the failure is (a misspelt member inside a literal is closer than a literal the type cannot take at all); a candidate
 that passed the probe and failed only in the real coercion ranks first. One best candidate → its reason, as before;
-several equally close → `no overload fits: Sig1: …; Sig2: …`. No arity fits → `expects 2 or 3 argument(s), got 4`.
+several equally close → `no overload fits: Sig1: …; Sig2: …`. No arity fits → the counts each overload accepts,
+`expects 2 or 1 to 3 argument(s), got 4`.
 
 - **Why depth as the tie-break:** in the Unity case both overloads match two of three arguments; the depth is what tells
   "this is a placement with a typo" from "a literal is not a GameObject".
 
 ### 4. One object literal binds parameters by name
 
-When the only argument is an object literal and no overload takes it positionally, its keys name parameters (exact,
-else the only case-insensitive match); parameters left out take their defaults. Unknown keys fail with
+When the only argument is an object literal and no overload took it positionally (none passed the check, or each one
+that passed failed in the real coercion), its keys name parameters (exact, else the only ASCII case-insensitive match);
+parameters left out take their defaults. Unknown keys fail with
 `no parameter 'k' (did you mean …?); parameters: …`, an unnamed required parameter with `missing parameter 'p'`.
 Validators, batch validation, hooks, receipts and dry runs are unchanged (they see the coerced arguments in parameter
 order).

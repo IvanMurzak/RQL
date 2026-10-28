@@ -730,15 +730,11 @@ const compareMiss = (a: Miss, b: Miss): number =>
 
 const hasDefault = (p: ParamSpec): boolean => p.optional === true || 'default' in p;
 
-/** A policy denial met while coercing an argument stops the call (permission-denied), whichever overload it was. */
-class Denied {
-  constructor(readonly why: string) {}
-}
-
 /**
- * Overload resolution and argument binding for `call` (spec §8 "Overloads"): candidates are checked with a side-effect-free
- * probe, only the chosen one's arguments are coerced; a single object literal that no overload takes binds by parameter
- * name; a failure reports the best-matching candidate.
+ * Overload resolution and argument binding for `call` (spec §8 "Overloads"): in order, each candidate is checked with a
+ * side-effect-free probe and the first that passes is coerced for real (the next is tried only when that fails); a single
+ * object literal that no overload took binds by parameter name; a failure reports a host policy denial met on the way, else
+ * the best-matching candidate.
  */
 export function resolveOverload(
   model: TypeModel,
@@ -748,10 +744,10 @@ export function resolveOverload(
 ): { method: MethodAccessor; args: unknown[] } | { why: string } | { denied: string } {
   const misses: Miss[] = [];
   const probe: CoerceRules = { ...rules, probe: true };
-  // Checks every bound value against its parameter (no side effects); records a miss when one fails.
-  let vals = given;
-  let kind = 'argument';
-  const fits = (m: MethodAccessor, slots: readonly number[]): boolean => {
+  let denied: string | undefined;
+  // Checks every bound value without side effects, then coerces them for real; a policy denial is remembered, not raised,
+  // so an overload that would not be chosen cannot veto the call.
+  const bind = (m: MethodAccessor, vals: readonly unknown[], slots: readonly number[], kind: string): unknown[] | undefined => {
     let matched = 0;
     let depth = 0;
     let first: string | undefined;
@@ -762,62 +758,69 @@ export function resolveOverload(
         matched++;
         continue;
       }
-      if (co.code !== undefined) throw new Denied(`${kind} '${p.name}': ${co.why}`);
+      if (co.code !== undefined) denied ??= `${kind} '${p.name}': ${co.why}`;
       if (first === undefined) {
         first = `${kind} '${p.name}': ${co.why}`;
         depth = co.depth ?? 0;
       }
     }
-    if (first === undefined) return true;
-    misses.push({ method: m, arityFits: true, matched, depth, why: first });
-    return false;
-  };
-  try {
-    // 1. Positional: every candidate whose arity fits is checked; the first that fits is coerced.
-    const fitting: { m: MethodAccessor; slots: number[] }[] = [];
-    for (const m of candidates) {
-      const ps = m.params;
-      if (ps.length < vals.length || ps.slice(vals.length).some((p) => !hasDefault(p))) {
-        misses.push({ method: m, arityFits: false, matched: 0, depth: 0, why: '' });
+    if (first !== undefined) {
+      misses.push({ method: m, arityFits: true, matched, depth, why: first });
+      return undefined;
+    }
+    const cv: unknown[] = m.params.map((p) => p.default);
+    for (let k = 0; k < slots.length; k++) {
+      const p = m.params[slots[k]!]!;
+      const co = coerce(model, vals[k], p.type ?? 'any', rules);
+      if (co.ok) {
+        cv[slots[k]!] = rawValue(co.value, p.type ?? 'any');
         continue;
       }
-      const slots = vals.map((_, i) => i);
-      if (fits(m, slots)) fitting.push({ m, slots });
+      // Only the real coercion sees what the probe cannot (member validators, constructors that throw, members of classes
+      // the probe cannot see); a candidate that passed the probe is the closest match, so its reason is the one reported.
+      misses.push({ method: m, arityFits: true, matched: Number.MAX_SAFE_INTEGER, depth: 0, why: `${kind} '${p.name}': ${co.why}` });
+      return undefined;
     }
-    // 2. By name: a single object literal that no overload takes positionally names the parameters.
-    const literal = given.length === 1 && given[0] instanceof ObjectValue ? given[0] : undefined;
-    if (fitting.length === 0 && literal !== undefined) {
-      vals = [...literal.values()];
-      kind = 'parameter';
-      for (const m of candidates) {
-        const slots = bindNames(m, literal, misses);
-        if (slots !== undefined && fits(m, slots)) fitting.push({ m, slots });
-      }
+    return cv;
+  };
+  // 1. Positional.
+  for (const m of candidates) {
+    const ps = m.params;
+    if (ps.length < given.length || ps.slice(given.length).some((p) => !hasDefault(p))) {
+      misses.push({ method: m, arityFits: false, matched: 0, depth: 0, why: '' });
+      continue;
     }
-    for (const { m, slots } of fitting) {
-      const ps = m.params;
-      const cv: unknown[] = ps.map((p) => p.default);
-      let ok = true;
-      for (let k = 0; k < slots.length && ok; k++) {
-        const p = ps[slots[k]!]!;
-        const co = coerce(model, vals[k], p.type ?? 'any', rules);
-        if (co.ok) {
-          cv[slots[k]!] = rawValue(co.value, p.type ?? 'any');
-          continue;
-        }
-        if (co.code !== undefined) throw new Denied(`${kind} '${p.name}': ${co.why}`);
-        // Only the real coercion sees what the probe cannot (member validators, constructors that throw); a candidate that
-        // passed the probe is the closest match, so its reason is the one reported.
-        misses.push({ method: m, arityFits: true, matched: Number.MAX_SAFE_INTEGER, depth: 0, why: `${kind} '${p.name}': ${co.why}` });
-        ok = false;
-      }
-      if (ok) return { method: m, args: cv };
-    }
-  } catch (e) {
-    if (e instanceof Denied) return { denied: e.why };
-    throw e;
+    const args = bind(
+      m,
+      given,
+      given.map((_, i) => i),
+      'argument',
+    );
+    if (args !== undefined) return { method: m, args };
   }
-  return { why: explainMisses(model, misses, given.length) };
+  // 2. By name: a single object literal that no overload took positionally names the parameters.
+  if (given.length === 1 && given[0] instanceof ObjectValue) {
+    const literal = given[0];
+    const vals = [...literal.values()];
+    for (const m of candidates) {
+      const slots = bindNames(m, literal, misses);
+      const args = slots !== undefined ? bind(m, vals, slots, 'parameter') : undefined;
+      if (args !== undefined) return { method: m, args };
+    }
+  }
+  return denied !== undefined ? { denied } : { why: explainMisses(model, misses, given.length) };
+}
+
+/** ASCII case-insensitive equality (parameter names, as in every runtime). */
+const asciiLower = (s: string): string => s.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+
+/** The fewest arguments a call can pass: up to the last parameter without a default. */
+function minArity(ps: readonly ParamSpec[]): number {
+  let min = 0;
+  ps.forEach((p, i) => {
+    if (!hasDefault(p)) min = i + 1;
+  });
+  return min;
 }
 
 /**
@@ -833,7 +836,7 @@ function bindNames(m: MethodAccessor, literal: ObjectValue, misses: Miss[]): num
   for (const key of literal.keys()) {
     let i = ps.findIndex((p) => p.name === key);
     if (i < 0) {
-      const ci = ps.flatMap((p, j) => (p.name.toUpperCase() === key.toUpperCase() ? [j] : []));
+      const ci = ps.flatMap((p, j) => (asciiLower(p.name) === asciiLower(key) ? [j] : []));
       if (ci.length === 1) i = ci[0]!;
     }
     if (i < 0) {
@@ -877,7 +880,9 @@ function bindNames(m: MethodAccessor, literal: ObjectValue, misses: Miss[]): num
 function explainMisses(model: TypeModel, misses: readonly Miss[], given: number): string {
   const fit = misses.filter((x) => x.arityFits);
   if (fit.length === 0) {
-    const counts = [...new Set(misses.map((x) => x.method.params.length))].sort((a, b) => a - b);
+    // Each overload accepts from its last parameter without a default up to all of them.
+    const ranges = misses.map((x) => [minArity(x.method.params), x.method.params.length] as const).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const counts = [...new Set(ranges.map(([min, max]) => (min === max ? `${min}` : `${min} to ${max}`)))];
     return `expects ${counts.join(' or ')} argument(s), got ${given}`;
   }
   let best = fit[0]!;

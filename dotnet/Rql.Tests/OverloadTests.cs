@@ -30,6 +30,12 @@ namespace Rql.Tests
             public string? parentName { get; set; }
         }
 
+        /// <summary>Plain data whose member the host's write policy denies.</summary>
+        public sealed class Locked
+        {
+            public string? parentName { get; set; }
+        }
+
         public sealed class EngineObjectAdapter : RqlTypeAdapter<EngineObject>
         {
             protected override bool? Alive(EngineObject value) => true;
@@ -53,6 +59,15 @@ namespace Rql.Tests
 
             [RqlCallable("Link to an existing object.")]
             public string Link(EngineObject other) => other.Name;
+
+            [RqlCallable("Pick a locked value.")]
+            public string Pick(Locked value) => "locked";
+
+            [RqlCallable("Pick a placement.")]
+            public string Pick(Placement value, int k = 0) => "placement";
+
+            [RqlCallable("Pick a locked value only.")]
+            public string PickLocked(Locked value) => "locked";
 
             private EngineObject Add(string name)
             {
@@ -145,6 +160,19 @@ namespace Rql.Tests
         {
             public int Id { get; set; } = 1;
             [RqlReference] public EngineObject? Target { get; set; }
+        }
+
+        [Fact]
+        public void APolicyDenialInAnOverloadNotChosenDoesNotVetoTheCall()
+        {
+            var (e, _) = Host();
+            e.Mutations.CanWrite = (t, m) => t != typeof(Locked);
+            var r = e.Execute("[1] | call editor.Pick({parentName: \"x\"})", null, DryRun);
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal("Pick(Placement value, int k)", r.Rows![0][1]!.GetValue<string>());
+            // When no overload fits, the denial is the reason.
+            Assert.Equal("permission-denied: cannot call PickLocked on Editor@1 for item 0: argument 'value': member 'parentName' of Locked may not be written (denied by host policy)",
+                Error(e.Execute("[1] | call editor.PickLocked({parentName: \"x\"})", null, DryRun)));
         }
 
         // ------------------------------------------------------------ errors across overloads

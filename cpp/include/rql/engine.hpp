@@ -84,7 +84,8 @@ struct MutationPolicy {
     /// The default builds the types registered constructible() that are not engine objects, i.e. have no stable_id or
     /// is_alive adapter (spec §13). Return false for types only the engine may create (Unreal's UObject subclasses): a
     /// literal written to such a type is then coercion-failed and nothing is constructed, on dry runs and during
-    /// overload resolution alike.
+    /// overload resolution alike. Hosts that mark liveness only through Engine::is_alive (no adapter) get no default
+    /// protection and set this hook.
     std::function<std::optional<bool>(const TypeDescriptor& type)> can_construct_from_literal;
     /// After planning, before any write (not on dry-run): e.g. record undo for the owners. Throwing (any
     /// exception) vetoes the whole mutation → permission-denied, nothing changed.

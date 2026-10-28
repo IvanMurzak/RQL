@@ -2079,7 +2079,7 @@ void overload_tests() {
               has(res.diagnostics[0].message, "; Create(string name, OvPlacement placement, string primitive): argument 'placement': "),
           "overloads: candidates that came equally close are all listed");
     res = run(*e, "Create", x + "," + x + "," + x + "," + x, true);
-    check(has(res.diagnostics[0].message, "expects 2 or 3 argument(s), got 4"), "overloads: an arity mismatch names the accepted counts");
+    check(has(res.diagnostics[0].message, "expects 2 or 2 to 3 argument(s), got 4"), "overloads: an arity mismatch names the accepted counts");
     // Arguments by name.
     res = run(*e, "Spawn", R"J({"object":[{"key":"size","value":{"lit":2}},{"key":"name","value":{"lit":"A"}}]})J", false);
     check(res.ok && editor.made.size() == 1 && editor.made[0] == "A:Cube:2", "named arguments: bound by name, defaults fill the rest");
@@ -2095,6 +2095,12 @@ void overload_tests() {
     const std::string made = R"J({"object":[{"key":"Name","value":{"lit":"made"}}]})J";
     res = run(*plain, "Link", made, false);
     check(res.ok && (*res.rows)[0][2].as_string() == "made", "overloads: without identity or liveness adapters a type is plain data");
+    plain->mutations().can_write = [obj](const rql::TypeDescriptor& t, const rql::MemberDescriptor&) { return &t != obj; };
+    res = run(*plain, "Link", made, true);
+    check(first_code(res) == "permission-denied" && has(res.diagnostics[0].message, "cannot call Link on ") &&
+              has(res.diagnostics[0].message, ": argument 'other': member 'Name' of OvObject may not be written"),
+          "overloads: a policy denial is the reason when no overload fits");
+    plain->mutations().can_write = nullptr;
     plain->mutations().can_construct_from_literal = [obj](const rql::TypeDescriptor& t) -> std::optional<bool> {
         if (&t == obj) return false;
         return std::nullopt;

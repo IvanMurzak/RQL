@@ -89,7 +89,8 @@ namespace Rql.Execution
         /// The default builds plain data (structs, records, settings objects) and never an engine object, i.e. a type with an
         /// identity or a liveness adapter (spec §13). Return false for types only the engine may create or whose constructors
         /// have side effects (Unity's UnityEngine.Object, Godot's GodotObject): a literal written to such a type is then
-        /// coercion-failed and nothing is constructed, on dry runs and during overload resolution alike.
+        /// coercion-failed and nothing is constructed, on dry runs and during overload resolution alike. Hosts that mark
+        /// liveness only through <see cref="RqlEngine.IsAlive"/> (no adapter) get no default protection and set this hook.
         /// </summary>
         public Func<Type, bool?>? CanConstructFromLiteral { get; set; }
 

@@ -20,6 +20,7 @@ class EngineObject {
 /** Plain data whose constructions are counted too. */
 class Placement {
   position: number[] = [];
+  parentName = '';
   constructor() {
     placementsBuilt++;
   }
@@ -137,7 +138,7 @@ test('overloads that came equally close are all listed; an arity mismatch names 
   const err = error(e.execute('[1] | call editor.CreateGameObject("X", 5, "Cube")', {}, D));
   assert.ok(err.includes("no overload fits: CreateGameObject(string name, EngineObject parent, string primitive): argument 'parent': "), err);
   assert.ok(err.includes("; CreateGameObject(string name, Placement placement, string primitive, string tag): argument 'placement': "), err);
-  assert.ok(error(e.execute('[1] | call editor.CreateGameObject("X")', {}, D)).endsWith('expects 3 or 4 argument(s), got 1'));
+  assert.ok(error(e.execute('[1] | call editor.CreateGameObject("X")', {}, D)).endsWith('expects 3 or 3 to 4 argument(s), got 1'));
 });
 
 test('one object literal binds by parameter name', () => {
@@ -152,4 +153,56 @@ test('one object literal binds by parameter name', () => {
   assert.ok(error(e.execute('[1] | call editor.Spawn({name: "A", sise: 2})', {}, D)).endsWith("no parameter 'sise' (did you mean 'size'?); parameters: name, primitive, size"));
   assert.ok(error(e.execute('[1] | call editor.Spawn({size: 2})', {}, D)).endsWith("missing parameter 'name'; parameters: name, primitive, size"));
   assert.ok(error(e.execute('[1] | call editor.Spawn({name: "A", size: "big"})', {}, D)).endsWith("parameter 'size': expected a number"));
+});
+
+class Locked {
+  parentName = '';
+}
+/** Not registered: the probe cannot see its members, only the real coercion can. */
+class Unregistered {
+  other = 0;
+}
+
+test('a policy denial in an overload not chosen does not veto the call; alone it is the reason', () => {
+  const model = new TypeModel()
+    .register(Locked, { members: ['parentName'] })
+    .register(Placement, { members: [{ name: 'position', type: t.list(t.number) }, 'parentName'] })
+    .register(Editor, {
+      members: [],
+      methods: [
+        { name: 'Pick', params: [{ name: 'value', type: t.of(Locked) }], returns: t.string, invoke: () => 'locked' },
+        {
+          name: 'Pick',
+          params: [
+            { name: 'value', type: t.of(Placement) },
+            { name: 'k', type: t.number, default: 0 },
+          ],
+          returns: t.string,
+          invoke: () => 'placement',
+        },
+        { name: 'PickLocked', params: [{ name: 'value', type: t.of(Locked) }], returns: t.string, invoke: () => 'locked' },
+        {
+          name: 'Named',
+          params: [
+            { name: 'c', type: t.of(Unregistered) },
+            { name: 'k', type: t.number, default: 0 },
+          ],
+          returns: t.string,
+          invoke: () => 'unregistered',
+        },
+        { name: 'Named', params: [{ name: 'name', type: t.string }], returns: t.string, invoke: (_ed, args) => `name ${args[0] as string}` },
+      ],
+    });
+  const e = new RqlEngine({ types: model }).addSource('editor', () => new Editor());
+  e.mutations.enabled = true;
+  e.mutations.canWrite = (ti) => ti.shortName !== 'Locked';
+  const r = e.execute('[1] | call editor.Pick({parentName: "x"})', {}, D);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.rows![0]![1], 'Pick(Placement value, double k)');
+  const err = error(e.execute('[1] | call editor.PickLocked({parentName: "x"})', {}, D));
+  assert.ok(err.startsWith('permission-denied: cannot call PickLocked on Editor@') && err.includes("for item 0: argument 'value': member 'parentName' of Locked"), err);
+  // An overload that only the real coercion rejects does not block binding by name.
+  const named = e.execute('[1] | call editor.Named({name: "x"})', {}, M);
+  assert.equal(named.ok, true, JSON.stringify(named));
+  assert.equal(named.rows![0]![2], 'name x');
 });

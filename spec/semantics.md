@@ -435,20 +435,23 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   `call-threw` (naming the method and the exception); calls completed before it are not rolled back (calls cannot be
   undone generically: hosts make them safe through validators and batch validation, below).
 * **Overloads**: a method may have several overloads (same name). For each target the arguments are bound to the
-  overloads in their declaration order:
+  overloads in order of parameter count (fewest first), then declaration order:
   1. **Positionally**: an overload fits by arity when it has at least as many parameters as there are arguments and
-     every parameter past them has a default. Each arity-fitting overload is **checked without side effects**: every
-     argument is tested for convertibility to its parameter type by the coercion rules (adapters and the host's text
-     coercion answer; object literals are checked against the type's constructibility, members, writability and
-     policy, recursively) with **nothing constructed, assigned or validated** — so an overload that is not chosen
-     never runs a constructor, even on a dry run. Only the first overload that passes this check has its arguments
-     coerced for real (constructing plain-data literals, running member validators); when that real coercion still
-     fails, the next passing overload is tried.
-  2. **By name**: when there is exactly **one** argument, it is an object literal, and no overload passed step 1, the
-     literal's keys name parameters: each key binds the parameter of that name (exact, else the only case-insensitive
-     match), parameters not named take their defaults. An overload is a candidate when every key names one of its
-     parameters and every parameter without a default is named; candidates are checked and coerced as in step 1.
-     So `call editor.CreateObject({name: "X", primitive: "Cube", position: [1, 2, 3]})` calls
+     every parameter past them has a default. Each arity-fitting overload in turn is first **checked without side
+     effects**: every argument is tested for convertibility to its parameter type by the coercion rules (object
+     literals are checked against the type's constructibility, members, writability and policy, recursively) with
+     **nothing constructed, assigned or validated** — so an overload that is not chosen never runs a constructor, a
+     setter or a member validator, even on a dry run. If the check passes, the overload's arguments are coerced for
+     real (constructing plain-data literals, running member validators) and, when that succeeds, it is chosen;
+     otherwise the next overload is tried. Type adapters' coercion and the host's text coercion are conversions and
+     answer during the check too (an adapter's nested coercions run as in a real coercion), so they must be free of
+     side effects. A host write-policy denial met while checking an overload does not stop the search: it is the
+     stage's error (`permission-denied`, naming the argument) only when no overload is chosen.
+  2. **By name**: when there is exactly **one** argument, it is an object literal, and no overload took it in step 1,
+     the literal's keys name parameters: each key binds the parameter of that name (exact, else the only ASCII
+     case-insensitive match), parameters not named take their defaults. An overload is a candidate when every key
+     names one of its parameters and every parameter without a default is named; candidates are checked and coerced
+     as in step 1. So `call editor.CreateObject({name: "X", primitive: "Cube", position: [1, 2, 3]})` calls
      `CreateObject(string name, string primitive = "Empty", Vector3 position = default, …)` without positional
      placeholders, and `range(0, 300) | call editor.CreateObject({name: "Tile" + $, position: […]})` creates in bulk
      with no extra overload. An overload that takes the literal itself (one object, struct or map parameter) wins over
@@ -457,13 +460,13 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   Validators, batch validation, the before-write hook, receipts (`method` is the chosen overload's signature) and
   dry runs are the same whichever way the arguments were bound. When no overload fits, the stage fails with
   `coercion-failed` naming the **best-matching** overload's reason: among overloads whose arity fits (or that
-  were bound by name), the one with the most arguments that convert, then the one whose failure is deepest inside a
-  value (a misspelt member inside an object literal is closer than a literal the parameter type cannot take at all);
-  an overload that passed the check and failed only in the real coercion is the closest. When several overloads come
-  equally close, each one's reason is listed after its signature (`no overload fits: Sig1: …; Sig2: …`). Binding by
-  name reports `no parameter 'k'` (with the closest name and the parameter list) or `missing parameter 'p'`. When no
-  overload's arity fits, the message names the accepted counts (`expects 2 or 3 argument(s), got 4`). The hint lists
-  every signature, as before.
+  were bound by name), the one with the most arguments that convert (for binding by name: the keys that name a
+  parameter), then the one whose failure is deepest inside a value (a misspelt member inside an object literal is
+  closer than a literal the parameter type cannot take at all); an overload that passed the check and failed only in
+  the real coercion is the closest. When several overloads come equally close, each one's reason is listed after its
+  signature (`no overload fits: Sig1: …; Sig2: …`). Binding by name reports `no parameter 'k'` (with the closest name
+  and the parameter list) or `missing parameter 'p'`. When no overload's arity fits, the message names the argument
+  counts each overload accepts (`expects 2 or 1 to 3 argument(s), got 4`). The hint lists every signature, as before.
 * **Scope of values and arguments**: a `set` value and a `call` argument are evaluated per target with `$` = the
   target, and `$index`, `$path` and `$depth` are the target's as it entered the stage: `$index` is its position in the
   stream entering `set` / `call` (null and destroyed items, which are skipped, keep their positions), so

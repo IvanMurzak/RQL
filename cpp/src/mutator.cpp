@@ -1016,15 +1016,25 @@ bool bind_names(const MethodDescriptor& m, const Value& literal, std::vector<siz
     return true;
 }
 
-/// Overload resolution and argument binding for `call` (spec §8 "Overloads"): candidates are checked with the side-effect-free
-/// can_coerce, only the chosen one's arguments are coerced; a single object literal that no overload takes binds by
-/// parameter name; a failure (null result) reports the best-matching candidate in `why`.
+/// The fewest arguments a call can pass: up to the last parameter without a default.
+size_t min_arity(const std::vector<ParamDescriptor>& ps) {
+    size_t min = 0;
+    for (size_t i = 0; i < ps.size(); ++i)
+        if (!ps[i].has_default) min = i + 1;
+    return min;
+}
+
+/// Overload resolution and argument binding for `call` (spec §8 "Overloads"): in order, each candidate is checked with the
+/// side-effect-free can_coerce and the first that passes is coerced for real (the next is tried only when that fails); a
+/// single object literal that no overload took binds by parameter name. A failure (null result) sets `why`: a host policy
+/// denial met on the way (`denied` true), else the best-matching candidate's reason.
 const MethodDescriptor* resolve_overload(Exec& x, const TypeDescriptor& type, const std::vector<const MethodDescriptor*>& candidates,
-                                         const std::vector<Value>& given, std::vector<Value>& coerced, std::string& why) {
+                                         const std::vector<Value>& given, std::vector<Value>& coerced, std::string& why, bool& denied) {
     std::vector<Miss> misses;
-    std::vector<Value> vals = given;
-    std::string kind = "argument";
-    auto fits = [&](const MethodDescriptor& m, const std::vector<size_t>& slots) {
+    std::string denial;
+    // Checks every bound value without side effects, then coerces them for real; a policy denial is remembered, not raised,
+    // so an overload that would not be chosen cannot veto the call.
+    auto bind = [&](const MethodDescriptor& m, const std::vector<Value>& vals, const std::vector<size_t>& slots, const std::string& kind) {
         long long matched = 0;
         int depth = 0;
         std::string first;
@@ -1032,7 +1042,16 @@ const MethodDescriptor* resolve_overload(Exec& x, const TypeDescriptor& type, co
             const ParamDescriptor& p = m.params[slots[k]];
             std::string w;
             int d = 0;
-            if (can_coerce(x, vals[k], p.type, p.nullable, w, d)) {
+            bool ok = false;
+            try {
+                ok = can_coerce(x, vals[k], p.type, p.nullable, w, d);
+            } catch (const RqlException& ex) {
+                if (ex.code() != "permission-denied") throw;
+                w = ex.what();
+                d = 0;
+                if (denial.empty()) denial = kind + " '" + p.name + "': " + w;
+            }
+            if (ok) {
                 ++matched;
                 continue;
             }
@@ -1041,76 +1060,67 @@ const MethodDescriptor* resolve_overload(Exec& x, const TypeDescriptor& type, co
                 depth = d;
             }
         }
-        if (first.empty()) return true;
-        misses.push_back({&m, true, matched, depth, first});
-        return false;
+        if (!first.empty()) {
+            misses.push_back({&m, true, matched, depth, first});
+            return false;
+        }
+        std::vector<Value> cv;
+        for (auto& p : m.params) cv.push_back(p.default_value);
+        for (size_t k = 0; k < slots.size(); ++k) {
+            const ParamDescriptor& p = m.params[slots[k]];
+            std::string w;
+            auto r = coerce(x, vals[k], p.type, p.nullable, w);
+            if (!r) {
+                // Only the real coercion sees what the probe cannot (member validators, setters that throw); a candidate that
+                // passed the probe is the closest match, so its reason is the one reported.
+                misses.push_back({&m, true, std::numeric_limits<long long>::max(), 0, kind + " '" + p.name + "': " + w});
+                return false;
+            }
+            cv[slots[k]] = *r;
+        }
+        coerced = std::move(cv);
+        return true;
     };
-    struct Fit {
-        const MethodDescriptor* m;
-        std::vector<size_t> slots;
-    };
-    std::vector<Fit> fitting;
-    // 1. Positional: every candidate whose arity fits is checked; the first that fits is coerced.
+    // 1. Positional.
     for (auto* m : candidates) {
         const auto& ps = m->params;
-        bool arity = ps.size() >= given.size();
-        for (size_t i = given.size(); arity && i < ps.size(); ++i)
-            if (!ps[i].has_default) arity = false;
-        if (!arity) {
+        if (ps.size() < given.size() || min_arity(ps) > given.size()) {
             misses.push_back({m, false, 0, 0, ""});
             continue;
         }
         std::vector<size_t> slots;
         for (size_t i = 0; i < given.size(); ++i) slots.push_back(i);
-        if (fits(*m, slots)) fitting.push_back({m, std::move(slots)});
+        if (bind(*m, given, slots, "argument")) return m;
     }
-    // 2. By name: a single object literal that no overload takes positionally names the parameters.
-    if (fitting.empty() && given.size() == 1 && given[0].is_map() && given[0].map().object_literal()) {
-        vals.clear();
+    // 2. By name: a single object literal that no overload took positionally names the parameters.
+    if (given.size() == 1 && given[0].is_map() && given[0].map().object_literal()) {
+        std::vector<Value> vals;
         given[0].map().for_each([&](const Value&, const Value& v) {
             vals.push_back(v);
             return true;
         });
-        kind = "parameter";
         for (auto* m : candidates) {
             std::vector<size_t> slots;
-            if (bind_names(*m, given[0], slots, misses) && fits(*m, slots)) fitting.push_back({m, std::move(slots)});
+            if (bind_names(*m, given[0], slots, misses) && bind(*m, vals, slots, "parameter")) return m;
         }
     }
-    for (auto& f : fitting) {
-        const auto& ps = f.m->params;
-        std::vector<Value> cv;
-        for (auto& p : ps) cv.push_back(p.default_value);
-        bool ok = true;
-        for (size_t k = 0; k < f.slots.size() && ok; ++k) {
-            const ParamDescriptor& p = ps[f.slots[k]];
-            std::string w;
-            auto r = coerce(x, vals[k], p.type, p.nullable, w);
-            if (r) {
-                cv[f.slots[k]] = *r;
-                continue;
-            }
-            // Only the real coercion sees what the probe cannot (member validators, setters that throw); a candidate that
-            // passed the probe is the closest match, so its reason is the one reported.
-            misses.push_back({f.m, true, std::numeric_limits<long long>::max(), 0, kind + " '" + p.name + "': " + w});
-            ok = false;
-        }
-        if (ok) {
-            coerced = std::move(cv);
-            return f.m;
-        }
+    denied = !denial.empty();
+    if (denied) {
+        why = denial;
+        return nullptr;
     }
     // The best candidate's reason; candidates that came equally close are listed with their signatures.
     std::vector<const Miss*> fit;
     for (auto& m : misses)
         if (m.arity_fits) fit.push_back(&m);
     if (fit.empty()) {
-        std::vector<size_t> counts;
-        for (auto& m : misses) counts.push_back(m.method->params.size());
-        std::sort(counts.begin(), counts.end());
-        counts.erase(std::unique(counts.begin(), counts.end()), counts.end());
+        // Each overload accepts from its last parameter without a default up to all of them.
+        std::vector<std::pair<size_t, size_t>> ranges;
+        for (auto& m : misses) ranges.emplace_back(min_arity(m.method->params), m.method->params.size());
+        std::sort(ranges.begin(), ranges.end());
+        ranges.erase(std::unique(ranges.begin(), ranges.end()), ranges.end());
         std::vector<std::string> parts;
-        for (size_t n : counts) parts.push_back(std::to_string(n));
+        for (auto& r : ranges) parts.push_back(r.first == r.second ? std::to_string(r.first) : std::to_string(r.first) + " to " + std::to_string(r.second));
         why = "expects " + join(parts, " or ") + " argument(s), got " + std::to_string(given.size());
         return nullptr;
     }
@@ -1209,7 +1219,9 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
         for (auto& a : args) vals.push_back(a(x));
         std::vector<Value> coerced;
         std::string why;
-        const MethodDescriptor* chosen = resolve_overload(x, *t, candidates, vals, coerced, why);
+        bool denied = false;
+        const MethodDescriptor* chosen = resolve_overload(x, *t, candidates, vals, coerced, why, denied);
+        if (!chosen && denied) throw RqlException("permission-denied", "cannot call " + s.method + " on " + at(item, target.index) + ": " + why);
         if (!chosen) {
             std::vector<std::string> cs;
             for (auto* m : candidates) cs.push_back(t->signature(*m));

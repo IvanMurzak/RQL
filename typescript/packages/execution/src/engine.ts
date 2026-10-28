@@ -77,7 +77,8 @@ export interface MutationPolicy {
    * default. The default builds plain data (structs, settings objects) and never an engine object, i.e. a class with a
    * `stableId` or `isAlive` adapter (spec §13). Return false for classes only the engine may create or whose constructors
    * have side effects: a literal written to such a class is then coercion-failed and nothing is constructed, on dry runs
-   * and during overload resolution alike.
+   * and during overload resolution alike. Hosts that mark liveness only through the engine-wide `isAlive` hook (no
+   * adapter) get no default protection and set this hook.
    */
   canConstructFromLiteral?: (ctor: Ctor) => boolean | null | undefined;
   /**
