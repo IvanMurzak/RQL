@@ -1341,6 +1341,13 @@ Value aggregate(Exec& x, const Value& v, const Eval* sel, const std::string& kin
 
 }  // namespace
 
+double range_at(double start, double step, int64_t k) {
+    // Two separately rounded operations, never a fused multiply-add (arm64 compilers contract a + b * c), so every runtime
+    // produces the same numbers and the same count.
+    volatile double offset = static_cast<double>(k) * step;
+    return start + offset;
+}
+
 bool range_of(const Value& a, const Value& b, const Value& c, double& start, double& step, int64_t& count, Value& error) {
     double nums[3] = {0, 0, 1};
     const Value* vals[3] = {&a, &b, &c};
@@ -1369,7 +1376,7 @@ bool range_of(const Value& a, const Value& b, const Value& c, double& start, dou
     count = n <= 0 ? 0 : n >= 9.2e18 ? INT64_MAX : static_cast<int64_t>(n);
     // end is excluded: rounding in (end - start) / step can count one number too many (range(0, 2.1, 0.3)).
     while (count > 0 && count < INT64_MAX &&
-           (step > 0 ? start + static_cast<double>(count - 1) * step >= nums[1] : start + static_cast<double>(count - 1) * step <= nums[1]))
+           (step > 0 ? range_at(start, step, count - 1) >= nums[1] : range_at(start, step, count - 1) <= nums[1]))
         --count;
     return true;
 }
@@ -1522,7 +1529,7 @@ Eval Compiler::compile_function(const Expr& c) {
             std::vector<Value> list;
             for (int64_t k = 0; k < count; ++k) {
                 x.visit();  // a range is bounded by maxVisited like any stream (spec §2)
-                list.push_back(Value::number(start + static_cast<double>(k) * step));
+                list.push_back(Value::number(range_at(start, step, k)));
             }
             return Value::list_of(std::move(list));
         };

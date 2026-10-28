@@ -339,7 +339,7 @@ public:
         }
         if (k_ >= count_) return false;
         x_.visit();
-        out = Item{Value::number(start_ + static_cast<double>(k_) * step_), base_ ? path_at(base_, k_) : nullptr, -1};
+        out = Item{Value::number(range_at(start_, step_, k_)), base_ ? path_at(base_, k_) : nullptr, -1};
         ++k_;
         return true;
     }

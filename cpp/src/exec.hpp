@@ -356,6 +356,8 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
 /// The numbers of range(start, end[, step]) (spec §2, §4.3): start + k * step for k = 0 … count - 1; false with `error`
 /// (an error argument, or a type-mismatch for a non-number, non-finite number or zero step).
 bool range_of(const Value& a, const Value& b, const Value& c, double& start, double& step, int64_t& count, Value& error);
+/// The k-th number of a range: start + k * step, rounded like .NET and JavaScript (no fused multiply-add).
+double range_at(double start, double step, int64_t k);
 
 /// `receiver`: a source-qualified call's object (spec §8), whose method runs once per stream item; null: on each item.
 /// Resolved after the policy check, so a read request never evaluates the target.
