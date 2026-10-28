@@ -7,7 +7,7 @@ import { RqlError, diagnostic, formatNumber, segmentToString, type CallExpr, typ
 import { elements, findMapKey, indexAt, isMapLike, mapEntries, mapGet, sizeOf, type MapLike } from './collections.js';
 import { firstAnswer, type AnyAdapter } from './adapters.js';
 import { Exec, IsSite, MemberSite, errorMessage } from './exec.js';
-import { EnumValue, StringMap, type Ctor, type TypeInfo, type TypeModel } from './types.js';
+import { EnumValue, StringMap, unwrapNullable, type Ctor, type TypeInfo, type TypeModel } from './types.js';
 import { ErrorValue, MISSING, MapEntry, ObjectValue, RowValue, UNKNOWN, isAbsent, toNumber } from './values.js';
 
 export type Eval = (x: Exec) => unknown;
@@ -807,7 +807,8 @@ export function equal(x: Exec, a: unknown, b: unknown): Truth {
   const ia = x.types.infoOf(a);
   const ib = x.types.infoOf(b);
   if (ia.isList && ib.isList) return listEqual(x, a, ia, b, ib);
-  // Structs and maps are not comparable in v0 (spec §4.1); objects by identity.
+  if (ia.kind === 'struct' && ia === ib) return structEqual(x, a, ia, b);
+  // Maps and structs of different types are not comparable (spec §4.1); objects by identity.
   if (valueLike(ia) || valueLike(ib)) return undefined;
   return a === b;
 }
@@ -827,6 +828,39 @@ function listEqual(x: Exec, a: object, ia: TypeInfo, b: object, ib: TypeInfo): T
   try {
     for (let i = 0; i < ea.length; i++) {
       const r = equal(x, x.live(ea[i] ?? null), x.live(eb[i] ?? null));
+      if (r === false) return false;
+      if (r === undefined) unknown = true;
+    }
+  } finally {
+    listDepth--;
+  }
+  return unknown ? undefined : true;
+}
+
+/**
+ * Two structs of one type compare member by member, recursively (spec §4.1): the members their encoding shows, without
+ * members of the struct's own class (derived values); false as soon as one differs, unknown when none differs but one is
+ * unknown.
+ */
+function structEqual(x: Exec, a: object, info: TypeInfo, b: object): Truth {
+  const members = info.implicitMembersOf(a);
+  if (members.length === 0) return undefined;
+  if (listDepth >= MAX_COMPARE_DEPTH) return undefined;
+  let unknown = false;
+  listDepth++;
+  try {
+    for (const m of members) {
+      const r0 = unwrapNullable(m.type);
+      if (typeof r0 === 'object' && 'kind' in r0 && r0.kind === 'class' && r0.ctor === a.constructor) continue;
+      let va: unknown;
+      let vb: unknown;
+      try {
+        va = x.live(m.get(a) ?? null);
+        vb = x.live(m.get(b) ?? null);
+      } catch {
+        return undefined;
+      }
+      const r = equal(x, va, vb);
       if (r === false) return false;
       if (r === undefined) unknown = true;
     }

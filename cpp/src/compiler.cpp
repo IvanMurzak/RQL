@@ -315,7 +315,30 @@ std::optional<bool> rql_equal(Exec& x, const Value& a, const Value& b) {
     if (b.is_enum()) return enum_equal(b, a);
     if (a.is_string()) return b.is_string() ? std::optional<bool>(a.as_string() == b.as_string()) : std::nullopt;
     if (a.is_bool()) return b.is_bool() ? std::optional<bool>(a.as_bool() == b.as_bool()) : std::nullopt;
-    // value types (structs) and mixed scalar kinds are not comparable in v0
+    // Two structs of one type compare member by member, recursively (spec §4.1): the members their encoding shows, without
+    // members of the struct's own type (derived values); false as soon as one differs, unknown when none differs but one is.
+    if (a.is_struct() && b.is_struct() && a.type() && a.type() == b.type()) {
+        const auto view = x.view(a.type());
+        const auto& members = view.implicit_members();
+        if (members.empty() || x.compare_depth >= kMaxCompareDepth) return std::nullopt;
+        DepthGuard guard(x.compare_depth);
+        bool unknown = false;
+        for (auto& m : members) {
+            if (m.type == a.type()) continue;
+            Value ma, mb;
+            try {
+                ma = x.live(m.getter(a.ptr()));
+                mb = x.live(m.getter(b.ptr()));
+            } catch (const std::exception&) {
+                return std::nullopt;
+            }
+            auto r = rql_equal(x, ma, mb);
+            if (r == std::optional<bool>(false)) return false;
+            if (!r) unknown = true;
+        }
+        return unknown ? std::nullopt : std::optional<bool>(true);
+    }
+    // structs of different types and mixed scalar kinds are not comparable
     if (a.is_struct() || b.is_struct() || b.is_number() || b.is_bool() || b.is_string()) return std::nullopt;
     if (a.is_list() && b.is_list()) {
         // Lists compare by value (spec §4.1): the same length and pairwise equal elements; false as soon as a pair differs,

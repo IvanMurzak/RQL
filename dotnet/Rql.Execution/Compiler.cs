@@ -605,13 +605,42 @@ namespace Rql.Execution
             if (la && lb) return ListEqual(model, kernel, a, b, depth);
             if (ta.IsValueType || b.GetType().IsValueType)
             {
-                // DateTime / Guid etc: same-type equality; other structs are not comparable in v0.
-                if (TypeModel.IsScalarType(ta) && ta == b.GetType()) return a.Equals(b);
-                return null;
+                // DateTime / Guid etc: same-type equality; structs of one type member by member (spec §4.1).
+                if (ta != b.GetType()) return null;
+                if (TypeModel.IsScalarType(ta)) return a.Equals(b);
+                return model != null && model.Info(ta).IsStruct ? StructEqual(model, kernel, a, b, depth) : null;
             }
             if (b is string) return null;
             if (la || lb || TypeModel.Get(ta).IsMap || TypeModel.Get(b.GetType()).IsMap) return null;
             return ReferenceEquals(a, b);
+        }
+
+        /// <summary>
+        /// Two structs of one type compare member by member, recursively (spec §4.1): the members their encoding shows, without
+        /// members of the struct's own type (derived values); false as soon as one differs, unknown when none differs but one is
+        /// unknown. A struct without visible members uses its own equality.
+        /// </summary>
+        private static bool? StructEqual(TypeModel model, RqlKernel? kernel, object a, object b, int depth)
+        {
+            var info = model.Info(a.GetType());
+            if (info.ImplicitMembers.Count == 0) return a.Equals(b);
+            if (depth >= MaxCompareDepth) return null;
+            bool unknown = false;
+            foreach (var m in info.ImplicitMembers)
+            {
+                if (m.Type == info.Type) continue;
+                object? va, vb;
+                try
+                {
+                    va = model.Live(m.Getter(a));
+                    vb = model.Live(m.Getter(b));
+                }
+                catch (Exception ex) when (!(ex is OutOfMemoryException)) { return null; }
+                var r = Equal(model, kernel, va, vb, depth + 1);
+                if (r == false) return false;
+                if (r == null) unknown = true;
+            }
+            return unknown ? (bool?)null : true;
         }
 
         /// <summary>

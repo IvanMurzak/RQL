@@ -29,7 +29,7 @@ Every expression evaluates to one of:
 | `bool`, `number`, `string` | Scalars. Numbers are compared numerically regardless of the runtime's int/float types. A single-precision (float) value is the double of its shortest round-trip decimal wherever it is used as a number (`4.2f` is `4.2`, not `4.19999980926514`), so arithmetic, functions and aggregates over float members compute with the value the member shows; the widened value converts back to the same float, so comparisons in float precision (§4.1) are unchanged. |
 | `enum` | Runtime enum value; compares to strings by name (enum name resolution, §8) and to numbers by underlying value. |
 | `object` | A reference-like runtime object with identity. |
-| `struct` | A value type (e.g. `Vector3`); no identity. `==` is `unknown` unless a type adapter compares it (§4.1, §13); arithmetic is component-wise when a type adapter declares its components (§4.2); `distinct` / `group-by` key it by its members with numbers rounded for display (§5). |
+| `struct` | A value type (e.g. `Vector3`); no identity. `==` compares two values of one type member by member, or through a type adapter (§4.1, §13); arithmetic is component-wise when a type adapter declares its components (§4.2); `distinct` / `group-by` key it by its members with numbers rounded for display (§5). |
 | `list` | Ordered collection (array, list, set, generic enumerable that is not a string or map). |
 | `map` | Key→value collection (dictionary/map). |
 
@@ -146,9 +146,15 @@ path; the same object reached by another query has another `$path`. Hosts expose
   `null` vs non-null is `false` for `==` and `true` for `!=`. **Lists by value**: two lists are equal when they have the
   same length and their elements are pairwise equal by these rules (`Tags == ["root", "red"]`; order matters); `false` as
   soon as one pair is not equal, `unknown` when no pair differs but one is `unknown` (lists nested more than 32 deep, or
-  containing themselves, compare as `unknown`; `distinct` / `group-by` then key them by identity). A list against a non-list, structs
-  and maps: `unknown` — including a struct against an object literal (§4.5), unless a type adapter's comparison answers
-  (§13). `in` / `contains` use the same equality, so `Tags in [["root"], []]` works.
+  containing themselves, compare as `unknown`; `distinct` / `group-by` then key them by identity). **Structs of one type
+  by their members**: the members their encoding shows (§6; members of the struct's own type, derived values such as
+  `normalized`, left out), each compared by these rules — recursively, so a struct of structs (`Anchors` holding two
+  `Vector2D`) compares its nested values, through their adapters when they have one — `false` as soon as one member
+  differs, `unknown` when none differs but one is `unknown` (or a getter throws, or the nesting passes 32 levels); a
+  struct type without visible members uses the runtime's own equality where it has one (.NET), otherwise `unknown`. A
+  type adapter's comparison answers first (§13). A list against a non-list, structs of different types and maps:
+  `unknown` — including a struct against an object literal (§4.5), unless a type adapter's comparison answers. So
+  `set` receipts (§8) count a struct written with the value it already has as unchanged. `in` / `contains` use the same equality, so `Tags in [["root"], []]` works.
 * `<`, `<=`, `>`, `>=`: numbers, strings (ordinal), enums (underlying value). Otherwise `unknown`.
 * `contains`, `starts-with`, `ends-with`: on strings — ordinal **case-insensitive** substring test.
   `contains` on a list — membership using `==`. Otherwise `unknown`.
@@ -312,8 +318,8 @@ values that print alike group together: `select Scale | distinct` keeps one `(1,
 differ: members it does not show still count, so adapters hide derived members such as `magnitude` if they vary in the
 last digits); this is a key, not a tolerance (rounding
 is transitive, a tolerance is not), so near a rounding boundary two values that `==` calls equal (`1.0000049` and
-`1.0000051`, printed `1` and `1.00001`) still form two groups. `==` does not change: structs compare through their type adapter (numeric tuples within a tolerance,
-§13), otherwise `unknown`. Scalars keep exact numeric equality.
+`1.0000051`, printed `1` and `1.00001`) still form two groups. `==` is not rounded: structs compare through their type adapter (numeric tuples within a tolerance, §13), otherwise
+member by member with exact numbers (single precision compared as floats, §4.1). Scalars keep exact numeric equality.
 
 Terminal stages (`count`, aggregates, `describe`, `set`, `call`) MUST be last;
 otherwise `invalid-plan`.

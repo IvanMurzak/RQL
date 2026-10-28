@@ -23992,6 +23992,330 @@
         "kind": "scalar",
         "value": 8
       }
+    },
+    {
+      "name": "struct-equal-member-wise",
+      "rql": "g.Nodes | recurse Children | select Name same=(Pos == Pos) b=(Pos == ref(\"Node#5\").Pos)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "same",
+                "expr": {
+                  "op": "==",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "op": "==",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "path": [
+                        "Pos"
+                      ],
+                      "on": {
+                        "call": "ref",
+                        "args": [
+                          {
+                            "lit": "Node#5"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "same",
+          "b"
+        ],
+        "rows": [
+          [
+            "root-a",
+            true,
+            false
+          ],
+          [
+            "a-1",
+            true,
+            false
+          ],
+          [
+            "a-2",
+            true,
+            false
+          ],
+          [
+            "a-2-x",
+            true,
+            false
+          ],
+          [
+            "root-b",
+            true,
+            true
+          ],
+          [
+            "b-1",
+            true,
+            false
+          ],
+          [
+            "B-2",
+            true,
+            false
+          ],
+          [
+            "lonely",
+            true,
+            false
+          ]
+        ],
+        "total": 8
+      }
+    },
+    {
+      "name": "struct-set-same-value-unchanged",
+      "rql": "ref(\"Node#2\") | set Pos = Pos",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#2"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Pos"
+                  ]
+                },
+                "value": {
+                  "path": [
+                    "Pos"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [],
+        "total": 0,
+        "dryRun": true,
+        "unchanged": 1
+      }
+    },
+    {
+      "name": "struct-set-same-literal-unchanged",
+      "rql": "ref(\"Node#2\") | set Pos = {x: 1, y: -1}",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#2"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Pos"
+                  ]
+                },
+                "value": {
+                  "object": [
+                    {
+                      "key": "x",
+                      "value": {
+                        "lit": 1
+                      }
+                    },
+                    {
+                      "key": "y",
+                      "value": {
+                        "lit": -1
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [],
+        "total": 0,
+        "dryRun": true,
+        "unchanged": 1
+      }
+    },
+    {
+      "name": "struct-set-other-literal-changes",
+      "rql": "ref(\"Node#2\") | set Pos = {x: 1, y: 2}",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#2"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Pos"
+                  ]
+                },
+                "value": {
+                  "object": [
+                    {
+                      "key": "x",
+                      "value": {
+                        "lit": 1
+                      }
+                    },
+                    {
+                      "key": "y",
+                      "value": {
+                        "lit": 2
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#2",
+            "Pos",
+            {
+              "x": 1,
+              "y": -1
+            },
+            {
+              "x": 1,
+              "y": 2
+            }
+          ]
+        ],
+        "total": 1,
+        "dryRun": true
+      }
     }
   ]
 }

@@ -75,8 +75,21 @@ Two structs share a key exactly when they print alike.
   equality.
 - Float precision alone (the c5fed20 rule for scalars) does not merge `1` and `0.99999994`, because these are
   different floats. Display precision does.
-- `==` does not change: tuple adapters keep their tolerance equality, and structs without an adapter stay `unknown`.
+- `==` is not rounded: tuple adapters keep their tolerance equality, and other structs compare member by member
+  (decision 5).
   Scalars keep exact numeric keys. Their display shows 15 digits, so differences there stay visible.
+
+### 5. Structs of one type compare member by member (follow-up, Unreal wave 5)
+
+`set Slot.LayoutData.Anchors = "(Minimum=(X=0,Y=0),Maximum=(X=0,Y=0))"` on a slot that already had those anchors was
+listed as a change. Receipts detect no-ops with `==`, and `==` was `unknown` for any struct without an equality adapter.
+`FAnchors` has none; its two `FVector2D` members have one. Now two structs of one type compare by their members (the
+members their encoding shows, members of their own type left out), each with the ordinary `==`, recursively. Nested
+members with an adapter use it (tuple tolerance), numbers compare exactly (single precision as floats, §4.1), and a
+throwing getter or depth over 32 is `unknown`. A type adapter's comparison still answers first, and structs of
+different types, or a struct against an object literal without an adapter, stay `unknown`. So the receipt reports the
+anchors write as unchanged, in every runtime. This was not the host's struct-equality hook: the runtime had no rule
+for adapter-less structs.
 
 ## Consequences
 

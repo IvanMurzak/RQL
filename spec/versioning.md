@@ -109,4 +109,6 @@
   the item; `has(m["k"])` still tests the key, and unknown members stay `missing`. `distinct` / `group-by` key structs by
   their members with numbers rounded as numeric tuples print (§5), so `(1, 1, 1)` and `(0.99999994, 1, 1)` merge.
   `unknown-member` hints also offer struct members one and two levels down (`BodyInstance.CollisionProfileName`, §10).
-  Two more shared language rules (vectors, missing map entries).
+  Two more shared language rules (vectors, missing map entries). **Behaviour change**: `==` compares two structs of one type member by member, recursively
+  (§4.1; it was `unknown` without an equality adapter), so a `set` that writes a struct's current value, nested structs
+  included, is counted as unchanged.
