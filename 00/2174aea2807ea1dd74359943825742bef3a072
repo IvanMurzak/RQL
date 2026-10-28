@@ -1,0 +1,51 @@
+cpp/src/compiler.cpp
+  s_7bc72ecaebd05d::t_0855e84fdb97d3 5,388-390,402-404,407,409,412-415,418-421,468-469,472,477,772-786,788,1020-1021
+cpp/src/exec.hpp
+  s_7bc72ecaebd05d::t_0dcfc377863b18 175-176
+cpp/tests/unit_tests.cpp
+  s_7be60963fe3603::t_813cfb40165200 10,1865-1868,1931-1941
+docs/decisions/0009-wave5-struct-and-map-semantics.md
+  s_7bc72ecaebd05d::t_ca9252095d4cf5 60-63,73-75
+docs/feature-matrix.md
+  s_7bc72ecaebd05d::t_6695430256cb19 40
+dotnet/Rql.Execution/Compiler.cs
+  s_7bc72ecaebd05d::t_2219e03c76fdf5 99-103,105-111,113-114,834-836,847-848
+dotnet/Rql.Execution/Pipeline.cs
+  s_7bc72ecaebd05d::t_5bde60dd8dbf81 1062-1070,1073-1076,1078,1080-1086,1088,1090,1136,1138-1140,1142-1147,1149
+dotnet/Rql.Execution/TypeAdapters.cs
+  s_7bc72ecaebd05d::t_90ee4b30ddaace 104,108-123
+dotnet/Rql.Tests/Wave5Tests.cs
+  s_7bc72ecaebd05d::t_a28014dc4dc550 154-202
+spec/semantics.md
+  s_7bc72ecaebd05d::t_05ec3ef3b4dfbd 99-101,305-307,311-313
+typescript/packages/execution/src/compiler.ts
+  s_7bc72ecaebd05d::t_d3e7938c2ea9b0 10,80-92,94,693-695,701-714,1019-1020,1031-1033
+typescript/packages/execution/src/pipeline.ts
+  s_7bc72ecaebd05d::t_6c41a5b6c766c9 34,903-912,952-969
+typescript/tests/src/wave5.test.ts
+  s_7bc72ecaebd05d::t_b7201a753ec180 3,119-136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "002174aea2807ea1dd74359943825742bef3a072",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    },
+    "s_7be60963fe3603": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c306a43-6f1a-4fe9-9b57-09acf4bc1a65",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
