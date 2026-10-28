@@ -1,0 +1,27 @@
+cpp/src/compiler.cpp
+  s_7bc72ecaebd05d::t_742faecb892281 322-323,325,327-328,330,342
+cpp/src/exec.hpp
+  s_7bc72ecaebd05d::t_91ac693c8ca2dd 177-178
+dotnet/Rql.Execution/Compiler.cs
+  s_7bc72ecaebd05d::t_c77f32dfecc7ab 626,628-630,632,634-645,648-649,653-657
+spec/semantics.md
+  s_7bc72ecaebd05d::t_5d1b11bf6d671a 153-155
+typescript/packages/execution/src/compiler.ts
+  s_7bc72ecaebd05d::t_db6211c1c2cb13 846,848,850,852,854,869,871,875-878
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "426bf24280c69f09d7596c36c200d4d623f7e4c4",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
