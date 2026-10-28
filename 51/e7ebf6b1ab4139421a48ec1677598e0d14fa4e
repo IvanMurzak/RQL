@@ -1,0 +1,62 @@
+fixtures/guide/language-rules.txt
+  s_7bc72ecaebd05d::t_b2aeaf02b30e98 1-8
+dotnet/Rql.Tests/BulkCreateTests.cs
+  s_7bc72ecaebd05d::t_e57d71cbf342f8 1-329
+  s_7bc72ecaebd05d::t_ca39fe2599da0d 330-335
+dotnet/Rql.Conformance/TestAdapters.cs
+  s_7bc72ecaebd05d::t_743b47298a56ca 138-149
+dotnet/Rql.Contracts/Plan.cs
+  s_7bc72ecaebd05d::t_1561407f6b61b8 234,237-242
+dotnet/Rql.Contracts/PlanCodec.cs
+  s_7bc72ecaebd05d::t_498baa9e47ef5b 216,546,549-550
+dotnet/Rql.Execution/Compiler.cs
+  s_7bc72ecaebd05d::t_a57c7481024217 26,863-885,983-998
+dotnet/Rql.Execution/Encoder.cs
+  s_7bc72ecaebd05d::t_4d9586bcbef747 71-76,143-144,146-154,156,160-161,163-176,178
+dotnet/Rql.Execution/Mutator.cs
+  s_7bc72ecaebd05d::t_dd6b8eacce434d 39-41,51-57,71-72,83,96-97,549-551,555-558,561-564,584,593,595,606,620-621,625-627,633-660
+dotnet/Rql.Execution/Pipeline.cs
+  s_7bc72ecaebd05d::t_b53f3d530c553f 313,340-354,368,376,379-382,385,397,401-404,407-408,412-424,428-429,431-484
+dotnet/Rql.Execution/RqlEngine.cs
+  s_7bc72ecaebd05d::t_63d7754973866d 346-353,653-671
+dotnet/Rql.Execution/RqlLanguageGuide.cs
+  s_7bc72ecaebd05d::t_e33346411fb15e 1-21
+dotnet/Rql.Parser/RqlParser.cs
+  s_7bc72ecaebd05d::t_0fac0b97661ca6 397-404
+dotnet/Rql.Tests/Tests.cs
+  s_7bc72ecaebd05d::t_f4f909a2ca19b3 961-962,1073
+fixtures/adapters/cases.json
+  s_7bc72ecaebd05d::t_474a7f657229c4 17,1879-1880,5235-6678
+fixtures/execution/cases.json
+  s_7bc72ecaebd05d::t_cb04a96ee50bf0 21793-22916
+fixtures/negative/plans.json
+  s_7bc72ecaebd05d::t_622f03150d8d9a 888-962
+fixtures/negative/syntax.json
+  s_7bc72ecaebd05d::t_16cf532c2f6a3c 172-175
+fixtures/syntax/cases.json
+  s_7bc72ecaebd05d::t_430a9f58b84f71 6613-6789
+spec/grammar.ebnf
+  s_7bc72ecaebd05d::t_178eca58297145 11-12,35-38
+spec/query-plan.schema.json
+  s_7bc72ecaebd05d::t_b79eeba8a899aa 84
+spec/semantics.md
+  s_7bc72ecaebd05d::t_efe316fe761295 61-63,69-80,182,273-274,298-299,348-350,386-405,467-470,550-552,569-570,713-714
+spec/versioning.md
+  s_7bc72ecaebd05d::t_9925ca24a09124 93-104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "51e7ebf6b1ab4139421a48ec1677598e0d14fa4e",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
