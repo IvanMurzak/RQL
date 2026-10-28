@@ -749,21 +749,22 @@ export function resolveOverload(
   const misses: Miss[] = [];
   const probe: CoerceRules = { ...rules, probe: true };
   // Checks every bound value against its parameter (no side effects); records a miss when one fails.
-  const fits = (m: MethodAccessor, vals: readonly unknown[], slots: readonly number[], label: (i: number) => string): boolean => {
+  let vals = given;
+  let kind = 'argument';
+  const fits = (m: MethodAccessor, slots: readonly number[]): boolean => {
     let matched = 0;
     let depth = 0;
     let first: string | undefined;
     for (let k = 0; k < slots.length; k++) {
-      const i = slots[k]!;
-      const p = m.params[i]!;
+      const p = m.params[slots[k]!]!;
       const co = coerce(model, vals[k], p.type ?? 'any', probe);
       if (co.ok) {
         matched++;
         continue;
       }
-      if (co.code !== undefined) throw new Denied(`${label(i)}: ${co.why}`);
+      if (co.code !== undefined) throw new Denied(`${kind} '${p.name}': ${co.why}`);
       if (first === undefined) {
-        first = `${label(i)}: ${co.why}`;
+        first = `${kind} '${p.name}': ${co.why}`;
         depth = co.depth ?? 0;
       }
     }
@@ -773,7 +774,6 @@ export function resolveOverload(
   };
   try {
     // 1. Positional: every candidate whose arity fits is checked; the first that fits is coerced.
-    let vals = given;
     const fitting: { m: MethodAccessor; slots: number[] }[] = [];
     for (const m of candidates) {
       const ps = m.params;
@@ -782,17 +782,17 @@ export function resolveOverload(
         continue;
       }
       const slots = vals.map((_, i) => i);
-      if (fits(m, vals, slots, (i) => `argument '${ps[i]!.name}'`)) fitting.push({ m, slots });
+      if (fits(m, slots)) fitting.push({ m, slots });
     }
     // 2. By name: a single object literal that no overload takes positionally names the parameters.
     const literal = given.length === 1 && given[0] instanceof ObjectValue ? given[0] : undefined;
     if (fitting.length === 0 && literal !== undefined) {
-      const named = [...literal.values()];
+      vals = [...literal.values()];
+      kind = 'parameter';
       for (const m of candidates) {
         const slots = bindNames(m, literal, misses);
-        if (slots !== undefined && fits(m, named, slots, (i) => `parameter '${m.params[i]!.name}'`)) fitting.push({ m, slots });
+        if (slots !== undefined && fits(m, slots)) fitting.push({ m, slots });
       }
-      if (fitting.length > 0) vals = named;
     }
     for (const { m, slots } of fitting) {
       const ps = m.params;
@@ -805,10 +805,10 @@ export function resolveOverload(
           cv[slots[k]!] = rawValue(co.value, p.type ?? 'any');
           continue;
         }
-        if (co.code !== undefined) throw new Denied(`argument '${p.name}': ${co.why}`);
+        if (co.code !== undefined) throw new Denied(`${kind} '${p.name}': ${co.why}`);
         // Only the real coercion sees what the probe cannot (member validators, constructors that throw); a candidate that
         // passed the probe is the closest match, so its reason is the one reported.
-        misses.push({ method: m, arityFits: true, matched: Number.MAX_SAFE_INTEGER, depth: 0, why: `argument '${p.name}': ${co.why}` });
+        misses.push({ method: m, arityFits: true, matched: Number.MAX_SAFE_INTEGER, depth: 0, why: `${kind} '${p.name}': ${co.why}` });
         ok = false;
       }
       if (ok) return { method: m, args: cv };

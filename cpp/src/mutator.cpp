@@ -966,12 +966,12 @@ bool ascii_iequals(const std::string& a, const std::string& b) {
 
 /// The parameter index of each literal key (exact name, else the only case-insensitive match); false with a miss when a key
 /// names no parameter or a parameter without a default is not named.
-bool bind_names(const MethodDescriptor& m, const Value& literal, std::vector<size_t>& slots, std::vector<Value>& vals, std::vector<Miss>& misses) {
+bool bind_names(const MethodDescriptor& m, const Value& literal, std::vector<size_t>& slots, std::vector<Miss>& misses) {
     const auto& ps = m.params;
     std::vector<bool> named(ps.size(), false);
     long long known = 0;
     std::string unknown, twice;
-    literal.map().for_each([&](const Value& k, const Value& v) {
+    literal.map().for_each([&](const Value& k, const Value&) {
         const std::string key = to_text(k);
         size_t i = ps.size();
         for (size_t j = 0; j < ps.size() && i == ps.size(); ++j)
@@ -992,7 +992,6 @@ bool bind_names(const MethodDescriptor& m, const Value& literal, std::vector<siz
         }
         named[i] = true;
         slots.push_back(i);
-        vals.push_back(v);
         ++known;
         return true;
     });
@@ -1023,7 +1022,9 @@ bool bind_names(const MethodDescriptor& m, const Value& literal, std::vector<siz
 const MethodDescriptor* resolve_overload(Exec& x, const TypeDescriptor& type, const std::vector<const MethodDescriptor*>& candidates,
                                          const std::vector<Value>& given, std::vector<Value>& coerced, std::string& why) {
     std::vector<Miss> misses;
-    auto fits = [&](const MethodDescriptor& m, const std::vector<Value>& vals, const std::vector<size_t>& slots, const char* label) {
+    std::vector<Value> vals = given;
+    std::string kind = "argument";
+    auto fits = [&](const MethodDescriptor& m, const std::vector<size_t>& slots) {
         long long matched = 0;
         int depth = 0;
         std::string first;
@@ -1036,7 +1037,7 @@ const MethodDescriptor* resolve_overload(Exec& x, const TypeDescriptor& type, co
                 continue;
             }
             if (first.empty()) {
-                first = std::string(label) + " '" + p.name + "': " + w;
+                first = kind + " '" + p.name + "': " + w;
                 depth = d;
             }
         }
@@ -1061,22 +1062,21 @@ const MethodDescriptor* resolve_overload(Exec& x, const TypeDescriptor& type, co
         }
         std::vector<size_t> slots;
         for (size_t i = 0; i < given.size(); ++i) slots.push_back(i);
-        if (fits(*m, given, slots, "argument")) fitting.push_back({m, std::move(slots)});
+        if (fits(*m, slots)) fitting.push_back({m, std::move(slots)});
     }
     // 2. By name: a single object literal that no overload takes positionally names the parameters.
-    std::vector<Value> named;
-    const bool by_name = fitting.empty() && given.size() == 1 && given[0].is_map() && given[0].map().object_literal();
-    if (by_name) {
+    if (fitting.empty() && given.size() == 1 && given[0].is_map() && given[0].map().object_literal()) {
+        vals.clear();
+        given[0].map().for_each([&](const Value&, const Value& v) {
+            vals.push_back(v);
+            return true;
+        });
+        kind = "parameter";
         for (auto* m : candidates) {
             std::vector<size_t> slots;
-            std::vector<Value> vals;
-            if (!bind_names(*m, given[0], slots, vals, misses)) continue;
-            if (!fits(*m, vals, slots, "parameter")) continue;
-            named = vals;  // every candidate binds the same values; only their order follows the literal
-            fitting.push_back({m, std::move(slots)});
+            if (bind_names(*m, given[0], slots, misses) && fits(*m, slots)) fitting.push_back({m, std::move(slots)});
         }
     }
-    const std::vector<Value>& vals = by_name ? named : given;
     for (auto& f : fitting) {
         const auto& ps = f.m->params;
         std::vector<Value> cv;
@@ -1092,7 +1092,7 @@ const MethodDescriptor* resolve_overload(Exec& x, const TypeDescriptor& type, co
             }
             // Only the real coercion sees what the probe cannot (member validators, setters that throw); a candidate that
             // passed the probe is the closest match, so its reason is the one reported.
-            misses.push_back({f.m, true, std::numeric_limits<long long>::max(), 0, "argument '" + p.name + "': " + w});
+            misses.push_back({f.m, true, std::numeric_limits<long long>::max(), 0, kind + " '" + p.name + "': " + w});
             ok = false;
         }
         if (ok) {

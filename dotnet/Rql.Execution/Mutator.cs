@@ -668,9 +668,11 @@ namespace Rql.Execution
                 ArityFits != o.ArityFits ? (ArityFits ? 1 : -1) : Matched != o.Matched ? Matched.CompareTo(o.Matched) : Depth.CompareTo(o.Depth);
         }
 
-        public static (CallableMethod? method, object?[]? args, string why) Resolve(RqlKernel kernel, IReadOnlyList<CallableMethod> candidates, object?[] vals)
+        public static (CallableMethod? method, object?[]? args, string why) Resolve(RqlKernel kernel, IReadOnlyList<CallableMethod> candidates, object?[] given)
         {
             var misses = new List<Miss>();
+            var vals = given;
+            string kind = "argument";
             // 1. Positional: every candidate whose arity fits is checked without side effects; the first that fits is coerced.
             var fitting = new List<(CallableMethod m, int[] slots)>();
             foreach (var m in candidates)
@@ -678,56 +680,49 @@ namespace Rql.Execution
                 var ps = m.Parameters;
                 if (ps.Count < vals.Length || ps.Skip(vals.Length).Any(p => !p.HasDefault)) { misses.Add(new Miss(m, false, 0, 0, "")); continue; }
                 var slots = Enumerable.Range(0, vals.Length).ToArray();
-                if (Probe(kernel, m, vals, slots, i => $"argument '{ps[i].Name}'", misses)) fitting.Add((m, slots));
+                if (Probe(kernel, m, vals, slots, kind, misses)) fitting.Add((m, slots));
             }
             // 2. By name: a single object literal that no overload takes positionally names the parameters (missing ones
             //    take their defaults).
-            if (fitting.Count == 0 && vals.Length == 1 && vals[0] is ObjectValue literal)
+            if (fitting.Count == 0 && given.Length == 1 && given[0] is ObjectValue literal)
             {
+                vals = literal.Values.ToArray();
+                kind = "parameter";
                 foreach (var m in candidates)
                 {
                     var slots = BindNames(m, literal, misses);
-                    if (slots == null) continue;
-                    var named = literal.Values.ToArray();
-                    if (Probe(kernel, m, named, slots, i => $"parameter '{m.Parameters[i].Name}'", misses)) fitting.Add((m, slots));
+                    if (slots != null && Probe(kernel, m, vals, slots, kind, misses)) fitting.Add((m, slots));
                 }
-                if (fitting.Count > 0) vals = literal.Values.ToArray();
             }
             foreach (var (m, slots) in fitting)
             {
                 var ps = m.Parameters;
-                var cv = new object?[ps.Count];
-                var given = new bool[ps.Count];
+                var cv = ps.Select(p => p.Default).ToArray();
                 bool ok = true;
                 for (int k = 0; k < slots.Length && ok; k++)
                 {
-                    int i = slots[k];
-                    given[i] = true;
-                    if (!Coerce.TryTo(kernel, vals[k], ps[i].Type, out cv[i], out var w))
-                    {
-                        // Only the real coercion sees what the probe cannot (member validators, constructors that throw); a
-                        // candidate that passed the probe is the closest match, so its reason is the one reported.
-                        misses.Add(new Miss(m, true, int.MaxValue, 0, $"argument '{ps[i].Name}': {w}"));
-                        ok = false;
-                    }
+                    var p = ps[slots[k]];
+                    if (Coerce.TryTo(kernel, vals[k], p.Type, out cv[slots[k]], out var w)) continue;
+                    // Only the real coercion sees what the probe cannot (member validators, constructors that throw); a
+                    // candidate that passed the probe is the closest match, so its reason is the one reported.
+                    misses.Add(new Miss(m, true, int.MaxValue, 0, $"{kind} '{p.Name}': {w}"));
+                    ok = false;
                 }
-                if (!ok) continue;
-                for (int i = 0; i < ps.Count; i++) if (!given[i]) cv[i] = ps[i].Default;
-                return (m, cv, "");
+                if (ok) return (m, cv, "");
             }
-            return (null, null, Explain(misses, vals.Length));
+            return (null, null, Explain(misses, given.Length));
         }
 
         /// <summary>Checks every bound value against its parameter (no side effects); records a miss and returns false when one fails.</summary>
-        private static bool Probe(RqlKernel kernel, CallableMethod m, object?[] vals, int[] slots, Func<int, string> label, List<Miss> misses)
+        private static bool Probe(RqlKernel kernel, CallableMethod m, object?[] vals, int[] slots, string kind, List<Miss> misses)
         {
             int matched = 0, depth = 0;
             string? first = null;
             for (int k = 0; k < slots.Length; k++)
             {
-                int i = slots[k];
-                if (Coerce.CanConvert(kernel, vals[k], m.Parameters[i].Type, out var w, out var d)) { matched++; continue; }
-                if (first == null) { first = $"{label(i)}: {w}"; depth = d; }
+                var p = m.Parameters[slots[k]];
+                if (Coerce.CanConvert(kernel, vals[k], p.Type, out var w, out var d)) { matched++; continue; }
+                if (first == null) { first = $"{kind} '{p.Name}': {w}"; depth = d; }
             }
             if (first == null) return true;
             misses.Add(new Miss(m, true, matched, depth, first));
