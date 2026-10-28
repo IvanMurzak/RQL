@@ -100,6 +100,19 @@ export const nodeAdapter: TypeAdapter<Node> = {
         'Value += by; returns the new Value',
         (n, by: number) => (by < 0 ? 'by must be non-negative' : n.Id === 5 ? 'node 5 is frozen' : undefined),
       )
+      .method(
+        'spawn',
+        [{ name: 'name', type: t.string }],
+        t.of(Node),
+        (n, name: string) => {
+          // The fixture's creation method: a child with Id = parent Id * 100 + its position (from 1).
+          const child = Object.assign(new Node(), { Id: n.Id * 100 + n.Children.length + 1, Name: name, Kind: NodeKind.Alpha, Enabled: true, Parent: n });
+          n.Children.push(child);
+          return child;
+        },
+        'append a new child node named name; returns it',
+        (_n, name: string) => (name.length === 0 ? 'name must not be empty' : undefined),
+      )
       .add<string[]>('tagsCopy', {
         type: t.list(t.string),
         get: (n) => [...n.Tags],

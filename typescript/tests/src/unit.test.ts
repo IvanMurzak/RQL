@@ -726,7 +726,7 @@ function wave3bEngine(doors: { Name: string; Opened: number }[]): RqlEngine {
 }
 
 test('the unknown-source example names a registered source', () => {
-  const d = wave3bEngine([]).execute('[0, 1, 2] | select $').diagnostics[0]!;
+  const d = wave3bEngine([]).execute('"doors" | select $').diagnostics[0]!;
   assert.equal(d.code, 'unknown-source');
   assert.ok(d.message.includes('(e.g. doors)'), d.message);
   assert.ok(!(d.message + d.hint).includes('world'));
@@ -787,5 +787,5 @@ test('empty-mutation edges: throwing hook, static silencing, has() guard, severa
   assert.equal(e.execute('doors | where has(glow) | set Name = "Y"', {}, { allowMutation: true }).ok, true);
   e.addSource('editor2', () => e.sources.get('editor')!.getter());
   const d = e.execute('doors | call createThing("a")', {}, { allowMutation: true }).diagnostics[0]!;
-  assert.ok(d.hint!.includes('sources with createThing: editor, editor2 (e.g. editor | call createThing(…))'), d.hint);
+  assert.ok(d.hint!.includes('sources with createThing: editor, editor2 (e.g. editor | call createThing(…) once, … | call editor.createThing(… $ …) once per item)'), d.hint);
 });

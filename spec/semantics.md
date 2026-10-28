@@ -58,14 +58,26 @@ The source is a `postfix` expression evaluated in **root scope**:
 
 * A path whose leading dotted segments match a registered source name (longest match wins,
   e.g. `unity.gameObjects` before `unity`) resolves to that source's live value; remaining
-  segments navigate from it. Unknown root → error `unknown-source` (with suggestions). Any other source text (a literal,
-  a list, an unknown function) is `unknown-source` too; its message gives a registered source as the example (the
-  first one the host registered, never an invented name) and its hint lists the sources and source functions.
+  segments navigate from it. Unknown root → error `unknown-source` (with suggestions). Any other source text (a scalar
+  literal, an unknown function, an operator) is `unknown-source` too; its message gives a registered source as the example
+  (the first one the host registered, never an invented name) and its hint lists the sources and source functions.
 * `ref("Type#id", ...)` resolves stable object references (§7). Unresolvable → `stale-ref`.
   `ref()` may also be used inside expressions (e.g. `set Target = ref("Player#1")`).
 * A call to a registered host extension function (§9), e.g. `unity.assets("t:Material")`, evaluated with no current
   item; its value is the source value. An error value fails the query with its code. (Implemented in .NET; TS/C++
   parity pending.)
+* The core function **`range(start, end[, step])`** streams numbers: `start + k × step` for k = 0, 1, … while the
+  number is below `end` (`step` > 0) or above it (`step` < 0); `step` defaults to 1 and `end` is excluded, so
+  `range(0, 300)` gives 0 … 299 (`$index` is the same as the number) and `range(10, 0, -2)` gives 10, 8, 6, 4, 2. The
+  arguments are evaluated with no current item; a non-number or non-finite argument, or a `step` of 0, fails the query
+  with `type-mismatch`, and a wrong argument count with `arity`. The numbers are produced one at a time and each counts
+  against `maxVisited` like any streamed item, so `range(0, 1e9) | first 3` is cheap and an unbounded range ends in
+  `budget-exceeded`; when the range feeds a `set` / `call`, the target limit stops it first (§8). `$path` of an item is
+  `range(…)[k]`. A host function registered as `range` takes precedence. In an expression `range(…)` is the list of
+  those numbers (§4.3).
+* A **list literal** `[a, b, …]` streams its elements, evaluated with no current item (bare paths in it read nothing:
+  use `ref(…)` for objects); `$path` of an element is `[…][i]`. `[["Crate", 1], ["Barrel", 2]] | call editor.Create($[0], $[1])`
+  creates one object per entry (§8).
 
 If the source value is a `list` its elements become the item stream; a `map` yields its entries
 (§4.4); anything else yields a single item.
@@ -167,6 +179,7 @@ modulo by zero → `error(div-by-zero)`. Other operand kinds → `error(type-mis
 | `insert(list, i, v)` | a new list with `v` inserted before index `i` (negative `i` counts from the end, `-1` appends). |
 | `remove-at(list, i)` | a new list without the element at `i` (negative from the end). |
 | `without(list, v)` | a new list without the elements equal to `v` (§4.1). |
+| `range(start, end[, step])` | the list of the numbers `range` streams as a source (§2); each number counts against `maxVisited`. Errors (a non-number, a zero step) are `type-mismatch` error values. |
 | `replace(s, from, to)` | `s` with every occurrence of `from` replaced by `to`, left to right, non-overlapping. `from` matches **ordinal case-insensitive** (like `contains`); an empty `from` returns `s`. |
 | `replace-regex(s, pattern, repl)` | `s` with every match of `pattern` (the `matches` dialect and case-insensitivity, §4.1) replaced by `repl`, in which `$0`–`$9` insert the match / group text (empty when the group did not take part or does not exist), `$$` inserts `$`, and any other `$` is literal. |
 | `substring(s, start[, length])` | the part of `s` from `start` (negative counts from the end), at most `length` characters (default: to the end). `start` and the end are clamped to the string, so out-of-range positions give a shorter or empty string; a negative `length` is a `type-mismatch` error value. |
@@ -257,7 +270,8 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
 | `group-by [n=]e, [n=]e ...` | several keys, or a named key: one row per distinct **combination** of key values, in order of first appearance, with one column per key — named like `select` columns (alias, or the key's source text: `group-by Folder, $type` → columns `Folder`, `$type`, `count`) — then `count`. Key values compare like `distinct` (lists by their elements: `group-by Tags` merges equal tag lists); `null`/`missing` values group as `null` per column. Keys are separated by commas or whitespace like `select` fields; computed keys need parentheses (`group-by Kind, big=(Mass > 10)`). Column names must be distinct (case-insensitive) and none may be `count` (`syntax-error` / `invalid-plan`). A single key without a name keeps the `{key, count}` form above. |
 | `describe` | terminal: schema of the distinct runtime types of the items (members, kinds, writability). |
 | `set p = e, ...` | mutation (§8). |
-| `call m(args)` | mutation: invoke an allowlisted method (§8). |
+| `call m(args)` | mutation: invoke an allowlisted method on each item (§8). |
+| `call q.m(args)` | mutation: invoke the method `m` of the one object the source expression `q` yields, once per item (source-qualified call, §8). |
 
 Terminal stages (`count`, aggregates, `describe`, `set`, `call`) MUST be last;
 otherwise `invalid-plan`.
@@ -281,7 +295,8 @@ member). Objects with **neither** an identity member nor a display member are va
 members, where nested identified objects become summaries and collections become the string
 `"<Type>[<count>]"`; structs → object of their public members (nested structs up to depth 2, deeper →
 `"…"`); lists → JSON array of encoded values (max `budgets.maxListItems`, default 20, then a
-trailing string `"…+N"`); maps → JSON object (string keys) of encoded values with the same limit.
+trailing string `"…+N"`); maps → JSON object (string keys) of encoded values with the same limit. A list or map nested
+inside itself (or nested more than 32 levels deep) encodes the repeated (or too deep) occurrence as the string `"…"`.
 Numbers: integral values without fraction; floats in shortest round-trip form of the *runtime's
 own precision* (a C# `float` 0.1f encodes as `0.1`, not `0.10000000149`; `(float)Math.PI / 2` as `1.5707964`, the
 shortest of the 9-digit forms, not `1.57079637`). Non-finite numbers encode as the strings `"NaN"`, `"Infinity"` and
@@ -330,8 +345,9 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   read that was **tested on items and missed on all of them** becomes an `unknown-member` **error** (its message adds
   that nothing was changed), provided **no known type declares** the name — no type statically reachable from the
   sources (the types the sources have produced so far: a source that is null right now, such as an empty selection, keeps
-  the types it had, so runtimes MAY cache the names by those types), no `select` / `group-by` column and nothing the
-  host's known-member hook accepts:
+  the types it had, so runtimes MAY cache the names by those types), no target type of a registered type adapter (§13;
+  its adapter-defined members included), no `select` / `group-by` column and nothing the host's known-member hook
+  accepts:
   `objects | where name == "X" | get transfrom | set position = …` fails instead of reporting "0 changes". These stay
   warnings with an empty receipt: a name some known type declares, so a polymorphic stream whose items happen not to
   have the member (`components | where intensity > 1 | set …` with no light among them) is a legitimate empty change;
@@ -367,6 +383,26 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   target, and `$index`, `$path` and `$depth` are the target's as it entered the stage: `$index` is its position in the
   stream entering `set` / `call` (null and destroyed items, which are skipped, keep their positions), so
   `nodes | where class == "RigidBody3D" | set Position.X = $index * 2` spreads the matches 0, 2, 4, ….
+* **Source-qualified call** `call q.m(args)`: `q` is a source expression (§2: a registered source with optional
+  navigation such as `editor` or `world.Scenes[0]`, `ref(…)`, a host function), evaluated **once**, before any item is
+  read; it must yield exactly one object with identity, the **receiver**. Its method `m` runs **once per stream item**,
+  and the item is only the scope of the arguments: `$`, `$index`, `$path` and `$depth` in them are the item's, and an
+  item may be any value — a number from `range`, a list entry, a string, a projected row, a map entry or an object
+  (null and destroyed items are skipped as above). So `range(0, 300) | call editor.CreateObject("Cube", {position:
+  [($ % 15) * 2, 0, floor($ / 15) * 2]})` creates 300 objects in one call. Everything else is the unqualified `call`'s:
+  the allowlist, coercion and overloads, per-invocation validators and batch validation (records name the receiver as
+  target; every invocation is resolved, coerced and validated before the first, on dry runs too), the host's
+  before-write hook receiving all invocations at once (one undo step), `call-threw` stopping the stage with the earlier
+  invocations completed, and the target limit, which counts **invocations** (items reaching the stage; on
+  `mutation-limit` the message counts items, not objects). The receiver's method is resolved before the stream is read,
+  so a misspelt method fails (`unknown-function`) even when no item arrives. A receiver that is not one object fails
+  before anything runs: a list or map → `invalid-plan` (its hint shows `q | call m(…)` for calling every element), null
+  or destroyed → `invalid-plan`, a struct or scalar → `invalid-plan`, an error value (e.g. `stale-ref`) → that code, and
+  a name that is not a source → `unknown-source` whose hint shows `… | get Member | call m(…)` for a method of each
+  item's member. Messages about one invocation name the receiver and the item's position (`for item 3`).
+* **Calls on items that are not objects**: an unqualified `call` whose items are numbers, strings or other value copies
+  is `invalid-plan` (targets must be objects); its hint shows the source-qualified form, naming the sources whose
+  object has the method (`… | call editor.CreateObject(… $ …)`).
 * **Map entries as targets**: a `set` target that is a map entry streamed from a map (`… | get Rows | where
   Value.IsElite | set Value.Health = Value.Health * 1.1`) writes through that map: `Value.p` (and a bare `p`, which reads
   through to the value like member access, §4.4) is the path `[key].p` on the map, and `Value` alone replaces the
@@ -428,7 +464,10 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   while counting is reported instead of `mutation-limit`: it is what the caller must fix first. A limit argument or
   hint override the host sets to an empty text counts as unset.
 * **Dry-run** (`options.dryRun`) computes and returns the receipt without writing.
-* Receipt: `kind: "rows"`, columns `["$ref", "member", "old", "new"]` (`call`: `["$ref", "method", "result"]`). A `set`
+* Receipt: `kind: "rows"`, columns `["$ref", "member", "old", "new"]` (`call`: `["$ref", "method", "result"]`, one row per
+  invocation; `$ref` is the target's, and for a source-qualified call the `$ref` of the returned object when the method
+  returned an object with identity — the created object — otherwise the receiver's; on a dry run the result is
+  `"(dry-run)"` and `$ref` the target's / receiver's). A `set`
   receipt lists only the assignments that changed the value: one whose planned (coerced) value **and** read-back `new`
   (below; the planned value on a dry run) both equal its `old` by `==` (§4.1) is a **no-op** — a write the host refused or
   clamped back to the old value is not, it stays listed so the caller sees that it did not take; a no-op is still
@@ -508,8 +547,9 @@ placeholder names), and never name request options (`options.allowMutation`) the
 otherwise "with the schema tool". A host MAY name its **mutation tool** (e.g. `rql-mutate`): a `set` / `call` sent without
 a mutation request is `permission-denied` "… requires a mutation request: run it with rql-mutate", otherwise "with the
 mutation tool". A `call` of a method the targets do not have (`unknown-function`) lists the targets' callable methods and also
-names every source whose value is a single object that has a callable method of that name
-(`objects | call CreateGameObject(…)` → "the source 'editor' has CreateGameObject: editor | call CreateGameObject(…)").
+names every source whose value is a single object that has a callable method of that name, with both forms
+(`objects | call CreateGameObject(…)` → "the source 'editor' has CreateGameObject: editor | call CreateGameObject(…) calls
+it once, … | call editor.CreateGameObject(… $ …) once per item").
 
 **Suggestions** ("did you mean …?" for members, sources, stages, functions and type names) rank candidates the same
 way in every runtime. Comparison is ASCII case-insensitive. A candidate qualifies when its *optimal string alignment*
@@ -526,7 +566,8 @@ lack while other targets have it fails with `unknown-member` naming how many tar
 have it ("only OmniLight3D has 'light_energy': filter first, e.g. … | where $ is OmniLight3D | set …"), and an unknown
 `call` method names the targets' types that have it likewise.
 Runtimes SHOULD also report `unknown-member` for a bare name that was never evaluated (short-circuit,
-empty stream, the untaken branch of `if`) when no type statically reachable from the sources declares it, no `select`
+empty stream, the untaken branch of `if`) when no type statically reachable from the sources or adapted by a type
+adapter declares it, no `select`
 alias produces it, no other read of the name found it and the host's known-member hook (§8) does not accept it.
 
 ## 11. Lexical conveniences (normative)
@@ -669,8 +710,8 @@ registration (`TypeSpec.name` plus the extra `is` names in `interfaces` / the `T
 `ClassBuilder::also_is`), which already gives both.
 
 **Listing.** Engines list their registered adapters in registration order (.NET `RqlEngine.Adapters`, TypeScript
-`engine.adapters`, C++ `Engine::adapters()`), e.g. for a host known-member hook (§8) that also accepts members adapters
-add.
+`engine.adapters`, C++ `Engine::adapters()`). The members of adapters' target types, adapter-defined members included,
+are known names (§8, §10) without a host hook.
 
 **Scope.** Adapters belong to an engine (a host may run engines with different adapter sets over one type registry);
 engines without adapters behave exactly as without this section. An explicit-only member is also not searched by

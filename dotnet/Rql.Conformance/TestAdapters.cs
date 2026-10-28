@@ -135,7 +135,18 @@ namespace Rql.Conformance
                         description: "Name / Value / Enabled with per-key types")
                     .AddMethod("bump", new[] { new CallableParameter("by", typeof(double), true, 1.0) }, typeof(double),
                         (o, args) => { var n = (Node)o; n.Value += (double)args[0]!; return n.Value; }, "Value += by; returns the new Value",
-                        (o, args) => (double)args[0]! < 0 ? "by must be non-negative" : ((Node)o).Id == 5 ? "node 5 is frozen" : null);
+                        (o, args) => (double)args[0]! < 0 ? "by must be non-negative" : ((Node)o).Id == 5 ? "node 5 is frozen" : null)
+                    .AddMethod("spawn", new[] { new CallableParameter("name", typeof(string)) }, typeof(Node),
+                        (o, args) => Spawn((Node)o, (string)args[0]!), "append a new child node named name; returns it",
+                        (o, args) => string.IsNullOrEmpty((string?)args[0]) ? "name must not be empty" : null);
+
+            /// <summary>The fixture's creation method: a child with Id = parent Id * 100 + its position (from 1).</summary>
+            private static Node Spawn(Node parent, string name)
+            {
+                var child = new Node { Id = parent.Id * 100 + parent.Children.Count + 1, Name = name, Kind = NodeKind.Alpha, Enabled = true, Parent = parent };
+                parent.Children.Add(child);
+                return child;
+            }
 
             private static readonly string[] Labels = { "name", "kind" };
             private static readonly string[] FieldNames = { "Name", "Value", "Enabled" };

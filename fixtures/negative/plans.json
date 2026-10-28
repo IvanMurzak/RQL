@@ -885,6 +885,81 @@
     ]
    },
    "code": null
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "call",
+      "method": "m",
+      "on": {
+       "pth": [
+        "g"
+       ]
+      },
+      "args": []
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "call",
+      "method": "m",
+      "on": "g",
+      "args": []
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "call": "range",
+     "args": [
+      {
+       "lit": 0
+      },
+      {
+       "lit": 3
+      }
+     ]
+    },
+    "stages": [
+     {
+      "op": "call",
+      "method": "m",
+      "on": {
+       "path": [
+        "g"
+       ]
+      },
+      "args": [
+       {
+        "path": []
+       }
+      ]
+     }
+    ]
+   },
+   "code": null
   }
  ]
 }

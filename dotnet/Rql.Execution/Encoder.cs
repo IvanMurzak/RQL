@@ -68,6 +68,12 @@ namespace Rql.Execution
             return r;
         }
 
+        /// <summary>The lists and maps being encoded (by identity): one nested in itself, or nested deeper than
+        /// <see cref="Compiler.MaxCompareDepth"/>, encodes as "…" instead of recursing forever (spec §6).</summary>
+        private readonly HashSet<object> _open = new HashSet<object>(new RefEq());
+
+        private bool Open(object collection) => _open.Count < Compiler.MaxCompareDepth && _open.Add(collection);
+
         public JsonNode? Encode(object? v, int depth = 0)
         {
             if (v != null && _x.Types.IsDead(v)) return null; // final guard: destroyed objects encode as null
@@ -134,32 +140,42 @@ namespace Rql.Execution
             {
                 case TypeKind.List:
                 {
-                    var arr = new JsonArray();
-                    int n = 0, total = 0;
-                    foreach (var el in (IEnumerable)v)
+                    if (!Open(v)) return JsonValue.Create("…");
+                    try
                     {
-                        total++;
-                        if (n < _x.MaxListItems) { arr.Add(Encode(el, depth + 1)); n++; }
+                        var arr = new JsonArray();
+                        int n = 0, total = 0;
+                        foreach (var el in (IEnumerable)v)
+                        {
+                            total++;
+                            if (n < _x.MaxListItems) { arr.Add(Encode(el, depth + 1)); n++; }
+                        }
+                        if (total > n) arr.Add(JsonValue.Create("…+" + (total - n).ToString(CultureInfo.InvariantCulture)));
+                        return arr;
                     }
-                    if (total > n) arr.Add(JsonValue.Create("…+" + (total - n).ToString(CultureInfo.InvariantCulture)));
-                    return arr;
+                    finally { _open.Remove(v); }
                 }
                 case TypeKind.Map:
                 {
-                    var obj = new JsonObject();
-                    int n = 0, total = 0;
-                    foreach (var e in V.EnumerateMap(v, info))
+                    if (!Open(v)) return JsonValue.Create("…");
+                    try
                     {
-                        total++;
-                        if (n >= _x.MaxListItems) continue;
-                        var me = (MapEntry)e!;
-                        var key = Compiler.ToText(me.Key);
-                        if (obj.ContainsKey(key)) continue;
-                        obj[key] = Encode(me.Value, depth + 1);
-                        n++;
+                        var obj = new JsonObject();
+                        int n = 0, total = 0;
+                        foreach (var e in V.EnumerateMap(v, info))
+                        {
+                            total++;
+                            if (n >= _x.MaxListItems) continue;
+                            var me = (MapEntry)e!;
+                            var key = Compiler.ToText(me.Key);
+                            if (obj.ContainsKey(key)) continue;
+                            obj[key] = Encode(me.Value, depth + 1);
+                            n++;
+                        }
+                        if (total > n) obj["…"] = JsonValue.Create("+" + (total - n).ToString(CultureInfo.InvariantCulture));
+                        return obj;
                     }
-                    if (total > n) obj["…"] = JsonValue.Create("+" + (total - n).ToString(CultureInfo.InvariantCulture));
-                    return obj;
+                    finally { _open.Remove(v); }
                 }
                 case TypeKind.Struct:
                 {

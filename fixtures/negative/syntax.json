@@ -169,6 +169,10 @@
     {
       "rql": "g | select v = (a ? b , c)",
       "code": "syntax-error"
+    },
+    {
+      "rql": "range(0, 3) | call editor.Create",
+      "code": "syntax-error"
     }
   ]
 }

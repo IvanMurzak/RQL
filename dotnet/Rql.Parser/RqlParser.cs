@@ -394,6 +394,14 @@ namespace Rql
         {
             var t = Peek();
             if (!IsName(t)) throw Error("expected a method name after 'call'", t, "example: call Heal(10)");
+            if (t.Kind == TokenKind.Ident && (Peek(1).Is(".") || (Peek(1).Is("(") && !Peek(1).SpaceBefore)))
+            {
+                // call M(args), or a source-qualified call: call editor.Create(args), call ref("T#1").M(args) (spec §8).
+                var e = ParsePostfix();
+                if (e is CallExpr c) return new CallStage(c.Name, c.Args, c.On);
+                throw Error("a source-qualified call needs parentheses", Peek(),
+                    "example: … | call editor.Create(\"Cube\") runs the source's method once per item");
+            }
             Next();
             var args = Peek().Is("(") ? ParseArgs() : new List<Expr>();
             return new CallStage(t.Text, args);

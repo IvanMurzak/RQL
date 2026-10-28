@@ -1041,7 +1041,7 @@ namespace {
 
 const char* kCoreFunctions[] = {"has", "is-null", "len", "lower", "upper", "abs", "round", "floor", "ceil", "sqrt", "pow", "min", "max",
                                 "coalesce", "if", "ref",
-                                "append", "insert", "remove-at", "without",
+                                "append", "insert", "remove-at", "without", "range",
                                 "replace", "replace-regex", "substring", "split", "trim", "pad",
                                 "contains", "starts-with", "ends-with", "matches"};
 const char* kCoreMethods[] = {"any", "all", "count", "sum", "min", "max", "avg", "first", "keys", "values",
@@ -1341,6 +1341,35 @@ Value aggregate(Exec& x, const Value& v, const Eval* sel, const std::string& kin
 
 }  // namespace
 
+bool range_of(const Value& a, const Value& b, const Value& c, double& start, double& step, int64_t& count, Value& error) {
+    double nums[3] = {0, 0, 1};
+    const Value* vals[3] = {&a, &b, &c};
+    for (int i = 0; i < 3; ++i) {
+        const Value& v = *vals[i];
+        if (v.is_error()) {
+            error = v;
+            return false;
+        }
+        if (!try_number(v, nums[i])) {
+            error = Value::error("type-mismatch", "range() expects numbers, got " + describe_value(v));
+            return false;
+        }
+        if (!std::isfinite(nums[i])) {
+            error = Value::error("type-mismatch", "range() expects finite numbers, got " + format_number_text(nums[i]));
+            return false;
+        }
+    }
+    start = nums[0];
+    step = nums[2];
+    if (step == 0) {
+        error = Value::error("type-mismatch", "range() step must not be 0");
+        return false;
+    }
+    const double n = std::ceil((nums[1] - start) / step);
+    count = n <= 0 ? 0 : n >= 9.2e18 ? INT64_MAX : static_cast<int64_t>(n);
+    return true;
+}
+
 void Compiler::arity(const Expr& c, size_t min, size_t max) {
     if (c.args.size() < min || c.args.size() > max) {
         std::string expect = min == max ? std::to_string(min) : std::to_string(min) + "-" + std::to_string(max);
@@ -1473,6 +1502,23 @@ Eval Compiler::compile_function(const Expr& c) {
         };
     }
     // List editing (spec §4.3): pure functions returning a new list; assign the result with `set`.
+    if (name == "range") {
+        arity(c, 2, 3);
+        std::vector<Eval> args;
+        for (auto& e : c.args) args.push_back(compile(*e));
+        return [args](Exec& x) -> Value {
+            double start = 0, step = 1;
+            int64_t count = 0;
+            Value error;
+            if (!range_of(args[0](x), args[1](x), args.size() > 2 ? args[2](x) : Value::number(1), start, step, count, error)) return error;
+            std::vector<Value> list;
+            for (int64_t k = 0; k < count; ++k) {
+                x.visit();  // a range is bounded by maxVisited like any stream (spec §2)
+                list.push_back(Value::number(start + static_cast<double>(k) * step));
+            }
+            return Value::list_of(std::move(list));
+        };
+    }
     if (name == "append" || name == "insert" || name == "remove-at" || name == "without") {
         enum class ListFn { Append, Insert, RemoveAt, Without };
         const ListFn fn = name == "append" ? ListFn::Append : name == "insert" ? ListFn::Insert : name == "remove-at" ? ListFn::RemoveAt : ListFn::Without;

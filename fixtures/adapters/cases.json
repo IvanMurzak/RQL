@@ -14,7 +14,7 @@
     "Node": {
       "members": "virtual member `childCount` (int, read-only) = Children count; virtual writable member `title` (string): get = Name upper-cased (ASCII), set = Name := value lower-cased (ASCII); validation rejects an empty string with reason \"title must not be empty\" (before any write); the setter itself THROWS \"node 3 is locked\" when the node's Id is 3 (exercises rollback); member `Note` is HIDDEN; member `Children` is EXPLICIT-ONLY (generic recurse does not follow it); virtual map `stats` (map<string, number>): keys = Props keys in order, get = Props[key], set = Props[key] := value, validation rejects a key not in Props with reason \"unknown stat '<key>'\" and a negative value with \"stats must be non-negative\"; read-only virtual map `labels` (map<string, string>): keys \"name\", \"kind\" -> Name, Kind (enum name); virtual member `tagsCopy` (list<string>): get = a NEW copy of Tags, set = Tags := value, marked COPY-ON-READ; mixed-type virtual map `fields`: keys \"Name\", \"Value\", \"Enabled\" with entry types string / double / bool, get/set the corresponding member",
       "describe": "Node: a conformance graph node",
-      "methods": "callable `bump(number by = 1)`: Value += by, returns the new Value; its VALIDATOR rejects by < 0 with reason \"by must be non-negative\" and the node with Id 5 with \"node 5 is frozen\"; callable `greet(string who)`: returns \"hi <who>, I am <Name>\", no state change; callable `fail(string why)`: always THROWS with message <why> (call-threw)",
+      "methods": "callable `bump(number by = 1)`: Value += by, returns the new Value; its VALIDATOR rejects by < 0 with reason \"by must be non-negative\" and the node with Id 5 with \"node 5 is frozen\"; callable `greet(string who)`: returns \"hi <who>, I am <Name>\", no state change; callable `fail(string why)`: always THROWS with message <why> (call-threw); callable `spawn(string name)`: appends a new Node to this node's Children and returns it — Id = this Id * 100 + Children count + 1 (counted before adding), Name = name, Kind Alpha, Value 0, Enabled true, Note null, Pos (0, 0), Tags [], Props {}, Children [], Parent = this node, Peer null; its VALIDATOR rejects an empty name with reason \"name must not be empty\"",
       "liveness": "IsAlive = Tags does not contain \"destroyed\" (destroyed nodes read as null)"
     },
     "Special": {
@@ -1876,7 +1876,8 @@
             "methods": [
               "bump(double by) — Value += by; returns the new Value",
               "fail(string why) — always throws (call-threw)",
-              "greet(string who) — a greeting (no state change)"
+              "greet(string who) — a greeting (no state change)",
+              "spawn(string name) — append a new child node named name; returns it"
             ]
           }
         ]
@@ -5219,6 +5220,1450 @@
             "op": "call",
             "method": "bump",
             "args": []
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-plan"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-call-qualified-range",
+      "rql": "range(0, 3) | call ref(\"Node#8\").bump($ + 1)",
+      "then": "ref(\"Node#8\") | select Value",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 3
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#8"
+                }
+              ]
+            },
+            "args": [
+              {
+                "op": "+",
+                "args": [
+                  {
+                    "path": []
+                  },
+                  {
+                    "lit": 1
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "bump(double by)",
+            4
+          ],
+          [
+            "Node#8",
+            "bump(double by)",
+            6
+          ],
+          [
+            "Node#8",
+            "bump(double by)",
+            9
+          ]
+        ],
+        "total": 3
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Value"
+        ],
+        "rows": [
+          [
+            9
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-call-qualified-list",
+      "rql": "[\"Ann\", \"Bob\"] | call ref(\"Node#8\").greet($ + \" \" + $index)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "list": [
+            {
+              "lit": "Ann"
+            },
+            {
+              "lit": "Bob"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "greet",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#8"
+                }
+              ]
+            },
+            "args": [
+              {
+                "op": "+",
+                "args": [
+                  {
+                    "op": "+",
+                    "args": [
+                      {
+                        "path": []
+                      },
+                      {
+                        "lit": " "
+                      }
+                    ]
+                  },
+                  {
+                    "path": [
+                      {
+                        "meta": "index"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi Ann 0, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi Bob 1, I am lonely"
+          ]
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "adapt-call-qualified-stream",
+      "rql": "g.Nodes | call g.Nodes[2].greet(Name)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "greet",
+            "on": {
+              "path": [
+                "g",
+                "Nodes",
+                {
+                  "index": 2
+                }
+              ]
+            },
+            "args": [
+              {
+                "path": [
+                  "Name"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi root-a, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi root-b, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi lonely, I am lonely"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "adapt-call-qualified-path-target",
+      "rql": "range(0, 2) | call g.Index.special.greet(\"#\" + $)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "greet",
+            "on": {
+              "path": [
+                "g",
+                "Index",
+                "special"
+              ]
+            },
+            "args": [
+              {
+                "op": "+",
+                "args": [
+                  {
+                    "lit": "#"
+                  },
+                  {
+                    "path": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Special#3",
+            "greet(string who)",
+            "hi #0, I am a-2"
+          ],
+          [
+            "Special#3",
+            "greet(string who)",
+            "hi #1, I am a-2"
+          ]
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "adapt-call-qualified-validate",
+      "rql": "[1, -1, 2] | call ref(\"Node#8\").bump($)",
+      "then": "ref(\"Node#8\") | select Value",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "list": [
+            {
+              "lit": 1
+            },
+            {
+              "lit": -1
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#8"
+                }
+              ]
+            },
+            "args": [
+              {
+                "path": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-value"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Value"
+        ],
+        "rows": [
+          [
+            3
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-call-qualified-validate-dry-run",
+      "rql": "[1, -1] | call ref(\"Node#8\").bump($)",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "list": [
+            {
+              "lit": 1
+            },
+            {
+              "lit": -1
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#8"
+                }
+              ]
+            },
+            "args": [
+              {
+                "path": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-value"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-call-qualified-dry-run",
+      "rql": "range(0, 2) | call ref(\"Node#8\").bump(1)",
+      "then": "ref(\"Node#8\") | select Value",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#8"
+                }
+              ]
+            },
+            "args": [
+              {
+                "lit": 1
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "bump(double by)",
+            "(dry-run)"
+          ],
+          [
+            "Node#8",
+            "bump(double by)",
+            "(dry-run)"
+          ]
+        ],
+        "total": 2,
+        "dryRun": true
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Value"
+        ],
+        "rows": [
+          [
+            3
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-call-qualified-batch-refused",
+      "rql": "range(0, 20) | call ref(\"Node#8\").bump(10)",
+      "then": "ref(\"Node#8\") | select Value",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 20
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#8"
+                }
+              ]
+            },
+            "args": [
+              {
+                "lit": 10
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-value"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Value"
+        ],
+        "rows": [
+          [
+            3
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-call-qualified-frozen",
+      "rql": "range(0, 2) | call ref(\"Node#5\").bump(1)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#5"
+                }
+              ]
+            },
+            "args": [
+              {
+                "lit": 1
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-value"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-call-qualified-limit",
+      "rql": "range(0, 25) | call ref(\"Node#8\").greet(\"x\")",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 25
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "greet",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#8"
+                }
+              ]
+            },
+            "args": [
+              {
+                "lit": "x"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "mutation-limit"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-call-qualified-limit-raised",
+      "rql": "range(0, 25) | call ref(\"Node#8\").greet(\"x\")",
+      "options": {
+        "allowMutation": true
+      },
+      "budgets": {
+        "maxMutationTargets": 25
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 25
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "greet",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#8"
+                }
+              ]
+            },
+            "args": [
+              {
+                "lit": "x"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi x, I am lonely"
+          ]
+        ],
+        "total": 25
+      }
+    },
+    {
+      "name": "adapt-call-qualified-threw",
+      "rql": "range(0, 2) | call ref(\"Node#8\").fail(\"boom\" + $)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "fail",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#8"
+                }
+              ]
+            },
+            "args": [
+              {
+                "op": "+",
+                "args": [
+                  {
+                    "lit": "boom"
+                  },
+                  {
+                    "path": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "call-threw"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-call-qualified-spawn",
+      "rql": "range(0, 3) | call ref(\"Node#8\").spawn(\"kid-\" + $)",
+      "then": "ref(\"Node#8\") | get Children | select $ref, Name, Parent.Name",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 3
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "spawn",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#8"
+                }
+              ]
+            },
+            "args": [
+              {
+                "op": "+",
+                "args": [
+                  {
+                    "lit": "kid-"
+                  },
+                  {
+                    "path": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#801",
+            "spawn(string name)",
+            {
+              "$ref": "Node#801",
+              "name": "kid-0"
+            }
+          ],
+          [
+            "Node#802",
+            "spawn(string name)",
+            {
+              "$ref": "Node#802",
+              "name": "kid-1"
+            }
+          ],
+          [
+            "Node#803",
+            "spawn(string name)",
+            {
+              "$ref": "Node#803",
+              "name": "kid-2"
+            }
+          ]
+        ],
+        "total": 3
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "get",
+            "expr": {
+              "path": [
+                "Children"
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "$ref",
+                "expr": {
+                  "path": [
+                    {
+                      "meta": "ref"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Parent.Name",
+                "expr": {
+                  "path": [
+                    "Parent",
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "Name",
+          "Parent.Name"
+        ],
+        "rows": [
+          [
+            "Node#801",
+            "kid-0",
+            "lonely"
+          ],
+          [
+            "Node#802",
+            "kid-1",
+            "lonely"
+          ],
+          [
+            "Node#803",
+            "kid-2",
+            "lonely"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "adapt-call-qualified-spawn-dry-run",
+      "rql": "[\"x\", \"y\"] | call ref(\"Node#8\").spawn($)",
+      "then": "ref(\"Node#8\") | select childCount",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "list": [
+            {
+              "lit": "x"
+            },
+            {
+              "lit": "y"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "spawn",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#8"
+                }
+              ]
+            },
+            "args": [
+              {
+                "path": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "spawn(string name)",
+            "(dry-run)"
+          ],
+          [
+            "Node#8",
+            "spawn(string name)",
+            "(dry-run)"
+          ]
+        ],
+        "total": 2,
+        "dryRun": true
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "childCount",
+                "expr": {
+                  "path": [
+                    "childCount"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "childCount"
+        ],
+        "rows": [
+          [
+            0
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-call-qualified-spawn-validate",
+      "rql": "[\"x\", \"\"] | call ref(\"Node#8\").spawn($)",
+      "then": "ref(\"Node#8\") | select childCount",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "list": [
+            {
+              "lit": "x"
+            },
+            {
+              "lit": ""
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "spawn",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#8"
+                }
+              ]
+            },
+            "args": [
+              {
+                "path": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-value"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "childCount",
+                "expr": {
+                  "path": [
+                    "childCount"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "childCount"
+        ],
+        "rows": [
+          [
+            0
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-call-qualified-stale-target",
+      "rql": "range(0, 2) | call ref(\"Node#99\").bump(1)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#99"
+                }
+              ]
+            },
+            "args": [
+              {
+                "lit": 1
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "stale-ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-call-unqualified-numbers-hint",
+      "rql": "range(0, 2) | call spawn(\"x\")",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "spawn",
+            "args": [
+              {
+                "lit": "x"
+              }
+            ]
           }
         ]
       },

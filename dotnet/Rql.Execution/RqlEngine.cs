@@ -343,6 +343,14 @@ namespace Rql.Execution
             var reachable = Describe.Reachable(Types, roots, 1000);
             foreach (var t in reachable)
                 foreach (var m in Types.Info(t).Members) known.Add(m.Name);
+            // Adapters' target types count as known too (their virtual members included), reachable or not (spec §8): hosts add
+            // only names of their own through IsKnownMember.
+            foreach (var a in Types.Adapters)
+            {
+                if (a.Target.ContainsGenericParameters) continue;
+                try { foreach (var m in Types.Info(a.Target).Members) known.Add(m.Name); }
+                catch (Exception ex) when (!(ex is OutOfMemoryException)) { /* a type the model cannot describe adds no names */ }
+            }
             lock (_sourceTypes)
                 if (version == _knownVersion) { _knownMembers = known; _knownTypes = reachable; } // changed meanwhile: walk again next time
             return (known, reachable);
@@ -642,8 +650,25 @@ namespace Rql.Execution
             }
             if (names.Count == 0) return "";
             return names.Count == 1
-                ? $"; the source '{names[0]}' has {method}: {names[0]} | call {method}(…)"
-                : $"; sources with {method}: {string.Join(", ", names)} (e.g. {names[0]} | call {method}(…))";
+                ? $"; the source '{names[0]}' has {method}: {names[0]} | call {method}(…) calls it once, … | call {names[0]}.{method}(… $ …) once per item"
+                : $"; sources with {method}: {string.Join(", ", names)} (e.g. {names[0]} | call {method}(…) once, … | call {names[0]}.{method}(… $ …) once per item)";
+        }
+
+        /// <summary>
+        /// The hint of an unqualified <c>call</c> on items that are not objects (numbers from range(), strings, structs): qualify the
+        /// method with the source that has it, so it runs once per item (spec §8, §10).
+        /// </summary>
+        internal string PerItemCallHint(string method)
+        {
+            var text = SourcesWithCallable(method);
+            var start = text.IndexOf("… | call ", StringComparison.Ordinal);
+            if (start >= 0)
+            {
+                int end = text.IndexOf(" once per item", start, StringComparison.Ordinal);
+                return $"to run a source's method once per item, qualify it with the source: {text.Substring(start, end - start)} ($ is the item)";
+            }
+            return $"call runs a method of each item, and these items have none; to run a source's method once per item qualify it: "
+                + $"… | call <source>.{method}(… $ …) ($ is the item; sources: {string.Join(" ", _sources.Keys)})";
         }
 
         /// <summary>The hint of a ref() that did not resolve: malformed text is usually a name, not a $ref.</summary>

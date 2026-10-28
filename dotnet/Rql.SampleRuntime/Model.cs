@@ -59,6 +59,18 @@ namespace Rql.Sample
         [RqlDescription("Root game objects of the scene (children are nested under GameObject.Children).")]
         public List<GameObject> Objects { get; set; } = new List<GameObject>();
         [RqlReference] public World? World { get; set; }
+
+        [RqlCallable("Create an empty root GameObject named name at position (x, y, z) in this scene; returns it.")]
+        public GameObject CreateObject(string name, float x = 0, float y = 0, float z = 0)
+        {
+            int id = (World != null ? WorldGenerator.AllObjects(World) : Objects.SelectMany(WorldGenerator.Descendants)).Select(g => g.Id).DefaultIfEmpty(0).Max() + 1;
+            var go = new GameObject { Id = id, Name = name, Scene = this };
+            go.Transform.Position = new Vector3(x, y, z);
+            Objects.Add(go);
+            return go;
+        }
+
+        public string? ValidateCreateObject(string name, float x, float y, float z) => string.IsNullOrWhiteSpace(name) ? "name must not be empty" : null;
     }
 
     public class GameObject

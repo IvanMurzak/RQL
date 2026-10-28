@@ -218,8 +218,25 @@ export class RqlEngine {
     }
     if (names.length === 0) return '';
     return names.length === 1
-      ? `; the source '${names[0]}' has ${method}: ${names[0]} | call ${method}(…)`
-      : `; sources with ${method}: ${names.join(', ')} (e.g. ${names[0]} | call ${method}(…))`;
+      ? `; the source '${names[0]}' has ${method}: ${names[0]} | call ${method}(…) calls it once, … | call ${names[0]}.${method}(… $ …) once per item`
+      : `; sources with ${method}: ${names.join(', ')} (e.g. ${names[0]} | call ${method}(…) once, … | call ${names[0]}.${method}(… $ …) once per item)`;
+  }
+
+  /**
+   * The hint of an unqualified `call` on items that are not objects (numbers from range(), strings, structs): qualify the
+   * method with the source that has it, so it runs once per item (spec §8, §10).
+   */
+  perItemCallHint(method: string): string {
+    const text = this.sourcesWithCallable(method);
+    const start = text.indexOf('… | call ');
+    if (start >= 0) {
+      const end = text.indexOf(' once per item', start);
+      return `to run a source's method once per item, qualify it with the source: ${text.slice(start, end)} ($ is the item)`;
+    }
+    return (
+      `call runs a method of each item, and these items have none; to run a source's method once per item qualify it: ` +
+      `… | call <source>.${method}(… $ …) ($ is the item; sources: ${[...this.sourceMap.keys()].join(' ')})`
+    );
   }
 
   /** The hint of a ref() that did not resolve: malformed text is usually a name, not a $ref. */
@@ -454,6 +471,17 @@ export class RqlEngine {
     for (const [name, seen] of this.sourceTypes) if (this.sourceMap.has(name)) for (const info of seen) if (!roots.includes(info)) roots.push(info);
     const types = reachableTypes(this.types, roots, 1000);
     for (const t of types) for (const m of t.members) add(m.name);
+    // Adapters' target classes count as known too (their virtual members included), reachable or not (spec §8): hosts add
+    // only names of their own through isKnownMember.
+    for (const a of this.types.adapters) {
+      if (a.target === undefined) continue;
+      try {
+        const info = this.types.infoForCtor(a.target);
+        if (info !== undefined) for (const m of info.members) add(m.name);
+      } catch {
+        // a class the model cannot describe adds no names
+      }
+    }
     this.knownMembers = { version: this.types.version, names, types };
     return names;
   }

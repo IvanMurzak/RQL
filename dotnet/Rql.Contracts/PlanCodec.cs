@@ -213,6 +213,7 @@ namespace Rql
                     break;
                 case CallStage x:
                     w.WriteString("method", x.Method);
+                    if (x.On != null) { w.WritePropertyName("on"); WriteExpr(w, x.On); }
                     WriteExprArray(w, "args", x.Args);
                     break;
                 case GenericStage x:
@@ -542,10 +543,11 @@ namespace Rql
                 }
                 case "call":
                 {
-                    AllowOnly(s, ctx, "op", "method", "args");
+                    AllowOnly(s, ctx, "op", "method", "on", "args");
                     var m = Required(s, "method", ctx);
                     if (m.ValueKind != JsonValueKind.String || m.GetString()!.Length == 0) throw Invalid("call.method must be a non-empty string");
-                    return new CallStage(m.GetString()!, ReadExprArray(Required(s, "args", ctx), "args"));
+                    var on = s.TryGetProperty("on", out var onEl) ? ReadExpr(onEl) : null;
+                    return new CallStage(m.GetString()!, ReadExprArray(Required(s, "args", ctx), "args"), on);
                 }
                 default:
                 {

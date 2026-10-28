@@ -61,8 +61,19 @@ Results come back as compact rows (header line, then col|col). Long results are 
             "  recurse Children [max-depth=N] [include-self=true]   walk a hierarchy (cycle-safe)",
             "  recurse Children [max-depth=N] [include-self=false]  the input items ($depth 0) plus all descendants via the member (cycle-safe)");
 
+        /// <summary>
+        /// v5 — v4 plus the host-independent language rules every RQL host ships (Rql.Execution.RqlLanguageGuide.Rules: boolean
+        /// conditions, ?:, list equality, group items, receipts, call and bulk create), so the eval prompt cannot drift from the
+        /// hosts' guides; the call line names the source-qualified form.
+        /// </summary>
+        public static readonly string V5 = V4
+            .Replace("  call Method(args)                  (rql_mutate) invoke an allowed method",
+                     "  call Method(args)                  (rql_mutate) invoke an allowed method on each item; call source.Method(args) runs one object's method once per item")
+            .Replace(RulesV2, Rql.Execution.RqlLanguageGuide.Rules + "\n" + RulesV2);
+
         public static string Get(string variant) => variant switch
         {
+            "v5" => V5,
             "v4" => V4,
             "v1" => V1,
             "v2" => V2,

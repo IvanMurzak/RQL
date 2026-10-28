@@ -23,7 +23,7 @@ namespace Rql.Execution
         public static readonly string[] CoreFunctions =
         {
             "has", "is-null", "len", "lower", "upper", "abs", "round", "floor", "ceil", "sqrt", "pow", "min", "max", "coalesce", "if", "ref",
-            "append", "insert", "remove-at", "without",
+            "append", "insert", "remove-at", "without", "range",
             "replace", "replace-regex", "substring", "split", "trim", "pad",
             "contains", "starts-with", "ends-with", "matches",
         };
@@ -860,6 +860,29 @@ namespace Rql.Execution
             };
         }
 
+        /// <summary>
+        /// The numbers of range(start, end[, step]) (spec §2, §4.3): start + k * step for k = 0 … count - 1, while below end (step
+        /// above 0) or above it (step below 0). An error argument is returned; a non-number, a non-finite number or a zero step is
+        /// a type-mismatch error value.
+        /// </summary>
+        internal static RqlError? RangeOf(object? a, object? b, object? c, out double start, out double step, out long count)
+        {
+            start = 0; step = 1; count = 0;
+            foreach (var v in new[] { a, b, c })
+            {
+                if (v is RqlError e) return e;
+                if (!V.TryNumber(v, out var d)) return new RqlError("type-mismatch", $"range() expects numbers, got {V.Describe(v)}");
+                if (double.IsNaN(d) || double.IsInfinity(d)) return new RqlError("type-mismatch", $"range() expects finite numbers, got {V.FormatNumber(d)}");
+            }
+            V.TryNumber(a, out start);
+            V.TryNumber(b, out var end);
+            V.TryNumber(c, out step);
+            if (step == 0) return new RqlError("type-mismatch", "range() step must not be 0");
+            double n = Math.Ceiling((end - start) / step);
+            count = n <= 0 ? 0 : n >= long.MaxValue ? long.MaxValue : (long)n;
+            return null;
+        }
+
         private void Arity(CallExpr c, int min, int max)
         {
             if (c.Args.Count < min || c.Args.Count > max)
@@ -955,6 +978,22 @@ namespace Rql.Execution
                         int dg = 0;
                         if (digits != null && V.TryNumber(digits(x), out var dd)) dg = Math.Max(0, Math.Min(15, (int)dd));
                         return Num(a(x), v => Math.Round(v, dg, MidpointRounding.AwayFromZero));
+                    };
+                }
+                case "range":
+                {
+                    Arity(c, 2, 3);
+                    var args = c.Args.Select(Compile).ToArray();
+                    return x =>
+                    {
+                        if (RangeOf(args[0](x), args[1](x), args.Length > 2 ? args[2](x) : 1d, out var start, out var step, out var count) is RqlError bad) return bad;
+                        var list = new List<object?>();
+                        for (long k = 0; k < count; k++)
+                        {
+                            x.Visit(); // a range is bounded by maxVisited like any stream (spec §2)
+                            list.Add(start + k * step);
+                        }
+                        return list;
                     };
                 }
                 // List editing (spec §4.3): pure functions returning a new list; assign the result with `set`.

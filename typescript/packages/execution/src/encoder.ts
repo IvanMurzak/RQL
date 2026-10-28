@@ -1,7 +1,7 @@
 /** Live value → JSON per spec §6. Only what survived filtering/projection is encoded. */
 import { diagnostic, formatNumber, isJsonInteger, type JsonObject, type JsonValue, type QueryResult } from '@rql/contracts';
 import { elements, mapEntries, sizeOf, type MapLike } from './collections.js';
-import { toText } from './compiler.js';
+import { MAX_COMPARE_DEPTH, toText } from './compiler.js';
 import { firstAnswer, type EncodeContext } from './adapters.js';
 import type { Exec } from './exec.js';
 import { EnumValue, friendlyName, type MemberAccessor, type TypeInfo } from './types.js';
@@ -33,6 +33,18 @@ function jsonLength(v: JsonValue): number {
 
 export class Encoder {
   constructor(private readonly x: Exec) {}
+
+  /**
+   * The lists and maps being encoded: one nested in itself, or nested deeper than MAX_COMPARE_DEPTH, encodes as "…" instead
+   * of recursing forever (spec §6).
+   */
+  private readonly open = new Set<object>();
+
+  private enter(collection: object): boolean {
+    if (this.open.size >= MAX_COMPARE_DEPTH || this.open.has(collection)) return false;
+    this.open.add(collection);
+    return true;
+  }
 
   rows(columns: readonly string[], rows: readonly (readonly unknown[])[]): QueryResult {
     const r: QueryResult = { ok: true, kind: 'rows', columns: [...columns], rows: [], diagnostics: [], stats: emptyStats() };
@@ -113,30 +125,40 @@ export class Encoder {
     const info = this.x.types.infoOf(v);
     switch (info.kind) {
       case 'list': {
-        const arr: JsonValue[] = [];
-        let total = 0;
-        for (const el of elements(v, info)) {
-          total++;
-          if (arr.length < this.x.maxListItems) arr.push(this.encode(el, depth + 1));
+        if (!this.enter(v)) return '…';
+        try {
+          const arr: JsonValue[] = [];
+          let total = 0;
+          for (const el of elements(v, info)) {
+            total++;
+            if (arr.length < this.x.maxListItems) arr.push(this.encode(el, depth + 1));
+          }
+          const n = arr.length;
+          if (total > n) arr.push('…+' + String(total - n));
+          return arr;
+        } finally {
+          this.open.delete(v);
         }
-        const n = arr.length;
-        if (total > n) arr.push('…+' + String(total - n));
-        return arr;
       }
       case 'map': {
-        const obj: JsonObject = {};
-        let n = 0;
-        let total = 0;
-        for (const e of mapEntries(v as MapLike)) {
-          total++;
-          if (n >= this.x.maxListItems) continue;
-          const key = toText(this.x, e.Key);
-          if (Object.prototype.hasOwnProperty.call(obj, key)) continue;
-          put(obj, key, this.encode(e.Value, depth + 1));
-          n++;
+        if (!this.enter(v)) return '…';
+        try {
+          const obj: JsonObject = {};
+          let n = 0;
+          let total = 0;
+          for (const e of mapEntries(v as MapLike)) {
+            total++;
+            if (n >= this.x.maxListItems) continue;
+            const key = toText(this.x, e.Key);
+            if (Object.prototype.hasOwnProperty.call(obj, key)) continue;
+            put(obj, key, this.encode(e.Value, depth + 1));
+            n++;
+          }
+          if (total > n) put(obj, '…', '+' + String(total - n));
+          return obj;
+        } finally {
+          this.open.delete(v);
         }
-        if (total > n) put(obj, '…', '+' + String(total - n));
-        return obj;
       }
       case 'struct': {
         if (depth > 2) return '…';
