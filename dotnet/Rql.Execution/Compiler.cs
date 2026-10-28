@@ -96,14 +96,22 @@ namespace Rql.Execution
                             // resolves against the enclosing item(s) (spec §3).
                             cur = x =>
                             {
-                                var r = Member(x, x.Current, site);
-                                if (!(r is Missing) || x.Outer.Count == 0) return r;
-                                for (int k = x.Outer.Count - 1; k >= 0; k--)
+                                if (x.Outer.Count == 0) return Member(x, x.Current, site);
+                                // An absent map key counts as missing here, so the name can still resolve on an enclosing item
+                                // (spec §3); when no item has it, the element's own answer stands (null for an absent key).
+                                x.KeyProbe++;
+                                try
                                 {
-                                    var o = Member(x, x.Outer[k], site);
-                                    if (!(o is Missing)) return o;
+                                    var r = Member(x, x.Current, site);
+                                    if (!(r is Missing)) return r;
+                                    for (int k = x.Outer.Count - 1; k >= 0; k--)
+                                    {
+                                        var o = Member(x, x.Outer[k], site);
+                                        if (!(o is Missing)) return o;
+                                    }
                                 }
-                                return r;
+                                finally { x.KeyProbe--; }
+                                return x.KeyProbe > 0 ? Missing.Value : Member(x, x.Current, site);
                             };
                         }
                         else cur = x => Member(x, prev(x), site);
@@ -334,7 +342,7 @@ namespace Rql.Execution
                         if (e.Key is string s && string.Equals(s, ks, StringComparison.OrdinalIgnoreCase)) { if (site != null) site.Hits++; return e.Value; }
                     }
                 }
-                return Missing.Value;
+                return AbsentKey(x);
             }
             foreach (var e in V.EnumerateMap(map, info))
             {
@@ -345,8 +353,11 @@ namespace Rql.Execution
                     return me.Value;
                 }
             }
-            return Missing.Value;
+            return AbsentKey(x);
         }
+
+        /// <summary>An absent map key reads as null (spec §3); inside has() it is missing, so has(M["k"]) tests the key.</summary>
+        private static object? AbsentKey(Exec x) => x.KeyProbe > 0 ? Missing.Value : null;
 
         internal static bool TryCoerceKey(object? key, Type? keyType, out object? result, TypeModel model)
         {
@@ -524,7 +535,7 @@ namespace Rql.Execution
                         return Tri(r);
                     };
                 }
-                case "neg": return x => Arith("neg", a(x), 0d);
+                case "neg": return x => Arith(x.Types, "neg", a(x), 0d);
                 case "+":
                 case "-":
                 case "*":
@@ -532,7 +543,7 @@ namespace Rql.Execution
                 case "%":
                 {
                     var op = o.Op;
-                    return x => Arith(op, a(x), b!(x));
+                    return x => Arith(x.Types, op, a(x), b!(x));
                 }
                 case "index":
                     return x =>
@@ -790,14 +801,18 @@ namespace Rql.Execution
             return x.Types.Info(a.GetType()).IsA(name);
         }
 
-        internal static object? Arith(string op, object? a, object? b)
+        internal static object? Arith(TypeModel model, string op, object? a, object? b)
         {
             if (a is Missing || b is Missing) return Missing.Value;
             if (a is RqlError) return a;
             if (b is RqlError) return b;
             if (op == "+" && ((a != null && V.IsString(a)) || (b != null && V.IsString(b))))
                 return ToText(a) + ToText(b);
-            if (!V.TryNumber(a, out var x) || !V.TryNumber(b, out var y)) return new RqlError("type-mismatch", $"cannot apply '{op}' to {V.Describe(a)} and {V.Describe(b)}");
+            if (!V.TryNumber(a, out var x) || !V.TryNumber(b, out var y))
+            {
+                if ((model.Caps & AdapterCaps.Arithmetic) != 0 && StructArith(model, op, a, b) is object r) return r;
+                return ArithMismatch(model, op, a, b, null);
+            }
             switch (op)
             {
                 case "neg": return -x;
@@ -808,6 +823,113 @@ namespace Rql.Execution
                 case "%": return y == 0 ? new RqlError("div-by-zero") : (object)(x % y);
                 default: return new RqlError("type-mismatch");
             }
+        }
+
+        private static RqlError ArithMismatch(TypeModel model, string op, object? a, object? b, string? why)
+        {
+            var message = $"cannot apply '{op}' to {V.Describe(a)} and {V.Describe(b)}";
+            if (why == null)
+            {
+                // A struct without declared components: say why (spec §4.2), so `Scale * 1.5` is not a mystery.
+                bool sa = IsStruct(model, a), sb = op != "neg" && IsStruct(model, b);
+                if (sa && Components(model, a, out _) == null) why = $"{V.Describe(a)} has no component-wise arithmetic";
+                else if (sb && Components(model, b, out _) == null) why = $"{V.Describe(b)} has no component-wise arithmetic";
+            }
+            return new RqlError("type-mismatch", why == null ? message : message + " (" + why + ")");
+        }
+
+        private static bool IsStruct(TypeModel model, object? v) => v != null && !V.IsAbsent(v) && model.Info(v.GetType()).IsStruct;
+
+        /// <summary>The arithmetic components of a struct whose type adapter declares them (spec §4.2, §13), else null.</summary>
+        private static double[]? Components(TypeModel model, object? v, out RqlTypeAdapter? adapter)
+        {
+            adapter = null;
+            if (!IsStruct(model, v)) return null;
+            foreach (var ad in model.Info(v!.GetType()).ArithmeticAdapters)
+            {
+                var parts = ad.GetComponents(v);
+                if (parts != null) { adapter = ad; return parts; }
+            }
+            return null;
+        }
+
+        /// <summary>A list of exactly <paramref name="width"/> numbers read as components (spec §4.2), else null.</summary>
+        private static double[]? ListParts(object list, int width)
+        {
+            var parts = new double[width];
+            int n = 0;
+            foreach (var e in V.Iterate(list))
+            {
+                if (n == width || !V.TryNumber(e, out var d)) return null;
+                parts[n++] = d;
+            }
+            return n == width ? parts : null;
+        }
+
+        /// <summary>
+        /// Component-wise arithmetic on structs whose adapter declares components (spec §4.2): v * n, n * v, v / n, v ± w,
+        /// v * w, v / w (w of the same type, or a list of as many numbers), -v. Null when neither operand has components.
+        /// </summary>
+        private static object? StructArith(TypeModel model, string op, object? a, object? b)
+        {
+            var pa = Components(model, a, out var adA);
+            RqlTypeAdapter? adB = null;
+            var pb = op == "neg" ? null : Components(model, b, out adB);
+            if (pa == null && pb == null) return null;
+            if (op == "%") return ArithMismatch(model, op, a, b, "'%' is not component-wise");
+            bool vectorLeft = pa != null;
+            var adapter = vectorLeft ? adA! : adB!;
+            var vector = vectorLeft ? a! : b!;
+            var parts = vectorLeft ? pa! : pb!;
+            double[] other;
+            if (op == "neg")
+            {
+                other = parts;
+                parts = new double[other.Length]; // -v = 0 - v
+                op = "-";
+            }
+            else if (pa != null && pb != null)
+            {
+                if (a!.GetType() != b!.GetType() || pa.Length != pb.Length) return ArithMismatch(model, op, a, b, "different types");
+                other = pb;
+            }
+            else
+            {
+                var operand = vectorLeft ? b : a;
+                if (V.TryNumber(operand, out var n))
+                {
+                    // v * n, n * v and v / n scale; a number added to a vector, or divided by one, is not defined.
+                    if (!(op == "*" || (op == "/" && vectorLeft)))
+                        return ArithMismatch(model, op, a, b, op == "/"
+                            ? "a number cannot be divided by a vector"
+                            : $"add a value of the same type or a list of {parts.Length} numbers; multiply or divide by a number");
+                    other = new double[parts.Length];
+                    for (int i = 0; i < other.Length; i++) other[i] = n;
+                }
+                else if (operand == null || V.IsString(operand) || !V.IsList(operand)) return ArithMismatch(model, op, a, b, null);
+                else if (ListParts(operand, parts.Length) is double[] lp) other = lp;
+                else return ArithMismatch(model, op, a, b, $"the list must hold exactly {parts.Length} numbers, one per component");
+                if (!vectorLeft) (parts, other) = (other, parts);
+            }
+            var result = new double[parts.Length];
+            for (int i = 0; i < result.Length; i++)
+            {
+                double l = parts[i], r = other[i];
+                switch (op)
+                {
+                    case "+": result[i] = l + r; break;
+                    case "-": result[i] = l - r; break;
+                    case "*": result[i] = l * r; break;
+                    default:
+                        if (r == 0) return new RqlError("div-by-zero");
+                        result[i] = l / r;
+                        break;
+                }
+            }
+            object? built;
+            try { built = adapter.MakeFromComponents(vector.GetType(), result); }
+            catch (Exception ex) when (!(ex is OutOfMemoryException)) { built = null; }
+            return built ?? ArithMismatch(model, op, a, b, $"cannot build {V.Describe(vector)} from components");
         }
 
         internal static string ToText(object? v) => v switch
@@ -906,7 +1028,12 @@ namespace Rql.Execution
                     _guarded++;
                     try { a = Compile(c.Args[0]); }
                     finally { _guarded--; }
-                    return x => V.Bool(!(a(x) is Missing));
+                    return x =>
+                    {
+                        x.KeyProbe++;
+                        try { return V.Bool(!(a(x) is Missing)); }
+                        finally { x.KeyProbe--; }
+                    };
                 }
                 case "is-null":
                 {

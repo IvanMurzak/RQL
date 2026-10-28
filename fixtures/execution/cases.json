@@ -23194,6 +23194,804 @@
           }
         ]
       }
+    },
+    {
+      "name": "map-absent-key-reads-null",
+      "rql": "g.Nodes | recurse Children | select Name eq=(Props[\"mp\"] == null) isnull=(Props[\"mp\"] is null) ne=(Props[\"mp\"] != null) present=has(Props[\"mp\"]) mp=Props[\"mp\"]",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "eq",
+                "expr": {
+                  "op": "==",
+                  "args": [
+                    {
+                      "path": [
+                        "Props",
+                        {
+                          "key": "mp"
+                        }
+                      ]
+                    },
+                    {
+                      "lit": null
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "isnull",
+                "expr": {
+                  "op": "==",
+                  "args": [
+                    {
+                      "path": [
+                        "Props",
+                        {
+                          "key": "mp"
+                        }
+                      ]
+                    },
+                    {
+                      "lit": null
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "ne",
+                "expr": {
+                  "op": "!=",
+                  "args": [
+                    {
+                      "path": [
+                        "Props",
+                        {
+                          "key": "mp"
+                        }
+                      ]
+                    },
+                    {
+                      "lit": null
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "present",
+                "expr": {
+                  "call": "has",
+                  "args": [
+                    {
+                      "path": [
+                        "Props",
+                        {
+                          "key": "mp"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "mp",
+                "expr": {
+                  "path": [
+                    "Props",
+                    {
+                      "key": "mp"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "eq",
+          "isnull",
+          "ne",
+          "present",
+          "mp"
+        ],
+        "rows": [
+          [
+            "root-a",
+            false,
+            false,
+            true,
+            true,
+            5
+          ],
+          [
+            "a-1",
+            true,
+            true,
+            false,
+            false,
+            null
+          ],
+          [
+            "a-2",
+            true,
+            true,
+            false,
+            false,
+            null
+          ],
+          [
+            "a-2-x",
+            true,
+            true,
+            false,
+            false,
+            null
+          ],
+          [
+            "root-b",
+            true,
+            true,
+            false,
+            false,
+            null
+          ],
+          [
+            "b-1",
+            false,
+            false,
+            true,
+            true,
+            30
+          ],
+          [
+            "B-2",
+            true,
+            true,
+            false,
+            false,
+            null
+          ],
+          [
+            "lonely",
+            true,
+            true,
+            false,
+            false,
+            null
+          ]
+        ],
+        "total": 8
+      }
+    },
+    {
+      "name": "map-absent-key-where-is-null",
+      "rql": "g.Nodes | recurse Children | where Props[\"mp\"] is null | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Props",
+                    {
+                      "key": "mp"
+                    }
+                  ]
+                },
+                {
+                  "lit": null
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 6
+      }
+    },
+    {
+      "name": "map-absent-key-member-syntax",
+      "rql": "g.Nodes | recurse Children | where Props.mp == null | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Props",
+                    "mp"
+                  ]
+                },
+                {
+                  "lit": null
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 6
+      }
+    },
+    {
+      "name": "map-absent-key-not-equal-keeps",
+      "rql": "g.Nodes | recurse Children | where Props[\"armor\"] != 12 | select Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "!=",
+              "args": [
+                {
+                  "path": [
+                    "Props",
+                    {
+                      "key": "armor"
+                    }
+                  ]
+                },
+                {
+                  "lit": 12
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "root-a"
+          ],
+          [
+            "a-1"
+          ],
+          [
+            "a-2"
+          ],
+          [
+            "root-b"
+          ],
+          [
+            "b-1"
+          ],
+          [
+            "B-2"
+          ],
+          [
+            "lonely"
+          ]
+        ],
+        "total": 7
+      }
+    },
+    {
+      "name": "map-absent-key-has-tests-presence",
+      "rql": "g.Nodes | recurse Children | where has(Props[\"armor\"]) | select Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "call": "has",
+              "args": [
+                {
+                  "path": [
+                    "Props",
+                    {
+                      "key": "armor"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "a-2-x"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "map-absent-key-coalesce",
+      "rql": "g.Nodes | select Name mp=coalesce(Props[\"mp\"], 0)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "mp",
+                "expr": {
+                  "call": "coalesce",
+                  "args": [
+                    {
+                      "path": [
+                        "Props",
+                        {
+                          "key": "mp"
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "mp"
+        ],
+        "rows": [
+          [
+            "root-a",
+            5
+          ],
+          [
+            "root-b",
+            0
+          ],
+          [
+            "lonely",
+            0
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "map-absent-key-typo-member-stays-unknown",
+      "rql": "g.Nodes | where Prosp[\"mp\"] is null | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Prosp",
+                    {
+                      "key": "mp"
+                    }
+                  ]
+                },
+                {
+                  "lit": null
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 0,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "map-absent-key-typo-empties-mutation",
+      "rql": "g.Nodes | where Prosp[\"mp\"] is null | set Value = 1",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Prosp",
+                    {
+                      "key": "mp"
+                    }
+                  ]
+                },
+                {
+                  "lit": null
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "lit": 1
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "map-absent-key-list-index-stays-missing",
+      "rql": "g.Nodes | where Tags[5] is null | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Tags",
+                    {
+                      "index": 5
+                    }
+                  ]
+                },
+                {
+                  "lit": null
+                }
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 0
+      }
+    },
+    {
+      "name": "struct-arith-without-components",
+      "rql": "ref(\"Node#3\") | select p=(Pos * 2) n=(-Pos)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#3"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "p",
+                "expr": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "n",
+                "expr": {
+                  "op": "neg",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "p",
+          "n"
+        ],
+        "rows": [
+          [
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "struct-distinct-exact-members",
+      "rql": "g.Nodes | recurse Children | select Pos | distinct | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Pos",
+                "expr": {
+                  "path": [
+                    "Pos"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "distinct"
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 8
+      }
     }
   ]
 }

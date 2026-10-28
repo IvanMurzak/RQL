@@ -46,6 +46,9 @@ export const vec2Adapter: TypeAdapter<Vec2> = {
     const o = toVec(other);
     return o === undefined ? undefined : Math.sign(length(v) - length(o));
   },
+  // Component-wise arithmetic (spec §4.2): components [x, y].
+  components: (v) => [v.x, v.y],
+  fromComponents: (c) => (c.length === 2 ? new Vec2(c[0]!, c[1]!) : undefined),
 };
 
 export const nodeAdapter: TypeAdapter<Node> = {

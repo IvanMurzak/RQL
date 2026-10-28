@@ -116,8 +116,8 @@ Engine& Engine::add_adapter(TypeAdapter adapter) noexcept {
         }
         if (adapter.name.empty()) adapter.name = adapter.target ? adapter.target->name + "Adapter" : adapter.interface_name + "Adapter";
         last_error_.clear();
-        const bool caps[] = {bool(adapter.encode),    bool(adapter.coerce),    bool(adapter.equals),
-                             bool(adapter.compare),   bool(adapter.stable_id), bool(adapter.is_alive)};
+        const bool caps[] = {bool(adapter.encode),  bool(adapter.coerce),    bool(adapter.equals),   bool(adapter.compare),
+                             bool(adapter.stable_id), bool(adapter.is_alive), bool(adapter.components)};
         for (size_t i = 0; i < caps_.size(); ++i) caps_[i] = caps_[i] || caps[i];
         adapters_.push_back(std::make_unique<TypeAdapter>(std::move(adapter)));
         // Registering adapters while queries run is not supported, so cached adaptations can just go.

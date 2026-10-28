@@ -7,7 +7,7 @@ import { errorMessage, type Exec } from './exec.js';
 import type { MutationRecord, TextCoercion } from './engine.js';
 import type { Item } from './pipeline.js';
 import { adapterName } from './adapters.js';
-import { memberHint } from './suggest.js';
+import { memberHint, nestedMembers } from './suggest.js';
 import {
   EnumType,
   EnumValue,
@@ -538,7 +538,12 @@ export class Mutator {
     const m = info.find(name, container);
     if (m === undefined) {
       const names = info.membersOf(container).map((mm) => mm.name);
-      throw new RqlError('unknown-member', `no member '${name}' on ${info.shortName}`, undefined, memberHint(name, names, top ? this.x.engine.typesDeclaring(name, [info]) : []));
+      throw new RqlError(
+        'unknown-member',
+        `no member '${name}' on ${info.shortName}`,
+        undefined,
+        memberHint(name, names, top ? this.x.engine.typesDeclaring(name, [info]) : [], nestedMembers(this.x.types, [info])),
+      );
     }
     return new MemberSlot(info, m);
   }

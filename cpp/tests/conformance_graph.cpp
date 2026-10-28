@@ -139,6 +139,17 @@ void register_test_adapters(rql::Engine& engine, rql::TypeRegistry& reg) {
         double a = length(*p), b = length(o);
         return a < b ? -1 : (a > b ? 1 : 0);
     };
+    // Component-wise arithmetic (spec §4.2): components [x, y].
+    vec.components = [r](const rql::Value& v) -> std::optional<std::vector<double>> {
+        const Vec2* p = rql::value_as<Vec2>(*r, v);
+        if (!p) return std::nullopt;
+        return std::vector<double>{p->x, p->y};
+    };
+    vec.from_components = [r](const rql::TypeDescriptor&, const std::vector<double>& c) -> std::optional<rql::Value> {
+        if (c.size() != 2) return std::nullopt;
+        Vec2 out{c[0], c[1]};
+        return rql::Traits<Vec2>::get(*r, out);
+    };
     engine.add_adapter(std::move(vec));
 
     rql::TypeAdapter node;

@@ -1302,9 +1302,10 @@ std::vector<Diagnostic> add_warnings(Exec& x, QueryResult& r, bool only_general)
             for (auto& m : view.members())
                 if (std::find(candidates.begin(), candidates.end(), m.name) == candidates.end()) candidates.push_back(m.name);
         }
-        auto close = suggest_closest(site.name, candidates, 3);
+        auto nested = nested_members(x, site.miss_types);
+        auto close = suggest_members(site.name, candidates, nested, 3);
         auto declaring = types_declaring(x, site.name, site.miss_types);
-        std::string hint = member_hint(site.name, candidates, declaring);
+        std::string hint = member_hint(site.name, candidates, declaring, nested);
         if (close.empty() && declaring.empty() && !site.name.empty() && site.name[0] >= 'A' && site.name[0] <= 'Z')
             hint += (hint.empty() ? "" : "; ") + std::string("if '") + site.name + "' is a value, quote it: \"" + site.name + "\"";
         r.diagnostics.push_back(Diagnostic::warning("unknown-member", "no member '" + site.name + "' on " + join(type_names, ", "), hint));

@@ -264,7 +264,7 @@ Slot slot_of(Exec& x, const Value& container, const Segment& seg, const std::str
         std::vector<const TypeDescriptor*> except;
         if (t) except.push_back(t);
         throw RqlException("unknown-member", "no member '" + name + "' on " + type_name,
-                           member_hint(name, names, top ? types_declaring(x, name, except) : std::vector<std::string>()));
+                           member_hint(name, names, top ? types_declaring(x, name, except) : std::vector<std::string>(), nested_members(x, except)));
     }
     s.kind = Slot::Member;
     s.member = m;

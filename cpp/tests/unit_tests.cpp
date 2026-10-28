@@ -7,6 +7,7 @@
 #include <memory>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -1845,6 +1846,101 @@ void bulk_tests() {
     }
 }
 
+// Wave 5: component-wise struct arithmetic (spec §4.2), rounded struct keys (§5), nested members in hints (§10).
+struct FVec3f {
+    float X = 0, Y = 0, Z = 0;
+};
+struct FBodyInstance {
+    std::string CollisionProfileName;
+    double Damping = 0;
+};
+struct UCoin {
+    std::string Name;
+    FVec3f Scale;
+    FBodyInstance BodyInstance;
+};
+struct UCoinWorld {
+    std::vector<std::unique_ptr<UCoin>> Coins;
+};
+struct UHolder {
+    double Threshold = 3;
+    std::vector<std::map<std::string, double>> Entries;
+};
+
+void wave5_tests() {
+    auto has = [](const std::string& s, const std::string& part) { return s.find(part) != std::string::npos; };
+    rql::TypeRegistry reg;
+    reg.structure<FVec3f>("FVector3f").member("X", &FVec3f::X).member("Y", &FVec3f::Y).member("Z", &FVec3f::Z);
+    reg.structure<FBodyInstance>("FBodyInstance").member("CollisionProfileName", &FBodyInstance::CollisionProfileName).member("Damping", &FBodyInstance::Damping);
+    reg.object<UCoin>("UCoin").member("Name", &UCoin::Name).member("Scale", &UCoin::Scale).member("BodyInstance", &UCoin::BodyInstance).no_identity();
+    reg.object<UCoinWorld>("UCoinWorld").member("Coins", &UCoinWorld::Coins);
+    UCoinWorld world;
+    for (int i = 0; i < 2; ++i) {
+        world.Coins.push_back(std::make_unique<UCoin>());
+        world.Coins.back()->Name = "Coin_" + std::to_string(i);
+        world.Coins.back()->Scale = FVec3f{i == 0 ? 1.0f : 0.99999994f, 1, 1};
+    }
+    const std::string coins = R"J({"rql":"0.1","source":{"path":["w","Coins"]},"stages":[)J";
+    const std::string scale2 = R"J({"op":"select","fields":[{"name":"p","expr":{"op":"*","args":[{"path":["Scale"]},{"lit":2}]}}]})J";
+    {
+        rql::Engine e(reg);
+        e.add_object_source("w", &world);
+        e.mutations().enabled = true;
+        // Distinct / group-by key float structs by their members rounded as tuples print: 1 and 0.99999994 merge.
+        auto d = arun(e, coins + R"J({"op":"select","fields":[{"name":"Scale","expr":{"path":["Scale"]}}]},{"op":"distinct"}]})J");
+        check(d.ok && d.rows && d.rows->size() == 1, "wave5: distinct merges float structs that print alike");
+        auto g = arun(e, coins + R"J({"op":"group-by","expr":{"path":["Scale"]}}]})J");
+        check(g.ok && g.rows && g.rows->size() == 1 && (*g.rows)[0][1].as_number() == 2, "wave5: group-by merges float structs that print alike");
+        // Without an arithmetic adapter a struct product is a type-mismatch error value.
+        auto off = arun(e, coins + scale2 + "]}");
+        check(off.ok && off.rows && (*off.rows)[0][0].is_object() && (*off.rows)[0][0].contains("$error"), "wave5: no components → type-mismatch cell");
+        // Nested struct members in unknown-member hints.
+        auto w = arun(e, coins + R"J({"op":"set","assign":[{"target":{"path":["CollisionProfileName"]},"value":{"lit":"NoCollision"}}]}]})J", true);
+        check(!w.ok && first_code(w) == "unknown-member" && has(w.diagnostics[0].hint, "did you mean BodyInstance.CollisionProfileName"),
+              "wave5: set hint finds BodyInstance.CollisionProfileName");
+        auto rd = arun(e, coins + R"J({"op":"where","pred":{"op":">","args":[{"path":["Damping"]},{"lit":0}]}},{"op":"count"}]})J");
+        bool found = false;
+        for (auto& diag : rd.diagnostics) found = found || has(diag.hint, "BodyInstance.Damping");
+        check(found, "wave5: read hint finds BodyInstance.Damping");
+    }
+    {
+        rql::Engine e(reg);
+        e.add_object_source("w", &world);
+        e.mutations().enabled = true;
+        rql::TypeRegistry* rp = &reg;
+        rql::TypeAdapter vec;
+        vec.target = reg.descriptor<FVec3f>();
+        vec.components = [rp](const rql::Value& v) -> std::optional<std::vector<double>> {
+            const FVec3f* p = rql::value_as<FVec3f>(*rp, v);
+            if (!p) return std::nullopt;
+            return std::vector<double>{rql::widen_single(p->X), rql::widen_single(p->Y), rql::widen_single(p->Z)};
+        };
+        vec.from_components = [rp](const rql::TypeDescriptor&, const std::vector<double>& c) -> std::optional<rql::Value> {
+            if (c.size() != 3) return std::nullopt;
+            FVec3f out{rql::to_single(c[0]), rql::to_single(c[1]), rql::to_single(c[2])};
+            return rql::Traits<FVec3f>::get(*rp, out);
+        };
+        e.add_adapter(std::move(vec));
+        auto r = arun(e, coins + R"J({"op":"set","assign":[{"target":{"path":["Scale"]},"value":{"op":"*","args":[{"path":["Scale"]},{"lit":1.5}]}}]}]})J", true);
+        check(r.ok && world.Coins[0]->Scale.X == 1.5f && world.Coins[0]->Scale.Z == 1.5f, "wave5: set Scale = Scale * 1.5 with components");
+        auto mix = arun(e, coins + R"J({"op":"select","fields":[{"name":"p","expr":{"op":"+","args":[{"path":["Scale"]},{"lit":1}]}}]}]})J");
+        check(mix.ok && mix.rows && (*mix.rows)[0][0].contains("$error"), "wave5: vector + number → type-mismatch cell");
+        auto lst = arun(e, coins + R"J({"op":"select","fields":[{"name":"x","expr":{"path":["X"],"on":{"op":"+","args":[{"path":["Scale"]},{"list":[{"lit":1},{"lit":0},{"lit":0}]}]}}}]}]})J");
+        check(lst.ok && lst.rows && (*lst.rows)[0][0].as_number() == 2.5, "wave5: vector + [1, 0, 0]");
+    }
+    {
+        // The scope chain falls back past an absent map key on the element (spec §3).
+        rql::TypeRegistry hr;
+        hr.object<UHolder>("UHolder").member("Threshold", &UHolder::Threshold).member("Entries", &UHolder::Entries).no_identity();
+        UHolder holder;
+        holder.Entries.push_back({{"v", 5.0}});
+        rql::Engine e(hr);
+        e.add_object_source("h", &holder);
+        auto r = arun(e, R"J({"rql":"0.1","source":{"path":["h"]},"stages":[{"op":"where","pred":{"call":"any","on":{"path":["Entries"]},"args":[{"op":">","args":[{"path":["v"]},{"path":["Threshold"]}]}]}},{"op":"count"}]})J");
+        check(r.ok && r.value.as_number() == 1, "wave5: scope chain falls back past an absent key");
+    }
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) repo_root = argv[1];
     try {
@@ -1858,6 +1954,7 @@ int main(int argc, char** argv) {
         wave3b_tests();
         wave4_tests();
         bulk_tests();
+        wave5_tests();
     } catch (const std::exception& ex) {
         std::cout << "FATAL " << ex.what() << "\n";
         return 2;

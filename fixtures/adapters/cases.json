@@ -9,7 +9,8 @@
       "compare": "equality: both values coerced to Vec2, equal when |dx| <= 1e-9 and |dy| <= 1e-9; ordering: by length sqrt(x*x+y*y)",
       "members": "virtual read-only member `len` (number) = sqrt(x*x+y*y)",
       "describe": "Vec2: write as \"(x, y)\" or [x, y]",
-      "literal": "LiteralSchema = {\"oneOf\":[{\"type\":\"string\"},{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":2,\"maxItems\":2},{\"type\":\"object\",\"properties\":{\"x\":{\"type\":\"number\"},\"y\":{\"type\":\"number\"}}}]}"
+      "literal": "LiteralSchema = {\"oneOf\":[{\"type\":\"string\"},{\"type\":\"array\",\"items\":{\"type\":\"number\"},\"minItems\":2,\"maxItems\":2},{\"type\":\"object\",\"properties\":{\"x\":{\"type\":\"number\"},\"y\":{\"type\":\"number\"}}}]}",
+      "arithmetic": "components [x, y]; fromComponents builds Vec2 { x: c[0], y: c[1] } from exactly two components (spec §4.2)"
     },
     "Node": {
       "members": "virtual member `childCount` (int, read-only) = Children count; virtual writable member `title` (string): get = Name upper-cased (ASCII), set = Name := value lower-cased (ASCII); validation rejects an empty string with reason \"title must not be empty\" (before any write); the setter itself THROWS \"node 3 is locked\" when the node's Id is 3 (exercises rollback); member `Note` is HIDDEN; member `Children` is EXPLICIT-ONLY (generic recurse does not follow it); virtual map `stats` (map<string, number>): keys = Props keys in order, get = Props[key], set = Props[key] := value, validation rejects a key not in Props with reason \"unknown stat '<key>'\" and a negative value with \"stats must be non-negative\"; read-only virtual map `labels` (map<string, string>): keys \"name\", \"kind\" -> Name, Kind (enum name); virtual member `tagsCopy` (list<string>): get = a NEW copy of Tags, set = Tags := value, marked COPY-ON-READ; mixed-type virtual map `fields`: keys \"Name\", \"Value\", \"Enabled\" with entry types string / double / bool, get/set the corresponding member",
@@ -6675,6 +6676,1262 @@
             "code": "invalid-plan"
           }
         ]
+      }
+    },
+    {
+      "name": "adapt-arith-scale",
+      "rql": "g.Nodes | recurse Children | first 3 | select Name p=(Pos * 2) q=(0.5 * Pos) h=(Pos / 2)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "first",
+            "n": 3
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "p",
+                "expr": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "q",
+                "expr": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "lit": 0.5
+                    },
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "h",
+                "expr": {
+                  "op": "/",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "p",
+          "q",
+          "h"
+        ],
+        "rows": [
+          [
+            "root-a",
+            "(0, 0)",
+            "(0, 0)",
+            "(0, 0)"
+          ],
+          [
+            "a-1",
+            "(2, -2)",
+            "(0.5, -0.5)",
+            "(0.5, -0.5)"
+          ],
+          [
+            "a-2",
+            "(4.5, 6)",
+            "(1.125, 1.5)",
+            "(1.125, 1.5)"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "adapt-arith-vectors-and-lists",
+      "rql": "ref(\"Node#5\") | select s=(Pos + Pos) d=(Pos - [0.25, 1]) l=([1, 1] + Pos) n=(-Pos) m=(Pos * Pos) q=(Pos / [1, 2])",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#5"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "s",
+                "expr": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "d",
+                "expr": {
+                  "op": "-",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 0.25
+                        },
+                        {
+                          "lit": 1
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "l",
+                "expr": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 1
+                        }
+                      ]
+                    },
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "n",
+                "expr": {
+                  "op": "neg",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "m",
+                "expr": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "q",
+                "expr": {
+                  "op": "/",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "s",
+          "d",
+          "l",
+          "n",
+          "m",
+          "q"
+        ],
+        "rows": [
+          [
+            "(20, 20)",
+            "(9.75, 9)",
+            "(11, 11)",
+            "(-10, -10)",
+            "(100, 100)",
+            "(10, 5)"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-arith-errors",
+      "rql": "ref(\"Node#5\") | select a=(Pos + 1) b=(Pos % 2) c=(Pos + [1, 2, 3]) d=(2 / Pos) e=(Pos / 0) f=([1, 2] * 2) g=(Pos * \"x\") h=(Pos / [1, 0]) i=(Pos + ref(\"Node#5\"))",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#5"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "lit": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "op": "%",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "c",
+                "expr": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        },
+                        {
+                          "lit": 3
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "d",
+                "expr": {
+                  "op": "/",
+                  "args": [
+                    {
+                      "lit": 2
+                    },
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "e",
+                "expr": {
+                  "op": "/",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "lit": 0
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "f",
+                "expr": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "g",
+                "expr": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "lit": "x"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "h",
+                "expr": {
+                  "op": "/",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 0
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "i",
+                "expr": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "call": "ref",
+                      "args": [
+                        {
+                          "lit": "Node#5"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e",
+          "f",
+          "g",
+          "h",
+          "i"
+        ],
+        "rows": [
+          [
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "div-by-zero"
+            },
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "div-by-zero"
+            },
+            {
+              "$error": "type-mismatch"
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-arith-concat-still-text",
+      "rql": "ref(\"Node#5\") | select t=(\"at \" + Name)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#5"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "t",
+                "expr": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "lit": "at "
+                    },
+                    {
+                      "path": [
+                        "Name"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "t"
+        ],
+        "rows": [
+          [
+            "at root-b"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-arith-missing-propagates",
+      "rql": "ref(\"Node#5\") | select m=(Pos * nosuch)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#5"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "m",
+                "expr": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "path": [
+                        "nosuch"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "m"
+        ],
+        "rows": [
+          [
+            null
+          ]
+        ],
+        "total": 1,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-arith-set",
+      "rql": "g.Nodes | recurse Children | where Id == 2 or Id == 3 | set Pos = Pos * 2 + [1, 0]",
+      "options": {
+        "allowMutation": true
+      },
+      "then": "g.Nodes | recurse Children | where Id <= 3 | select Id Pos",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "or",
+              "args": [
+                {
+                  "op": "==",
+                  "args": [
+                    {
+                      "path": [
+                        "Id"
+                      ]
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                },
+                {
+                  "op": "==",
+                  "args": [
+                    {
+                      "path": [
+                        "Id"
+                      ]
+                    },
+                    {
+                      "lit": 3
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Pos"
+                  ]
+                },
+                "value": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "op": "*",
+                      "args": [
+                        {
+                          "path": [
+                            "Pos"
+                          ]
+                        },
+                        {
+                          "lit": 2
+                        }
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 0
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#2",
+            "Pos",
+            "(1, -1)",
+            "(3, -2)"
+          ],
+          [
+            "Special#3",
+            "Pos",
+            "(2.25, 3)",
+            "(5.5, 6)"
+          ]
+        ],
+        "total": 2
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "<=",
+              "args": [
+                {
+                  "path": [
+                    "Id"
+                  ]
+                },
+                {
+                  "lit": 3
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Id",
+                "expr": {
+                  "path": [
+                    "Id"
+                  ]
+                }
+              },
+              {
+                "name": "Pos",
+                "expr": {
+                  "path": [
+                    "Pos"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Id",
+          "Pos"
+        ],
+        "rows": [
+          [
+            1,
+            "(0, 0)"
+          ],
+          [
+            2,
+            "(3, -2)"
+          ],
+          [
+            3,
+            "(5.5, 6)"
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "adapt-arith-set-dry-run",
+      "rql": "ref(\"Node#5\") | set Pos = -Pos",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#5"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Pos"
+                  ]
+                },
+                "value": {
+                  "op": "neg",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#5",
+            "Pos",
+            "(10, 10)",
+            "(-10, -10)"
+          ]
+        ],
+        "total": 1,
+        "dryRun": true
+      }
+    },
+    {
+      "name": "adapt-arith-where",
+      "rql": "g.Nodes | recurse Children | where (Pos * 2) == [2, -2] | select Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "op": "*",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                },
+                {
+                  "list": [
+                    {
+                      "lit": 2
+                    },
+                    {
+                      "lit": -2
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "a-1"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-distinct-struct-rounded",
+      "rql": "range(0, 3) | select p=(ref(\"Node#5\").Pos * ($ == 1 ? 0.3 : 0.1 * 3)) | distinct | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 3
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "p",
+                "expr": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ],
+                      "on": {
+                        "call": "ref",
+                        "args": [
+                          {
+                            "lit": "Node#5"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "call": "if",
+                      "args": [
+                        {
+                          "op": "==",
+                          "args": [
+                            {
+                              "path": []
+                            },
+                            {
+                              "lit": 1
+                            }
+                          ]
+                        },
+                        {
+                          "lit": 0.3
+                        },
+                        {
+                          "op": "*",
+                          "args": [
+                            {
+                              "lit": 0.1
+                            },
+                            {
+                              "lit": 3
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "distinct"
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 1
+      }
+    },
+    {
+      "name": "adapt-group-by-struct-rounded",
+      "rql": "range(0, 3) | group-by p=(ref(\"Node#5\").Pos * ($ == 1 ? 0.3 : 0.1 * 3)) | select count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 3
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "group-by",
+            "fields": [
+              {
+                "name": "p",
+                "expr": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ],
+                      "on": {
+                        "call": "ref",
+                        "args": [
+                          {
+                            "lit": "Node#5"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "call": "if",
+                      "args": [
+                        {
+                          "op": "==",
+                          "args": [
+                            {
+                              "path": []
+                            },
+                            {
+                              "lit": 1
+                            }
+                          ]
+                        },
+                        {
+                          "lit": 0.3
+                        },
+                        {
+                          "op": "*",
+                          "args": [
+                            {
+                              "lit": 0.1
+                            },
+                            {
+                              "lit": 3
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "count",
+                "expr": {
+                  "path": [
+                    "count"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "count"
+        ],
+        "rows": [
+          [
+            3
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-distinct-struct-keeps-different",
+      "rql": "range(0, 2) | select p=(ref(\"Node#5\").Pos * ($ == 1 ? 0.3 : 0.3001)) | distinct | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "p",
+                "expr": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ],
+                      "on": {
+                        "call": "ref",
+                        "args": [
+                          {
+                            "lit": "Node#5"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "call": "if",
+                      "args": [
+                        {
+                          "op": "==",
+                          "args": [
+                            {
+                              "path": []
+                            },
+                            {
+                              "lit": 1
+                            }
+                          ]
+                        },
+                        {
+                          "lit": 0.3
+                        },
+                        {
+                          "lit": 0.3001
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "distinct"
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 2
       }
     }
   ]

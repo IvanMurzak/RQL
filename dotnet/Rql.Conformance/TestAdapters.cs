@@ -77,6 +77,12 @@ namespace Rql.Conformance
             protected override int? Order(Vec2 value, object? other, RqlKernel kernel) =>
                 TryVec(other, out var o) ? Length(value).CompareTo(Length(o)) : (int?)null;
 
+            // Component-wise arithmetic (spec §4.2): components [x, y].
+            protected override double[]? Components(Vec2 value) => new[] { value.x, value.y };
+
+            protected override object? FromComponents(double[] components) =>
+                components.Length == 2 ? new Vec2 { x = components[0], y = components[1] } : (object?)null;
+
             private static double Length(Vec2 v) => Math.Sqrt(v.x * v.x + v.y * v.y);
 
             private static bool TryVec(object? value, out Vec2 v)

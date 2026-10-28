@@ -54,6 +54,7 @@ sealed class RendererAdapter : RqlTypeAdapter<Renderer>
 | Kernel | `RqlKernel` passed to `TryCoerce` / `AreEqual` / `Compare`: `TryCoerce(value, type, path)`, `Equal`, `Compare`; one kernel per type model / execution, recursion guard and depth per thread | composite values reuse whatever adapter handles a nested type |
 | Modules | `IRqlModule { Order; Configure(ctx) }`, `engine.AddModulesFrom(assemblies)` or `engine.AddModules(types)` (hosts with a type index, e.g. Unity's TypeCache); `AddFunction(name, fn, description)` | optional packages contribute adapters, sources and functions by being installed |
 | Numeric structs | `NumericTupleAdapter<T>` (`Width`, `Part`, `Make`, `Expected`, optional `ParseExtra`) | vectors / quaternions / colors: `"(x, y)"` (also `nan` / `inf`) / `[x, y]` / `{x, y}` in, tidy `"(x, y)"` display out (6 significant digits, noise below 1e-6 as 0, spec §13 "Numeric tuples"), approximate equality (absolute 1e-5, relative for large values) with text, lists and object literals (members left out keep the compared value's) |
+| Arithmetic | `GetComponents(value)` / `MakeFromComponents(type, parts)`, typed `Components(T)` / `FromComponents(parts)`; `NumericTupleAdapter.Arithmetic => true` opts a tuple adapter in | component-wise `v * n`, `n * v`, `v / n`, `v ± w`, `v * w`, `v / w`, `v + [x, y, z]`, `-v` (spec §4.2); opt in vectors and colors, never quaternions or matrices |
 | Identity | `StableId(value)`, `IsAlive(value)` | `$ref` / `ref("Type#id")`, `stale-ref` |
 | Describe | `Description` | schema / `describe` |
 
@@ -69,7 +70,8 @@ setters should round-trip their getter (the rollback writes the old value back t
 value types are rejected (they would write to a copy). Configuring a member that does not exist fails the query with
 `internal-error` and names the member. Adapters are per engine: engines without adapters keep the shared,
 adapter-free type model. Objects reachable only through explicit-only members are not found by `ref("Type#id")`
-search, so give such hosts a `ResolveStableRef`. `distinct` / `group-by` don't use adapter equality in 0.1. When no adapter is registered anywhere, the cost is one static read (measured within ±2% of
+search, so give such hosts a `ResolveStableRef`. `distinct` / `group-by` don't use adapter equality in 0.1 (structs key by
+their members, numbers rounded as tuples print, spec §5). When no adapter is registered anywhere, the cost is one static read (measured within ±2% of
 the pre-adapter build on every benchmark query, with dynamic PGO off for deterministic codegen).
 
 ## Unity-MCP converters → RQL adapters
@@ -121,7 +123,8 @@ success; method calls are limited to allowlisted / exposed instance methods.
 TypeScript (ThreeJS hosts: `Vector3`, `Color`, `Object3D`) and C++ (Unreal: `FVector`, `FRotator`, `UObject`
 validity/pending-kill) implement the same capabilities with idiomatic APIs, limited to the resolution tiers their type
 systems can express (TS: exact / prototype chain / `matches(ctor)` predicate; C++: exact / base distance / interface
-name, no `IncludeFields` since C++ cannot reflect private fields). In TS, member shaping needs a registered class:
+name, no `IncludeFields` since C++ cannot reflect private fields). Arithmetic: TS `components(value)` /
+`fromComponents(parts, target)`, C++ `TypeAdapter::components` / `from_components`. In TS, member shaping needs a registered class:
 an adapter with `members` that resolves to an undeclared (per-instance) class fails the query with `internal-error`
 rather than silently not hiding anything. All three pass the same
 `fixtures/adapters/cases.json`.

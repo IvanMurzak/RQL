@@ -5,9 +5,9 @@
  */
 import { RqlError, diagnostic, formatNumber, segmentToString, type CallExpr, type Expr, type OpExpr, type PathExpr } from '@rql/contracts';
 import { elements, findMapKey, indexAt, isMapLike, mapEntries, mapGet, sizeOf, type MapLike } from './collections.js';
-import { firstAnswer } from './adapters.js';
+import { firstAnswer, type AnyAdapter } from './adapters.js';
 import { Exec, IsSite, MemberSite, errorMessage } from './exec.js';
-import { EnumValue, type TypeInfo, type TypeModel } from './types.js';
+import { EnumValue, StringMap, type Ctor, type TypeInfo, type TypeModel } from './types.js';
 import { ErrorValue, MISSING, MapEntry, ObjectValue, RowValue, UNKNOWN, isAbsent, toNumber } from './values.js';
 
 export type Eval = (x: Exec) => unknown;
@@ -77,13 +77,21 @@ export class Compiler {
             // Lexical scope chain: inside method arguments a bare name missing on the element
             // resolves against the enclosing item(s), innermost first (spec §3).
             cur = (x) => {
-              const r = member(x, x.live(x.current), site);
-              if (r !== MISSING || x.outer.length === 0) return r;
-              for (let k = x.outer.length - 1; k >= 0; k--) {
-                const o = member(x, x.outer[k], site);
-                if (o !== MISSING) return o;
+              if (x.outer.length === 0) return member(x, x.live(x.current), site);
+              // An absent map key counts as missing here, so the name can still resolve on an enclosing item (spec §3);
+              // when no item has it, the element's own answer stands (null for an absent key).
+              x.keyProbe++;
+              try {
+                const r = member(x, x.live(x.current), site);
+                if (r !== MISSING) return r;
+                for (let k = x.outer.length - 1; k >= 0; k--) {
+                  const o = member(x, x.outer[k], site);
+                  if (o !== MISSING) return o;
+                }
+              } finally {
+                x.keyProbe--;
               }
-              return r;
+              return x.keyProbe > 0 ? MISSING : member(x, x.live(x.current), site);
             };
           } else cur = (x) => member(x, prev(x), site);
           break;
@@ -264,14 +272,14 @@ export class Compiler {
         };
       }
       case 'neg':
-        return (x) => arith('neg', a(x), 0);
+        return (x) => arith(x.types, 'neg', a(x), 0);
       case '+':
       case '-':
       case '*':
       case '/':
       case '%': {
         const op = o.op;
-        return (x) => arith(op, a(x), b(x));
+        return (x) => arith(x.types, op, a(x), b(x));
       }
       case 'index':
         return (x) => {
@@ -340,7 +348,14 @@ export class Compiler {
         } finally {
           this.guarded--;
         }
-        return (x) => a(x) !== MISSING;
+        return (x) => {
+          x.keyProbe++;
+          try {
+            return a(x) !== MISSING;
+          } finally {
+            x.keyProbe--;
+          }
+        };
       }
       case 'is-null': {
         this.arity(c, 1, 1);
@@ -675,10 +690,26 @@ export function member(x: Exec, v: unknown, site: MemberSite): unknown {
 export function mapLookup(x: Exec, map: MapLike, key: unknown, site?: MemberSite): unknown {
   x.membersRead++;
   const k = findMapKey(map, key);
-  if (!k.found) return MISSING;
+  // An absent key reads as null (spec §3); inside has() it is missing, so has(M["k"]) tests the key. A key that cannot be a
+  // key of this map (an unknown enum name, text for numeric keys) stays missing.
+  if (!k.found) return x.keyProbe > 0 || badKey(map, key) ? MISSING : null;
   if (site !== undefined) site.hits++;
   const v = mapGet(map, k.key);
   return v === undefined ? null : x.live(v);
+}
+
+/**
+ * Whether `key` cannot convert to the map's key type (spec §3: such a lookup stays missing). JS maps carry no declared key
+ * type, so it is judged by the keys present: an empty map cannot tell.
+ */
+function badKey(map: MapLike, key: unknown): boolean {
+  if (map instanceof StringMap) return typeof key !== 'string' && typeof key !== 'number' && !(key instanceof EnumValue);
+  for (const k of map.keys()) {
+    if (k instanceof EnumValue) return typeof key === 'string' ? k.type.parse(key) === undefined : typeof key !== 'number' && !(key instanceof EnumValue);
+    if (typeof k === 'number') return typeof key === 'string' ? key.trim() === '' || Number.isNaN(Number(key)) : typeof key !== 'number';
+    return false;
+  }
+  return false;
 }
 
 function indexOf(x: Exec, v: unknown, idx: number): unknown {
@@ -949,14 +980,20 @@ function isType(x: Exec, a: unknown, b: unknown): Truth {
 
 // ------------------------------------------------------------------ arithmetic and text
 
-export function arith(op: string, a: unknown, b: unknown): unknown {
+export function arith(model: TypeModel, op: string, a: unknown, b: unknown): unknown {
   if (a === MISSING || b === MISSING) return MISSING;
   if (a instanceof ErrorValue) return a;
   if (b instanceof ErrorValue) return b;
   if (op === '+' && (typeof a === 'string' || typeof b === 'string')) return toText(undefined, a) + toText(undefined, b);
   const l = toNumber(a);
   const r = toNumber(b);
-  if (l === undefined || r === undefined) return new ErrorValue('type-mismatch', `cannot apply '${op}' to ${describeValue(a)} and ${describeValue(b)}`);
+  if (l === undefined || r === undefined) {
+    if (model.hasCapability('components')) {
+      const v = structArith(model, op, a, b);
+      if (v !== undefined) return v;
+    }
+    return arithMismatch(model, op, a, b);
+  }
   switch (op) {
     case 'neg':
       return -l;
@@ -973,6 +1010,113 @@ export function arith(op: string, a: unknown, b: unknown): unknown {
     default:
       return new ErrorValue('type-mismatch');
   }
+}
+
+function arithMismatch(model: TypeModel, op: string, a: unknown, b: unknown, why?: string): ErrorValue {
+  const message = `cannot apply '${op}' to ${describeValue(a)} and ${describeValue(b)}`;
+  if (why === undefined) {
+    // A struct without declared components: say why (spec §4.2), so `Scale * 1.5` is not a mystery.
+    if (isStruct(model, a) && componentsOf(model, a) === undefined) why = `${describeValue(a)} has no component-wise arithmetic`;
+    else if (op !== 'neg' && isStruct(model, b) && componentsOf(model, b) === undefined) why = `${describeValue(b)} has no component-wise arithmetic`;
+  }
+  return new ErrorValue('type-mismatch', why === undefined ? message : `${message} (${why})`);
+}
+
+function isStruct(model: TypeModel, v: unknown): boolean {
+  return typeof v === 'object' && v !== null && !isAbsent(v) && model.infoOf(v).kind === 'struct';
+}
+
+/** The arithmetic components of a struct whose type adapter declares them (spec §4.2, §13), with that adapter. */
+function componentsOf(model: TypeModel, v: unknown): { parts: readonly number[]; adapter: AnyAdapter } | undefined {
+  if (!isStruct(model, v)) return undefined;
+  for (const adapter of model.infoOf(v as object).adapterSet.components) {
+    const parts = adapter.components!(v as object);
+    if (parts !== undefined) return { parts, adapter };
+  }
+  return undefined;
+}
+
+/** The list info of `v`, or undefined when it is not a list. */
+function listInfo(model: TypeModel, v: unknown): TypeInfo | undefined {
+  if (typeof v !== 'object' || v === null || isAbsent(v)) return undefined;
+  const info = model.infoOf(v);
+  return info.isList ? info : undefined;
+}
+
+/** A list of exactly `width` numbers read as components (spec §4.2), else undefined. */
+function listParts(v: object, info: TypeInfo, width: number): number[] | undefined {
+  const parts: number[] = [];
+  for (const e of elements(v, info)) {
+    const n = toNumber(e);
+    if (n === undefined || parts.length === width) return undefined;
+    parts.push(n);
+  }
+  return parts.length === width ? parts : undefined;
+}
+
+/**
+ * Component-wise arithmetic on structs whose adapter declares components (spec §4.2): v * n, n * v, v / n, v ± w, v * w,
+ * v / w (w of the same type, or a list of as many numbers), -v. Undefined when neither operand has components.
+ */
+function structArith(model: TypeModel, op: string, a: unknown, b: unknown): unknown {
+  const ca = componentsOf(model, a);
+  const cb = op === 'neg' ? undefined : componentsOf(model, b);
+  if (ca === undefined && cb === undefined) return undefined;
+  if (op === '%') return arithMismatch(model, op, a, b, "'%' is not component-wise");
+  const vectorLeft = ca !== undefined;
+  const own = vectorLeft ? ca : cb!;
+  const vector = (vectorLeft ? a : b) as object;
+  let parts = own.parts;
+  let other: readonly number[];
+  if (op === 'neg') {
+    other = parts;
+    parts = parts.map(() => 0); // -v = 0 - v
+    op = '-';
+  } else if (ca !== undefined && cb !== undefined) {
+    if ((a as object).constructor !== (b as object).constructor || ca.parts.length !== cb.parts.length) return arithMismatch(model, op, a, b, 'different types');
+    other = cb.parts;
+  } else {
+    const operand = vectorLeft ? b : a;
+    const n = toNumber(operand);
+    if (n !== undefined) {
+      // v * n, n * v and v / n scale; a number added to a vector, or divided by one, is not defined.
+      if (!(op === '*' || (op === '/' && vectorLeft)))
+        return arithMismatch(
+          model,
+          op,
+          a,
+          b,
+          op === '/' ? 'a number cannot be divided by a vector' : `add a value of the same type or a list of ${parts.length} numbers; multiply or divide by a number`,
+        );
+      other = parts.map(() => n);
+    } else {
+      const info = listInfo(model, operand);
+      if (info === undefined) return arithMismatch(model, op, a, b);
+      const lp = listParts(operand as object, info, parts.length);
+      if (lp === undefined) return arithMismatch(model, op, a, b, `the list must hold exactly ${parts.length} numbers, one per component`);
+      other = lp;
+    }
+    if (!vectorLeft) [parts, other] = [other, parts];
+  }
+  const result: number[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const l = parts[i]!;
+    const r = other[i]!;
+    if (op === '+') result.push(l + r);
+    else if (op === '-') result.push(l - r);
+    else if (op === '*') result.push(l * r);
+    else {
+      if (r === 0) return new ErrorValue('div-by-zero');
+      result.push(l / r);
+    }
+  }
+  let built: unknown;
+  try {
+    built = own.adapter.fromComponents?.(result, vector.constructor as Ctor);
+  } catch {
+    built = undefined;
+  }
+  return built ?? arithMismatch(model, op, a, b, `cannot build ${describeValue(vector)} from components`);
 }
 
 /** Text form used for concatenation, map keys in output and sort fallbacks. */

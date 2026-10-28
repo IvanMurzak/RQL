@@ -102,3 +102,11 @@
   nested in itself encodes the repetition as `"…"` (§6; .NET recursed without end). Known names include the members of
   type adapters' target types (§8, §13). The host-independent language rules ship as text with every runtime
   (`fixtures/guide/language-rules.txt`). The group-row hint names the rows' own key columns (§5; it showed `select key` and `items.avg(key)` after a named key).
+* Wave-5, ADR-0009 (unreleased; protocol stays `0.1`, no new error code, no plan change): **component-wise struct
+  arithmetic** for types whose adapter declares components (the new adapter capability *Arithmetic*, §4.2, §13:
+  `Scale * 1.5`, `Position + [0, 1, 0]`, `-v`); other struct operands stay `type-mismatch`, now with a reason. **Behaviour
+  change**: an absent map key reads as `null`, not `missing` (§3), so `== null` / `is null` are `true` and `!= v` keeps
+  the item; `has(m["k"])` still tests the key, and unknown members stay `missing`. `distinct` / `group-by` key structs by
+  their members with numbers rounded as numeric tuples print (§5), so `(1, 1, 1)` and `(0.99999994, 1, 1)` merge.
+  `unknown-member` hints also offer struct members one and two levels down (`BodyInstance.CollisionProfileName`, §10).
+  Two more shared language rules (vectors, missing map entries).

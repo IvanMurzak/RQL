@@ -440,7 +440,8 @@ namespace Rql.Execution
             var m = info.Find(name);
             if (m == null)
                 throw new RqlException("unknown-member", $"no member '{name}' on {info.ShortName}", null,
-                    Suggest.MemberHint(name, info.Members.Select(mm => mm.Name).ToList(), top ? _x.Engine.TypesDeclaring(name, new[] { info }) : new List<string>()));
+                    Suggest.MemberHint(name, info.Members.Select(mm => mm.Name).ToList(), top ? _x.Engine.TypesDeclaring(name, new[] { info }) : new List<string>(),
+                        Suggest.NestedMembers(_x.Types, new[] { info })));
             return new MemberSlot(container.GetType(), m);
         }
 

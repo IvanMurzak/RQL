@@ -23,13 +23,13 @@ Every expression evaluates to one of:
 
 | Kind | Meaning |
 |---|---|
-| `missing` | The path does not exist on this value (no such member/key/index). |
+| `missing` | The path does not exist on this value (no such member or list index). An absent map key is not `missing`: it reads as `null` (§3). |
 | `null` | The member exists and its value is null / empty optional / nullptr. |
 | `error` | Evaluation failed (getter threw, division by zero, type mismatch in arithmetic). Carries a code. |
 | `bool`, `number`, `string` | Scalars. Numbers are compared numerically regardless of the runtime's int/float types. A single-precision (float) value is the double of its shortest round-trip decimal wherever it is used as a number (`4.2f` is `4.2`, not `4.19999980926514`), so arithmetic, functions and aggregates over float members compute with the value the member shows; the widened value converts back to the same float, so comparisons in float precision (§4.1) are unchanged. |
 | `enum` | Runtime enum value; compares to strings by name (enum name resolution, §8) and to numbers by underlying value. |
 | `object` | A reference-like runtime object with identity. |
-| `struct` | A value type (e.g. `Vector3`); no identity, compared member-wise is NOT supported in v0 (use members). |
+| `struct` | A value type (e.g. `Vector3`); no identity. `==` is `unknown` unless a type adapter compares it (§4.1, §13); arithmetic is component-wise when a type adapter declares its components (§4.2); `distinct` / `group-by` key it by its members with numbers rounded for display (§5). |
 | `list` | Ordered collection (array, list, set, generic enumerable that is not a string or map). |
 | `map` | Key→value collection (dictionary/map). |
 
@@ -93,7 +93,14 @@ If the source value is a `list` its elements become the item stream; a `map` yie
   runtimes expose plain auto-properties only.
 * **Maps** — `m.key` and `m["key"]` look up the key (string keys compare ordinally; for non-string
   key types the key literal is coerced). A real member of the map type with that name (e.g.
-  `Count`) takes precedence for `.name` syntax; `["name"]` is always a key lookup.
+  `Count`) takes precedence for `.name` syntax; `["name"]` is always a key lookup. **An absent key reads as `null`**,
+  not `missing`: a map's keys are data, not members, so `Props["mp"] == null`, `Props["mp"] is null` and
+  `coalesce(Props["mp"], 0)` treat an object without the entry like one whose entry is null, and `where Props["mp"] != 5`
+  keeps it; `set Nick = Props["nick"]` assigns null to an object without the entry (guard with `where has(…)` or
+  `coalesce`). For the scope chain (below) an absent key on the element counts as missing, so `Entries.any(v >
+  Threshold)` still finds the item's `Threshold` when the entry maps have no such key. `has(Props["mp"])` still tests whether the key is present (§4.3). A key that cannot be converted to the map's
+  key type (an enum name the key type does not have) stays `missing`, and so do a list index out of range and an
+  unknown member (a typo such as `Prosp["mp"]`, which keeps its `unknown-member` warning).
 * **Lists** — `[i]` indexes (`missing` when out of range). `.name` on a list: if the list type
   itself has that member (`Count`, `Length`) it is used; otherwise the access **maps** over the
   elements, skipping `missing` results and flattening one level of nested lists. So
@@ -151,7 +158,9 @@ path; the same object reached by another query has another `$path`. Hosts expose
   query fails before it runs; a computed pattern yields `unknown` for that item plus one `invalid-regex` warning.
   A match that exceeds the runtime's per-match regex time limit yields `unknown` plus one `timeout` warning.
 * `x in [a, b]` / `x not in [...]`: `==` against each list element.
-* `x is null`, `x is not null`: `true`/`false` (missing → `unknown`).
+* `x is null`, `x is not null`: `true`/`false` for every value, an absent map key included (it reads as `null`, §3);
+  `missing` (an unknown member, an index out of range) and `error` → `unknown`, so a misspelt member never makes a filter
+  keep every item (`where Parnet is null | set …` reports the typo instead of changing every object, §8).
 * `x is TypeName`: `true` if the runtime type of `x` or any base type/implemented interface has
   short name `TypeName` (ordinal, case-insensitive); `false` for other objects; `unknown` for
   missing/error; `false` for null.
@@ -162,11 +171,30 @@ path; the same object reached by another query has another `$path`. Hosts expose
 modulo by zero → `error(div-by-zero)`. Other operand kinds → `error(type-mismatch)`.
 `missing` operands propagate `missing`.
 
+**Component-wise arithmetic on structs.** A struct whose type adapter declares its numeric **components** (the
+*Arithmetic* capability, §13: vectors, rotators, colors — never quaternions or matrices, whose products are not
+component-wise) takes part in arithmetic component by component, and the result is a new value of the same type:
+
+| Expression | Result |
+|---|---|
+| `v * n`, `n * v`, `v / n` | every component multiplied / divided by the number `n` (`Scale * 1.5`). |
+| `v + w`, `v - w`, `v * w`, `v / w` | `w` of the same type: component with component (`Position + Offset`). |
+| `v + [a, b, c]` (any of `+ - * /`, either side) | a list of exactly as many numbers as `v` has components is read as a value of `v`'s type (`Position + [0, 1, 0]`). |
+| `-v` | every component negated. |
+
+Components are computed as numbers (single-precision components widened as in §1.1) and the adapter builds the
+result. Everything else is `error(type-mismatch)` naming both operands: two different struct types (`Vector3 + Vector2`),
+`v + n` / `n - v` / `n / v`, `v % …`, a list whose length differs from the component count or that holds a non-number,
+and a struct whose type declares no components (the message then says so). Division by a zero number or a zero
+component is `error(div-by-zero)`. A list alone is not a vector: `[1, 2, 3] * 2` stays `type-mismatch` (lists only take
+part next to a struct, whose type gives them their meaning). `+` with a string still concatenates. Writes need no
+coercion: `set Scale = Scale * 1.5` assigns a value of the member's own type.
+
 ### 4.3 Functions (portable core)
 
 | Function | Result |
 |---|---|
-| `has(path)` | `true` if `path` is not `missing` (argument is not evaluated beyond the path). |
+| `has(path)` | `true` if `path` is not `missing` and every map lookup in it finds its key (an absent key reads as `null` elsewhere, §3, but `has(Props["mp"])` is `false` without the entry); the argument is not evaluated beyond the path. |
 | `is-null(x)` | same as `x is null`. |
 | `len(x)` | string length, list/map size; otherwise `missing`. |
 | `lower(s)`, `upper(s)` | invariant case conversion. |
@@ -264,7 +292,7 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
 | `count` | terminal: number of items. |
 | `get e` | replace each item by `e`; `list` results are flattened into separate items; `missing`/`null` dropped. |
 | `recurse [via...] [max-depth=N] [include-self=false]` | depth-first pre-order expansion of each item into **itself (depth 0) and** its descendants; `include-self=false` emits descendants only. With `via` members (e.g. `recurse Children`) only those members are followed; without, every **owning** object-valued member and list/map element of objects is followed (runtime member order). Members the descriptor marks as non-owning references (parent links, targets, shared assets) are not followed by generic recursion. Cycle-safe: each object identity is emitted at most once per stage. `max-depth` default 8, hard cap per budget. |
-| `distinct [e]` | keep the first item for each distinct value of `e` (default `$`; objects by identity; projected rows by their column values, so `select Tag \| distinct` keeps one row per tag; lists by their elements, like `==` (§4.1), so `distinct Tags` keeps one item per tag list; structs and other values by value). It keeps **items**, not the values of `e`: `distinct Tag` returns one whole item per tag; to list the values project first (`select Tag \| distinct`) or count them (`group-by Tag`). |
+| `distinct [e]` | keep the first item for each distinct value of `e` (default `$`; objects by identity; projected rows by their column values, so `select Tag \| distinct` keeps one row per tag; lists by their elements, like `==` (§4.1), so `distinct Tags` keeps one item per tag list; structs by their type and member values with numbers rounded for display, below; other values by value). It keeps **items**, not the values of `e`: `distinct Tag` returns one whole item per tag; to list the values project first (`select Tag \| distinct`) or count them (`group-by Tag`). |
 | `sum/min/max/avg e` | terminal aggregate, same rules as the collection methods (`sum` of nothing → `0`). |
 | `group-by e` | replaces the stream by rows `{key, count}` (members `key`, `count`) in order of first appearance of the key; `null`/`missing` keys form one `null` group. Can be followed by `sort count desc`, `where count > 1`, etc. **Group items**: every group row also has the member `items`, the list of the group's items in stream order, so per-group aggregates are collection methods (§4.3): `group-by Category \| select key, count, avg = items.avg(Weight)`, `items.sum(Mass)`, `items.count(Enabled)`, `items.first().Name`. `items` is not a column (not encoded with the row); a key column named `items` takes precedence. Runtimes MAY keep the items only when the plan reads a member named `items`. A member missing on group rows gets a hint that shows `items.avg(…)` with the rows' own key columns (`group-by mat=(…) | select key` → `select mat, count, avg = items.avg(…)`; a missing key column is never offered as the member to aggregate). |
 | `group-by [n=]e, [n=]e ...` | several keys, or a named key: one row per distinct **combination** of key values, in order of first appearance, with one column per key — named like `select` columns (alias, or the key's source text: `group-by Folder, $type` → columns `Folder`, `$type`, `count`) — then `count`. Key values compare like `distinct` (lists by their elements: `group-by Tags` merges equal tag lists); `null`/`missing` values group as `null` per column. Keys are separated by commas or whitespace like `select` fields; computed keys need parentheses (`group-by Kind, big=(Mass > 10)`). Column names must be distinct (case-insensitive) and none may be `count` (`syntax-error` / `invalid-plan`). A single key without a name keeps the `{key, count}` form above. |
@@ -272,6 +300,20 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
 | `set p = e, ...` | mutation (§8). |
 | `call m(args)` | mutation: invoke an allowlisted method on each item (§8). |
 | `call q.m(args)` | mutation: invoke the method `m` of the one object the source expression `q` yields, once per item (source-qualified call, §8). |
+
+**Struct keys** (`distinct`, `group-by`). A struct is keyed by its type and the values of its members (the members its
+default encoding shows, §6: explicit-only members excluded, and members of the struct's own type — derived values such
+as `normalized` or `inverse` — left out; nested structs likewise, two levels deep like encoding; a struct type without
+members keys by the runtime's own equality), where every number
+is rounded the way numeric tuples are displayed (§13): a single-precision number to 6 significant digits, any other
+number to 12, a magnitude below `1e-6` (single) / `1e-9` (other) to `0`, and `-0` to `0`; `NaN` keys like `NaN`. So
+values that print alike group together: `select Scale | distinct` keeps one `(1, 1, 1)` although one Scale is
+`0.99999994`. Two structs share a key exactly when their members print alike by that rule (a type adapter's display may
+differ: members it does not show still count, so adapters hide derived members such as `magnitude` if they vary in the
+last digits); this is a key, not a tolerance (rounding
+is transitive, a tolerance is not), so near a rounding boundary two values that `==` calls equal (`1.0000049` and
+`1.0000051`, printed `1` and `1.00001`) still form two groups. `==` does not change: structs compare through their type adapter (numeric tuples within a tolerance,
+§13), otherwise `unknown`. Scalars keep exact numeric equality.
 
 Terminal stages (`count`, aggregates, `describe`, `set`, `call`) MUST be last;
 otherwise `invalid-plan`.
@@ -559,6 +601,13 @@ the name's length, or when it contains the name (at least 3 characters), or when
 least half as long as the name (`LabelText` → `Label`, but not `NoSuchType` → `Type`). Order: containment first, then
 distance, then ordinal name; at most 3 suggestions. When nothing qualifies, a hint MAY list the type's members, at most
 12 of them followed by `… (N more)`, **ordered by distance to the name** (then ordinal), never in declaration order.
+**Nested members**: the candidates of an `unknown-member` hint (a read or a `set` target) also include the members of the
+type's **struct-typed** members, one and two levels down, as dotted paths (`BodyInstance.CollisionProfileName`), from
+static type information only (no getter runs; at most 200 nested paths per type). A nested path qualifies and ranks by
+its last segment, with the rules above (containment, then distance), and among equal ranks a direct member comes before
+a nested one, a shallower path before a deeper one, then ordinal; so `set CollisionProfileName = …` on a component whose
+real member is `BodyInstance.CollisionProfileName` gets "did you mean BodyInstance.CollisionProfileName?". The member
+list shown when nothing qualifies stays the type's own members.
 **Mixed streams**: an `unknown-member` hint names the known types that do have the member (statically reachable types,
 least derived first, at most 3) and suggests filtering to them: "'light_energy' is a member of OmniLight3D: filter to
 those first, e.g. where $ is OmniLight3D (or where has(light_energy))". A `set` whose first target segment some targets
@@ -645,6 +694,7 @@ removed again on rollback), and entries are never removed. Schemas show the type
 | Exclusion | Hide members by predicate (e.g. every `[Obsolete]` member), and engine-wide exclude member **types** (a member is dropped when its type, element type or a generic argument matches), e.g. delegates, native pointers or assemblies that must never be touched. |
 | Literals | Coercion receives object literals (§4.5) and may build values itself; an adapter may publish a JSON Schema of the literals it accepts, shown by `describe` as `literal`. |
 | Describe | A one-line description of the type for schemas and `describe`, e.g. how to write literals. |
+| Arithmetic | Opt-in component-wise arithmetic (§4.2) for a struct type: the adapter reads a value's numeric **components** (always the same count for the type, in a fixed order) and **builds** a value of the type from such a list. The first applicable adapter that returns components decides; a build that fails is `type-mismatch`. Hosts opt in only types whose arithmetic is component-wise (vectors, rotators, colors), never quaternions or matrices. |
 
 **Numeric tuples** (vectors, rotations, quaternions, colors: adapters that encode a struct as text `"(x, y, z)"`, such
 as the .NET `NumericTupleAdapter`; hosts with their own tuple adapters SHOULD follow the same rules so agents see one
@@ -657,6 +707,8 @@ format across engines):
   display form: it parses back to within the equality tolerance, not bit-exactly.
 * *Input*: text components accept `nan`, `inf`, `infinity` with an optional sign, case-insensitively, besides
   numbers, so every printed form parses back.
+* *Arithmetic*: a tuple adapter MAY opt in to component-wise arithmetic (§4.2) with its components as the arithmetic
+  components (.NET `NumericTupleAdapter.Arithmetic`); vector and color adapters SHOULD, quaternion adapters MUST NOT.
 * *Equality*: component-wise within a tolerance of `max(1e-5, 1e-5 × |larger component|)` (an absolute tolerance near
   zero, relative for large values, so a printed value compares equal to its source); a NaN component equals nothing.
   The other operand may be the tuple text, a list of numbers, or an **object literal**: its keys name members
@@ -716,8 +768,8 @@ are known names (§8, §10) without a host hook.
 **Scope.** Adapters belong to an engine (a host may run engines with different adapter sets over one type registry);
 engines without adapters behave exactly as without this section. An explicit-only member is also not searched by
 `ref("Type#id")` fallback resolution, so objects reachable only through one need a host stable-ref resolver.
-`distinct`, `group-by` keys and `in`/`contains` over maps hash by built-in value identity and do not consult adapter
-equality in 0.1.
+`distinct`, `group-by` keys and `in`/`contains` over maps hash by built-in value identity (structs by their rounded
+members, §5) and do not consult adapter equality in 0.1.
 
 **Conformance.** `fixtures/adapters/cases.json` specifies a test adapter set over the conformance graph that every runtime
 implements in its test harness (see the file's `adapters` section); its cases must pass in every runtime.
