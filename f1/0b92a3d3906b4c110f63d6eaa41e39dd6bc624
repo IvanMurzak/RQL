@@ -1,0 +1,47 @@
+cpp/include/rql/guide.hpp
+  s_7be60963fe3603::t_a3132616a7be38 1-22
+cpp/include/rql/plan.hpp
+  s_7bc72ecaebd05d::t_2770433d10f6ee 83
+cpp/include/rql/rql.hpp
+  s_7bc72ecaebd05d::t_576fc66446252b 7
+cpp/src/codec.cpp
+  s_7bc72ecaebd05d::t_cab0e2f52b7629 251,546,550
+cpp/src/compiler.cpp
+  s_7bc72ecaebd05d::t_0d9c26c5ed9f87 1044,1344-1372,1505-1521
+cpp/src/encoder.cpp
+  s_7bc72ecaebd05d::t_8f3d3228e2f774 63-71,109-110,116,120,134
+cpp/src/exec.hpp
+  s_7bc72ecaebd05d::t_db7130e2f6694f 332-335,356-361
+cpp/src/mutator.cpp
+  s_7bc72ecaebd05d::t_74ba02d96da9e7 11-12,71,81-83,93-95,103-107,129-130,861-862,864-881,884,888-890,910,912-915,926-948,989,997,999,1020-1021,1025-1027
+cpp/src/pipeline.cpp
+  s_7bc72ecaebd05d::t_cf4a0607b1f078 271-295,298,303-307,309-310,317,322-352,821-836,848-851,854,860-863,868-878,885-938,1213-1219,1344-1348
+cpp/tests/conformance_graph.cpp
+  s_7bc72ecaebd05d::t_e4440c9418fd68 154-155,200-214
+cpp/tests/unit_tests.cpp
+  s_7bc72ecaebd05d::t_252f91d4c413f0 5-7,1634,1762-1839,1852
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f10b92a3d3906b4c110f63d6eaa41e39dd6bc624",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    },
+    "s_7be60963fe3603": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c306a43-6f1a-4fe9-9b57-09acf4bc1a65",
+        "model": "unknown"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
