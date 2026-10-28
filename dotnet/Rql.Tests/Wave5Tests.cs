@@ -200,6 +200,28 @@ namespace Rql.Tests
             Assert.Equal("1", own.Rows![0][0]!.ToJsonString());
         }
 
+        public struct Anchors { public Vec2f Minimum; public Vec2f Maximum; }
+
+        public sealed class Slot { public Anchors Anchors { get; set; } }
+
+        [Fact]
+        public void SetOfANestedStructWithItsCurrentValueIsUnchanged()
+        {
+            var slots = new List<Slot> { new Slot() };
+            var e = new RqlEngine().AddSource("slots", () => slots).AddAdapter(new Vec2Adapter()); // members have an adapter, Anchors none
+            e.Mutations.Enabled = true;
+            var opts = new QueryOptions { AllowMutation = true, DryRun = true };
+            var lit = e.Execute("slots | set Anchors = {Minimum: \"(0, 0)\", Maximum: [0, 0]}", null, opts);
+            Assert.True(lit.Ok, Json(lit));
+            Assert.Empty(lit.Rows!);
+            Assert.Equal(1, lit.Unchanged);
+            var same = e.Execute("slots | set Anchors = Anchors", null, opts);
+            Assert.Equal(1, same.Unchanged);
+            var changed = e.Execute("slots | set Anchors = {Minimum: [0.5, 0], Maximum: [0, 0]}", null, opts);
+            Assert.Single(changed.Rows!);
+            Assert.Equal("true", e.Execute("slots | select e=(Anchors == Anchors)").Rows![0][0]!.ToJsonString());
+        }
+
         [Fact]
         public void UnknownMemberHintFindsNestedStructMembers()
         {

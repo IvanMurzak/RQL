@@ -1862,6 +1862,12 @@ struct UCoin {
 struct UCoinWorld {
     std::vector<std::unique_ptr<UCoin>> Coins;
 };
+struct FAnchorsT {
+    FVec3f Minimum, Maximum;
+};
+struct USlot {
+    FAnchorsT Anchors;
+};
 struct UHolder {
     double Threshold = 3;
     std::vector<std::map<std::string, double>> Entries;
@@ -1938,6 +1944,22 @@ void wave5_tests() {
         e.add_object_source("h", &holder);
         auto r = arun(e, R"J({"rql":"0.1","source":{"path":["h"]},"stages":[{"op":"where","pred":{"call":"any","on":{"path":["Entries"]},"args":[{"op":">","args":[{"path":["v"]},{"path":["Threshold"]}]}]}},{"op":"count"}]})J");
         check(r.ok && r.value.as_number() == 1, "wave5: scope chain falls back past an absent key");
+    }
+    {
+        // A struct of structs written with its current value is unchanged (spec §4.1 member-wise struct equality).
+        rql::TypeRegistry sr;
+        sr.structure<FVec3f>("FVector3f").member("X", &FVec3f::X).member("Y", &FVec3f::Y).member("Z", &FVec3f::Z);
+        sr.structure<FAnchorsT>("FAnchors").member("Minimum", &FAnchorsT::Minimum).member("Maximum", &FAnchorsT::Maximum);
+        sr.object<USlot>("USlot").member("Anchors", &USlot::Anchors).no_identity();
+        USlot slot;
+        slot.Anchors.Maximum.X = 0.5f;
+        rql::Engine e(sr);
+        e.add_object_source("s", &slot);
+        e.mutations().enabled = true;
+        auto same = arun(e, R"J({"rql":"0.1","source":{"path":["s"]},"stages":[{"op":"set","assign":[{"target":{"path":["Anchors"]},"value":{"path":["Anchors"]}}]}]})J", true);
+        check(same.ok && same.rows && same.rows->empty() && same.unchanged == 1, "wave5: set nested struct to its value → unchanged");
+        auto eq = arun(e, R"J({"rql":"0.1","source":{"path":["s"]},"stages":[{"op":"select","fields":[{"name":"e","expr":{"op":"==","args":[{"path":["Anchors"]},{"path":["Anchors"]}]}}]}]})J");
+        check(eq.ok && eq.rows && (*eq.rows)[0][0].is_bool() && (*eq.rows)[0][0].as_bool(), "wave5: struct == struct member-wise");
     }
 }
 

@@ -605,14 +605,55 @@ namespace Rql.Execution
             if (la && lb) return ListEqual(model, kernel, a, b, depth);
             if (ta.IsValueType || b.GetType().IsValueType)
             {
-                // DateTime / Guid etc: same-type equality; other structs are not comparable in v0.
-                if (TypeModel.IsScalarType(ta) && ta == b.GetType()) return a.Equals(b);
-                return null;
+                // DateTime / Guid etc: same-type equality; structs of one type member by member (spec §4.1).
+                if (ta != b.GetType()) return null;
+                if (TypeModel.IsScalarType(ta)) return a.Equals(b);
+                var info = model?.Info(ta);
+                return info != null && info.IsStruct ? StructEqual(model!, kernel, info, a, b, depth) : null;
             }
             if (b is string) return null;
             if (la || lb || TypeModel.Get(ta).IsMap || TypeModel.Get(b.GetType()).IsMap) return null;
             return ReferenceEquals(a, b);
         }
+
+        /// <summary>
+        /// Two structs of one type compare member by member, recursively (spec §4.1): the members their encoding shows, without
+        /// members of the struct's own type (derived values); false as soon as one differs, unknown when none differs but one is
+        /// unknown. A struct without visible members uses its own equality.
+        /// </summary>
+        private static bool? StructEqual(TypeModel model, RqlKernel? kernel, TypeInfo info, object a, object b, int depth)
+        {
+            if (depth >= MaxCompareDepth || _structDepth >= MaxStructCompareDepth) return null;
+            bool unknown = false;
+            int compared = 0;
+            _structDepth++;
+            try
+            {
+                foreach (var m in info.ImplicitMembers)
+                {
+                    if ((Nullable.GetUnderlyingType(m.Type) ?? m.Type) == info.Type) continue;
+                    compared++;
+                    object? va, vb;
+                    try
+                    {
+                        va = model.Live(m.Getter(a));
+                        vb = model.Live(m.Getter(b));
+                    }
+                    catch (Exception ex) when (!(ex is OutOfMemoryException)) { return null; }
+                    var r = Equal(model, kernel, va, vb, depth + 1);
+                    if (r == false) return false;
+                    if (r == null) unknown = true;
+                }
+            }
+            finally { _structDepth--; }
+            if (compared == 0) return a.Equals(b); // nothing visible to compare: the struct's own equality
+            return unknown ? (bool?)null : true;
+        }
+
+        /// <summary>Struct nesting `==` looks into (spec §4.1): derived members of other struct types cannot branch without end.</summary>
+        private const int MaxStructCompareDepth = 8;
+
+        [ThreadStatic] private static int _structDepth;
 
         /// <summary>
         /// Lists compare by value (spec §4.1): the same length and pairwise equal elements; false as soon as a pair differs,

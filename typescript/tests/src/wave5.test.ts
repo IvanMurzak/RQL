@@ -134,3 +134,27 @@ test('the scope chain falls back past an absent key; an unconvertible key stays 
   const r = e.execute('holders | select a = (ByKind["B"] is null) c = (ByKind["Nope"] is null)');
   assert.deepEqual(r.rows, [[true, null]]);
 });
+
+test('a struct of structs written with its current value is unchanged', () => {
+  class Anchors {
+    Minimum = new Vec3();
+    Maximum = new Vec3();
+  }
+  class Slot {
+    Anchors = new Anchors();
+  }
+  const types = new TypeModel()
+    .register(Vec3, { kind: 'struct', members: [{ name: 'x', type: t.number }, { name: 'y', type: t.number }, { name: 'z', type: t.number }] })
+    .register(Anchors, { kind: 'struct', members: [{ name: 'Minimum', type: t.of(Vec3) }, { name: 'Maximum', type: t.of(Vec3) }] })
+    .register(Slot, { members: [{ name: 'Anchors', type: t.of(Anchors) }] });
+  const e = new RqlEngine({ types }).addSource('slots', () => [new Slot()]);
+  e.mutations.enabled = true;
+  const dry = { allowMutation: true, dryRun: true };
+  const same = e.execute('slots | set Anchors = Anchors', {}, dry);
+  assert.equal(same.ok, true, JSON.stringify(same.diagnostics));
+  assert.deepEqual([same.rows!.length, same.unchanged], [0, 1]);
+  const lit = e.execute('slots | set Anchors = {Minimum: {x: 0}, Maximum: {}}', {}, dry);
+  assert.deepEqual([lit.rows!.length, lit.unchanged], [0, 1]);
+  const changed = e.execute('slots | set Anchors = {Minimum: {x: 1}}', {}, dry);
+  assert.equal(changed.rows!.length, 1);
+});

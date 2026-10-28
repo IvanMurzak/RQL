@@ -24,7 +24,7 @@ import {
   type Stage,
 } from '@rql/contracts';
 import { elements, mapEntries, sizeOf, type MapLike } from './collections.js';
-import { Compiler, MAX_COMPARE_DEPTH, compare, pathText, rangeOf, reduce, toText, type Eval } from './compiler.js';
+import { Compiler, MAX_COMPARE_DEPTH, compare, isOwnType, pathText, rangeOf, reduce, toText, type Eval } from './compiler.js';
 import { describeRun, reachableTypes } from './describe.js';
 import { Encoder } from './encoder.js';
 import type { ArgEvaluator, SourceRegistration } from './engine.js';
@@ -904,11 +904,6 @@ let listKeyDepth = 0;
 const MAX_STRUCT_KEY_DEPTH = 3;
 let structKeyDepth = 0;
 
-/** A member declared with the struct's own class (a derived value such as `normalized`). */
-function isOwnType(type: TypeRef, v: object): boolean {
-  const r = unwrapNullable(type);
-  return typeof r === 'object' && 'kind' in r && r.kind === 'class' && r.ctor === v.constructor;
-}
 
 function keyPart(x: Exec, v: unknown): string {
   const k = distinctKey(x, v);

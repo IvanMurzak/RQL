@@ -174,6 +174,8 @@ public:
     int key_probe = 0;
     /// Struct nesting while building a distinct / group-by key (spec §5).
     int struct_key_depth = 0;
+    /// Struct nesting while comparing with == (spec §4.1).
+    int struct_eq_depth = 0;
     std::vector<Value> outer;  // enclosing items while evaluating collection-method arguments
 
     int64_t visited = 0;
