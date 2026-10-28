@@ -608,7 +608,8 @@ namespace Rql.Execution
                 // DateTime / Guid etc: same-type equality; structs of one type member by member (spec §4.1).
                 if (ta != b.GetType()) return null;
                 if (TypeModel.IsScalarType(ta)) return a.Equals(b);
-                return model != null && model.Info(ta).IsStruct ? StructEqual(model, kernel, a, b, depth) : null;
+                var info = model?.Info(ta);
+                return info != null && info.IsStruct ? StructEqual(model!, kernel, info, a, b, depth) : null;
             }
             if (b is string) return null;
             if (la || lb || TypeModel.Get(ta).IsMap || TypeModel.Get(b.GetType()).IsMap) return null;
@@ -620,9 +621,8 @@ namespace Rql.Execution
         /// members of the struct's own type (derived values); false as soon as one differs, unknown when none differs but one is
         /// unknown. A struct without visible members uses its own equality.
         /// </summary>
-        private static bool? StructEqual(TypeModel model, RqlKernel? kernel, object a, object b, int depth)
+        private static bool? StructEqual(TypeModel model, RqlKernel? kernel, TypeInfo info, object a, object b, int depth)
         {
-            var info = model.Info(a.GetType());
             if (info.ImplicitMembers.Count == 0) return a.Equals(b);
             if (depth >= MaxCompareDepth) return null;
             bool unknown = false;

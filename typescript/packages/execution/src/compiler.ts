@@ -7,7 +7,7 @@ import { RqlError, diagnostic, formatNumber, segmentToString, type CallExpr, typ
 import { elements, findMapKey, indexAt, isMapLike, mapEntries, mapGet, sizeOf, type MapLike } from './collections.js';
 import { firstAnswer, type AnyAdapter } from './adapters.js';
 import { Exec, IsSite, MemberSite, errorMessage } from './exec.js';
-import { EnumValue, StringMap, unwrapNullable, type Ctor, type TypeInfo, type TypeModel } from './types.js';
+import { EnumValue, StringMap, unwrapNullable, type Ctor, type TypeInfo, type TypeModel, type TypeRef } from './types.js';
 import { ErrorValue, MISSING, MapEntry, ObjectValue, RowValue, UNKNOWN, isAbsent, toNumber } from './values.js';
 
 export type Eval = (x: Exec) => unknown;
@@ -819,12 +819,12 @@ export function equal(x: Exec, a: unknown, b: unknown): Truth {
  */
 function listEqual(x: Exec, a: object, ia: TypeInfo, b: object, ib: TypeInfo): Truth {
   if (a === b) return true;
-  if (listDepth >= MAX_COMPARE_DEPTH) return undefined; // a list nested this deep (or containing itself) is not compared
+  if (compareDepth >= MAX_COMPARE_DEPTH) return undefined; // a list nested this deep (or containing itself) is not compared
   const ea = [...elements(a, ia)];
   const eb = [...elements(b, ib)];
   if (ea.length !== eb.length) return false;
   let unknown = false;
-  listDepth++;
+  compareDepth++;
   try {
     for (let i = 0; i < ea.length; i++) {
       const r = equal(x, x.live(ea[i] ?? null), x.live(eb[i] ?? null));
@@ -832,7 +832,7 @@ function listEqual(x: Exec, a: object, ia: TypeInfo, b: object, ib: TypeInfo): T
       if (r === undefined) unknown = true;
     }
   } finally {
-    listDepth--;
+    compareDepth--;
   }
   return unknown ? undefined : true;
 }
@@ -843,15 +843,14 @@ function listEqual(x: Exec, a: object, ia: TypeInfo, b: object, ib: TypeInfo): T
  * unknown.
  */
 function structEqual(x: Exec, a: object, info: TypeInfo, b: object): Truth {
+  if (compareDepth >= MAX_COMPARE_DEPTH) return undefined;
   const members = info.implicitMembersOf(a);
   if (members.length === 0) return undefined;
-  if (listDepth >= MAX_COMPARE_DEPTH) return undefined;
   let unknown = false;
-  listDepth++;
+  compareDepth++;
   try {
     for (const m of members) {
-      const r0 = unwrapNullable(m.type);
-      if (typeof r0 === 'object' && 'kind' in r0 && r0.kind === 'class' && r0.ctor === a.constructor) continue;
+      if (isOwnType(m.type, a)) continue;
       let va: unknown;
       let vb: unknown;
       try {
@@ -865,14 +864,20 @@ function structEqual(x: Exec, a: object, info: TypeInfo, b: object): Truth {
       if (r === undefined) unknown = true;
     }
   } finally {
-    listDepth--;
+    compareDepth--;
   }
   return unknown ? undefined : true;
 }
 
-/** Nesting of lists compared by value (spec §4.1): deeper (or self-containing) lists compare as unknown. */
+/** Nesting of lists and structs compared by value (spec §4.1): deeper (or self-containing) values compare as unknown. */
 export const MAX_COMPARE_DEPTH = 32;
-let listDepth = 0;
+let compareDepth = 0;
+
+/** A member declared with the struct's own class (a derived value such as `normalized`, spec §4.1 / §5). */
+export function isOwnType(type: TypeRef, v: object): boolean {
+  const r = unwrapNullable(type);
+  return typeof r === 'object' && 'kind' in r && r.kind === 'class' && r.ctor === v.constructor;
+}
 
 function enumEqual(e: EnumValue, other: unknown): Truth {
   // The entry the string resolves to (spec §8 enum name resolution); unresolved or ambiguous is not equal.
