@@ -623,25 +623,37 @@ namespace Rql.Execution
         /// </summary>
         private static bool? StructEqual(TypeModel model, RqlKernel? kernel, TypeInfo info, object a, object b, int depth)
         {
-            if (info.ImplicitMembers.Count == 0) return a.Equals(b);
-            if (depth >= MaxCompareDepth) return null;
+            if (depth >= MaxCompareDepth || _structDepth >= MaxStructCompareDepth) return null;
             bool unknown = false;
-            foreach (var m in info.ImplicitMembers)
+            int compared = 0;
+            _structDepth++;
+            try
             {
-                if (m.Type == info.Type) continue;
-                object? va, vb;
-                try
+                foreach (var m in info.ImplicitMembers)
                 {
-                    va = model.Live(m.Getter(a));
-                    vb = model.Live(m.Getter(b));
+                    if ((Nullable.GetUnderlyingType(m.Type) ?? m.Type) == info.Type) continue;
+                    compared++;
+                    object? va, vb;
+                    try
+                    {
+                        va = model.Live(m.Getter(a));
+                        vb = model.Live(m.Getter(b));
+                    }
+                    catch (Exception ex) when (!(ex is OutOfMemoryException)) { return null; }
+                    var r = Equal(model, kernel, va, vb, depth + 1);
+                    if (r == false) return false;
+                    if (r == null) unknown = true;
                 }
-                catch (Exception ex) when (!(ex is OutOfMemoryException)) { return null; }
-                var r = Equal(model, kernel, va, vb, depth + 1);
-                if (r == false) return false;
-                if (r == null) unknown = true;
             }
+            finally { _structDepth--; }
+            if (compared == 0) return a.Equals(b); // nothing visible to compare: the struct's own equality
             return unknown ? (bool?)null : true;
         }
+
+        /// <summary>Struct nesting `==` looks into (spec §4.1): derived members of other struct types cannot branch without end.</summary>
+        private const int MaxStructCompareDepth = 8;
+
+        [ThreadStatic] private static int _structDepth;
 
         /// <summary>
         /// Lists compare by value (spec §4.1): the same length and pairwise equal elements; false as soon as a pair differs,

@@ -319,12 +319,15 @@ std::optional<bool> rql_equal(Exec& x, const Value& a, const Value& b) {
     // members of the struct's own type (derived values); false as soon as one differs, unknown when none differs but one is.
     if (a.is_struct() && b.is_struct() && a.type() && a.type() == b.type()) {
         const auto view = x.view(a.type());
-        const auto& members = view.implicit_members();
-        if (members.empty() || x.compare_depth >= kMaxCompareDepth) return std::nullopt;
+        // Struct nesting is capped at 8 so derived members of other struct types cannot branch without end.
+        if (x.compare_depth >= kMaxCompareDepth || x.struct_eq_depth >= 8) return std::nullopt;
         DepthGuard guard(x.compare_depth);
+        DepthGuard struct_guard(x.struct_eq_depth);
         bool unknown = false;
-        for (auto& m : members) {
+        size_t compared = 0;
+        for (auto& m : view.implicit_members()) {
             if (m.type == a.type()) continue;
+            ++compared;
             Value ma, mb;
             try {
                 ma = x.live(m.getter(a.ptr()));
@@ -336,6 +339,7 @@ std::optional<bool> rql_equal(Exec& x, const Value& a, const Value& b) {
             if (r == std::optional<bool>(false)) return false;
             if (!r) unknown = true;
         }
+        if (compared == 0) return std::nullopt;  // nothing visible to compare
         return unknown ? std::nullopt : std::optional<bool>(true);
     }
     // structs of different types and mixed scalar kinds are not comparable

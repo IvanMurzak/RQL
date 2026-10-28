@@ -150,8 +150,9 @@ path; the same object reached by another query has another `$path`. Hosts expose
   by their members**: the members their encoding shows (§6; members of the struct's own type, derived values such as
   `normalized`, left out), each compared by these rules — recursively, so a struct of structs (`Anchors` holding two
   `Vector2D`) compares its nested values, through their adapters when they have one — `false` as soon as one member
-  differs, `unknown` when none differs but one is `unknown` (or a getter throws, or the nesting passes 32 levels); a
-  struct type without visible members uses the runtime's own equality where it has one (.NET), otherwise `unknown`. A
+  differs, `unknown` when none differs but one is `unknown` (or a getter throws, or structs nest more than 8 levels); a
+  struct type with no member left to compare uses the runtime's own equality where it has one (.NET), otherwise
+  `unknown`. A
   type adapter's comparison answers first (§13). A list against a non-list, structs of different types and maps:
   `unknown` — including a struct against an object literal (§4.5), unless a type adapter's comparison answers. So
   `set` receipts (§8) count a struct written with the value it already has as unchanged. `in` / `contains` use the same equality, so `Tags in [["root"], []]` works.

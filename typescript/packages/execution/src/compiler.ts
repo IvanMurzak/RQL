@@ -843,14 +843,15 @@ function listEqual(x: Exec, a: object, ia: TypeInfo, b: object, ib: TypeInfo): T
  * unknown.
  */
 function structEqual(x: Exec, a: object, info: TypeInfo, b: object): Truth {
-  if (compareDepth >= MAX_COMPARE_DEPTH) return undefined;
-  const members = info.implicitMembersOf(a);
-  if (members.length === 0) return undefined;
+  if (compareDepth >= MAX_COMPARE_DEPTH || structDepth >= MAX_STRUCT_COMPARE_DEPTH) return undefined;
   let unknown = false;
+  let compared = 0;
   compareDepth++;
+  structDepth++;
   try {
-    for (const m of members) {
+    for (const m of info.implicitMembersOf(a)) {
       if (isOwnType(m.type, a)) continue;
+      compared++;
       let va: unknown;
       let vb: unknown;
       try {
@@ -865,9 +866,15 @@ function structEqual(x: Exec, a: object, info: TypeInfo, b: object): Truth {
     }
   } finally {
     compareDepth--;
+    structDepth--;
   }
+  if (compared === 0) return undefined; // nothing visible to compare
   return unknown ? undefined : true;
 }
+
+/** Struct nesting `==` looks into (spec §4.1): derived members of other struct types cannot branch without end. */
+const MAX_STRUCT_COMPARE_DEPTH = 8;
+let structDepth = 0;
 
 /** Nesting of lists and structs compared by value (spec §4.1): deeper (or self-containing) values compare as unknown. */
 export const MAX_COMPARE_DEPTH = 32;
