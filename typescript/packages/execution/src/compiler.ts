@@ -7,7 +7,7 @@ import { RqlError, diagnostic, formatNumber, segmentToString, type CallExpr, typ
 import { elements, findMapKey, indexAt, isMapLike, mapEntries, mapGet, sizeOf, type MapLike } from './collections.js';
 import { firstAnswer, type AnyAdapter } from './adapters.js';
 import { Exec, IsSite, MemberSite, errorMessage } from './exec.js';
-import { EnumValue, type Ctor, type TypeInfo, type TypeModel } from './types.js';
+import { EnumValue, StringMap, type Ctor, type TypeInfo, type TypeModel } from './types.js';
 import { ErrorValue, MISSING, MapEntry, ObjectValue, RowValue, UNKNOWN, isAbsent, toNumber } from './values.js';
 
 export type Eval = (x: Exec) => unknown;
@@ -77,13 +77,21 @@ export class Compiler {
             // Lexical scope chain: inside method arguments a bare name missing on the element
             // resolves against the enclosing item(s), innermost first (spec §3).
             cur = (x) => {
-              const r = member(x, x.live(x.current), site);
-              if (r !== MISSING || x.outer.length === 0) return r;
-              for (let k = x.outer.length - 1; k >= 0; k--) {
-                const o = member(x, x.outer[k], site);
-                if (o !== MISSING) return o;
+              if (x.outer.length === 0) return member(x, x.live(x.current), site);
+              // An absent map key counts as missing here, so the name can still resolve on an enclosing item (spec §3);
+              // when no item has it, the element's own answer stands (null for an absent key).
+              x.keyProbe++;
+              try {
+                const r = member(x, x.live(x.current), site);
+                if (r !== MISSING) return r;
+                for (let k = x.outer.length - 1; k >= 0; k--) {
+                  const o = member(x, x.outer[k], site);
+                  if (o !== MISSING) return o;
+                }
+              } finally {
+                x.keyProbe--;
               }
-              return r;
+              return x.keyProbe > 0 ? MISSING : member(x, x.live(x.current), site);
             };
           } else cur = (x) => member(x, prev(x), site);
           break;
@@ -682,11 +690,26 @@ export function member(x: Exec, v: unknown, site: MemberSite): unknown {
 export function mapLookup(x: Exec, map: MapLike, key: unknown, site?: MemberSite): unknown {
   x.membersRead++;
   const k = findMapKey(map, key);
-  // An absent key reads as null (spec §3); inside has() it is missing, so has(M["k"]) tests the key.
-  if (!k.found) return x.keyProbe > 0 ? MISSING : null;
+  // An absent key reads as null (spec §3); inside has() it is missing, so has(M["k"]) tests the key. A key that cannot be a
+  // key of this map (an unknown enum name, text for numeric keys) stays missing.
+  if (!k.found) return x.keyProbe > 0 || badKey(map, key) ? MISSING : null;
   if (site !== undefined) site.hits++;
   const v = mapGet(map, k.key);
   return v === undefined ? null : x.live(v);
+}
+
+/**
+ * Whether `key` cannot convert to the map's key type (spec §3: such a lookup stays missing). JS maps carry no declared key
+ * type, so it is judged by the keys present: an empty map cannot tell.
+ */
+function badKey(map: MapLike, key: unknown): boolean {
+  if (map instanceof StringMap) return typeof key !== 'string' && typeof key !== 'number' && !(key instanceof EnumValue);
+  for (const k of map.keys()) {
+    if (k instanceof EnumValue) return typeof key === 'string' ? k.type.parse(key) === undefined : typeof key !== 'number' && !(key instanceof EnumValue);
+    if (typeof k === 'number') return typeof key === 'string' ? key.trim() === '' || Number.isNaN(Number(key)) : typeof key !== 'number';
+    return false;
+  }
+  return false;
 }
 
 function indexOf(x: Exec, v: unknown, idx: number): unknown {
@@ -993,8 +1016,8 @@ function arithMismatch(model: TypeModel, op: string, a: unknown, b: unknown, why
   const message = `cannot apply '${op}' to ${describeValue(a)} and ${describeValue(b)}`;
   if (why === undefined) {
     // A struct without declared components: say why (spec §4.2), so `Scale * 1.5` is not a mystery.
-    const s = isStruct(model, a) ? a : op !== 'neg' && isStruct(model, b) ? b : undefined;
-    if (s !== undefined && componentsOf(model, s) === undefined) why = `${describeValue(s)} has no component-wise arithmetic`;
+    if (isStruct(model, a) && componentsOf(model, a) === undefined) why = `${describeValue(a)} has no component-wise arithmetic`;
+    else if (op !== 'neg' && isStruct(model, b) && componentsOf(model, b) === undefined) why = `${describeValue(b)} has no component-wise arithmetic`;
   }
   return new ErrorValue('type-mismatch', why === undefined ? message : `${message} (${why})`);
 }
@@ -1005,9 +1028,9 @@ function isStruct(model: TypeModel, v: unknown): boolean {
 
 /** The arithmetic components of a struct whose type adapter declares them (spec §4.2, §13), with that adapter. */
 function componentsOf(model: TypeModel, v: unknown): { parts: readonly number[]; adapter: AnyAdapter } | undefined {
-  if (typeof v !== 'object' || v === null || isAbsent(v)) return undefined;
-  for (const adapter of model.infoOf(v).adapterSet.components) {
-    const parts = adapter.components!(v);
+  if (!isStruct(model, v)) return undefined;
+  for (const adapter of model.infoOf(v as object).adapterSet.components) {
+    const parts = adapter.components!(v as object);
     if (parts !== undefined) return { parts, adapter };
   }
   return undefined;

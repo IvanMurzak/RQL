@@ -31,7 +31,7 @@ import type { ArgEvaluator, SourceRegistration } from './engine.js';
 import { PathNode, type Exec } from './exec.js';
 import { Mutator } from './mutator.js';
 import { closest, closestMembers, memberHint, nestedMembers } from './suggest.js';
-import { EnumType, EnumValue, unwrapNullable, type TypeInfo } from './types.js';
+import { EnumType, EnumValue, unwrapNullable, type TypeInfo, type TypeRef } from './types.js';
 import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, isAbsent, originOf, streamedEntry, toNumber, type EntryOrigin } from './values.js';
 
 /** The core source function range(start, end[, step]) (spec §2). */
@@ -900,6 +900,16 @@ function identityId(v: unknown): number {
 /** Nesting of lists keyed by value; deeper (or self-containing) lists key by identity. */
 let listKeyDepth = 0;
 
+/** Struct levels a key looks into: the struct and two nested levels (spec §5 "Struct keys"). */
+const MAX_STRUCT_KEY_DEPTH = 3;
+let structKeyDepth = 0;
+
+/** A member declared with the struct's own class (a derived value such as `normalized`). */
+function isOwnType(type: TypeRef, v: object): boolean {
+  const r = unwrapNullable(type);
+  return typeof r === 'object' && 'kind' in r && r.kind === 'class' && r.ctor === v.constructor;
+}
+
 function keyPart(x: Exec, v: unknown): string {
   const k = distinctKey(x, v);
   if (typeof k !== 'string') return 'o:' + String(identityId(k));
@@ -939,15 +949,24 @@ export function distinctKey(x: Exec, v: unknown): unknown {
       }
     }
     if (info.kind === 'struct') {
-      // Structs by their members with numbers rounded as numeric tuples print (spec §5 "Struct keys"): values that print alike group.
-      return `v:${JSON.stringify(info.shortName)}(${info
-        .implicitMembersOf(v)
-        .map((m) => {
-          const mv = x.live(m.get(v));
-          const n = toNumber(mv);
-          return n !== undefined ? 'd:' + String(roundedForKey(n)) : keyPart(x, mv);
-        })
-        .join(',')})`;
+      // Structs by their members with numbers rounded as numeric tuples print (spec §5 "Struct keys"): values that print alike
+      // group. The struct and two nested levels count; members of the struct's own type (derived values) are left out.
+      const head = `v:${JSON.stringify(info.shortName)}`;
+      if (structKeyDepth >= MAX_STRUCT_KEY_DEPTH) return head;
+      structKeyDepth++;
+      try {
+        const parts = info
+          .implicitMembersOf(v)
+          .filter((m) => !isOwnType(m.type, v))
+          .map((m) => {
+            const mv = x.live(m.get(v));
+            const n = toNumber(mv);
+            return n !== undefined ? 'd:' + String(roundedForKey(n)) : keyPart(x, mv);
+          });
+        return `${head}(${parts.join(',')})`;
+      } finally {
+        structKeyDepth--;
+      }
     }
     return v;
   }

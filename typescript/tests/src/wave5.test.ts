@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { RqlEngine, TypeModel, t, type TypeAdapter } from '@rql/execution';
+import { EnumType, EnumValue, RqlEngine, TypeModel, t, type TypeAdapter } from '@rql/execution';
 
 // Wave-5 semantics: component-wise struct arithmetic (spec §4.2), absent map keys as null (§3), rounded struct keys for
 // distinct / group-by (§5) and nested struct members in unknown-member hints (§10).
@@ -115,4 +115,22 @@ test('unknown-member hints search nested struct members', () => {
   assert.ok(w.diagnostics[0]!.hint!.includes('did you mean BodyInstance.CollisionProfileName'), w.diagnostics[0]!.hint);
   const deep = e.execute('things | where Damping > 0 | count');
   assert.ok(deep.diagnostics.some((d) => (d.hint ?? '').includes('BodyInstance.Settings.Damping')), JSON.stringify(deep.diagnostics));
+});
+
+test('the scope chain falls back past an absent key; an unconvertible key stays missing', () => {
+  class Holder {
+    Threshold = 3;
+    Entries = [new Map<string, number>([['v', 5]])];
+    ByKind = new Map<EnumValue, number>();
+  }
+  const Kind = new EnumType('Kind', ['A', 'B']);
+  const h = new Holder();
+  h.ByKind.set(Kind.values[0]!, 1);
+  const types = new TypeModel().register(Holder, {
+    members: [{ name: 'Threshold', type: t.number }, { name: 'Entries', type: t.list(t.map(t.string, t.number)) }, { name: 'ByKind', type: t.map(Kind, t.number) }],
+  });
+  const e = new RqlEngine({ types }).addSource('holders', () => [h]);
+  assert.equal(e.execute('holders | where Entries.any(v > Threshold) | count').value, 1);
+  const r = e.execute('holders | select a = (ByKind["B"] is null) c = (ByKind["Nope"] is null)');
+  assert.deepEqual(r.rows, [[true, null]]);
 });

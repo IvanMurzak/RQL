@@ -57,8 +57,10 @@ typo-empties-mutation error (§8). Typos keep their `unknown-member` warning and
 converted to the map's key type also stays `missing`. TS gap: for an enum-keyed map, such a key reads `null` (see the
 feature matrix).
 
-Consequence: arithmetic on an absent key is now `null` arithmetic (`type-mismatch` instead of `missing`). Use
-`coalesce(m["k"], 0)`.
+Consequences: arithmetic on an absent key is now `null` arithmetic (`type-mismatch` instead of `missing`), and
+`set Nick = Props["nick"]` assigns null to an object without the entry instead of failing with "value is missing" (map
+keys have no typo detection either way). Use `coalesce(m["k"], …)` or `where has(m["k"])`. In the scope chain of method
+arguments an absent key on the element still counts as missing, so a bare name falls back to the enclosing item.
 
 ### 4. Struct keys are rounded like the tuple display; `==` is unchanged
 
@@ -68,6 +70,9 @@ Two structs share a key exactly when they print alike.
 
 - A key must be transitive, so it cannot be the tolerance equality of numeric tuples. Rounding is transitive. The cost
   is a boundary effect: two values that `==` calls equal can land on either side of a rounding step.
+- Members of the struct's own type (Unity's `normalized`, `Matrix4x4.inverse`) are left out and nesting stops after two
+  levels, so a key never walks an unbounded chain of derived values. A struct type without members keys by its own
+  equality.
 - Float precision alone (the c5fed20 rule for scalars) does not merge `1` and `0.99999994`, because these are
   different floats. Display precision does.
 - `==` does not change: tuple adapters keep their tolerance equality, and structs without an adapter stay `unknown`.

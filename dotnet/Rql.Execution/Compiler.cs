@@ -96,14 +96,22 @@ namespace Rql.Execution
                             // resolves against the enclosing item(s) (spec §3).
                             cur = x =>
                             {
-                                var r = Member(x, x.Current, site);
-                                if (!(r is Missing) || x.Outer.Count == 0) return r;
-                                for (int k = x.Outer.Count - 1; k >= 0; k--)
+                                if (x.Outer.Count == 0) return Member(x, x.Current, site);
+                                // An absent map key counts as missing here, so the name can still resolve on an enclosing item
+                                // (spec §3); when no item has it, the element's own answer stands (null for an absent key).
+                                x.KeyProbe++;
+                                try
                                 {
-                                    var o = Member(x, x.Outer[k], site);
-                                    if (!(o is Missing)) return o;
+                                    var r = Member(x, x.Current, site);
+                                    if (!(r is Missing)) return r;
+                                    for (int k = x.Outer.Count - 1; k >= 0; k--)
+                                    {
+                                        var o = Member(x, x.Outer[k], site);
+                                        if (!(o is Missing)) return o;
+                                    }
                                 }
-                                return r;
+                                finally { x.KeyProbe--; }
+                                return x.KeyProbe > 0 ? Missing.Value : Member(x, x.Current, site);
                             };
                         }
                         else cur = x => Member(x, prev(x), site);
@@ -823,8 +831,9 @@ namespace Rql.Execution
             if (why == null)
             {
                 // A struct without declared components: say why (spec §4.2), so `Scale * 1.5` is not a mystery.
-                var s = IsStruct(model, a) ? a : op != "neg" && IsStruct(model, b) ? b : null;
-                if (s != null && Components(model, s, out _) == null) why = $"{V.Describe(s)} has no component-wise arithmetic";
+                bool sa = IsStruct(model, a), sb = op != "neg" && IsStruct(model, b);
+                if (sa && Components(model, a, out _) == null) why = $"{V.Describe(a)} has no component-wise arithmetic";
+                else if (sb && Components(model, b, out _) == null) why = $"{V.Describe(b)} has no component-wise arithmetic";
             }
             return new RqlError("type-mismatch", why == null ? message : message + " (" + why + ")");
         }
@@ -835,8 +844,8 @@ namespace Rql.Execution
         private static double[]? Components(TypeModel model, object? v, out RqlTypeAdapter? adapter)
         {
             adapter = null;
-            if (v == null || V.IsAbsent(v)) return null;
-            foreach (var ad in model.Info(v.GetType()).ArithmeticAdapters)
+            if (!IsStruct(model, v)) return null;
+            foreach (var ad in model.Info(v!.GetType()).ArithmeticAdapters)
             {
                 var parts = ad.GetComponents(v);
                 if (parts != null) { adapter = ad; return parts; }

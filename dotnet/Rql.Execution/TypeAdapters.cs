@@ -101,8 +101,24 @@ namespace Rql.Execution
             if (Overrides("Compare", "Order")) caps |= AdapterCaps.Ordering;
             if (Overrides("StableId", "Id")) caps |= AdapterCaps.Identity;
             if (Overrides("IsAlive", "Alive")) caps |= AdapterCaps.Liveness;
-            if (Overrides("GetComponents", "Components")) caps |= AdapterCaps.Arithmetic;
+            if (OverridesArithmetic()) caps |= AdapterCaps.Arithmetic;
             Caps = caps;
+        }
+
+        /// <summary>
+        /// Arithmetic is declared by overriding the components (or, for a <see cref="NumericTupleAdapter{T}"/>, by opting in with
+        /// <c>Arithmetic</c>): the tuple base's own components implementation alone does not count, so tuple adapters that do not
+        /// opt in (quaternions) skip the arithmetic path entirely.
+        /// </summary>
+        private bool OverridesArithmetic()
+        {
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+            for (var t = GetType(); t != null && t != typeof(RqlTypeAdapter); t = t.BaseType)
+            {
+                if (t.IsGenericType && (t.GetGenericTypeDefinition() == typeof(RqlTypeAdapter<>) || t.GetGenericTypeDefinition() == typeof(NumericTupleAdapter<>))) break;
+                if (t.GetMethods(flags).Any(m => m.Name == "GetComponents" || m.Name == "Components" || m.Name == "get_Arithmetic")) return true;
+            }
+            return false;
         }
 
         /// <summary>True when a class between the concrete adapter and the library base types declares one of the methods.</summary>

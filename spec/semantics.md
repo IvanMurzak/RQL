@@ -96,7 +96,9 @@ If the source value is a `list` its elements become the item stream; a `map` yie
   `Count`) takes precedence for `.name` syntax; `["name"]` is always a key lookup. **An absent key reads as `null`**,
   not `missing`: a map's keys are data, not members, so `Props["mp"] == null`, `Props["mp"] is null` and
   `coalesce(Props["mp"], 0)` treat an object without the entry like one whose entry is null, and `where Props["mp"] != 5`
-  keeps it. `has(Props["mp"])` still tests whether the key is present (§4.3). A key that cannot be converted to the map's
+  keeps it; `set Nick = Props["nick"]` assigns null to an object without the entry (guard with `where has(…)` or
+  `coalesce`). For the scope chain (below) an absent key on the element counts as missing, so `Entries.any(v >
+  Threshold)` still finds the item's `Threshold` when the entry maps have no such key. `has(Props["mp"])` still tests whether the key is present (§4.3). A key that cannot be converted to the map's
   key type (an enum name the key type does not have) stays `missing`, and so do a list index out of range and an
   unknown member (a typo such as `Prosp["mp"]`, which keeps its `unknown-member` warning).
 * **Lists** — `[i]` indexes (`missing` when out of range). `.name` on a list: if the list type
@@ -300,11 +302,15 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
 | `call q.m(args)` | mutation: invoke the method `m` of the one object the source expression `q` yields, once per item (source-qualified call, §8). |
 
 **Struct keys** (`distinct`, `group-by`). A struct is keyed by its type and the values of its members (the members its
-default encoding shows, §6: explicit-only members excluded; nested structs likewise), where every number
+default encoding shows, §6: explicit-only members excluded, and members of the struct's own type — derived values such
+as `normalized` or `inverse` — left out; nested structs likewise, two levels deep like encoding; a struct type without
+members keys by the runtime's own equality), where every number
 is rounded the way numeric tuples are displayed (§13): a single-precision number to 6 significant digits, any other
 number to 12, a magnitude below `1e-6` (single) / `1e-9` (other) to `0`, and `-0` to `0`; `NaN` keys like `NaN`. So
 values that print alike group together: `select Scale | distinct` keeps one `(1, 1, 1)` although one Scale is
-`0.99999994`. Two structs share a key exactly when their members print alike; this is a key, not a tolerance (rounding
+`0.99999994`. Two structs share a key exactly when their members print alike by that rule (a type adapter's display may
+differ: members it does not show still count, so adapters hide derived members such as `magnitude` if they vary in the
+last digits); this is a key, not a tolerance (rounding
 is transitive, a tolerance is not), so near a rounding boundary two values that `==` calls equal (`1.0000049` and
 `1.0000051`, printed `1` and `1.00001`) still form two groups. `==` does not change: structs compare through their type adapter (numeric tuples within a tolerance,
 §13), otherwise `unknown`. Scalars keep exact numeric equality.

@@ -2,6 +2,7 @@
 // Mirrors dotnet/Rql.Execution/Compiler.cs.
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <functional>
 #include <limits>
 
@@ -384,6 +385,9 @@ static std::string rounded_key(const Value& v) {
     return buf;
 }
 
+/// Struct levels a distinct / group-by key looks into: the struct and two nested levels (spec §5 "Struct keys").
+constexpr int kMaxStructKeyDepth = 3;
+
 bool distinct_equal(Exec& x, const Value& a, const Value& b) {
     if (a.is_null() || b.is_null()) return a.is_null() && b.is_null();
     if (a.is_missing() || b.is_missing()) return a.is_missing() && b.is_missing();  // singletons in .NET
@@ -395,13 +399,26 @@ bool distinct_equal(Exec& x, const Value& a, const Value& b) {
     if (a.is_bool() && b.is_bool()) return a.as_bool() == b.as_bool();
     if (a.is_struct() && b.is_struct()) {
         if (a.type() != b.type()) return false;
+        // The struct and two nested levels count (spec §5 "Struct keys"); deeper levels are not compared.
+        if (x.struct_key_depth >= kMaxStructKeyDepth) return true;
+        DepthGuard guard(x.struct_key_depth);
         const auto view = x.view(a.type());
         for (auto& m : view.implicit_members()) {  // never hidden / explicit-only members (spec §13)
+            if (m.type == a.type()) continue;      // a member of the struct's own type is a derived value (normalized)
             Value ma, mb;
+            bool threw_a = false, threw_b = false;
             try {
                 ma = x.live(m.getter(a.ptr()));
+            } catch (const std::exception&) {
+                threw_a = true;
+            }
+            try {
                 mb = x.live(m.getter(b.ptr()));
             } catch (const std::exception&) {
+                threw_b = true;
+            }
+            if (threw_a || threw_b) {  // as .NET: members whose getter throws on both sides are equal
+                if (threw_a && threw_b) continue;
                 return false;
             }
             // Numbers as numeric tuples print them (spec §5 "Struct keys"): values that print alike group together.
@@ -448,12 +465,16 @@ size_t distinct_hash(Exec& x, const Value& v) {
         case Value::Kind::Enum: return std::hash<int64_t>()(v.enum_value()) ^ std::hash<const void*>()(v.type());
         case Value::Kind::Struct: {
             size_t h = std::hash<const void*>()(v.type());
+            if (x.struct_key_depth >= kMaxStructKeyDepth) return h;
+            DepthGuard guard(x.struct_key_depth);
             const auto view = x.view(v.type());
             for (auto& m : view.implicit_members()) {
+                if (m.type == v.type()) continue;
                 try {
                     Value mv = x.live(m.getter(v.ptr()));
                     h = h * 31 + (mv.is_number() ? std::hash<std::string>()(rounded_key(mv)) : distinct_hash(x, mv));
                 } catch (const std::exception&) {
+                    h = h * 31 + 1;
                 }
             }
             return h;
@@ -748,13 +769,23 @@ Eval Compiler::compile_path(const Expr& p) {
                     // Lexical scope chain: inside collection-method arguments a bare name missing on the
                     // element resolves against the enclosing item(s), innermost first (spec §3).
                     cur = [site](Exec& x) {
-                        Value r = member_of(x, x.live(x.current), *site);
-                        if (!r.is_missing() || x.outer.empty()) return r;
-                        for (size_t k = x.outer.size(); k-- > 0;) {
-                            Value o = member_of(x, x.live(x.outer[k]), *site);
-                            if (!o.is_missing()) return o;
+                        if (x.outer.empty()) return member_of(x, x.live(x.current), *site);
+                        // An absent map key counts as missing here, so the name can still resolve on an enclosing item
+                        // (spec §3); when no item has it, the element's own answer stands (null for an absent key).
+                        {
+                            struct Probe {
+                                int& depth;
+                                explicit Probe(int& d) : depth(d) { ++depth; }
+                                ~Probe() { --depth; }
+                            } probe(x.key_probe);
+                            Value r = member_of(x, x.live(x.current), *site);
+                            if (!r.is_missing()) return r;
+                            for (size_t k = x.outer.size(); k-- > 0;) {
+                                Value o = member_of(x, x.live(x.outer[k]), *site);
+                                if (!o.is_missing()) return o;
+                            }
                         }
-                        return r;
+                        return x.key_probe > 0 ? Value::missing() : member_of(x, x.live(x.current), *site);
                     };
                 } else {
                     cur = [prev, site](Exec& x) { return member_of(x, prev(x), *site); };
@@ -984,10 +1015,10 @@ Value arith_mismatch(Exec& x, const std::string& op, const Value& a, const Value
     std::string message = "cannot apply '" + op + "' to " + describe_value(a) + " and " + describe_value(b);
     if (why.empty()) {
         // A struct without declared components: say why (spec §4.2), so `Scale * 1.5` is not a mystery.
-        const Value* s = a.is_struct() ? &a : (op != "neg" && b.is_struct()) ? &b : nullptr;
         std::vector<double> parts;
         const TypeAdapter* ad = nullptr;
-        if (s && !components_of(x, *s, parts, ad)) why = describe_value(*s) + " has no component-wise arithmetic";
+        if (a.is_struct() && !components_of(x, a, parts, ad)) why = describe_value(a) + " has no component-wise arithmetic";
+        else if (op != "neg" && b.is_struct() && !components_of(x, b, parts, ad)) why = describe_value(b) + " has no component-wise arithmetic";
     }
     return Value::error("type-mismatch", why.empty() ? message : message + " (" + why + ")");
 }

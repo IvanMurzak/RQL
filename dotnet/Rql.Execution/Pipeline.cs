@@ -1059,20 +1059,35 @@ namespace Rql.Execution
             return ReferenceEquals(a, b);
         }
 
-        /// <summary>Structs by their members, numbers rounded for display (spec §5 "Struct keys").</summary>
+        /// <summary>Struct levels a key looks into: the struct and two nested levels (spec §5 "Struct keys"), like encoding.</summary>
+        private const int MaxStructKeyDepth = 3;
+
+        private int _structDepth;
+
+        /// <summary>
+        /// Structs by their members, numbers rounded for display (spec §5 "Struct keys"); members of the struct's own type
+        /// (derived values such as normalized / inverse) are left out. A struct without members compares by its own equality.
+        /// </summary>
         private bool StructEquals(TypeInfo info, object a, object b, int depth)
         {
-            if (depth >= Compiler.MaxCompareDepth) return a.Equals(b);
-            foreach (var m in info.ImplicitMembers)
+            if (info.ImplicitMembers.Count == 0) return a.Equals(b);
+            if (_structDepth >= MaxStructKeyDepth) return true;
+            _structDepth++;
+            try
             {
-                object? va = Read(m, a), vb = Read(m, b);
-                if (V.TryNumber(va, out var da, out var sa) && V.TryNumber(vb, out var db, out var sb))
+                foreach (var m in info.ImplicitMembers)
                 {
-                    if (!Rounded(da, sa).Equals(Rounded(db, sb))) return false;
+                    if (m.Type == info.Type) continue;
+                    object? va = Read(m, a), vb = Read(m, b);
+                    if (V.TryNumber(va, out var da, out var sa) && V.TryNumber(vb, out var db, out var sb))
+                    {
+                        if (!Rounded(da, sa).Equals(Rounded(db, sb))) return false;
+                    }
+                    else if (!Equals(va, vb, depth + 1)) return false;
                 }
-                else if (!Equals(va, vb, depth + 1)) return false;
+                return true;
             }
-            return true;
+            finally { _structDepth--; }
         }
 
         private static readonly object Threw = new object();
@@ -1118,13 +1133,20 @@ namespace Rql.Execution
             if (o.GetType().IsValueType)
             {
                 var info = _model.Info(o.GetType());
-                if (!info.IsStruct || depth >= Compiler.MaxCompareDepth) return o.GetHashCode();
+                if (!info.IsStruct || info.ImplicitMembers.Count == 0) return o.GetHashCode();
                 int h = o.GetType().GetHashCode();
-                foreach (var m in info.ImplicitMembers)
+                if (_structDepth >= MaxStructKeyDepth) return h;
+                _structDepth++;
+                try
                 {
-                    var v = Read(m, o);
-                    h = unchecked(h * 31 + (V.TryNumber(v, out var n, out var single) ? Rounded(n, single).GetHashCode() : ReferenceEquals(v, Threw) ? 1 : Hash(v, depth + 1)));
+                    foreach (var m in info.ImplicitMembers)
+                    {
+                        if (m.Type == info.Type) continue;
+                        var v = Read(m, o);
+                        h = unchecked(h * 31 + (V.TryNumber(v, out var n, out var single) ? Rounded(n, single).GetHashCode() : ReferenceEquals(v, Threw) ? 1 : Hash(v, depth + 1)));
+                    }
                 }
+                finally { _structDepth--; }
                 return h;
             }
             return System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o);

@@ -7,6 +7,7 @@
 #include <memory>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -1861,6 +1862,10 @@ struct UCoin {
 struct UCoinWorld {
     std::vector<std::unique_ptr<UCoin>> Coins;
 };
+struct UHolder {
+    double Threshold = 3;
+    std::vector<std::map<std::string, double>> Entries;
+};
 
 void wave5_tests() {
     auto has = [](const std::string& s, const std::string& part) { return s.find(part) != std::string::npos; };
@@ -1922,6 +1927,17 @@ void wave5_tests() {
         check(mix.ok && mix.rows && (*mix.rows)[0][0].contains("$error"), "wave5: vector + number → type-mismatch cell");
         auto lst = arun(e, coins + R"J({"op":"select","fields":[{"name":"x","expr":{"path":["X"],"on":{"op":"+","args":[{"path":["Scale"]},{"list":[{"lit":1},{"lit":0},{"lit":0}]}]}}}]}]})J");
         check(lst.ok && lst.rows && (*lst.rows)[0][0].as_number() == 2.5, "wave5: vector + [1, 0, 0]");
+    }
+    {
+        // The scope chain falls back past an absent map key on the element (spec §3).
+        rql::TypeRegistry hr;
+        hr.object<UHolder>("UHolder").member("Threshold", &UHolder::Threshold).member("Entries", &UHolder::Entries).no_identity();
+        UHolder holder;
+        holder.Entries.push_back({{"v", 5.0}});
+        rql::Engine e(hr);
+        e.add_object_source("h", &holder);
+        auto r = arun(e, R"J({"rql":"0.1","source":{"path":["h"]},"stages":[{"op":"where","pred":{"call":"any","on":{"path":["Entries"]},"args":[{"op":">","args":[{"path":["v"]},{"path":["Threshold"]}]}]}},{"op":"count"}]})J");
+        check(r.ok && r.value.as_number() == 1, "wave5: scope chain falls back past an absent key");
     }
 }
 

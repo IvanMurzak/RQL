@@ -151,6 +151,55 @@ namespace Rql.Tests
                 "[" + string.Join(",", r.Rows!.Select(row => "[" + string.Join(",", row.Select(c => c!.ToJsonString())) + "]")) + "]");
         }
 
+        public struct Mat
+        {
+            public float m00;
+            public Mat inverse => new Mat { m00 = m00 == 0 ? 0 : 1 / m00 };
+            public Mat transpose => this;
+        }
+
+        public struct Opaque
+        {
+            private int _id;
+            public Opaque(int id) { _id = id; }
+        }
+
+        public sealed class Holder
+        {
+            public Mat M { get; set; }
+            public Opaque H { get; set; }
+            public double Threshold { get; set; } = 3;
+            public List<Dictionary<string, double>> Entries { get; set; } = new List<Dictionary<string, double>> { new Dictionary<string, double> { ["v"] = 5 } };
+        }
+
+        [Fact]
+        public void StructKeysSkipSelfTypedMembersAndKeepOpaqueStructsApart()
+        {
+            var holders = new List<Holder>
+            {
+                new Holder { M = new Mat { m00 = 2 }, H = new Opaque(1) },
+                new Holder { M = new Mat { m00 = 2 }, H = new Opaque(2) },
+            };
+            var e = new RqlEngine().AddSource("holders", () => holders);
+            var m = e.Execute("holders | select M | distinct"); // inverse / transpose are not walked (would branch 2^n)
+            Assert.True(m.Ok, Json(m));
+            Assert.Single(m.Rows!);
+            var h = e.Execute("holders | select H | distinct"); // no visible members: the struct's own equality
+            Assert.True(h.Ok, Json(h));
+            Assert.Equal(2, h.Rows!.Count);
+        }
+
+        [Fact]
+        public void ScopeChainStillFallsBackPastAnAbsentKey()
+        {
+            var e = new RqlEngine().AddSource("holders", () => new List<Holder> { new Holder() });
+            var r = e.Execute("holders | where Entries.any(v > Threshold) | count");
+            Assert.True(r.Ok, Json(r));
+            Assert.Equal("1", r.Value!.ToJsonString());
+            var own = e.Execute("holders | select n=Entries.count(nope is null)"); // no item has it: the absent key reads null
+            Assert.Equal("1", own.Rows![0][0]!.ToJsonString());
+        }
+
         [Fact]
         public void UnknownMemberHintFindsNestedStructMembers()
         {
