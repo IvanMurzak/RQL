@@ -281,8 +281,14 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
   that coerces object literals); every other key must name a writable member of that type (unknown or read-only →
   `coercion-failed`), the host's per-member write policy applies to it exactly as to `set` (`permission-denied`), and
   its value is coerced recursively to the member type and validated like a `set`. Excluded types (§13) are never
-  constructed. Construction happens while the mutation is planned, so constructors run even for a dry-run or a
-  vetoed mutation; hosts whose constructors have side effects construct through an adapter instead. Members not
+  constructed, and neither are **engine objects**: a type that has an identity or a liveness adapter (§13), or that
+  the host's **literal-construction hook** (type → yes / no / no answer) refuses; the hook can also allow such a type.
+  A literal written to an engine object is `coercion-failed` ("… is an engine object and cannot be built from an
+  object literal; pass an existing one") and nothing is constructed — the engine creates those objects (a scene object
+  built by its constructor would join the scene even on a dry run), so a method that creates one takes plain data
+  (names, positions, a settings struct) instead. Construction of plain data happens while the mutation is planned, so
+  those constructors run even for a dry-run or a vetoed mutation; overload resolution never constructs anything for
+  an overload it does not choose (§8 "Overloads"). Members not
   named keep the type's defaults (numbers `0`, strings `""`, booleans `false`, empty lists/maps, null references) —
   an object literal builds a new value, it does not patch the old one (use member paths for that);
 * any other target type → `coercion-failed`.
@@ -428,6 +434,36 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   nothing called. Methods without a validator behave as before. A method that throws stops the stage with error
   `call-threw` (naming the method and the exception); calls completed before it are not rolled back (calls cannot be
   undone generically: hosts make them safe through validators and batch validation, below).
+* **Overloads**: a method may have several overloads (same name). For each target the arguments are bound to the
+  overloads in their declaration order:
+  1. **Positionally**: an overload fits by arity when it has at least as many parameters as there are arguments and
+     every parameter past them has a default. Each arity-fitting overload is **checked without side effects**: every
+     argument is tested for convertibility to its parameter type by the coercion rules (adapters and the host's text
+     coercion answer; object literals are checked against the type's constructibility, members, writability and
+     policy, recursively) with **nothing constructed, assigned or validated** — so an overload that is not chosen
+     never runs a constructor, even on a dry run. Only the first overload that passes this check has its arguments
+     coerced for real (constructing plain-data literals, running member validators); when that real coercion still
+     fails, the next passing overload is tried.
+  2. **By name**: when there is exactly **one** argument, it is an object literal, and no overload passed step 1, the
+     literal's keys name parameters: each key binds the parameter of that name (exact, else the only case-insensitive
+     match), parameters not named take their defaults. An overload is a candidate when every key names one of its
+     parameters and every parameter without a default is named; candidates are checked and coerced as in step 1.
+     So `call editor.CreateObject({name: "X", primitive: "Cube", position: [1, 2, 3]})` calls
+     `CreateObject(string name, string primitive = "Empty", Vector3 position = default, …)` without positional
+     placeholders, and `range(0, 300) | call editor.CreateObject({name: "Tile" + $, position: […]})` creates in bulk
+     with no extra overload. An overload that takes the literal itself (one object, struct or map parameter) wins over
+     binding by name; a literal next to other arguments is never bound by name.
+
+  Validators, batch validation, the before-write hook, receipts (`method` is the chosen overload's signature) and
+  dry runs are the same whichever way the arguments were bound. When no overload fits, the stage fails with
+  `coercion-failed` naming the **best-matching** overload's reason: among overloads whose arity fits (or that
+  were bound by name), the one with the most arguments that convert, then the one whose failure is deepest inside a
+  value (a misspelt member inside an object literal is closer than a literal the parameter type cannot take at all);
+  an overload that passed the check and failed only in the real coercion is the closest. When several overloads come
+  equally close, each one's reason is listed after its signature (`no overload fits: Sig1: …; Sig2: …`). Binding by
+  name reports `no parameter 'k'` (with the closest name and the parameter list) or `missing parameter 'p'`. When no
+  overload's arity fits, the message names the accepted counts (`expects 2 or 3 argument(s), got 4`). The hint lists
+  every signature, as before.
 * **Scope of values and arguments**: a `set` value and a `call` argument are evaluated per target with `$` = the
   target, and `$index`, `$path` and `$depth` are the target's as it entered the stage: `$index` is its position in the
   stream entering `set` / `call` (null and destroyed items, which are skipped, keep their positions), so
@@ -527,7 +563,9 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   setter or the host may clamp, normalise or ignore a value: `set mass = -1` can report `1E-07`, an unknown tag can
   keep the old one). On a dry run nothing is written and `new` is the planned (coerced) value. If the read-back fails,
   `new` is the planned value and the query gets a `getter-threw` warning. Host committed hooks (§13) receive the
-  read-back values too.
+  read-back values too. The JSON receipt always lists every row; the tool layer's compact text MAY shorten a long
+  receipt (a method every row shares printed once, a `$ref` that repeats the result's reference left out, only the
+  first rows listed with a count of the rest, `docs/agent-tool-contract.md`).
 
 ## 9. Extensions
 
@@ -696,7 +734,7 @@ removed again on rollback), and entries are never removed. Schemas show the type
 | Encode | Replace the output encoding of values of the type (first adapter that encodes wins). |
 | Coerce | Convert a value supplied by a query (literal, list, other type) to the type on writes (`set`, `call` arguments). Values already of the target type bypass it. A failure carries a reason → `coercion-failed`, reason in the message. |
 | Compare | Equality and/or ordering of a value of the type with any other value (first adapter of the left operand that answers wins, then of the right operand with the result mirrored). Ordering applies everywhere values are ordered: comparison operators, `sort`, `min` / `max` (which also accept values whose type has an ordering adapter). An adapter typically coerces the other operand, so `Pos == "(1, -1)"` works. |
-| Identity / liveness | Stable id for `$ref`, resolution of `Type#id`, and an `IsAlive` verdict. A destroyed object (the liveness verdict — first answering adapter, then the host's liveness hook; only objects, never collections, maps, structs or scalars, are asked — is "not alive", e.g. Unity's fake-null) **reads as null everywhere**: the conversion happens where values enter expressions (member reads, list / map elements, sources), so `== null` / `is null` / `coalesce` / sort / `distinct` / encoding all see `null`, members of it read as members of null (no getter runs), stream expansion skips it like a null element (collection methods still see the `null`, e.g. `targets.any($ == null)`), it is therefore never a mutation target, and `ref()` to it is `stale-ref`. Adapters may choose the **identity** and **display** members by name (e.g. Unity's lowercase `name`). |
+| Identity / liveness | Stable id for `$ref`, resolution of `Type#id`, and an `IsAlive` verdict. A destroyed object (the liveness verdict — first answering adapter, then the host's liveness hook; only objects, never collections, maps, structs or scalars, are asked — is "not alive", e.g. Unity's fake-null) **reads as null everywhere**: the conversion happens where values enter expressions (member reads, list / map elements, sources), so `== null` / `is null` / `coalesce` / sort / `distinct` / encoding all see `null`, members of it read as members of null (no getter runs), stream expansion skips it like a null element (collection methods still see the `null`, e.g. `targets.any($ == null)`), it is therefore never a mutation target, and `ref()` to it is `stale-ref`. Adapters may choose the **identity** and **display** members by name (e.g. Unity's lowercase `name`). A type with an identity or liveness adapter is an **engine object**: object literals never construct it (§4.5); the host's literal-construction hook can decide otherwise per type, either way. |
 | Write-back | A member can be marked **copy-on-read** (its getter returns a copy, e.g. Unity's `Renderer.sharedMaterials`, `Gradient.colorKeys`): writes into its value are assigned back through the member's setter exactly like value types (§8), with the same writability rules and rollback. A value type can be marked **writes-through** (a handle to shared state, e.g. Unity's `ParticleSystem.MainModule`): writes to its copies are live, so no write-back to the owner happens, get-only owners are fine, virtual setters on it are allowed, and its values may be mutation targets. |
 | Exclusion | Hide members by predicate (e.g. every `[Obsolete]` member), and engine-wide exclude member **types** (a member is dropped when its type, element type or a generic argument matches), e.g. delegates, native pointers or assemblies that must never be touched. |
 | Literals | Coercion receives object literals (§4.5) and may build values itself; an adapter may publish a JSON Schema of the literals it accepts, shown by `describe` as `literal`. |

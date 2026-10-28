@@ -100,6 +100,11 @@ namespace Rql
         public bool DryRun { get; set; }
         /// <summary>A <c>set</c> receipt: how many assignments left the value as it was (old == new), omitted from the rows.</summary>
         public long? Unchanged { get; set; }
+        /// <summary>
+        /// A mutation receipt (the rows of a <c>set</c> or <c>call</c>, spec §8). Not part of the JSON contract; the agent table
+        /// format compacts long receipts.
+        /// </summary>
+        public bool Receipt { get; set; }
         public List<Diagnostic> Diagnostics { get; } = new List<Diagnostic>();
         public Stats Stats { get; } = new Stats();
 

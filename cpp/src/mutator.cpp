@@ -1,6 +1,8 @@
 // Permissioned, all-or-nothing `set` / `call` (spec §8). Mirrors dotnet/Rql.Execution/Mutator.cs.
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 #include "exec.hpp"
@@ -454,9 +456,22 @@ Value read_back(Exec& x, const PlannedWrite& w) {
     return w.new_value;
 }
 
+std::optional<Value> coerce_impl(Exec& x, const Value& v, const TypeDescriptor* target, bool nullable, std::string& why, bool probe, int& depth);
+
+/// Whether an object literal may build `type` (spec §4.5): the host's answer, else every type that is not an engine object
+/// (no stable_id or is_alive adapter).
+bool may_construct(Exec& x, const TypeDescriptor* type) {
+    if (const auto& decide = x.engine.mutations().can_construct_from_literal) {
+        if (std::optional<bool> answer = decide(*type)) return *answer;
+    }
+    return x.adapters_for(type, Capability::StableId).empty() && x.adapters_for(type, Capability::IsAlive).empty();
+}
+
 /// Build `target` (object or struct) from an object literal (spec §4.5): concrete type (`"$type"`),
-/// construction, assignment of the named members (coerced recursively and validated).
-std::optional<Value> construct(Exec& x, const Value& literal, const TypeDescriptor* target, std::string& why) {
+/// construction, assignment of the named members (coerced recursively and validated). A `probe` checks the same rules
+/// without constructing, assigning or validating anything (its success value is a placeholder).
+std::optional<Value> construct(Exec& x, const Value& literal, const TypeDescriptor* target, std::string& why, bool probe, int& depth) {
+    depth = 0;
     const TypeDescriptor* concrete = target;
     Value type_name;
     if (literal.map().find(Value::string("$type"), type_name) == MapLookup::Found) {
@@ -475,18 +490,28 @@ std::optional<Value> construct(Exec& x, const Value& literal, const TypeDescript
         }
         concrete = hits[0];
     }
+    // Engine objects are never built from literals (spec §4.5): only existing ones can be passed.
+    if (!may_construct(x, concrete)) {
+        why = concrete->name + " is an engine object and cannot be built from an object literal; pass an existing one (e.g. ref(\"\xE2\x80\xA6\"))";
+        return std::nullopt;
+    }
     if (!concrete->create) {
         why = "cannot construct " + concrete->friendly_name() + " (register it constructible(), or add an adapter that coerces object literals)";
         return std::nullopt;
     }
-    std::shared_ptr<void> data = concrete->create();
-    Value instance = concrete->kind == TypeKind::Struct ? Value::structure(concrete, data) : Value::object(concrete, data.get(), data);
+    std::shared_ptr<void> data;
+    Value instance;
+    if (!probe) {
+        data = concrete->create();
+        instance = concrete->kind == TypeKind::Struct ? Value::structure(concrete, data) : Value::object(concrete, data.get(), data);
+    }
     const TypeView view = x.view(concrete);
     bool ok = true;
     literal.map().for_each([&](const Value& k, const Value& v) {
         if (k.is_string() && k.as_string() == "$type") return true;
         const std::string name = to_text(k);
         const MemberDescriptor* m = view.find(name);
+        depth = 1;
         if (!m) {
             why = "no member '" + name + "' on " + concrete->name;
         } else if (!view.member_writable(*m)) {
@@ -496,9 +521,13 @@ std::optional<Value> construct(Exec& x, const Value& literal, const TypeDescript
                                "member '" + m->name + "' of " + concrete->name + " may not be written (denied by host policy)");
         } else {
             std::string w;
-            auto mv = coerce(x, v, m->type, m->nullable, w);
+            int d = 0;
+            auto mv = coerce_impl(x, v, m->type, m->nullable, w, probe, d);
             if (!mv) {
                 why = "'" + m->name + "': " + w;
+                depth = d + 1;
+            } else if (probe) {
+                return true;
             } else {
                 std::string rejected = m->validate ? m->validate(instance.ptr(), *mv) : std::string();
                 if (!rejected.empty()) {
@@ -519,14 +548,15 @@ std::optional<Value> construct(Exec& x, const Value& literal, const TypeDescript
         return false;
     });
     if (!ok) return std::nullopt;
+    depth = 0;
+    if (probe) return Value::null();
     // Engine-built objects are retained by the engine (raw links may reach them); host-factory ones are host-owned.
     if (instance.is_object() && !concrete->host_owned) x.constructed.push_back(data);
     return instance;
 }
 
-}  // namespace
-
-std::optional<Value> coerce(Exec& x, const Value& v, const TypeDescriptor* target, bool nullable, std::string& why) {
+std::optional<Value> coerce_impl(Exec& x, const Value& v, const TypeDescriptor* target, bool nullable, std::string& why, bool probe, int& depth) {
+    depth = 0;
     if (v.is_absent()) {
         why = "value is " + describe_value(v);
         return std::nullopt;
@@ -574,7 +604,7 @@ std::optional<Value> coerce(Exec& x, const Value& v, const TypeDescriptor* targe
     }
     if (v.is_map() && v.map().object_literal()) {
         // Object literals (spec §4.5): maps are built entry by entry below; objects / structs are constructed.
-        if (target->kind == TypeKind::Object || target->kind == TypeKind::Struct) return construct(x, v, target, why);
+        if (target->kind == TypeKind::Object || target->kind == TypeKind::Struct) return construct(x, v, target, why, probe, depth);
         if (target->kind != TypeKind::Map) {
             why = "an object literal cannot become " + target->friendly_name();
             return std::nullopt;
@@ -642,13 +672,16 @@ std::optional<Value> coerce(Exec& x, const Value& v, const TypeDescriptor* targe
             size_t n = l.size();
             for (size_t i = 0; i < n; ++i) {
                 std::string w;
-                auto c = coerce(x, l.at(i), target->element, target->element_nullable, w);
+                int d = 0;
+                auto c = coerce_impl(x, l.at(i), target->element, target->element_nullable, w, probe, d);
                 if (!c) {
                     why = "element: " + w;
+                    depth = d + 1;
                     return std::nullopt;
                 }
-                items.push_back(*c);
+                if (!probe) items.push_back(*c);
             }
+            if (probe) return Value::null();
             return Value::list_of(std::move(items));
         }
         case TypeKind::Map: {
@@ -660,21 +693,35 @@ std::optional<Value> coerce(Exec& x, const Value& v, const TypeDescriptor* targe
             bool ok = true;
             v.map().for_each([&](const Value& k, const Value& val) {
                 std::string w;
-                auto c = coerce(x, val, target->element, target->element_nullable, w);
+                int d = 0;
+                auto c = coerce_impl(x, val, target->element, target->element_nullable, w, probe, d);
                 if (!c) {
                     why = "value: " + w;
+                    depth = d + 1;
                     ok = false;
                     return false;
                 }
-                entries.emplace_back(k, *c);
+                if (!probe) entries.emplace_back(k, *c);
                 return true;
             });
             if (!ok) return std::nullopt;
+            if (probe) return Value::null();
             return Value::map(std::make_shared<OwnedMap>(target, std::move(entries)));
         }
     }
     why = "expected " + target->friendly_name();
     return std::nullopt;
+}
+
+}  // namespace
+
+std::optional<Value> coerce(Exec& x, const Value& v, const TypeDescriptor* target, bool nullable, std::string& why) {
+    int depth = 0;
+    return coerce_impl(x, v, target, nullable, why, false, depth);
+}
+
+bool can_coerce(Exec& x, const Value& v, const TypeDescriptor* target, bool nullable, std::string& why, int& depth) {
+    return coerce_impl(x, v, target, nullable, why, true, depth).has_value();
 }
 
 namespace {
@@ -893,6 +940,199 @@ std::string per_item_call_hint(Exec& x, const std::string& method) {
            method + "(" + ell + " $ " + ell + ") ($ is the item; sources: " + join(names, " ") + ")";
 }
 
+namespace {
+
+/// Why one candidate does not fit, ranked by how close it came (spec §8 "Overloads").
+struct Miss {
+    const MethodDescriptor* method;
+    bool arity_fits;
+    long long matched;
+    int depth;
+    std::string why;
+};
+
+int compare_miss(const Miss& a, const Miss& b) {
+    if (a.arity_fits != b.arity_fits) return a.arity_fits ? 1 : -1;
+    if (a.matched != b.matched) return a.matched < b.matched ? -1 : 1;
+    return a.depth == b.depth ? 0 : a.depth < b.depth ? -1 : 1;
+}
+
+bool ascii_iequals(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) return false;
+    return true;
+}
+
+/// The parameter index of each literal key (exact name, else the only case-insensitive match); false with a miss when a key
+/// names no parameter or a parameter without a default is not named.
+bool bind_names(const MethodDescriptor& m, const Value& literal, std::vector<size_t>& slots, std::vector<Value>& vals, std::vector<Miss>& misses) {
+    const auto& ps = m.params;
+    std::vector<bool> named(ps.size(), false);
+    long long known = 0;
+    std::string unknown, twice;
+    literal.map().for_each([&](const Value& k, const Value& v) {
+        const std::string key = to_text(k);
+        size_t i = ps.size();
+        for (size_t j = 0; j < ps.size() && i == ps.size(); ++j)
+            if (ps[j].name == key) i = j;
+        if (i == ps.size()) {
+            size_t hits = 0, hit = 0;
+            for (size_t j = 0; j < ps.size(); ++j)
+                if (ascii_iequals(ps[j].name, key)) ++hits, hit = j;
+            if (hits == 1) i = hit;
+        }
+        if (i == ps.size()) {
+            if (unknown.empty()) unknown = key;
+            return true;
+        }
+        if (named[i]) {
+            twice = ps[i].name;
+            return false;
+        }
+        named[i] = true;
+        slots.push_back(i);
+        vals.push_back(v);
+        ++known;
+        return true;
+    });
+    std::vector<std::string> names;
+    for (auto& p : ps) names.push_back(p.name);
+    if (!twice.empty()) {
+        misses.push_back({&m, true, known, 0, "parameter '" + twice + "' is named twice"});
+        return false;
+    }
+    if (!unknown.empty()) {
+        std::vector<std::string> close = suggest_closest(unknown, names, 1);
+        misses.push_back({&m, true, known, 0,
+                          "no parameter '" + unknown + "'" + (close.empty() ? std::string() : " (did you mean '" + close[0] + "'?)") +
+                              (ps.empty() ? std::string("; it takes no parameters") : "; parameters: " + join(names, ", "))});
+        return false;
+    }
+    for (size_t j = 0; j < ps.size(); ++j) {
+        if (named[j] || ps[j].has_default) continue;
+        misses.push_back({&m, true, known, 0, "missing parameter '" + ps[j].name + "'; parameters: " + join(names, ", ")});
+        return false;
+    }
+    return true;
+}
+
+/// Overload resolution and argument binding for `call` (spec §8 "Overloads"): candidates are checked with the side-effect-free
+/// can_coerce, only the chosen one's arguments are coerced; a single object literal that no overload takes binds by
+/// parameter name; a failure (null result) reports the best-matching candidate in `why`.
+const MethodDescriptor* resolve_overload(Exec& x, const TypeDescriptor& type, const std::vector<const MethodDescriptor*>& candidates,
+                                         const std::vector<Value>& given, std::vector<Value>& coerced, std::string& why) {
+    std::vector<Miss> misses;
+    auto fits = [&](const MethodDescriptor& m, const std::vector<Value>& vals, const std::vector<size_t>& slots, const char* label) {
+        long long matched = 0;
+        int depth = 0;
+        std::string first;
+        for (size_t k = 0; k < slots.size(); ++k) {
+            const ParamDescriptor& p = m.params[slots[k]];
+            std::string w;
+            int d = 0;
+            if (can_coerce(x, vals[k], p.type, p.nullable, w, d)) {
+                ++matched;
+                continue;
+            }
+            if (first.empty()) {
+                first = std::string(label) + " '" + p.name + "': " + w;
+                depth = d;
+            }
+        }
+        if (first.empty()) return true;
+        misses.push_back({&m, true, matched, depth, first});
+        return false;
+    };
+    struct Fit {
+        const MethodDescriptor* m;
+        std::vector<size_t> slots;
+    };
+    std::vector<Fit> fitting;
+    // 1. Positional: every candidate whose arity fits is checked; the first that fits is coerced.
+    for (auto* m : candidates) {
+        const auto& ps = m->params;
+        bool arity = ps.size() >= given.size();
+        for (size_t i = given.size(); arity && i < ps.size(); ++i)
+            if (!ps[i].has_default) arity = false;
+        if (!arity) {
+            misses.push_back({m, false, 0, 0, ""});
+            continue;
+        }
+        std::vector<size_t> slots;
+        for (size_t i = 0; i < given.size(); ++i) slots.push_back(i);
+        if (fits(*m, given, slots, "argument")) fitting.push_back({m, std::move(slots)});
+    }
+    // 2. By name: a single object literal that no overload takes positionally names the parameters.
+    std::vector<Value> named;
+    const bool by_name = fitting.empty() && given.size() == 1 && given[0].is_map() && given[0].map().object_literal();
+    if (by_name) {
+        for (auto* m : candidates) {
+            std::vector<size_t> slots;
+            std::vector<Value> vals;
+            if (!bind_names(*m, given[0], slots, vals, misses)) continue;
+            if (!fits(*m, vals, slots, "parameter")) continue;
+            named = vals;  // every candidate binds the same values; only their order follows the literal
+            fitting.push_back({m, std::move(slots)});
+        }
+    }
+    const std::vector<Value>& vals = by_name ? named : given;
+    for (auto& f : fitting) {
+        const auto& ps = f.m->params;
+        std::vector<Value> cv;
+        for (auto& p : ps) cv.push_back(p.default_value);
+        bool ok = true;
+        for (size_t k = 0; k < f.slots.size() && ok; ++k) {
+            const ParamDescriptor& p = ps[f.slots[k]];
+            std::string w;
+            auto r = coerce(x, vals[k], p.type, p.nullable, w);
+            if (r) {
+                cv[f.slots[k]] = *r;
+                continue;
+            }
+            // Only the real coercion sees what the probe cannot (member validators, setters that throw); a candidate that
+            // passed the probe is the closest match, so its reason is the one reported.
+            misses.push_back({f.m, true, std::numeric_limits<long long>::max(), 0, "argument '" + p.name + "': " + w});
+            ok = false;
+        }
+        if (ok) {
+            coerced = std::move(cv);
+            return f.m;
+        }
+    }
+    // The best candidate's reason; candidates that came equally close are listed with their signatures.
+    std::vector<const Miss*> fit;
+    for (auto& m : misses)
+        if (m.arity_fits) fit.push_back(&m);
+    if (fit.empty()) {
+        std::vector<size_t> counts;
+        for (auto& m : misses) counts.push_back(m.method->params.size());
+        std::sort(counts.begin(), counts.end());
+        counts.erase(std::unique(counts.begin(), counts.end()), counts.end());
+        std::vector<std::string> parts;
+        for (size_t n : counts) parts.push_back(std::to_string(n));
+        why = "expects " + join(parts, " or ") + " argument(s), got " + std::to_string(given.size());
+        return nullptr;
+    }
+    const Miss* best = fit[0];
+    for (auto* m : fit)
+        if (compare_miss(*m, *best) > 0) best = m;
+    std::vector<const Miss*> tied;
+    for (auto* m : fit)
+        if (compare_miss(*m, *best) == 0 && std::none_of(tied.begin(), tied.end(), [&](const Miss* o) { return o->method == m->method; }))
+            tied.push_back(m);
+    if (tied.size() == 1) {
+        why = best->why;
+        return nullptr;
+    }
+    std::vector<std::string> parts;
+    for (auto* m : tied) parts.push_back(type.signature(*m->method) + ": " + m->why);
+    why = "no overload fits: " + join(parts, "; ");
+    return nullptr;
+}
+
+}  // namespace
+
 QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s, const std::function<Value()>& resolve_receiver) {
     check_policy(x, "call");
     // After the policy check: a read request never evaluates the target.
@@ -967,40 +1207,9 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
         enter_scope(x, target);
         std::vector<Value> vals;
         for (auto& a : args) vals.push_back(a(x));
-        const MethodDescriptor* chosen = nullptr;
         std::vector<Value> coerced;
         std::string why;
-        for (auto* m : candidates) {
-            const auto& ps = m->params;
-            bool fits = ps.size() >= vals.size();
-            for (size_t i = vals.size(); fits && i < ps.size(); ++i)
-                if (!ps[i].has_default) fits = false;
-            if (!fits) {
-                why = "expects " + std::to_string(ps.size()) + " argument(s)";
-                continue;
-            }
-            std::vector<Value> cv;
-            bool ok = true;
-            for (size_t i = 0; i < ps.size(); ++i) {
-                if (i >= vals.size()) {
-                    cv.push_back(ps[i].default_value);
-                    continue;
-                }
-                std::string w;
-                auto r = coerce(x, vals[i], ps[i].type, ps[i].nullable, w);
-                if (!r) {
-                    ok = false;
-                    why = "argument '" + ps[i].name + "': " + w;
-                    break;
-                }
-                cv.push_back(*r);
-            }
-            if (ok) {
-                chosen = m;
-                coerced = std::move(cv);
-                break;
-            }
-        }
+        const MethodDescriptor* chosen = resolve_overload(x, *t, candidates, vals, coerced, why);
         if (!chosen) {
             std::vector<std::string> cs;
             for (auto* m : candidates) cs.push_back(t->signature(*m));

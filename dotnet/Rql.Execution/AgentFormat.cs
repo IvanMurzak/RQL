@@ -21,7 +21,18 @@ namespace Rql.Execution
     {
         public static OutputFormat Parse(string s) => s.Equals("json", StringComparison.OrdinalIgnoreCase) ? OutputFormat.Json : OutputFormat.Table;
 
-        public static string Render(QueryResult r, OutputFormat format)
+        /// <summary>Receipt rows the table format shows before it summarises the rest (<see cref="Render(QueryResult, OutputFormat, int)"/>).</summary>
+        public const int DefaultReceiptRows = 50;
+
+        public static string Render(QueryResult r, OutputFormat format) => Render(r, format, DefaultReceiptRows);
+
+        /// <summary>
+        /// Render a result. The table format compacts mutation receipts (<see cref="QueryResult.Receipt"/>, spec §8): a method
+        /// every <c>call</c> row shares is printed once, a <c>$ref</c> column that only repeats the result's reference is left
+        /// out, and only the first <paramref name="maxReceiptRows"/> rows are listed, followed by how many are not (0 or less
+        /// lists all). The json format always carries every row.
+        /// </summary>
+        public static string Render(QueryResult r, OutputFormat format, int maxReceiptRows)
         {
             if (format == OutputFormat.Json) return r.ToJson(indented: false, includeStats: false);
             var sb = new StringBuilder();
@@ -38,12 +49,22 @@ namespace Rql.Execution
                     sb.Append(Cell(r.Value));
                     break;
                 case ResultKind.Rows:
+                {
                     Header(sb, r, r.Rows!.Count, r.DryRun ? "DRY RUN — nothing changed; " : "",
                         r.Unchanged > 0 ? $" ({r.Unchanged} unchanged assignment(s) not listed)" : "");
-                    sb.Append(string.Join("|", r.Columns!)).Append('\n');
-                    foreach (var row in r.Rows!) sb.Append(string.Join("|", row.Select(Cell))).Append('\n');
+                    var columns = Enumerable.Range(0, r.Columns!.Count).ToList();
+                    int shown = r.Rows.Count;
+                    if (r.Receipt)
+                    {
+                        CompactReceipt(sb, r, columns);
+                        if (maxReceiptRows > 0 && shown > maxReceiptRows) shown = maxReceiptRows;
+                    }
+                    sb.Append(string.Join("|", columns.Select(c => r.Columns[c]))).Append('\n');
+                    for (int i = 0; i < shown; i++) sb.Append(string.Join("|", columns.Select(c => Cell(r.Rows[i][c])))).Append('\n');
+                    if (shown < r.Rows.Count) sb.Append("… ").Append(r.Rows.Count - shown).Append(" more row(s) not shown (the json format lists every row)\n");
                     foreach (var e in r.CellErrors) sb.Append("note: error cell ").Append(e).Append('\n');
                     break;
+                }
                 case ResultKind.Items:
                     Header(sb, r, r.Items!.Count, "");
                     foreach (var it in r.Items!) sb.Append(Cell(it)).Append('\n');
@@ -54,6 +75,30 @@ namespace Rql.Execution
             }
             return sb.ToString().TrimEnd();
         }
+
+        /// <summary>
+        /// Compacts a receipt of two or more rows: a <c>call</c> receipt whose rows share one method prints it once (a
+        /// <c>method:</c> line) instead of a column, and a <c>$ref</c> that equals the reference of the row's result on every
+        /// row (a source-qualified call that created objects) is left out. Removes the dropped columns from
+        /// <paramref name="columns"/>.
+        /// </summary>
+        private static void CompactReceipt(StringBuilder sb, QueryResult r, List<int> columns)
+        {
+            var rows = r.Rows!;
+            if (rows.Count < 2) return;
+            int refCol = r.Columns!.IndexOf("$ref"), methodCol = r.Columns.IndexOf("method"), resultCol = r.Columns.IndexOf("result");
+            if (methodCol < 0 || resultCol < 0) return;
+            var method = Text(rows[0][methodCol]);
+            if (method != null && rows.All(row => Text(row[methodCol]) == method))
+            {
+                sb.Append("method: ").Append(method).Append('\n');
+                columns.Remove(methodCol);
+            }
+            if (refCol >= 0 && rows.All(row => Text(row[refCol]) is string rf && row[resultCol] is JsonObject o && Text(o["$ref"]) == rf))
+                columns.Remove(refCol);
+        }
+
+        private static string? Text(JsonNode? n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 
         private static void Header(StringBuilder sb, QueryResult r, int shown, string prefix, string suffix = "")
         {

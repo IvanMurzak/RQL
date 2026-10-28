@@ -116,6 +116,44 @@ export const nodeAdapter: TypeAdapter<Node> = {
         'append a new child node named name; returns it',
         (_n, name: string) => (name.length === 0 ? 'name must not be empty' : undefined),
       )
+      // Overloads (spec §8): an object literal never builds a Node (an engine object here: it has a liveness adapter), so
+      // probe({x: 1, y: 2}) resolves to the Vec2 overload without constructing anything.
+      .method('probe', [{ name: 'peer', type: t.of(Node) }], t.number, (_n, peer: Node) => peer.Id, "the peer's Id")
+      .method(
+        'probe',
+        [
+          { name: 'at', type: t.of(Vec2) },
+          { name: 'scale', type: t.number, default: 1 },
+        ],
+        t.number,
+        (_n, at: Vec2, scale: number) => (at.x + at.y) * scale,
+        '(at.x + at.y) * scale',
+      )
+      .method('pin', [{ name: 'peer', type: t.of(Node) }], t.number, (_n, peer: Node) => peer.Id, "the peer's Id")
+      // Arguments by name: place({name: "box", side: "up"}).
+      .method(
+        'place',
+        [
+          { name: 'name', type: t.string },
+          { name: 'side', type: t.string, default: 'left' },
+          { name: 'weight', type: t.number, default: 1 },
+        ],
+        t.string,
+        (_n, name: string, side: string, _weight: number) => `${name}/${side}`,
+        'name/side',
+        (_n, _name: string, _side: string, weight: number) => (weight < 0 ? 'weight must be non-negative' : undefined),
+      )
+      .method('scale', [{ name: 'by', type: t.of(Vec2) }], t.number, (_n, by: Vec2) => by.x * by.y, 'by.x * by.y')
+      .method(
+        'scale',
+        [
+          { name: 'x', type: t.number },
+          { name: 'y', type: t.number },
+        ],
+        t.number,
+        (_n, x: number, y: number) => x + y,
+        'x + y',
+      )
       .add<string[]>('tagsCopy', {
         type: t.list(t.string),
         get: (n) => [...n.Tags],

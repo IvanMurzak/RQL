@@ -28,11 +28,26 @@ namespace Rql.Execution
             public int Op;
         }
 
-        internal RqlKernel(TypeModel types, Func<Type, MemberAccessor, bool>? writePolicy, Func<Type, string, object?>? textCoercion = null)
+        internal RqlKernel(TypeModel types, Func<Type, MemberAccessor, bool>? writePolicy, Func<Type, string, object?>? textCoercion = null,
+            Func<Type, bool?>? canConstruct = null)
         {
             Types = types;
             WritePolicy = writePolicy;
             TextCoercion = textCoercion;
+            _canConstruct = canConstruct;
+        }
+
+        private readonly Func<Type, bool?>? _canConstruct;
+
+        /// <summary>
+        /// Whether an object literal may build <paramref name="type"/> (spec §4.5): the host's answer, else every type that is
+        /// not an engine object (no identity or liveness adapter).
+        /// </summary>
+        internal bool CanConstruct(Type type)
+        {
+            if (_canConstruct?.Invoke(type) is bool decided) return decided;
+            var info = Types.Info(type);
+            return info.IdentityAdapters.Length == 0 && info.LivenessAdapters.Length == 0;
         }
 
         /// <summary>The engine's type model (member tables, kinds, adapters).</summary>

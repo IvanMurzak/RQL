@@ -144,7 +144,27 @@ namespace Rql.Conformance
                         (o, args) => (double)args[0]! < 0 ? "by must be non-negative" : ((Node)o).Id == 5 ? "node 5 is frozen" : null)
                     .AddMethod("spawn", new[] { new CallableParameter("name", typeof(string)) }, typeof(Node),
                         (o, args) => Spawn((Node)o, (string)args[0]!), "append a new child node named name; returns it",
-                        (o, args) => string.IsNullOrEmpty((string?)args[0]) ? "name must not be empty" : null);
+                        (o, args) => string.IsNullOrEmpty((string?)args[0]) ? "name must not be empty" : null)
+                    // Overloads (spec §8): an object literal never builds a Node (an engine object here: it has a liveness
+                    // adapter), so probe({x: 1, y: 2}) resolves to the Vec2 overload without constructing anything.
+                    .AddMethod("probe", new[] { new CallableParameter("peer", typeof(Node)) }, typeof(double),
+                        (o, args) => (double)((Node)args[0]!).Id, "the peer's Id")
+                    .AddMethod("probe", new[] { new CallableParameter("at", typeof(Vec2)), new CallableParameter("scale", typeof(double), true, 1.0) }, typeof(double),
+                        (o, args) => (((Vec2)args[0]!).x + ((Vec2)args[0]!).y) * (double)args[1]!, "(at.x + at.y) * scale")
+                    .AddMethod("pin", new[] { new CallableParameter("peer", typeof(Node)) }, typeof(double),
+                        (o, args) => (double)((Node)args[0]!).Id, "the peer's Id")
+                    // Arguments by name: place({name: "box", side: "up"}).
+                    .AddMethod("place", new[]
+                        {
+                            new CallableParameter("name", typeof(string)), new CallableParameter("side", typeof(string), true, "left"),
+                            new CallableParameter("weight", typeof(double), true, 1.0),
+                        }, typeof(string),
+                        (o, args) => (string)args[0]! + "/" + (string)args[1]!, "name/side",
+                        (o, args) => (double)args[2]! < 0 ? "weight must be non-negative" : null)
+                    .AddMethod("scale", new[] { new CallableParameter("by", typeof(Vec2)) }, typeof(double),
+                        (o, args) => ((Vec2)args[0]!).x * ((Vec2)args[0]!).y, "by.x * by.y")
+                    .AddMethod("scale", new[] { new CallableParameter("x", typeof(double)), new CallableParameter("y", typeof(double)) }, typeof(double),
+                        (o, args) => (double)args[0]! + (double)args[1]!, "x + y");
 
             /// <summary>The fixture's creation method: a child with Id = parent Id * 100 + its position (from 1).</summary>
             private static Node Spawn(Node parent, string name)

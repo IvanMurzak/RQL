@@ -139,6 +139,8 @@ are non-owning by default; a virtual setter must round-trip its getter (rollback
 - `engine.mutations.validateBatch(records)` sees every planned change of a `set` / `call` stage (call records
   carry `args`) before anything runs, dry runs included; a returned reason refuses the stage (`invalid-value`).
   `engine.mutations.coerceText(ctor, text)` converts strings for struct / object types no adapter coerces;
+  `engine.mutations.canConstructFromLiteral(ctor)` decides which classes object literals may build (default: every class
+  without a `stableId` / `isAlive` adapter, so engine objects never are, spec §4.5);
   `engine.mutations.limitHint(op, limit)` replaces the `mutation-limit` hint; `engine.defaults.budgetsAdjustable
   = false` keeps hints from advising `budgets.*`; `engine.findHint` names the host's finder in `ref()` hints;
   `engine.schemaHint` (e.g. `rql-schema`) names the host's schema tool in hints and `engine.mutateHint` (e.g. `rql-mutate`)

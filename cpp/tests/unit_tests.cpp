@@ -1106,8 +1106,19 @@ void adapter_tests() {
         check(r.ok && recs.size() == 1 && recs[0].owner.ptr() == gr->Nodes[0].get(), "review: owner of a map entry is the owning object");
         re.mutations().before_write = nullptr;
         re.mutations().can_write = [](const rql::TypeDescriptor& t, const rql::MemberDescriptor& m) { return !(t.name == "Node" && m.name == "Name"); };
-        r = arun(re, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Peer"]},"value":{"object":[{"key":"Name","value":{"lit":"x"}}]}}]}]})J", true);
+        const std::string literal_peer =
+            R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Peer"]},"value":{"object":[{"key":"Name","value":{"lit":"x"}}]}}]}]})J";
+        // Node has a liveness adapter here, so it is an engine object: literals never build it unless the host allows it.
+        r = arun(re, literal_peer, true);
+        check(!r.ok && first_code(r) == "coercion-failed" && r.diagnostics[0].message.find("engine object") != std::string::npos && gr->Nodes[2]->Peer == nullptr,
+              "overloads: an engine object (liveness adapter) is never built from an object literal");
+        re.mutations().can_construct_from_literal = [](const rql::TypeDescriptor& t) -> std::optional<bool> {
+            if (t.name == "Node") return true;
+            return std::nullopt;
+        };
+        r = arun(re, literal_peer, true);
         check(!r.ok && first_code(r) == "permission-denied" && gr->Nodes[2]->Peer == nullptr, "review: object-literal construction checks the host policy");
+        re.mutations().can_construct_from_literal = nullptr;
         re.mutations().can_write = nullptr;
         // dead intermediate: Node#8.Peer -> Node#5, then Node#5 is destroyed
         r = arun(re, R"J({"rql":"0.1","source":{"call":"ref","args":[{"lit":"Node#8"}]},"stages":[{"op":"set","assign":[{"target":{"path":["Peer"]},"value":{"call":"ref","args":[{"lit":"Node#5"}]}}]}]})J", true);
@@ -1963,6 +1974,140 @@ void wave5_tests() {
     }
 }
 
+// ADR-0010: overload resolution without side effects, engine objects never built from literals, the best-matching
+// overload's failure and arguments by name. Mirrors dotnet/Rql.Tests/OverloadTests.cs.
+int ov_objects_built = 0;
+int ov_placements_built = 0;
+struct OvObject {
+    OvObject() { ++ov_objects_built; }
+    int Id = 0;
+    std::string Name;
+};
+struct OvPlacement {
+    OvPlacement() { ++ov_placements_built; }
+    double x = 0;
+    double y = 0;
+};
+struct OvEditor {
+    std::vector<std::string> made;
+};
+
+void overload_tests() {
+    auto has = [](const std::string& s, const std::string& part) { return s.find(part) != std::string::npos; };
+    rql::TypeRegistry reg;
+    reg.object<OvObject>("OvObject").member("Id", &OvObject::Id).member("Name", &OvObject::Name).constructible();
+    reg.object<OvPlacement>("OvPlacement").member("x", &OvPlacement::x).member("y", &OvPlacement::y).no_identity().constructible();
+    reg.object<OvEditor>("OvEditor").no_identity();
+    rql::TypeRegistry* r = &reg;
+    const rql::TypeDescriptor* obj = reg.descriptor<OvObject>();
+    const rql::TypeDescriptor* place = reg.descriptor<OvPlacement>();
+    const auto str = rql::builtin::string_type();
+    const auto num = rql::builtin::double_type();
+    auto engine = [&](bool engine_objects) {
+        auto e = std::make_unique<rql::Engine>(reg);
+        if (engine_objects) {
+            rql::TypeAdapter alive;
+            alive.name = "OvObjectAdapter";
+            alive.target = obj;
+            alive.is_alive = [](const rql::Value&) -> std::optional<bool> { return true; };
+            e->add_adapter(std::move(alive));
+        }
+        rql::TypeAdapter ed;
+        ed.name = "OvEditorAdapter";
+        ed.target = reg.descriptor<OvEditor>();
+        ed.configure_members = [=](rql::MemberTable& t) {
+            t.method<OvEditor>(
+                 "Create", {rql::ParamDescriptor{"name", str, false, false, rql::Value()}, rql::ParamDescriptor{"parent", obj, false, false, rql::Value()}}, str,
+                 [](OvEditor& e, const std::vector<rql::Value>& a) {
+                     e.made.push_back(a[0].as_string());
+                     return rql::Value::string("parent");
+                 })
+                .method<OvEditor>(
+                    "Create",
+                    {rql::ParamDescriptor{"name", str, false, false, rql::Value()}, rql::ParamDescriptor{"placement", place, false, false, rql::Value()},
+                     rql::ParamDescriptor{"primitive", str, false, true, rql::Value::string("Cube")}},
+                    str,
+                    [](OvEditor& e, const std::vector<rql::Value>& a) {
+                        e.made.push_back(a[0].as_string());
+                        return rql::Value::string("placement");
+                    })
+                .method<OvEditor>(
+                    "Spawn",
+                    {rql::ParamDescriptor{"name", str, false, false, rql::Value()}, rql::ParamDescriptor{"primitive", str, false, true, rql::Value::string("Cube")},
+                     rql::ParamDescriptor{"size", num, false, true, rql::Value::number(1)}},
+                    str,
+                    [](OvEditor& e, const std::vector<rql::Value>& a) {
+                        e.made.push_back(a[0].as_string() + ":" + a[1].as_string() + ":" + rql::format_number_text(a[2].as_number()));
+                        return rql::Value::string(e.made.back());
+                    },
+                    "", [](OvEditor&, const std::vector<rql::Value>& a) -> std::string { return a[2].as_number() <= 0 ? "size must be positive" : ""; })
+                .method<OvEditor>("Link", {rql::ParamDescriptor{"other", obj, false, false, rql::Value()}}, str,
+                                  [r](OvEditor&, const std::vector<rql::Value>& a) { return rql::Value::string(rql::value_as<OvObject>(*r, a[0])->Name); });
+        };
+        e->add_adapter(std::move(ed));
+        e->mutations().enabled = true;
+        return e;
+    };
+    OvEditor editor;
+    auto run = [&](rql::Engine& e, const std::string& method, const std::string& args, bool dry) {
+        rql::QueryOptions o;
+        o.allow_mutation = true;
+        o.dry_run = dry;
+        return e.execute_json(R"J({"rql":"0.1","source":{"list":[{"lit":1}]},"stages":[{"op":"call","method":")J" + method +
+                                  R"J(","on":{"path":["editor"]},"args":[)J" + args + "]}]}",
+                              {}, o);
+    };
+    const std::string placement = R"J({"object":[{"key":"x","value":{"lit":1}},{"key":"y","value":{"lit":2}}]})J";
+    const std::string x = R"J({"lit":"X"})J";
+    auto e = engine(true);
+    e->add_object_source("editor", &editor);
+    ov_objects_built = ov_placements_built = 0;
+    auto res = run(*e, "Create", x + "," + placement, true);
+    check(res.ok && (*res.rows)[0][1].as_string() == "Create(string name, OvPlacement placement, string primitive)" && ov_objects_built == 0 &&
+              ov_placements_built == 1 && editor.made.empty(),
+          "overloads: the engine-object overload is checked without constructing; only the chosen argument is built");
+    for (bool dry : {true, false}) {
+        res = run(*e, "Link", R"J({"object":[]})J", dry);
+        check(first_code(res) == "coercion-failed" && has(res.diagnostics[0].message, "OvObject is an engine object") && ov_objects_built == 0,
+              "overloads: an empty literal never builds an engine object (the only overload)");
+    }
+    res = run(*e, "Create", x + R"J(,{"object":[{"key":"positon","value":{"lit":1}}]})J", true);
+    check(first_code(res) == "coercion-failed" && has(res.diagnostics[0].message, ": argument 'placement': no member 'positon' on OvPlacement"),
+          "overloads: a typo inside a placement is reported against the placement overload");
+    res = run(*e, "Create", x + R"J(,{"lit":5})J", true);
+    check(has(res.diagnostics[0].message, "no overload fits: Create(string name, OvObject parent): argument 'parent': ") &&
+              has(res.diagnostics[0].message, "; Create(string name, OvPlacement placement, string primitive): argument 'placement': "),
+          "overloads: candidates that came equally close are all listed");
+    res = run(*e, "Create", x + "," + x + "," + x + "," + x, true);
+    check(has(res.diagnostics[0].message, "expects 2 or 3 argument(s), got 4"), "overloads: an arity mismatch names the accepted counts");
+    // Arguments by name.
+    res = run(*e, "Spawn", R"J({"object":[{"key":"size","value":{"lit":2}},{"key":"name","value":{"lit":"A"}}]})J", false);
+    check(res.ok && editor.made.size() == 1 && editor.made[0] == "A:Cube:2", "named arguments: bound by name, defaults fill the rest");
+    res = run(*e, "Spawn", R"J({"object":[{"key":"name","value":{"lit":"A"}},{"key":"size","value":{"lit":0}}]})J", true);
+    check(first_code(res) == "invalid-value" && has(res.diagnostics[0].message, "size must be positive"), "named arguments: validators run on dry runs");
+    res = run(*e, "Spawn", R"J({"object":[{"key":"name","value":{"lit":"A"}},{"key":"sise","value":{"lit":2}}]})J", true);
+    check(has(res.diagnostics[0].message, "no parameter 'sise' (did you mean 'size'?); parameters: name, primitive, size"), "named arguments: unknown name");
+    res = run(*e, "Spawn", R"J({"object":[{"key":"size","value":{"lit":2}}]})J", true);
+    check(has(res.diagnostics[0].message, "missing parameter 'name'; parameters: name, primitive, size"), "named arguments: missing required");
+    // The host decides.
+    auto plain = engine(false);
+    plain->add_object_source("editor", &editor);
+    const std::string made = R"J({"object":[{"key":"Name","value":{"lit":"made"}}]})J";
+    res = run(*plain, "Link", made, false);
+    check(res.ok && (*res.rows)[0][2].as_string() == "made", "overloads: without identity or liveness adapters a type is plain data");
+    plain->mutations().can_construct_from_literal = [obj](const rql::TypeDescriptor& t) -> std::optional<bool> {
+        if (&t == obj) return false;
+        return std::nullopt;
+    };
+    check(has(run(*plain, "Link", made, false).diagnostics[0].message, "engine object"), "overloads: the host can refuse a type");
+    e->mutations().can_construct_from_literal = [obj](const rql::TypeDescriptor& t) -> std::optional<bool> {
+        if (&t == obj) return true;
+        return std::nullopt;
+    };
+    res = run(*e, "Link", made, false);
+    check(res.ok && (*res.rows)[0][2].as_string() == "made", "overloads: the host can allow an engine object");
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) repo_root = argv[1];
     try {
@@ -1977,6 +2122,7 @@ int main(int argc, char** argv) {
         wave4_tests();
         bulk_tests();
         wave5_tests();
+        overload_tests();
     } catch (const std::exception& ex) {
         std::cout << "FATAL " << ex.what() << "\n";
         return 2;
