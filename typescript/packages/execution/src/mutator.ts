@@ -638,12 +638,12 @@ export class Mutator {
     // A source-qualified call checks its receiver's method before reading the stream: a typo fails even with no items.
     const fixed = receiver !== undefined ? candidatesOf(receiver, undefined) : undefined;
     const targets = this.targets(stream, 'call', s.method, receiver !== undefined);
-    const planned: { item: object; method: MethodAccessor; args: unknown[]; at: string }[] = [];
+    const planned: { item: object; method: MethodAccessor; args: unknown[]; index: number }[] = [];
+    // Where a failure is: the target, or for a source-qualified call the receiver and the item's position.
+    const at = (item: object, index: number): string => x.engine.refOf(item) + (receiver !== undefined ? ` for item ${index}` : '');
     for (const t of targets) {
       const item = receiver ?? (t.item.value as object);
       const candidates = fixed ?? candidatesOf(item, targets);
-      // Where a failure is: the target, or for a source-qualified call the receiver and the item's position.
-      const at = x.engine.refOf(item) + (receiver !== undefined ? ` for item ${t.index}` : '');
       this.enterScope(t);
       const vals = args.map((a) => a(x));
       let chosen: { method: MethodAccessor; args: unknown[] } | undefined;
@@ -664,7 +664,7 @@ export class Mutator {
           }
           const co = coerce(x.types, vals[i], p.type ?? 'any', x.engine.mutations.canWrite, x.engine.mutations.coerceText);
           if (!co.ok) {
-            if (co.code !== undefined) throw new RqlError(co.code, `cannot call ${s.method} on ${at}: argument '${p.name}': ${co.why}`);
+            if (co.code !== undefined) throw new RqlError(co.code, `cannot call ${s.method} on ${at(item, t.index)}: argument '${p.name}': ${co.why}`);
             ok = false;
             why = `argument '${p.name}': ${co.why}`;
             break;
@@ -677,7 +677,7 @@ export class Mutator {
         }
       }
       if (chosen === undefined) {
-        throw new RqlError('coercion-failed', `cannot call ${s.method} on ${at}: ${why}`, undefined, 'signature: ' + candidates.map((m) => m.signature(x.types)).join(', '));
+        throw new RqlError('coercion-failed', `cannot call ${s.method} on ${at(item, t.index)}: ${why}`, undefined, 'signature: ' + candidates.map((m) => m.signature(x.types)).join(', '));
       }
       // The method's own check, for every target before the first call (and on dry runs): all-or-nothing (spec §8).
       const check = chosen.method.validate;
@@ -689,10 +689,10 @@ export class Mutator {
           rejected = `its check threw ${e instanceof Error ? e.name : typeof e}: ${errorMessage(e)}`;
         }
         if (rejected !== null && rejected !== undefined) {
-          throw new RqlError('invalid-value', `cannot call ${chosen.method.signature(x.types)} on ${at}: ${rejected}; nothing was called`);
+          throw new RqlError('invalid-value', `cannot call ${chosen.method.signature(x.types)} on ${at(item, t.index)}: ${rejected}; nothing was called`);
         }
       }
-      planned.push({ item, ...chosen, at });
+      planned.push({ item, ...chosen, index: t.index });
     }
 
     const callRecords = once(() =>
@@ -715,7 +715,7 @@ export class Mutator {
           // Completed calls are not rolled back, so the host still learns about them.
           const completed = done;
           this.runHook('committed', () => callRecords().slice(0, completed));
-          throw new RqlError('call-threw', `${p.method.name} on ${p.at} threw ${name}: ${errorMessage(e)}; ${done} earlier call(s) completed and are NOT rolled back`);
+          throw new RqlError('call-threw', `${p.method.name} on ${at(p.item, p.index)} threw ${name}: ${errorMessage(e)}; ${done} earlier call(s) completed and are NOT rolled back`);
         }
       }
       done++;

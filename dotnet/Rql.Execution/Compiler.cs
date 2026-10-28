@@ -868,19 +868,19 @@ namespace Rql.Execution
         internal static RqlError? RangeOf(object? a, object? b, object? c, out double start, out double step, out long count)
         {
             start = 0; step = 1; count = 0;
-            foreach (var v in new[] { a, b, c })
-            {
-                if (v is RqlError e) return e;
-                if (!V.TryNumber(v, out var d)) return new RqlError("type-mismatch", $"range() expects numbers, got {V.Describe(v)}");
-                if (double.IsNaN(d) || double.IsInfinity(d)) return new RqlError("type-mismatch", $"range() expects finite numbers, got {V.FormatNumber(d)}");
-            }
-            V.TryNumber(a, out start);
-            V.TryNumber(b, out var end);
-            V.TryNumber(c, out step);
+            double end = 0;
+            if ((Arg(a, ref start) ?? Arg(b, ref end) ?? Arg(c, ref step)) is RqlError bad) return bad;
             if (step == 0) return new RqlError("type-mismatch", "range() step must not be 0");
             double n = Math.Ceiling((end - start) / step);
             count = n <= 0 ? 0 : n >= long.MaxValue ? long.MaxValue : (long)n;
             return null;
+
+            static RqlError? Arg(object? v, ref double d)
+            {
+                if (v is RqlError e) return e;
+                if (!V.TryNumber(v, out d)) return new RqlError("type-mismatch", $"range() expects numbers, got {V.Describe(v)}");
+                return double.IsNaN(d) || double.IsInfinity(d) ? new RqlError("type-mismatch", $"range() expects finite numbers, got {V.FormatNumber(d)}") : null;
+            }
         }
 
         private void Arity(CallExpr c, int min, int max)

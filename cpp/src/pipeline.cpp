@@ -911,9 +911,7 @@ Value call_receiver(Exec& x, Compiler& c, const Stage& s) {
         b = bind_source(x, c, on);
     } catch (const RqlException& ex) {
         if (ex.code() != "unknown-source" || on.kind != ExprKind::Path || on.segments.empty()) throw;
-        std::vector<std::string> parts;
-        for (auto& g : on.segments) parts.push_back(g.kind == SegmentKind::Member ? g.name : g.to_string());
-        const std::string text = join(parts, ".");
+        const std::string text = path_text(on);
         throw RqlException("unknown-source", "call " + text + "." + s.method + ": '" + on.segments[0].name + "' is not a source",
                            "a qualified call runs a method of a source (sources: " + join(source_names(x), " ") +
                                "); to call a method of each item's member, get it first: " + ell + " | get " + text + " | call " + s.method + "(" + ell + ")");

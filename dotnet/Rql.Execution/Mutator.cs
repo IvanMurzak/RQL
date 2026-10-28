@@ -556,12 +556,12 @@ namespace Rql.Execution
             var fixedCandidates = receiver != null ? Candidates(receiver, null) : null;
             var targets = Targets(stream, "call", s.Method, perItem: receiver != null);
             var planned = new List<(object item, CallableMethod method, object?[] args, long index)>();
+            // Where a failure is: the target, or for a source-qualified call the receiver and the item's position.
+            string At(object item, long index) => _x.Engine.RefOf(item) + (receiver != null ? $" for item {index}" : "");
             foreach (var t in targets)
             {
                 var item = receiver ?? t.Value;
                 var candidates = fixedCandidates ?? Candidates(item, targets);
-                // Where a failure is: the target, or for a source-qualified call the receiver and the item's position.
-                string at = _x.Engine.RefOf(item) + (receiver != null ? $" for item {t.Index}" : "");
                 EnterScope(t);
                 var vals = args.Select(a => a(_x)).ToArray();
                 CallableMethod? chosen = null;
@@ -581,7 +581,7 @@ namespace Rql.Execution
                     if (ok) { chosen = m; coerced = cv; break; }
                 }
                 if (chosen == null)
-                    throw new RqlException("coercion-failed", $"cannot call {s.Method} on {at}: {why}", null,
+                    throw new RqlException("coercion-failed", $"cannot call {s.Method} on {At(item, t.Index)}: {why}", null,
                         "signature: " + string.Join(", ", candidates.Select(m => m.Signature)));
                 // The method's own check, for every target before the first call (and on dry runs): all-or-nothing (spec §8).
                 if (chosen.Validate != null)
@@ -590,7 +590,7 @@ namespace Rql.Execution
                     try { rejected = chosen.Validate(item, coerced!); }
                     catch (Exception ex) when (!(ex is OutOfMemoryException)) { rejected = $"its check threw {ex.GetType().Name}: {ex.Message}"; }
                     if (rejected != null)
-                        throw new RqlException("invalid-value", $"cannot call {chosen.Signature} on {at}: {rejected}; nothing was called");
+                        throw new RqlException("invalid-value", $"cannot call {chosen.Signature} on {At(item, t.Index)}: {rejected}; nothing was called");
                 }
                 planned.Add((item, chosen, coerced!, t.Index));
             }
@@ -617,8 +617,7 @@ namespace Rql.Execution
                         // Completed calls are not rolled back, so the host still learns about them.
                         int completed = done;
                         RunHook(_x.Engine.Mutations.Committed, callRecords.Take(completed).ToList(), veto: false);
-                        string at = _x.Engine.RefOf(item) + (receiver != null ? $" for item {index}" : "");
-                        throw new RqlException("call-threw", $"{method.Name} on {at} threw {ex.GetType().Name}: {ex.Message}; {done} earlier call(s) completed and are NOT rolled back");
+                        throw new RqlException("call-threw", $"{method.Name} on {At(item, index)} threw {ex.GetType().Name}: {ex.Message}; {done} earlier call(s) completed and are NOT rolled back");
                     }
                 }
                 done++;
@@ -655,9 +654,7 @@ namespace Rql.Execution
         /// <summary>An object with identity (not a list, map, struct or scalar): a receipt row can carry its $ref.</summary>
         private bool IsIdentified(object v)
         {
-            if (v.GetType().IsValueType || TypeModel.IsScalarType(v.GetType())) return false;
-            var info = _x.Types.Info(v.GetType());
-            return info.IsObject;
+            return !v.GetType().IsValueType && !TypeModel.IsScalarType(v.GetType()) && _x.Types.Info(v.GetType()).IsObject;
         }
     }
 

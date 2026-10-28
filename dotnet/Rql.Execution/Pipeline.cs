@@ -462,7 +462,7 @@ namespace Rql.Execution
             try { bound = BindSource(on); }
             catch (RqlException ex) when (ex.Code == "unknown-source" && on is PathExpr p)
             {
-                var text = string.Join(".", p.Segments.Select(g => g.Kind == SegmentKind.Member ? g.Name : g.ToString()));
+                var text = Compiler.PathText(p) ?? s.Method;
                 throw new RqlException("unknown-source", $"call {text}.{s.Method}: '{p.Segments[0].Name}' is not a source", on.Span,
                     $"a qualified call runs a method of a source (sources: {string.Join(" ", _x.Engine.Sources.Keys)}); "
                     + $"to call a method of each item's member, get it first: … | get {text} | call {s.Method}(…)");

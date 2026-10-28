@@ -638,6 +638,18 @@ namespace Rql.Execution
         /// </summary>
         internal string SourcesWithCallable(string method)
         {
+            var names = SourceNamesWithCallable(method);
+            if (names.Count == 0) return "";
+            return names.Count == 1
+                ? $"; the source '{names[0]}' has {method}: {names[0]} | call {method}(…) calls it once, {PerItemForm(names[0], method)} once per item"
+                : $"; sources with {method}: {string.Join(", ", names)} (e.g. {names[0]} | call {method}(…) once, {PerItemForm(names[0], method)} once per item)";
+        }
+
+        private static string PerItemForm(string source, string method) => $"… | call {source}.{method}(… $ …)";
+
+        /// <summary>The sources whose value is a single object with a callable method of this name.</summary>
+        private List<string> SourceNamesWithCallable(string method)
+        {
             var names = new List<string>();
             foreach (var s in _sources.Values)
             {
@@ -648,10 +660,7 @@ namespace Rql.Execution
                 if (info.IsList || info.IsMap) continue;
                 if (info.Callable.Any(m => string.Equals(m.Name, method, StringComparison.OrdinalIgnoreCase))) names.Add(s.Name);
             }
-            if (names.Count == 0) return "";
-            return names.Count == 1
-                ? $"; the source '{names[0]}' has {method}: {names[0]} | call {method}(…) calls it once, … | call {names[0]}.{method}(… $ …) once per item"
-                : $"; sources with {method}: {string.Join(", ", names)} (e.g. {names[0]} | call {method}(…) once, … | call {names[0]}.{method}(… $ …) once per item)";
+            return names;
         }
 
         /// <summary>
@@ -660,13 +669,9 @@ namespace Rql.Execution
         /// </summary>
         internal string PerItemCallHint(string method)
         {
-            var text = SourcesWithCallable(method);
-            var start = text.IndexOf("… | call ", StringComparison.Ordinal);
-            if (start >= 0)
-            {
-                int end = text.IndexOf(" once per item", start, StringComparison.Ordinal);
-                return $"to run a source's method once per item, qualify it with the source: {text.Substring(start, end - start)} ($ is the item)";
-            }
+            var names = SourceNamesWithCallable(method);
+            if (names.Count > 0)
+                return $"to run a source's method once per item, qualify it with the source: {PerItemForm(names[0], method)} ($ is the item)";
             return $"call runs a method of each item, and these items have none; to run a source's method once per item qualify it: "
                 + $"… | call <source>.{method}(… $ …) ($ is the item; sources: {string.Join(" ", _sources.Keys)})";
         }

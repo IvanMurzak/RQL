@@ -70,7 +70,7 @@ namespace Rql.Execution
 
         /// <summary>The lists and maps being encoded (by identity): one nested in itself, or nested deeper than
         /// <see cref="Compiler.MaxCompareDepth"/>, encodes as "…" instead of recursing forever (spec §6).</summary>
-        private readonly HashSet<object> _open = new HashSet<object>(new RefEq());
+        private readonly HashSet<object> _open = new HashSet<object>(RefEq.Instance);
 
         private bool Open(object collection) => _open.Count < Compiler.MaxCompareDepth && _open.Add(collection);
 

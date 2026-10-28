@@ -23,8 +23,8 @@ import {
   type SortStage,
   type Stage,
 } from '@rql/contracts';
-import { elements, mapEntries, type MapLike } from './collections.js';
-import { Compiler, MAX_COMPARE_DEPTH, compare, rangeOf, reduce, toText, type Eval } from './compiler.js';
+import { elements, mapEntries, sizeOf, type MapLike } from './collections.js';
+import { Compiler, MAX_COMPARE_DEPTH, compare, pathText, rangeOf, reduce, toText, type Eval } from './compiler.js';
 import { describeRun, reachableTypes } from './describe.js';
 import { Encoder } from './encoder.js';
 import type { ArgEvaluator, SourceRegistration } from './engine.js';
@@ -395,7 +395,7 @@ export class Pipeline {
       b = this.bindSource(on);
     } catch (e) {
       if (!(e instanceof RqlError) || e.code !== 'unknown-source' || on.kind !== 'path') throw e;
-      const text = on.segments.map((g) => (g.kind === 'member' ? g.name : segmentToString(g))).join('.');
+      const text = pathText(on) ?? s.method;
       throw new RqlError(
         'unknown-source',
         `call ${text}.${s.method}: '${memberName(on.segments[0]!)}' is not a source`,
@@ -413,8 +413,7 @@ export class Pipeline {
     }
     const info = x.types.infoOf(v);
     if (info.isList || info.isMap) {
-      let n = 0;
-      if (typeof v === 'object') for (const _ of info.isList ? elements(v, info) : mapEntries(v as MapLike)) n++;
+      const n = sizeOf(v, x.types) ?? 0;
       throw new RqlError(
         'invalid-plan',
         `call target ${label} is a ${info.isList ? 'list' : 'map'} of ${n} item(s), not one object; nothing was called`,

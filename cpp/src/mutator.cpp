@@ -839,8 +839,16 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
     return r;
 }
 
-/// Sources whose value is a single object with a callable method of this name, as hint text, or "" (spec §10).
-std::string sources_with_callable(Exec& x, const std::string& method) {
+namespace {
+
+/// The source-qualified call text of a hint: … | call src.M(… $ …).
+std::string per_item_form(const std::string& source, const std::string& method) {
+    const std::string ell = "\xE2\x80\xA6";
+    return ell + " | call " + source + "." + method + "(" + ell + " $ " + ell + ")";
+}
+
+/// The sources whose value is a single object with a callable method of this name.
+std::vector<std::string> source_names_with_callable(Exec& x, const std::string& method) {
     std::vector<std::string> names;
     for (auto& s : x.engine.sources()) {
         Value v;
@@ -857,9 +865,17 @@ std::string sources_with_callable(Exec& x, const std::string& method) {
                 break;
             }
     }
+    return names;
+}
+
+}  // namespace
+
+/// Sources whose value is a single object with a callable method of this name, as hint text, or "" (spec §10).
+std::string sources_with_callable(Exec& x, const std::string& method) {
+    const std::vector<std::string> names = source_names_with_callable(x, method);
     if (names.empty()) return {};
     const std::string ell = "\xE2\x80\xA6";
-    const std::string per_item = ell + " | call " + names[0] + "." + method + "(" + ell + " $ " + ell + ") once per item";
+    const std::string per_item = per_item_form(names[0], method) + " once per item";
     if (names.size() == 1)
         return "; the source '" + names[0] + "' has " + method + ": " + names[0] + " | call " + method + "(" + ell + ") calls it once, " + per_item;
     return "; sources with " + method + ": " + join(names, ", ") + " (e.g. " + names[0] + " | call " + method + "(" + ell + ") once, " + per_item + ")";
@@ -869,12 +885,8 @@ std::string sources_with_callable(Exec& x, const std::string& method) {
 /// method with the source that has it, so it runs once per item (spec §8, §10).
 std::string per_item_call_hint(Exec& x, const std::string& method) {
     const std::string ell = "\xE2\x80\xA6";
-    const std::string text = sources_with_callable(x, method);
-    const size_t start = text.find(ell + " | call ");
-    if (start != std::string::npos) {
-        const size_t end = text.find(" once per item", start);
-        return "to run a source's method once per item, qualify it with the source: " + text.substr(start, end - start) + " ($ is the item)";
-    }
+    const std::vector<std::string> having = source_names_with_callable(x, method);
+    if (!having.empty()) return "to run a source's method once per item, qualify it with the source: " + per_item_form(having[0], method) + " ($ is the item)";
     std::vector<std::string> names;
     for (auto& src : x.engine.sources()) names.push_back(src.name);
     return "call runs a method of each item, and these items have none; to run a source's method once per item qualify it: " + ell + " | call <source>." +
@@ -937,15 +949,17 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
         Value item;
         const MethodDescriptor* method;
         std::vector<Value> args;
-        std::string at;
+        int64_t index;
     };
     std::vector<Planned> planned;
+    // Where a failure is: the target, or for a source-qualified call the receiver and the item's position.
+    auto at = [&](const Value& item, int64_t index) { return x.ref_of(item) + (receiver ? " for item " + std::to_string(index) : std::string()); };
+    std::vector<const MethodDescriptor*> own;
     for (auto& target : items) {
         const Value& item = receiver ? *receiver : target.item.value;
         const TypeDescriptor* t = item.type();
-        std::vector<const MethodDescriptor*> candidates = receiver ? fixed : candidates_of(item, &items);
-        // Where a failure is: the target, or for a source-qualified call the receiver and the item's position.
-        const std::string at = x.ref_of(item) + (receiver ? " for item " + std::to_string(target.index) : std::string());
+        if (!receiver) own = candidates_of(item, &items);
+        const std::vector<const MethodDescriptor*>& candidates = receiver ? fixed : own;
         enter_scope(x, target);
         std::vector<Value> vals;
         for (auto& a : args) vals.push_back(a(x));
@@ -986,7 +1000,7 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
         if (!chosen) {
             std::vector<std::string> cs;
             for (auto* m : candidates) cs.push_back(t->signature(*m));
-            throw RqlException("coercion-failed", "cannot call " + s.method + " on " + at + ": " + why, "signature: " + join(cs, ", "));
+            throw RqlException("coercion-failed", "cannot call " + s.method + " on " + at(item, target.index) + ": " + why, "signature: " + join(cs, ", "));
         }
         // The method's own check, for every target before the first call (and on dry runs): all-or-nothing (spec §8).
         if (chosen->validate) {
@@ -994,9 +1008,9 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
             if (auto failure = capture_failure([&] { rejected = chosen->validate(item.ptr(), coerced); }))
                 rejected = "its check threw: " + *failure;
             if (!rejected.empty())
-                throw RqlException("invalid-value", "cannot call " + t->signature(*chosen) + " on " + at + ": " + rejected + "; nothing was called");
+                throw RqlException("invalid-value", "cannot call " + t->signature(*chosen) + " on " + at(item, target.index) + ": " + rejected + "; nothing was called");
         }
-        planned.push_back({item, chosen, std::move(coerced), at});
+        planned.push_back({item, chosen, std::move(coerced), target.index});
     }
 
     auto call_records = [&] {
@@ -1017,7 +1031,7 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
             if (auto failure = capture_failure([&] { result = p.method->invoke(p.item.ptr(), p.args); })) {
                 // Completed calls are not rolled back, so the host still learns about them.
                 if (!records.empty()) committed(x, std::vector<MutationRecord>(records.begin(), records.begin() + static_cast<std::ptrdiff_t>(done)));
-                throw RqlException("call-threw", p.method->name + " on " + p.at + " threw: " + *failure + "; " + std::to_string(done) +
+                throw RqlException("call-threw", p.method->name + " on " + at(p.item, p.index) + " threw: " + *failure + "; " + std::to_string(done) +
                                                        " earlier call(s) completed and are NOT rolled back");
             }
         }
