@@ -546,11 +546,12 @@ namespace Rql.Execution
 
         // ------------------------------------------------------------ call
 
-        /// <param name="receiver">A source-qualified call's object (spec §8): its method runs once per stream item, with `$` and
+        /// <param name="resolveReceiver">A source-qualified call's object (spec §8): its method runs once per stream item, with `$` and
         /// the other metas the item's; null: the method runs on each item.</param>
-        public QueryResult Call(IEnumerable<Item> stream, CallStage s, object? receiver = null)
+        public QueryResult Call(IEnumerable<Item> stream, CallStage s, Func<object>? resolveReceiver = null)
         {
             CheckPolicy("call");
+            var receiver = resolveReceiver?.Invoke(); // after the policy check: a read request never evaluates the target
             var args = s.Args.Select(_c.Compile).ToArray();
             // A source-qualified call checks its receiver's method before reading the stream: a typo fails even with no items.
             var fixedCandidates = receiver != null ? Candidates(receiver, null) : null;

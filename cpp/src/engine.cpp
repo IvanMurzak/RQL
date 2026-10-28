@@ -31,7 +31,7 @@ const char* kCoreStageNames[] = {"where", "select", "sort", "first", "skip", "co
 // Keep in sync with kCoreFunctions / kCoreMethods in compiler.cpp (the manifest lists what the compiler binds).
 const char* kFunctionNames[] = {"has", "is-null", "len", "lower", "upper", "abs", "round", "floor", "ceil", "sqrt", "pow", "min", "max",
                                 "coalesce", "if", "ref",
-                                "append", "insert", "remove-at", "without",
+                                "append", "insert", "remove-at", "without", "range",
                                 "replace", "replace-regex", "substring", "split", "trim", "pad",
                                 "contains", "starts-with", "ends-with", "matches"};
 const char* kMethodNames[] = {"any", "all", "count", "sum", "min", "max", "avg", "first", "keys", "values",

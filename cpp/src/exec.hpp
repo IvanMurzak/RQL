@@ -358,7 +358,8 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
 bool range_of(const Value& a, const Value& b, const Value& c, double& start, double& step, int64_t& count, Value& error);
 
 /// `receiver`: a source-qualified call's object (spec §8), whose method runs once per stream item; null: on each item.
-QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s, const Value* receiver = nullptr);
+/// Resolved after the policy check, so a read request never evaluates the target.
+QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s, const std::function<Value()>& resolve_receiver = {});
 /// Coerce a value to a member/parameter type (spec §8); nullopt + why on failure.
 std::optional<Value> coerce(Exec& x, const Value& v, const TypeDescriptor* target, bool nullable, std::string& why);
 

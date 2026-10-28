@@ -22980,6 +22980,220 @@
           }
         ]
       }
+    },
+    {
+      "name": "range-end-excluded-fraction",
+      "rql": "range(0, 2.1, 0.3) | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2.1
+            },
+            {
+              "lit": 0.3
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 7
+      }
+    },
+    {
+      "name": "range-end-excluded-down",
+      "rql": "range(2.1, 0, -0.3) | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 2.1
+            },
+            {
+              "lit": 0
+            },
+            {
+              "lit": -0.3
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 7
+      }
+    },
+    {
+      "name": "list-source-error-element",
+      "rql": "[1 / 0, 2]",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "list": [
+            {
+              "op": "/",
+              "args": [
+                {
+                  "lit": 1
+                },
+                {
+                  "lit": 0
+                }
+              ]
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": []
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "div-by-zero"
+          }
+        ]
+      }
+    },
+    {
+      "name": "list-source-bare-path-dropped",
+      "rql": "[nothing, 2] | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "list": [
+            {
+              "path": [
+                "nothing"
+              ]
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 1
+      }
+    },
+    {
+      "name": "call-qualified-read-request-checks-policy-first",
+      "rql": "range(0, 2) | call nosuch.bump($)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "path": [
+                "nosuch"
+              ]
+            },
+            "args": [
+              {
+                "path": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "permission-denied"
+          }
+        ]
+      }
+    },
+    {
+      "name": "call-qualified-non-source-target",
+      "rql": "[1] | call lower(\"x\").bump($)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "list": [
+            {
+              "lit": 1
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "call": "lower",
+              "args": [
+                {
+                  "lit": "x"
+                }
+              ]
+            },
+            "args": [
+              {
+                "path": []
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "unknown-source"
+          }
+        ]
+      }
     }
   ]
 }

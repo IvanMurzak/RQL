@@ -330,7 +330,10 @@ public:
             x_.current = Value::null();
             x_.current_path = nullptr;
             Value error;
-            if (!range_of(args_[0](x_), args_[1](x_), args_.size() > 2 ? args_[2](x_) : Value::number(1), start_, step_, count_, error))
+            const Value a = args_[0](x_);
+            const Value b = args_[1](x_);
+            const Value c = args_.size() > 2 ? args_[2](x_) : Value::number(1);
+            if (!range_of(a, b, c, start_, step_, count_, error))
                 throw RqlException(error.error_code(), "source range(\xE2\x80\xA6) failed: " + (error.error_detail().empty() ? error.error_code() : error.error_detail()));
             if (x_.track_paths) base_ = path_text(nullptr, "range(\xE2\x80\xA6)");
         }
@@ -872,8 +875,20 @@ SourceBinding bind_source(Exec& x, Compiler& c, const Expr& src) {
     }
     // A list literal streams its elements, evaluated with no current item (spec §2).
     if (src.kind == ExprKind::List) {
+        // An error element fails the query; an element that reads nothing (a bare path) is dropped like null.
         b.kind = SourceBinding::Kind::Value;
-        b.ev = c.compile(src);
+        Eval list = c.compile(src);
+        b.ev = [list](Exec& ex) -> Value {
+            Value v = list(ex);
+            if (!v.is_list()) return v;
+            std::vector<Value> kept;
+            for (size_t i = 0; i < v.list().size(); ++i) {
+                Value e = v.list().at(i);
+                if (e.is_error()) return e;
+                if (!e.is_absent()) kept.push_back(std::move(e));
+            }
+            return Value::list_of(std::move(kept));
+        };
         b.text = "[\xE2\x80\xA6]";
         return b;
     }
@@ -910,8 +925,11 @@ Value call_receiver(Exec& x, Compiler& c, const Stage& s) {
     try {
         b = bind_source(x, c, on);
     } catch (const RqlException& ex) {
-        if (ex.code() != "unknown-source" || on.kind != ExprKind::Path || on.segments.empty()) throw;
+        if (ex.code() != "unknown-source") throw;
         const std::string text = path_text(on);
+        if (text.empty() || on.segments[0].kind != SegmentKind::Member)
+            throw RqlException("unknown-source", "call " + ell + "." + s.method + ": the call target must be a source, ref(" + ell + ") or a host function",
+                               "a qualified call runs a method of one source object (sources: " + join(source_names(x), " ") + ")");
         throw RqlException("unknown-source", "call " + text + "." + s.method + ": '" + on.segments[0].name + "' is not a source",
                            "a qualified call runs a method of a source (sources: " + join(source_names(x), " ") +
                                "); to call a method of each item's member, get it first: " + ell + " | get " + text + " | call " + s.method + "(" + ell + ")");
@@ -931,7 +949,9 @@ Value call_receiver(Exec& x, Compiler& c, const Stage& s) {
                            "call target " + label + " is a " + (v.is_list() ? "list" : "map") + " of " + std::to_string(n) + " item(s), not one object; nothing was called",
                            "to call " + s.method + " on each of them: " + label + " | call " + s.method + "(" + ell + "); " + per_item);
     }
-    if (!v.is_object())
+    // A writes-through struct (a handle to shared state, spec §13) is a receiver like an object.
+    const bool handle = v.is_struct() && x.view(v.type()).writes_through();
+    if (!v.is_object() && !handle)
         throw RqlException("invalid-plan", "call target " + label + " is a " + type_name_of(v) + " value, not an object with identity; nothing was called", per_item);
     return v;
 }
@@ -1354,8 +1374,7 @@ QueryResult run_core(Exec& x) {
         case StageKind::Set: return run_set(x, c, enc, *stream, *terminal);
         case StageKind::Call: {
             if (!terminal->on) return run_call(x, c, enc, *stream, *terminal);
-            const Value receiver = call_receiver(x, c, *terminal);
-            return run_call(x, c, enc, *stream, *terminal, &receiver);
+            return run_call(x, c, enc, *stream, *terminal, [&] { return call_receiver(x, c, *terminal); });
         }
         default: throw RqlException("unsupported", "stage '" + terminal->op + "' is not supported");
     }

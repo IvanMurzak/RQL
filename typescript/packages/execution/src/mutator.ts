@@ -604,9 +604,10 @@ export class Mutator {
    * `receiver`: a source-qualified call's object (spec §8): its method runs once per stream item, with `$` and the other
    * metas the item's; undefined: the method runs on each item.
    */
-  call(stream: Iterable<Item>, s: CallStage, receiver?: object): QueryResult {
+  call(stream: Iterable<Item>, s: CallStage, resolveReceiver?: () => object): QueryResult {
     const x = this.x;
     this.checkPolicy('call');
+    const receiver = resolveReceiver?.(); // after the policy check: a read request never evaluates the target
     const args: Eval[] = s.args.map((a) => this.c.compile(a));
     const wanted = s.method.toUpperCase();
     // The callable overloads of the method on a target; none: unknown-function (or permission-denied for a method the host

@@ -271,7 +271,7 @@ export class Pipeline {
       case 'set':
         return new Mutator(x, this.c, encoder).set(stream, terminal);
       case 'call':
-        return new Mutator(x, this.c, encoder).call(stream, terminal, terminal.on !== undefined ? this.callReceiver(terminal) : undefined);
+        return new Mutator(x, this.c, encoder).call(stream, terminal, terminal.on !== undefined ? () => this.callReceiver(terminal) : undefined);
       default:
         throw new RqlError('unsupported', `stage '${terminal.op}' is not supported`);
     }
@@ -322,7 +322,19 @@ export class Pipeline {
     }
     if (src.kind === 'call' && src.on === undefined && src.name.toLowerCase() === 'ref') return { value: this.rootValue(this.c.compile(src)), pathText: 'ref(…)', quiet: true };
     // A list literal streams its elements, evaluated with no current item (spec §2).
-    if (src.kind === 'list') return { value: this.rootValue(this.c.compile(src)), pathText: '[…]', quiet: false };
+    // An error element fails the query; an element that reads nothing (a bare path) is dropped like null.
+    if (src.kind === 'list') {
+      const list = this.rootValue(this.c.compile(src));
+      return {
+        value: () => {
+          const l = list();
+          if (!Array.isArray(l)) return l;
+          return l.find((e) => e instanceof ErrorValue) ?? l.filter((e) => e !== MISSING && e !== UNKNOWN);
+        },
+        pathText: '[…]',
+        quiet: false,
+      };
+    }
     const example = x.engine.exampleSource;
     throw new RqlError(
       'unknown-source',
@@ -394,8 +406,16 @@ export class Pipeline {
     try {
       b = this.bindSource(on);
     } catch (e) {
-      if (!(e instanceof RqlError) || e.code !== 'unknown-source' || on.kind !== 'path') throw e;
-      const text = pathText(on) ?? s.method;
+      if (!(e instanceof RqlError) || e.code !== 'unknown-source') throw e;
+      const text = pathText(on);
+      if (text === undefined || on.kind !== 'path') {
+        throw new RqlError(
+          'unknown-source',
+          `call ….${s.method}: the call target must be a source or ref(…)`,
+          on.span,
+          `a qualified call runs a method of one source object (sources: ${[...x.engine.sources.keys()].join(' ')}), e.g. … | call ${x.engine.exampleSource ?? 'editor'}.${s.method}(…)`,
+        );
+      }
       throw new RqlError(
         'unknown-source',
         `call ${text}.${s.method}: '${memberName(on.segments[0]!)}' is not a source`,

@@ -319,7 +319,7 @@ namespace Rql.Execution
                 case SetStage s:
                     return new Mutator(_x, _c, encoder).Set(stream, s);
                 case CallStage s:
-                    return new Mutator(_x, _c, encoder).Call(stream, s, s.On != null ? CallReceiver(s) : null);
+                    return new Mutator(_x, _c, encoder).Call(stream, s, s.On != null ? () => CallReceiver(s) : (Func<object>?)null);
                 default:
                     throw new RqlException("unsupported", $"stage '{terminal.Op}' is not supported");
             }
@@ -386,9 +386,13 @@ namespace Rql.Execution
             // A host extension function may produce the input too, e.g. unity.assets("t:Material") (spec §2).
             if (src is CallExpr fn && Compiler.ExtensionName(fn, _x.Engine.Functions) is string fnName)
                 return (RootValue(_c.Compile(src)), fnName + "(…)", false);
-            // A list literal streams its elements, evaluated with no current item (spec §2).
+            // A list literal streams its elements, evaluated with no current item (spec §2): an error element fails the query,
+            // an element that reads nothing (a bare path) is dropped like null.
             if (src is ListExpr)
-                return (RootValue(_c.Compile(src)), "[…]", false);
+            {
+                var list = RootValue(_c.Compile(src));
+                return (() => list() is List<object?> l ? (object?)l.FirstOrDefault(e => e is RqlError) ?? l.Where(e => !V.IsAbsent(e)).ToList() : null, "[…]", false);
+            }
             var example = _x.Engine.ExampleSource;
             throw new RqlException("unknown-source",
                 $"query must start with a source name{(example != null ? $" (e.g. {example})" : "")}, ref(\"Type#id\"), range(…), a list or a host function", src.Span,
@@ -469,11 +473,14 @@ namespace Rql.Execution
                     $"stream the numbers into a source's method instead: range(…) | call <source>.{s.Method}(… $ …)");
             (Func<object?> value, string pathText, bool quiet) bound;
             try { bound = BindSource(on); }
-            catch (RqlException ex) when (ex.Code == "unknown-source" && on is PathExpr p)
+            catch (RqlException ex) when (ex.Code == "unknown-source")
             {
-                var text = Compiler.PathText(p) ?? s.Method;
+                var sources = string.Join(" ", _x.Engine.Sources.Keys);
+                if (!(on is PathExpr p && Compiler.PathText(p) is string text))
+                    throw new RqlException("unknown-source", $"call ….{s.Method}: the call target must be a source, ref(…) or a host function", on.Span,
+                        $"a qualified call runs a method of one source object (sources: {sources}), e.g. … | call {_x.Engine.ExampleSource ?? "editor"}.{s.Method}(…)");
                 throw new RqlException("unknown-source", $"call {text}.{s.Method}: '{p.Segments[0].Name}' is not a source", on.Span,
-                    $"a qualified call runs a method of a source (sources: {string.Join(" ", _x.Engine.Sources.Keys)}); "
+                    $"a qualified call runs a method of a source (sources: {sources}); "
                     + $"to call a method of each item's member, get it first: … | get {text} | call {s.Method}(…)");
             }
             var label = bound.pathText;

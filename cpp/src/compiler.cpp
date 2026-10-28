@@ -1367,6 +1367,10 @@ bool range_of(const Value& a, const Value& b, const Value& c, double& start, dou
     }
     const double n = std::ceil((nums[1] - start) / step);
     count = n <= 0 ? 0 : n >= 9.2e18 ? INT64_MAX : static_cast<int64_t>(n);
+    // end is excluded: rounding in (end - start) / step can count one number too many (range(0, 2.1, 0.3)).
+    while (count > 0 && count < INT64_MAX &&
+           (step > 0 ? start + static_cast<double>(count - 1) * step >= nums[1] : start + static_cast<double>(count - 1) * step <= nums[1]))
+        --count;
     return true;
 }
 
@@ -1510,7 +1514,11 @@ Eval Compiler::compile_function(const Expr& c) {
             double start = 0, step = 1;
             int64_t count = 0;
             Value error;
-            if (!range_of(args[0](x), args[1](x), args.size() > 2 ? args[2](x) : Value::number(1), start, step, count, error)) return error;
+            // Left to right, like every other function (C++ argument evaluation order is unspecified).
+            const Value from = args[0](x);
+            const Value to = args[1](x);
+            const Value by = args.size() > 2 ? args[2](x) : Value::number(1);
+            if (!range_of(from, to, by, start, step, count, error)) return error;
             std::vector<Value> list;
             for (int64_t k = 0; k < count; ++k) {
                 x.visit();  // a range is bounded by maxVisited like any stream (spec §2)

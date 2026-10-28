@@ -1008,8 +1008,10 @@ export function rangeOf(a: unknown, b: unknown, c: unknown): { start: number; st
   }
   const [start, end, step] = nums as [number, number, number];
   if (step === 0) return new ErrorValue('type-mismatch', 'range() step must not be 0');
-  const n = Math.ceil((end - start) / step);
-  return { start, step, count: n > 0 ? n : 0 };
+  let count = Math.max(0, Math.ceil((end - start) / step));
+  // end is excluded: rounding in (end - start) / step can count one number too many (range(0, 2.1, 0.3)).
+  while (count > 0 && Number.isFinite(count) && (step > 0 ? start + (count - 1) * step >= end : start + (count - 1) * step <= end)) count--;
+  return { start, step, count };
 }
 
 export function describeValue(v: unknown): string {

@@ -873,6 +873,8 @@ namespace Rql.Execution
             if (step == 0) return new RqlError("type-mismatch", "range() step must not be 0");
             double n = Math.Ceiling((end - start) / step);
             count = n <= 0 ? 0 : n >= long.MaxValue ? long.MaxValue : (long)n;
+            // end is excluded: rounding in (end - start) / step can count one number too many (range(0, 2.1, 0.3)).
+            while (count > 0 && count < long.MaxValue && (step > 0 ? start + (count - 1) * step >= end : start + (count - 1) * step <= end)) count--;
             return null;
 
             static RqlError? Arg(object? v, ref double d)

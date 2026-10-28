@@ -63,6 +63,12 @@ Json Encoder::inline_object(const Value& obj, int depth) {
 // Like the comparison nesting limit (spec §4.1): deeper lists and maps encode as "…".
 constexpr size_t kMaxEncodeNesting = 32;
 
+/// Pops the collection entered last, also when encoding its elements throws.
+struct Leave {
+    std::vector<const void*>& open;
+    ~Leave() { open.pop_back(); }
+};
+
 bool Encoder::enter(const void* collection) {
     if (open_.size() >= kMaxEncodeNesting || std::find(open_.begin(), open_.end(), collection) != open_.end()) return false;
     open_.push_back(collection);
@@ -107,17 +113,18 @@ Json Encoder::encode(const Value& v, int depth) {
         case Value::Kind::List: {
             auto& l = v.list();
             if (!enter(l.identity())) return Json(kEllipsis);
+            Leave leave{open_};
             Json arr = Json::array();
             size_t total = l.size();
             size_t limit = static_cast<size_t>(std::max(0, x_.max_list_items));
             size_t n = std::min(total, limit);
             for (size_t i = 0; i < n; ++i) arr.push(encode(l.at(i), depth + 1));
             if (total > n) arr.push(Json(std::string(kEllipsis) + "+" + std::to_string(total - n)));
-            open_.pop_back();
             return arr;
         }
         case Value::Kind::Map: {
             if (!enter(v.map().identity())) return Json(kEllipsis);
+            Leave leave{open_};
             Json o = Json::object();
             size_t n = 0, total = 0;
             size_t limit = static_cast<size_t>(std::max(0, x_.max_list_items));
@@ -131,7 +138,6 @@ Json Encoder::encode(const Value& v, int depth) {
                 return true;
             });
             if (total > n) o.set(kEllipsis, "+" + std::to_string(total - n));
-            open_.pop_back();
             return o;
         }
         case Value::Kind::Struct: {

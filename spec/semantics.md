@@ -75,8 +75,8 @@ The source is a `postfix` expression evaluated in **root scope**:
   `budget-exceeded`; when the range feeds a `set` / `call`, the target limit stops it first (§8). `$path` of an item is
   `range(…)[k]`. A host function registered as `range` takes precedence. In an expression `range(…)` is the list of
   those numbers (§4.3).
-* A **list literal** `[a, b, …]` streams its elements, evaluated with no current item (bare paths in it read nothing:
-  use `ref(…)` for objects); `$path` of an element is `[…][i]`. `[["Crate", 1], ["Barrel", 2]] | call editor.Create($[0], $[1])`
+* A **list literal** `[a, b, …]` streams its elements, evaluated with no current item (bare paths in it read nothing and
+  their elements are dropped like null: use `ref(…)` for objects; an error element fails the query with its code); `$path` of an element is `[…][i]`. `[["Crate", 1], ["Barrel", 2]] | call editor.Create($[0], $[1])`
   creates one object per entry (§8).
 
 If the source value is a `list` its elements become the item stream; a `map` yields its entries
@@ -384,8 +384,8 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   stream entering `set` / `call` (null and destroyed items, which are skipped, keep their positions), so
   `nodes | where class == "RigidBody3D" | set Position.X = $index * 2` spreads the matches 0, 2, 4, ….
 * **Source-qualified call** `call q.m(args)`: `q` is a source expression (§2: a registered source with optional
-  navigation such as `editor` or `world.Scenes[0]`, `ref(…)`, a host function), evaluated **once**, before any item is
-  read; it must yield exactly one object with identity, the **receiver**. Its method `m` runs **once per stream item**,
+  navigation such as `editor` or `world.Scenes[0]`, `ref(…)`, a host function), evaluated **once**, after the mutation
+  policy check (a read request is `permission-denied` without evaluating it) and before any item is read; it must yield exactly one object with identity, the **receiver**. Its method `m` runs **once per stream item**,
   and the item is only the scope of the arguments: `$`, `$index`, `$path` and `$depth` in them are the item's, and an
   item may be any value — a number from `range`, a list entry, a string, a projected row, a map entry or an object
   (null and destroyed items are skipped as above). So `range(0, 300) | call editor.CreateObject("Cube", {position:

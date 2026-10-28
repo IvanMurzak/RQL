@@ -893,8 +893,12 @@ std::string per_item_call_hint(Exec& x, const std::string& method) {
            method + "(" + ell + " $ " + ell + ") ($ is the item; sources: " + join(names, " ") + ")";
 }
 
-QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s, const Value* receiver) {
+QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const Stage& s, const std::function<Value()>& resolve_receiver) {
     check_policy(x, "call");
+    // After the policy check: a read request never evaluates the target.
+    std::optional<Value> resolved;
+    if (resolve_receiver) resolved = resolve_receiver();
+    const Value* receiver = resolved ? &*resolved : nullptr;
     std::vector<Eval> args;
     for (auto& a : s.args) args.push_back(c.compile(*a));
     // The callable overloads of the method on a target, by arity; none: unknown-function (or permission-denied for a method
