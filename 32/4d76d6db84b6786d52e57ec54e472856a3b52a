@@ -1,0 +1,24 @@
+dotnet/Rql.Execution/Mutator.cs
+  s_7bc72ecaebd05d::t_848deaee3a9afa 717,723-725
+  s_7bc72ecaebd05d::t_eba6fd435f7d94 671,674-675,683,687,689-690,694,700,704-709,711,713
+cpp/src/mutator.cpp
+  s_7bc72ecaebd05d::t_41edcebad6aa8e 969,974,1025-1027,1040,1065,1068-1074,1077,1095
+typescript/packages/execution/src/mutator.ts
+  s_7bc72ecaebd05d::t_be26511904f44b 752-754,759,765,767,785,790-791,794,808,811
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "324d76d6db84b6786d52e57ec54e472856a3b52a",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
