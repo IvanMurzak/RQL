@@ -62,11 +62,12 @@ namespace Rql.Tests
             var spawn = new RqlRuleExamples
             {
                 CreateCall = "editor.SpawnActor",
-                Grid = "editor.SpawnActor(\"StaticMeshActor\", \"Tile\" + $, [($ % 15) * 200, floor($ / 15) * 200, 0])",
+                Grid = "range(0, 150) | call editor.SpawnActor(\"StaticMeshActor\", \"Tile\" + $, [($ % 15) * 200, floor($ / 15) * 200, 0])",
                 PerEntry = "[[\"A\", [0, 0, 0]], [\"B\", [200, 0, 0]]] | call editor.SpawnActor(\"PointLight\", $[0], $[1])",
             };
             var text = RqlLanguageGuide.RulesWith(spawn);
-            Assert.Contains("range(0, 300) | call " + spawn.Grid + " builds a 15-wide grid", text);
+            Assert.Contains("one call creates many objects: " + spawn.Grid + " builds a 15-wide grid", text);
+            Assert.DoesNotContain("range(0, 300)", text); // the host sets the range (e.g. within its target limit)
             Assert.Contains(spawn.PerEntry + " one object per entry", text);
             Assert.Contains("call editor.SpawnActor({name: \"Tile\" + $", text); // left out: the default with the host call
             Assert.DoesNotContain("editor.CreateObject", text);
@@ -77,18 +78,6 @@ namespace Rql.Tests
             // The call-only form is the old one exactly: the note goes, every placeholder becomes the call.
             Assert.Equal(RqlLanguageGuide.Rules.Replace(" (editor.CreateObject stands for the host's source and creation method)", "").Replace("editor.CreateObject", "x$'y"),
                 RqlLanguageGuide.RulesFor(" x$'y "));
-        }
-
-        [Fact]
-        public void AGridWithAPipeIsTheWholeExample()
-        {
-            // The host sets the range too, e.g. to stay within its target limit (Unreal: 200).
-            var whole = "range(0, 150) | call editor.SpawnActor(\"StaticMeshActor\", \"Tile\" + $, [($ % 15) * 200, floor($ / 15) * 200, 0])";
-            var text = RqlLanguageGuide.RulesWith(new RqlRuleExamples { CreateCall = "editor.SpawnActor", Grid = " " + whole + " " });
-            Assert.Contains("one call creates many objects: " + whole + " builds a 15-wide grid", text);
-            Assert.DoesNotContain("range(0, 300)", text);
-            Assert.DoesNotContain("editor.CreateObject", text);
-            Assert.Contains("stands for", RqlLanguageGuide.RulesWith(new RqlRuleExamples { Grid = whole })); // other placeholders are left
         }
 
         public sealed class Painter

@@ -33,9 +33,9 @@ recommended for MCP integrations.
   placeholder `editor.CreateObject`. Hosts whose creation call does not take `(name, {properties})` (Unreal's
   `editor.SpawnActor(ClassName, Label, Location, …)`) supply the examples themselves: `RqlLanguageGuide.RulesWith(new
   RqlRuleExamples { CreateCall, Grid, PerEntry, Named })` (TS `languageRules({createCall, grid, perEntry, named})`, C++
-  `rql::language_rules_with(rql::RuleExamples{…})`); each example left out keeps the default with the host's call. A
-  `Grid` with a `|` is the whole bulk-create example, range included (`range(0, 150) | call …`), so a host with a target
-  limit below 300 (Unreal: 200) shows a range that runs; a bare call goes after the default `range(0, 300) | call `.
+  `rql::language_rules_with(rql::RuleExamples{…})`); each example left out keeps the default with the host's call.
+  `Grid`, like `PerEntry`, is the whole example, range included (`range(0, 150) | call …`), so a host whose target limit
+  is below 300 (Unreal: 200) shows a range that runs.
 * **json**: the conformance `QueryResult` without stats.
 
 Experiment E5 compared both (see `RESULTS.md`).

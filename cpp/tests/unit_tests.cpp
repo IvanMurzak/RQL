@@ -2632,10 +2632,11 @@ void hint_tests() {
         check(has(rql::language_rules_for(" editor.CreateGameObject "), "call editor.CreateGameObject(\"Cube\""), "hints: the call is trimmed");
         rql::RuleExamples spawn;
         spawn.create_call = "editor.SpawnActor";
-        spawn.grid = "editor.SpawnActor(\"StaticMeshActor\", \"Tile\" + $, [($ % 15) * 200, floor($ / 15) * 200, 0])";
+        spawn.grid = "range(0, 150) | call editor.SpawnActor(\"StaticMeshActor\", \"Tile\" + $, [($ % 15) * 200, floor($ / 15) * 200, 0])";
         spawn.per_entry = "[[\"A\", [0, 0, 0]], [\"B\", [200, 0, 0]]] | call editor.SpawnActor(\"PointLight\", $[0], $[1])";
         const std::string own = rql::language_rules_with(spawn);
-        check(has(own, "range(0, 300) | call " + spawn.grid + " builds a 15-wide grid") && has(own, spawn.per_entry + " one object per entry") &&
+        check(has(own, "one call creates many objects: " + spawn.grid + " builds a 15-wide grid") && !has(own, "range(0, 300)") &&
+                  has(own, spawn.per_entry + " one object per entry") &&
                   has(own, "call editor.SpawnActor({name: \"Tile\" + $") && !has(own, "editor.CreateObject") && !has(own, "stands for"),
               "hints: host-supplied examples appear verbatim; a missing one keeps the default with the host call");
         check(rql::language_rules_with(rql::RuleExamples{}) == std::string(rql::language_rules()), "hints: no examples keep the shared rules");
@@ -2650,19 +2651,6 @@ void hint_tests() {
             for (size_t at = old.find("editor.CreateObject"); at != std::string::npos; at = old.find("editor.CreateObject", at + 4))
                 old.replace(at, 19, "x$'y");
             check(rql::language_rules_for(" x$'y ") == old, "hints: the call-only rules are unchanged");
-        }
-        {
-            // A grid with a pipe is the whole example: the host sets the range (e.g. within its target limit).
-            rql::RuleExamples ranged = spawn;
-            const std::string whole = "range(0, 150) | call " + spawn.grid;
-            ranged.grid = " " + whole + " ";
-            const std::string text = rql::language_rules_with(ranged);
-            check(has(text, "one call creates many objects: " + whole + " builds a 15-wide grid") && !has(text, "range(0, 300)") &&
-                      !has(text, "editor.CreateObject"),
-                  "hints: a grid with a pipe replaces the whole example, range included");
-            rql::RuleExamples whole_only;
-            whole_only.grid = whole;
-            check(has(rql::language_rules_with(whole_only), "stands for"), "hints: a whole grid example leaves the other placeholders");
         }
     }
     {

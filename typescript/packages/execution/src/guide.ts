@@ -20,8 +20,7 @@ export const LANGUAGE_RULES =
 const EXAMPLE_CALL = 'editor.CreateObject';
 const EXAMPLE_NOTE = " (editor.CreateObject stands for the host's source and creation method)";
 
-const GRID_RANGE = 'range(0, 300) | call ';
-const GRID_EXAMPLE = 'editor.CreateObject("Cube", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})';
+const GRID_EXAMPLE = 'range(0, 300) | call editor.CreateObject("Cube", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})';
 const PER_ENTRY_EXAMPLE = '[["A", 1], ["B", 2]] | call editor.CreateObject($[0], $[1])';
 const NAMED_EXAMPLE = 'editor.CreateObject({name: "Tile" + $, position: [$ * 2, 0, 0]})';
 
@@ -33,9 +32,8 @@ export interface LanguageRuleExamples {
   /** The creation call, e.g. 'editor.CreateGameObject' (none: editor.CreateObject). */
   readonly createCall?: string;
   /**
-   * Replaces the bulk-create example. A whole pipeline (it has a `|`, e.g. `range(0, 150) | call …`) replaces
-   * `range(0, 300) | call …` range included, so the example stays within the host's target limit; a bare call replaces only
-   * the call after `range(0, 300) | call `. Either way it builds a 15-wide grid from $.
+   * Replaces the bulk-create example in full, range included (`range(0, 150) | call …`, a 15-wide grid from $), so it can
+   * stay within the host's target limit.
    */
   readonly grid?: string;
   /** Replaces the list-literal example in full (`[…] | call ….($[0], $[1])`, one call per entry). */
@@ -62,10 +60,8 @@ export function languageRules(createCall?: string | LanguageRuleExamples): strin
   const example = (g: string | undefined, fallback: string): string => g ?? (call === undefined ? fallback : fallback.replaceAll(EXAMPLE_CALL, () => call));
   // The note explains the placeholder: it goes once no example keeps it.
   const placeholderLeft = call === undefined && (grid === undefined || perEntry === undefined || named === undefined);
-  // A grid with a pipe is the whole example, range included (the host's target limit may be below 300).
-  const wholeGrid = grid?.includes('|') === true;
   return (placeholderLeft ? LANGUAGE_RULES : LANGUAGE_RULES.replace(EXAMPLE_NOTE, ''))
-    .replace(wholeGrid ? GRID_RANGE + GRID_EXAMPLE : GRID_EXAMPLE, () => example(grid, GRID_EXAMPLE))
+    .replace(GRID_EXAMPLE, () => example(grid, GRID_EXAMPLE))
     .replace(PER_ENTRY_EXAMPLE, () => example(perEntry, PER_ENTRY_EXAMPLE))
     .replace(NAMED_EXAMPLE, () => example(named, NAMED_EXAMPLE));
 }

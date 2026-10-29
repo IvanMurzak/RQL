@@ -25,8 +25,7 @@ namespace Rql.Execution
 
         private const string ExampleCall = "editor.CreateObject";
         private const string ExampleNote = " (editor.CreateObject stands for the host's source and creation method)";
-        private const string GridRange = "range(0, 300) | call ";
-        private const string GridExample = "editor.CreateObject(\"Cube\", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})";
+        private const string GridExample = "range(0, 300) | call editor.CreateObject(\"Cube\", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})";
         private const string PerEntryExample = "[[\"A\", 1], [\"B\", 2]] | call editor.CreateObject($[0], $[1])";
         private const string NamedExample = "editor.CreateObject({name: \"Tile\" + $, position: [$ * 2, 0, 0]})";
 
@@ -54,8 +53,6 @@ namespace Rql.Execution
             // The note explains the placeholder: it goes once no example keeps it.
             bool placeholderLeft = call == null && (grid == null || perEntry == null || named == null);
             var text = placeholderLeft ? Rules : ReplaceOnce(Rules, ExampleNote, "");
-            // A grid with a pipe is the whole example, range included (the host's target limit may be below 300).
-            if (grid != null && grid.IndexOf('|') >= 0) { text = ReplaceOnce(text, GridRange + GridExample, grid); grid = GridExample; }
             foreach (var (fallback, given) in new[] { (GridExample, grid), (PerEntryExample, perEntry), (NamedExample, named) })
                 text = ReplaceOnce(text, fallback, given ?? (call == null ? fallback : fallback.Replace(ExampleCall, call)));
             return text;
@@ -77,9 +74,8 @@ namespace Rql.Execution
         /// <summary>The creation call, e.g. <c>editor.CreateGameObject</c> (null: <c>editor.CreateObject</c>).</summary>
         public string? CreateCall { get; set; }
         /// <summary>
-        /// Replaces the bulk-create example. A whole pipeline (it has a <c>|</c>, e.g. <c>range(0, 150) | call …</c>) replaces
-        /// <c>range(0, 300) | call …</c> range included, so the example stays within the host's target limit; a bare call replaces
-        /// only the call after <c>range(0, 300) | call </c>. Either way it builds a 15-wide grid from <c>$</c>.
+        /// Replaces the bulk-create example in full, range included (<c>range(0, 150) | call …</c>, a 15-wide grid from
+        /// <c>$</c>), so it can stay within the host's target limit.
         /// </summary>
         public string? Grid { get; set; }
         /// <summary>Replaces the list-literal example in full (<c>[…] | call ….($[0], $[1])</c>, one call per entry).</summary>
