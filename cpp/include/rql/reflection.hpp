@@ -254,9 +254,9 @@ public:
     std::vector<const TypeDescriptor*> registered() const;
     size_t registered_count() const noexcept { return order_.size(); }
     /// Registers a descriptor built at runtime (e.g. descriptor_for(UClass*) filled from the class) like object<T>() does:
-    /// "$type", known names and schemas then see it (spec §13 "Subtype lookup"). `d` is usually descriptor_for(key); a
-    /// host-owned one must outlive the registry. Kind Object / Struct / Enum with a name, else std::invalid_argument.
-    /// Idempotent; not synchronized, like every registration (never concurrently with a query).
+    /// "$type", known names and schemas then see it (spec §13 "Subtype lookup"). `d` must come from descriptor_for(key) and
+    /// be filled first (name, kind Object / Struct / Enum, base, members): std::invalid_argument otherwise. Idempotent; not
+    /// synchronized, like every registration (never concurrently with a query).
     void register_descriptor(TypeDescriptor* d);
 
     /// Wrap a native pointer as an object Value with its most-derived registered type.

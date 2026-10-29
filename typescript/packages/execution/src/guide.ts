@@ -41,11 +41,12 @@ export interface LanguageRuleExamples {
 
 /**
  * LANGUAGE_RULES with the host's own creation call (e.g. 'editor.CreateGameObject', 'godot.CreateNode') or examples
- * (LanguageRuleExamples) instead of the placeholder editor.CreateObject, whose "stands for" note is then left out.
+ * (LanguageRuleExamples) instead of the placeholder editor.CreateObject, whose "stands for" note is left out once no example
+ * keeps the placeholder.
  * Nothing given (or only blanks): LANGUAGE_RULES. Every text is trimmed.
  */
 export function languageRules(createCall?: string | LanguageRuleExamples): string {
-  const examples: LanguageRuleExamples = typeof createCall === 'object' ? createCall : { createCall };
+  const examples: LanguageRuleExamples = typeof createCall === 'object' && createCall !== null ? createCall : { createCall: createCall ?? undefined };
   const given = (s?: string): string | undefined => s?.trim() || undefined;
   const call = given(examples.createCall);
   const grid = given(examples.grid);
@@ -53,8 +54,10 @@ export function languageRules(createCall?: string | LanguageRuleExamples): strin
   const named = given(examples.named);
   if (call === undefined && grid === undefined && perEntry === undefined && named === undefined) return LANGUAGE_RULES;
   // An example the host leaves out keeps the default, with its creation call.
-  const example = (g: string | undefined, fallback: string): string => g ?? (call === undefined ? fallback : fallback.replaceAll(EXAMPLE_CALL, call));
-  return LANGUAGE_RULES.replace(EXAMPLE_NOTE, '')
+  const example = (g: string | undefined, fallback: string): string => g ?? (call === undefined ? fallback : fallback.replaceAll(EXAMPLE_CALL, () => call));
+  // The note explains the placeholder: it goes once no example keeps it.
+  const placeholderLeft = call === undefined && (grid === undefined || perEntry === undefined || named === undefined);
+  return (placeholderLeft ? LANGUAGE_RULES : LANGUAGE_RULES.replace(EXAMPLE_NOTE, ''))
     .replace(GRID_EXAMPLE, () => example(grid, GRID_EXAMPLE))
     .replace(PER_ENTRY_EXAMPLE, () => example(perEntry, PER_ENTRY_EXAMPLE))
     .replace(NAMED_EXAMPLE, () => example(named, NAMED_EXAMPLE));

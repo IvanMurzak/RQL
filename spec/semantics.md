@@ -887,7 +887,7 @@ registration (`TypeSpec.name` plus the extra `is` names in `interfaces` / the `T
 `ClassBuilder::also_is`), which already gives both.
 
 **Subtype lookup.** The candidates for an object literal's `"$type"` (§4.5) are the types the runtime knows: .NET every
-loaded type (reflection over the loaded assemblies), TypeScript the registered classes, C++ the
+public concrete type of the loaded assemblies (re-indexed when assemblies load), TypeScript the registered classes, C++ the
 registered descriptors. A host whose types are created at runtime and are too many to register up front (Unreal's
 `UClass`es) supplies a **subtype lookup**: (target type, name) → a type of the target's kind that is or derives from the
 target, or no answer. It is asked only when no known type matches the name, also while overload resolution probes a
@@ -895,8 +895,8 @@ literal, and its answers are not cached by the engine; it must not construct obj
 from the target is `coercion-failed`, and so is a lookup that fails (its message as the reason). C++:
 `MutationPolicy::resolve_subtype`, plus `TypeRegistry::register_descriptor` to register a runtime-built descriptor
 eagerly (it then counts like a builder-registered type: `"$type"`, known names, schemas). .NET and TypeScript need no
-hook: .NET already sees every loaded type, and TypeScript registration (`TypeModel.register`) is public and callable at
-any time, which a class needs anyway for its members to be reflected.
+hook: .NET already sees every loaded type, and TypeScript registration (`TypeModel.register`, which `"$type"` and
+construction need) is public and callable at any time; it clears the subtype cache.
 
 **Listing.** Engines list their registered adapters in registration order (.NET `RqlEngine.Adapters`, TypeScript
 `engine.adapters`, C++ `Engine::adapters()`). The members of adapters' target types, adapter-defined members included,

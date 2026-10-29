@@ -88,6 +88,11 @@ test('the rules take the host creation call', () => {
   assert.ok(!own.includes('editor.CreateObject') && !own.includes('stands for'));
   assert.equal(languageRules({}), LANGUAGE_RULES);
   assert.equal(languageRules({ grid: ' ' }), LANGUAGE_RULES);
+  // The call-only form is the old one exactly: the note goes, every placeholder becomes the call, `$` stays literal.
+  const note = " (editor.CreateObject stands for the host's source and creation method)";
+  assert.equal(languageRules(" x$'y "), LANGUAGE_RULES.replace(note, '').split('editor.CreateObject').join("x$'y"));
+  assert.equal(languageRules(null as unknown as string), LANGUAGE_RULES);
+  assert.ok(languageRules({ grid: spawn.grid }).includes(note), 'a placeholder left in an example keeps its note');
   assert.ok(languageRules('  editor.CreateGameObject ').includes('call editor.CreateGameObject("Cube"'));
 });
 

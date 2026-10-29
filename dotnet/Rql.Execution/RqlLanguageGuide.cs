@@ -38,7 +38,7 @@ namespace Rql.Execution
 
         /// <summary>
         /// <see cref="Rules"/> with the host's examples (<see cref="RqlRuleExamples"/>), for hosts whose creation call does not
-        /// take <c>(name, {properties})</c>; the "stands for" note is left out once anything is given. Nothing given (null,
+        /// take <c>(name, {properties})</c>; the "stands for" note is left out once no example keeps the placeholder. Nothing given (null,
         /// empty or blank): <see cref="Rules"/> unchanged. Every text is trimmed.
         /// </summary>
         public static string RulesWith(RqlRuleExamples? examples)
@@ -50,7 +50,9 @@ namespace Rql.Execution
             var named = Given(examples?.Named);
             if (call == null && grid == null && perEntry == null && named == null) return Rules;
             // An example the host leaves out keeps the default, with its creation call.
-            var text = ReplaceOnce(Rules, ExampleNote, "");
+            // The note explains the placeholder: it goes once no example keeps it.
+            bool placeholderLeft = call == null && (grid == null || perEntry == null || named == null);
+            var text = placeholderLeft ? Rules : ReplaceOnce(Rules, ExampleNote, "");
             foreach (var (fallback, given) in new[] { (GridExample, grid), (PerEntryExample, perEntry), (NamedExample, named) })
                 text = ReplaceOnce(text, fallback, given ?? (call == null ? fallback : fallback.Replace(ExampleCall, call)));
             return text;

@@ -73,6 +73,10 @@ namespace Rql.Tests
             Assert.DoesNotContain("stands for", text);
             Assert.Equal(RqlLanguageGuide.Rules, RqlLanguageGuide.RulesWith(null));
             Assert.Equal(RqlLanguageGuide.Rules, RqlLanguageGuide.RulesWith(new RqlRuleExamples { Grid = " " }));
+            Assert.Contains("stands for", RqlLanguageGuide.RulesWith(new RqlRuleExamples { Grid = spawn.Grid })); // a placeholder is left
+            // The call-only form is the old one exactly: the note goes, every placeholder becomes the call.
+            Assert.Equal(RqlLanguageGuide.Rules.Replace(" (editor.CreateObject stands for the host's source and creation method)", "").Replace("editor.CreateObject", "x$'y"),
+                RqlLanguageGuide.RulesFor(" x$'y "));
         }
 
         public sealed class Painter

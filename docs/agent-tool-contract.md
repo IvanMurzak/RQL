@@ -33,7 +33,7 @@ recommended for MCP integrations.
   placeholder `editor.CreateObject`. Hosts whose creation call does not take `(name, {properties})` (Unreal's
   `editor.SpawnActor(ClassName, Label, Location, …)`) supply the examples themselves: `RqlLanguageGuide.RulesWith(new
   RqlRuleExamples { CreateCall, Grid, PerEntry, Named })` (TS `languageRules({createCall, grid, perEntry, named})`, C++
-  `rql::language_rules_for(rql::RuleExamples{…})`); each example left out keeps the default with the host's call.
+  `rql::language_rules_with(rql::RuleExamples{…})`); each example left out keeps the default with the host's call.
 * **json**: the conformance `QueryResult` without stats.
 
 Experiment E5 compared both (see `RESULTS.md`).

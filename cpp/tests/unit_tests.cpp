@@ -2634,11 +2634,23 @@ void hint_tests() {
         spawn.create_call = "editor.SpawnActor";
         spawn.grid = "editor.SpawnActor(\"StaticMeshActor\", \"Tile\" + $, [($ % 15) * 200, floor($ / 15) * 200, 0])";
         spawn.per_entry = "[[\"A\", [0, 0, 0]], [\"B\", [200, 0, 0]]] | call editor.SpawnActor(\"PointLight\", $[0], $[1])";
-        const std::string own = rql::language_rules_for(spawn);
+        const std::string own = rql::language_rules_with(spawn);
         check(has(own, "range(0, 300) | call " + spawn.grid + " builds a 15-wide grid") && has(own, spawn.per_entry + " one object per entry") &&
                   has(own, "call editor.SpawnActor({name: \"Tile\" + $") && !has(own, "editor.CreateObject") && !has(own, "stands for"),
               "hints: host-supplied examples appear verbatim; a missing one keeps the default with the host call");
-        check(rql::language_rules_for(rql::RuleExamples{}) == std::string(rql::language_rules()), "hints: no examples keep the shared rules");
+        check(rql::language_rules_with(rql::RuleExamples{}) == std::string(rql::language_rules()), "hints: no examples keep the shared rules");
+        rql::RuleExamples grid_only;
+        grid_only.grid = spawn.grid;
+        check(has(rql::language_rules_with(grid_only), "stands for"), "hints: a placeholder left in an example keeps its note");
+        {
+            // The call-only form is the old one exactly: the note goes, every placeholder becomes the call.
+            std::string old = rql::language_rules();
+            const std::string note = " (editor.CreateObject stands for the host's source and creation method)";
+            old.erase(old.find(note), note.size());
+            for (size_t at = old.find("editor.CreateObject"); at != std::string::npos; at = old.find("editor.CreateObject", at + 4))
+                old.replace(at, 19, "x$'y");
+            check(rql::language_rules_for(" x$'y ") == old, "hints: the call-only rules are unchanged");
+        }
     }
     {
         rql::TypeRegistry reg;
@@ -2782,6 +2794,14 @@ void dynamic_subtype_tests() {
                 static_cast<DynObj*>(self)->triggers = std::move(items);
             };
             d->members.push_back(std::move(m));
+            rql::MethodDescriptor add;
+            add.name = "AddTrigger";
+            add.params.push_back(rql::ParamDescriptor{"trigger", describe(&trigger_cls), false, false, rql::Value()});
+            add.invoke = [](void* self, const std::vector<rql::Value>& a) {
+                static_cast<DynObj*>(self)->triggers.push_back(static_cast<DynObj*>(a[0].ptr()));
+                return rql::Value::null();
+            };
+            d->methods.push_back(std::move(add));
         }
         return d;
     };
@@ -2864,6 +2884,30 @@ void dynamic_subtype_tests() {
     check(throws([&] { reg.register_descriptor(nullptr); }), "dynamic subtypes: register_descriptor(nullptr) throws");
     check(throws([&] { reg.register_descriptor(const_cast<rql::TypeDescriptor*>(reg.list_type(trigger_t, false))); }),
           "dynamic subtypes: register_descriptor refuses a list type");
+    static const char unnamed_key = 0;
+    check(throws([&] { reg.register_descriptor(reg.descriptor_for(&unnamed_key)); }), "dynamic subtypes: register_descriptor refuses an unfilled descriptor");
+    rql::TypeDescriptor foreign;
+    foreign.name = "Foreign";
+    check(throws([&] { reg.register_descriptor(&foreign); }), "dynamic subtypes: register_descriptor refuses a descriptor of no registry");
+    // A resolved type of another kind is refused like one that does not derive from the target.
+    static const char struct_key = 0;
+    rql::TypeDescriptor* pod = reg.descriptor_for(&struct_key);
+    pod->name = pod->friendly = "TriggerSettings";
+    pod->kind = rql::TypeKind::Struct;
+    pod->base = trigger_t;
+    e->mutations().resolve_subtype = [pod](const rql::TypeDescriptor&, const std::string&) -> const rql::TypeDescriptor* { return pod; };
+    r = e->execute_json(set_triggers("TriggerSettings", "ActuationThreshold"), {}, mutate);
+    check(first_code(r) == "coercion-failed" && has(why(r), "which does not derive from InputTrigger"), "dynamic subtypes: a resolved type of another kind is refused");
+    // A call argument resolves through the hook too, built for the call's target.
+    e->mutations().resolve_subtype = [&](const rql::TypeDescriptor&, const std::string& name) -> const rql::TypeDescriptor* {
+        return name == hold_cls.name ? describe(&hold_cls) : nullptr;
+    };
+    r = e->execute_json(
+        R"J({"rql":"0.1","source":{"path":["action"]},"stages":[{"op":"call","method":"AddTrigger","args":[{"object":[{"key":"$type","value":{"lit":"InputTriggerHold"}},{"key":"HoldTimeThreshold","value":{"lit":2}}]}]}]})J",
+        {}, mutate);
+    check(r.ok && action.triggers.size() == 2 && action.triggers[1]->cls == &hold_cls && action.triggers[1]->num["HoldTimeThreshold"] == 2 &&
+              action.triggers[1]->outer == &action,
+          "dynamic subtypes: a call argument resolves through the hook, built for the target");
 }
 
 int main(int argc, char** argv) {

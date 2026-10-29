@@ -24,7 +24,7 @@ inline const char* language_rules() noexcept {
         ;
 }
 
-/// The host's examples for the shared rules (language_rules_for): each empty field keeps the default example, with
+/// The host's examples for the shared rules (language_rules_with): each empty field keeps the default example, with
 /// create_call in place of the placeholder editor.CreateObject. Hosts whose creation call does not take (name, {properties})
 /// write their own examples, e.g. Unreal's editor.SpawnActor(ClassName, Label, Location, …).
 struct RuleExamples {
@@ -38,9 +38,9 @@ struct RuleExamples {
     std::string named;
 };
 
-/// language_rules() with the host's examples (RuleExamples); the "stands for" note on the placeholder is left out once
-/// anything is given. All fields empty or blank: language_rules() unchanged. Every text is trimmed.
-inline std::string language_rules_for(const RuleExamples& examples) {
+/// language_rules() with the host's examples (RuleExamples); the "stands for" note on the placeholder is left out once no
+/// example keeps the placeholder. All fields empty or blank: language_rules() unchanged. Every text is trimmed.
+inline std::string language_rules_with(const RuleExamples& examples) {
     static constexpr const char* placeholder = "editor.CreateObject";
     static constexpr const char* note = " (editor.CreateObject stands for the host's source and creation method)";
     static constexpr const char* grid_example = "editor.CreateObject(\"Cube\", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})";
@@ -65,7 +65,8 @@ inline std::string language_rules_for(const RuleExamples& examples) {
         if (given.empty() && !call.empty()) replace(example, placeholder, call, true);
         replace(text, fallback, example, false);
     };
-    replace(text, note, "", false);
+    // The note explains the placeholder: it goes once no example keeps it.
+    if (!call.empty() || (!grid.empty() && !per_entry.empty() && !named.empty())) replace(text, note, "", false);
     put(grid_example, grid);
     put(per_entry_example, per_entry);
     put(named_example, named);
@@ -78,7 +79,7 @@ inline std::string language_rules_for(const RuleExamples& examples) {
 inline std::string language_rules_for(const std::string& create_call) {
     RuleExamples examples;
     examples.create_call = create_call;
-    return language_rules_for(examples);
+    return language_rules_with(examples);
 }
 
 }  // namespace rql
