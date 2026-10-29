@@ -7249,7 +7249,7 @@
                   "op": "*",
                   "args": [
                     {
-                      "lit": 1E+308
+                      "lit": 1e+308
                     },
                     {
                       "lit": 10
@@ -7260,7 +7260,7 @@
                   "op": "*",
                   "args": [
                     {
-                      "lit": 1E+308
+                      "lit": 1e+308
                     },
                     {
                       "lit": 10
@@ -26311,10 +26311,10 @@
             0,
             0,
             1,
-            1.570796326795,
-            1.047197551197,
-            0.785398163397,
-            -2.356194490192,
+            1.5707963267949,
+            1.0471975511966,
+            0.78539816339745,
+            -2.35619449019234,
             3.141592653589793,
             60,
             0.7853981633974483,
@@ -26773,6 +26773,333 @@
             "code": "unknown-meta"
           }
         ]
+      }
+    },
+    {
+      "name": "trig-nan-and-clean-degrees",
+      "rql": "g | select a = asin(2), b = acos(-3), c = sin(sqrt(-1)), d = deg(atan2(1, 1)), e = deg(acos(0.5)), f = deg(asin(1)), h = deg(atan2(0, -1)), i = atan2(0, -1)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "call": "asin",
+                  "args": [
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "call": "acos",
+                  "args": [
+                    {
+                      "lit": -3
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "c",
+                "expr": {
+                  "call": "sin",
+                  "args": [
+                    {
+                      "call": "sqrt",
+                      "args": [
+                        {
+                          "lit": -1
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "d",
+                "expr": {
+                  "call": "deg",
+                  "args": [
+                    {
+                      "call": "atan2",
+                      "args": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 1
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "e",
+                "expr": {
+                  "call": "deg",
+                  "args": [
+                    {
+                      "call": "acos",
+                      "args": [
+                        {
+                          "lit": 0.5
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "f",
+                "expr": {
+                  "call": "deg",
+                  "args": [
+                    {
+                      "call": "asin",
+                      "args": [
+                        {
+                          "lit": 1
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "h",
+                "expr": {
+                  "call": "deg",
+                  "args": [
+                    {
+                      "call": "atan2",
+                      "args": [
+                        {
+                          "lit": 0
+                        },
+                        {
+                          "lit": -1
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "i",
+                "expr": {
+                  "call": "atan2",
+                  "args": [
+                    {
+                      "lit": 0
+                    },
+                    {
+                      "lit": -1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e",
+          "f",
+          "h",
+          "i"
+        ],
+        "rows": [
+          [
+            "NaN",
+            "NaN",
+            "NaN",
+            45,
+            60,
+            90,
+            180,
+            3.14159265358979
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "mut-set-count-not-in-collection-methods",
+      "rql": "g.Nodes | where Id == 1 | set Value = [1, 2, 3].sum($ + coalesce($count, 0)) * 10 + [1, 2].count(coalesce($count, 0) == 0)",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Id"
+                  ]
+                },
+                {
+                  "lit": 1
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "op": "*",
+                      "args": [
+                        {
+                          "call": "sum",
+                          "on": {
+                            "list": [
+                              {
+                                "lit": 1
+                              },
+                              {
+                                "lit": 2
+                              },
+                              {
+                                "lit": 3
+                              }
+                            ]
+                          },
+                          "args": [
+                            {
+                              "op": "+",
+                              "args": [
+                                {
+                                  "path": []
+                                },
+                                {
+                                  "call": "coalesce",
+                                  "args": [
+                                    {
+                                      "path": [
+                                        {
+                                          "meta": "count"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "lit": 0
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "lit": 10
+                        }
+                      ]
+                    },
+                    {
+                      "call": "count",
+                      "on": {
+                        "list": [
+                          {
+                            "lit": 1
+                          },
+                          {
+                            "lit": 2
+                          }
+                        ]
+                      },
+                      "args": [
+                        {
+                          "op": "==",
+                          "args": [
+                            {
+                              "call": "coalesce",
+                              "args": [
+                                {
+                                  "path": [
+                                    {
+                                      "meta": "count"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "lit": 0
+                                }
+                              ]
+                            },
+                            {
+                              "lit": 0
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "Value",
+            10,
+            62
+          ]
+        ],
+        "total": 1,
+        "dryRun": true
       }
     }
   ]

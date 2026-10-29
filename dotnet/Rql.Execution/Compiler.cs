@@ -1211,9 +1211,9 @@ namespace Rql.Execution
                         "sin" => v => Trig(Math.Sin(v)),
                         "cos" => v => Trig(Math.Cos(v)),
                         "tan" => v => Trig(Math.Tan(v)),
-                        "asin" => v => Trig(Math.Asin(v)),
-                        "acos" => v => Trig(Math.Acos(v)),
-                        "atan" => v => Trig(Math.Atan(v)),
+                        "asin" => v => TrigInverse(Math.Asin(v)),
+                        "acos" => v => TrigInverse(Math.Acos(v)),
+                        "atan" => v => TrigInverse(Math.Atan(v)),
                         // Multiply, then divide, so every runtime returns the same digits; degrees are rounded like trig
                         // results (60, not 59.99999999999999), radians are not (rad(180) is pi()).
                         "deg" => v => Trig(v * 180 / Math.PI),
@@ -1235,7 +1235,7 @@ namespace Rql.Execution
                     Func<double, double, double> f = name switch
                     {
                         "pow" => Math.Pow,
-                        "atan2" => (y, xv) => Trig(Math.Atan2(y, xv)),
+                        "atan2" => (y, xv) => TrigInverse(Math.Atan2(y, xv)),
                         "min" => Math.Min,
                         _ => Math.Max,
                     };
@@ -1568,6 +1568,10 @@ namespace Rql.Execution
         /// differ in the last bit return the same digits (and sin(pi()) is 0, never -0).</summary>
         internal static double Trig(double d) => Math.Round(d, 12, MidpointRounding.AwayFromZero) + 0d; // -0 + 0 is +0
 
+        /// <summary>Inverse trigonometric results (radians) are rounded to 14 places, so deg() of them, rounded to 12, comes out
+        /// clean: deg(atan2(1, 1)) is 45 (spec §4.3).</summary>
+        internal static double TrigInverse(double d) => Math.Round(d, 14, MidpointRounding.AwayFromZero) + 0d;
+
         private static object? Num(object? v, Func<double, double> f)
         {
             if (v == null || V.IsAbsent(v)) return v;
@@ -1669,7 +1673,7 @@ namespace Rql.Execution
             var savedPath = x.CurrentPath;
             var savedIndex = x.Index;
             var savedCount = x.Count;
-            x.Count = -1; // $index is the element's here, and $count is not defined (spec §3)
+            x.Count = -1; // $count is not defined in collection-method arguments (spec §3)
             x.Outer.Add(saved);
             try
             {
@@ -1731,6 +1735,8 @@ namespace Rql.Execution
             if (els == null) return v == null ? null : Missing.Value;
             var saved = x.Current;
             var savedPath = x.CurrentPath;
+            var savedCount = x.Count;
+            x.Count = -1; // $count is not defined in collection-method arguments (spec §3)
             x.Outer.Add(saved);
             try
             {
@@ -1754,6 +1760,7 @@ namespace Rql.Execution
                 x.Outer.RemoveAt(x.Outer.Count - 1);
                 x.Current = saved;
                 x.CurrentPath = savedPath;
+                x.Count = savedCount;
             }
         }
 

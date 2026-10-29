@@ -47,7 +47,7 @@ namespace Rql.Tests
             Assert.Equal(new[] { 0.0, 0, 2 }, nodes[1].Position);
             Assert.Equal(new[] { -2.0, 0, 0 }, nodes[2].Position);
             Assert.Equal(new[] { 0.0, 0, -2 }, nodes[3].Position);
-            // After a filter it counts the filtered stream; skipped null items count, like their $index.
+            // After a filter it counts the filtered stream.
             e.Execute("nodes | where Name != \"n0\" | set Value = $count", null, Mutate);
             Assert.Equal(new[] { 4.0, 3, 3, 3 }, nodes.Select(n => n.Value));
         }

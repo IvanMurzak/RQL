@@ -232,10 +232,6 @@ export class Mutator {
     }
   }
 
-  /**
-   * `method`: for `call`, the method (hints). `perItem`: a source-qualified call, whose items are only the scope of its
-   * arguments, so any value may be one (spec §8).
-   */
   /** Compiles set values / call arguments, where `$count` is defined (spec §3, §8). */
   private mutationValues<T>(compile: () => T): T {
     this.c.mutationValues = true;
@@ -246,6 +242,10 @@ export class Mutator {
     }
   }
 
+  /**
+   * `method`: for `call`, the method (hints). `perItem`: a source-qualified call, whose items are only the scope of its
+   * arguments, so any value may be one (spec §8).
+   */
   private targets(stream: Iterable<Item>, op: string, method?: string, perItem = false): Target[] {
     const rest = stream[Symbol.iterator]();
     try {

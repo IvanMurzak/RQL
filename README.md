@@ -201,7 +201,7 @@ objects | where $ is Enemy | first 1 | describe
 
 Operators include `== != < <= > >=`, `and or not`, `in`, `is Type`, `is null`, `contains`, `starts-with`, `ends-with`,
 `matches`, `+ - * / %`. Collection methods: `any all count sum min max avg first keys values`. Functions include
-`len lower upper abs round floor ceil sqrt pow min max has if ref append insert remove-at without range` (`if(c, a, b)` is also
+`len lower upper abs round floor ceil sqrt pow min max sin cos tan asin acos atan atan2 pi deg rad has if ref append insert remove-at without range` (`if(c, a, b)` is also
 written `c ? a : b`), and string functions
 `replace replace-regex substring split trim pad` (also as methods: `Name.replace("a", "b")`). Hosts register their
 own sources and add namespaced functions and stages (`myapp.fn(...)`). Besides sources, a query may start with

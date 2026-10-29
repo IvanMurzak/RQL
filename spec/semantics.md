@@ -125,8 +125,9 @@ If the source value is a `list` its elements become the item stream; a `map` yie
   stage (in a `set` value or `call` argument: the target's position in the stream entering the `set` / `call` stage,
   §8); `$count` — in a `set` value or `call` argument only, the number of items in the stream entering the `set` /
   `call` stage (skipped null and destroyed items included, so `$index` runs from 0 to `$count - 1`); it is `missing`
-  inside a collection method's arguments there (where `$index` is the element's) and anywhere else, where it also
-  gets a warning `unknown-meta` ("only defined in a set value or call argument"); `$depth` — inside/after a `recurse` stage, the item's depth relative to the item the
+  inside the arguments of a collection method there (`any`, `all`, `count`, `first`, `sum`, `min`, `max`, `avg`), and
+  anywhere else, where it also gets a warning `unknown-meta` ("only defined in a set value or call argument");
+  `$depth` — inside/after a `recurse` stage, the item's depth relative to the item the
   recursion started from (0 = start item), otherwise `missing`. Unknown meta → `missing` +
   warning `unknown-meta`. On projected rows a column literally named `$name` (from
   `select $path`) shadows the meta member, so `select $path Name | where $path contains "x"` works.
@@ -227,9 +228,9 @@ through the struct rules, `set Position = [x, 0, z] * k` through the member type
 | `lower(s)`, `upper(s)` | invariant case conversion. |
 | `abs(n)`, `round(n[, digits])`, `floor(n)`, `ceil(n)` | numeric. |
 | `sqrt(n)`, `pow(base, exponent)` | numeric (IEEE: `sqrt` of a negative number is NaN). |
-| `sin(x)`, `cos(x)`, `tan(x)`, `asin(x)`, `acos(x)`, `atan(x)`, `atan2(y, x)` | trigonometry in **radians**. The result is rounded to 12 decimal places, half away from zero (`round(r, 12)`), and a zero result is `0`, never `-0`: runtimes whose math libraries differ in the last bit then return the same digits (except in the rare case where that bit decides a half-way rounding), `sin(pi())` is `0`, and a result below 5e-13 in size is `0` (IEEE: `asin(2)` is NaN). `atan2(y, x)` is the angle of the point `(x, y)`, from -π to π. |
+| `sin(x)`, `cos(x)`, `tan(x)`, `asin(x)`, `acos(x)`, `atan(x)`, `atan2(y, x)` | trigonometry in **radians**. `sin`, `cos` and `tan` are rounded to 12 decimal places, the inverse functions (radians out) to 14, half away from zero (`round(r, 12)` / `round(r, 14)`), and a zero result is `0`, never `-0`. So runtimes whose math libraries differ in the last bit return the same digits (except in the rare case where that bit decides a half-way rounding, and for results above about 9000 in size, such as `tan` next to π/2, which rounding cannot reach), `sin(pi())` is `0`, a `sin` / `cos` / `tan` result below 5e-13 in size is `0`, and `deg` of an inverse result is clean: `deg(atan2(1, 1))` is `45` (but `asin(1)` is 1.5707963267949, not `pi() / 2`). `atan2(y, x)` is the angle of the point `(x, y)`, from -π to π. NaN stays NaN (IEEE: `asin(2)` is NaN). |
 | `pi()` | π as a double (3.141592653589793), not rounded. |
-| `deg(x)`, `rad(x)` | radians to degrees (`x × 180 / π`, rounded like the trigonometric functions: `deg(pi() / 3)` is `60`) and degrees to radians (`x × π / 180`, multiplied first, not rounded: `rad(180)` is `pi()`). |
+| `deg(x)`, `rad(x)` | radians to degrees (`x × 180 / π`, rounded to 12 decimal places like `sin`: `deg(pi() / 3)` is `60`) and degrees to radians (`x × π / 180`, multiplied first, not rounded: `rad(180)` is `pi()`). |
 | `min(a, b, ...)`, `max(a, b, ...)` | the smallest / largest of two or more numbers (the `min` / `max` *stages* and *methods* aggregate a stream or a collection instead; with one argument the call is an `arity` error). |
 | `if(cond, then, else)` | `then` when `cond` is `true` as a predicate (§1.2), otherwise (`false`, `null`, unknown, an error value) `else`; any other `cond` value fails the query (§1.2). **Lazy**: only the taken branch is evaluated, so it can guard an error (`if(Count > 0, Total / Count, 0)`). The text form `cond ? then : else` (lowest precedence, right-associative, §11) is the same function. |
 | `ref(s, ...)` | root scope only: resolve object references. |

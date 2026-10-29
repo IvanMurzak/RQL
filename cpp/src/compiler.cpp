@@ -36,7 +36,7 @@ struct ScopeGuard {
     int64_t count;
     explicit ScopeGuard(Exec& e) : x(e), current(e.current), path(e.current_path), index(e.index), count(e.count) {
         e.outer.push_back(current);
-        e.count = -1;  // $index is the element's here, and $count is not defined (spec §3)
+        e.count = -1;  // $count is not defined in collection-method arguments (spec §3)
     }
     ~ScopeGuard() {
         x.outer.pop_back();
@@ -1687,6 +1687,9 @@ Value case_of(const Value& v, bool upper) {
 /// bit return the same digits (and sin(pi()) is 0, never -0).
 double round_away(double v, int digits);
 double trig(double d) { return round_away(d, 12) + 0.0; }  // -0 + 0 is +0
+/// Inverse trigonometric results (radians) are rounded to 14 places, so deg() of them, rounded to 12, comes out clean:
+/// deg(atan2(1, 1)) is 45 (spec §4.3).
+double trig_inverse(double d) { return round_away(d, 14) + 0.0; }
 constexpr double kPi = 3.14159265358979323846;
 
 Value num_of(const Value& v, double (*f)(double)) {
@@ -1941,9 +1944,9 @@ Eval Compiler::compile_function(const Expr& c) {
                   : name == "sin"   ? +[](double v) { return trig(std::sin(v)); }
                   : name == "cos"   ? +[](double v) { return trig(std::cos(v)); }
                   : name == "tan"   ? +[](double v) { return trig(std::tan(v)); }
-                  : name == "asin"  ? +[](double v) { return trig(std::asin(v)); }
-                  : name == "acos"  ? +[](double v) { return trig(std::acos(v)); }
-                  : name == "atan"  ? +[](double v) { return trig(std::atan(v)); }
+                  : name == "asin"  ? +[](double v) { return trig_inverse(std::asin(v)); }
+                  : name == "acos"  ? +[](double v) { return trig_inverse(std::acos(v)); }
+                  : name == "atan"  ? +[](double v) { return trig_inverse(std::atan(v)); }
                   : name == "deg"   ? +[](double v) { return trig(v * 180 / kPi); }
                                     : +[](double v) { return v * kPi / 180; };
         return [a, f](Exec& x) { return num_of(a(x), f); };
@@ -1954,7 +1957,7 @@ Eval Compiler::compile_function(const Expr& c) {
         std::vector<Eval> args;
         for (auto& e : c.args) args.push_back(compile(*e));
         double (*f)(double, double) = name == "pow"     ? static_cast<double (*)(double, double)>(std::pow)
-                                      : name == "atan2" ? +[](double y, double xv) { return trig(std::atan2(y, xv)); }
+                                      : name == "atan2" ? +[](double y, double xv) { return trig_inverse(std::atan2(y, xv)); }
                                       : name == "min"   ? math_min
                                                         : math_max;
         return [args, f, name](Exec& x) -> Value {
