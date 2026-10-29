@@ -26,6 +26,7 @@ namespace Rql.Execution
             "append", "insert", "remove-at", "without", "range",
             "replace", "replace-regex", "substring", "split", "trim", "pad",
             "contains", "starts-with", "ends-with", "matches",
+            "length", "magnitude", "normalize", "distance", "dot", "lerp",
         };
 
         public static readonly string[] CoreMethods =
@@ -33,6 +34,7 @@ namespace Rql.Execution
             "any", "all", "count", "sum", "min", "max", "avg", "first", "keys", "values",
             "contains", "starts-with", "ends-with", "matches", "lower", "upper", "len",
             "replace", "replace-regex", "substring", "split", "trim", "pad",
+            "length", "magnitude", "normalize", "distance", "dot", "lerp",
         };
 
         public Eval Compile(Expr e)
@@ -852,6 +854,7 @@ namespace Rql.Execution
             if (!V.TryNumber(a, out var x) || !V.TryNumber(b, out var y))
             {
                 if ((model.Caps & AdapterCaps.Arithmetic) != 0 && StructArith(model, op, a, b) is object r) return r;
+                if (!IsStruct(model, a) && !IsStruct(model, b) && ListArith(op, a, b) is object l) return l;
                 return ArithMismatch(model, op, a, b, null);
             }
             switch (op)
@@ -882,7 +885,7 @@ namespace Rql.Execution
         private static bool IsStruct(TypeModel model, object? v) => v != null && !V.IsAbsent(v) && model.Info(v.GetType()).IsStruct;
 
         /// <summary>The arithmetic components of a struct whose type adapter declares them (spec §4.2, §13), else null.</summary>
-        private static double[]? Components(TypeModel model, object? v, out RqlTypeAdapter? adapter)
+        internal static double[]? Components(TypeModel model, object? v, out RqlTypeAdapter? adapter)
         {
             adapter = null;
             if (!IsStruct(model, v)) return null;
@@ -895,16 +898,13 @@ namespace Rql.Execution
         }
 
         /// <summary>A list of exactly <paramref name="width"/> numbers read as components (spec §4.2), else null.</summary>
-        private static double[]? ListParts(object list, int width)
+        private static double[]? ListParts(object list, int width) => NumericList(list) is double[] parts && parts.Length == width ? parts : null;
+
+        /// <summary>A value of <paramref name="like"/>'s struct type built from components through its adapter, or null (spec §4.2, §13).</summary>
+        internal static object? BuildFromComponents(RqlTypeAdapter adapter, object like, double[] parts)
         {
-            var parts = new double[width];
-            int n = 0;
-            foreach (var e in V.Iterate(list))
-            {
-                if (n == width || !V.TryNumber(e, out var d)) return null;
-                parts[n++] = d;
-            }
-            return n == width ? parts : null;
+            try { return adapter.MakeFromComponents(like.GetType(), parts); }
+            catch (Exception ex) when (!(ex is OutOfMemoryException)) { return null; }
         }
 
         /// <summary>
@@ -967,10 +967,84 @@ namespace Rql.Execution
                         break;
                 }
             }
-            object? built;
-            try { built = adapter.MakeFromComponents(vector.GetType(), result); }
-            catch (Exception ex) when (!(ex is OutOfMemoryException)) { built = null; }
-            return built ?? ArithMismatch(model, op, a, b, $"cannot build {V.Describe(vector)} from components");
+            return BuildFromComponents(adapter, vector, result) ?? ArithMismatch(model, op, a, b, $"cannot build {V.Describe(vector)} from components");
+        }
+
+        /// <summary>
+        /// Vector functions (spec §4.3): length / magnitude, normalize, distance, dot, lerp over numeric lists and structs whose
+        /// adapter declares components; <paramref name="receiver"/> is 1 for the method form (the vector is the first argument).
+        /// </summary>
+        private Eval CompileVectorFunction(CallExpr c, string name, IReadOnlyList<Expr> args, int receiver)
+        {
+            int n = name == "lerp" ? 3 : name == "distance" || name == "dot" ? 2 : 1;
+            if (args.Count != n)
+                throw new RqlException("arity", $"'{name}' takes {n - receiver} argument(s), got {args.Count - receiver}", c.Span,
+                    "example: " + Vectors.Example(name, receiver == 1));
+            var evals = args.Select(Compile).ToArray();
+            return x =>
+            {
+                var vals = new object?[evals.Length];
+                for (int i = 0; i < vals.Length; i++)
+                {
+                    vals[i] = evals[i](x);
+                    if (vals[i] == null || V.IsAbsent(vals[i])) return vals[i];
+                }
+                return Vectors.Apply(x.Types, name, vals);
+            };
+        }
+
+        /// <summary>The numbers of a list whose elements are all numbers (spec §4.2 numeric lists), else null.</summary>
+        internal static double[]? NumericList(object? v)
+        {
+            if (!V.IsList(v)) return null;
+            var parts = v is ICollection c ? new List<double>(c.Count) : new List<double>();
+            foreach (var e in V.Iterate(v!))
+            {
+                if (!V.TryNumber(e, out var d)) return null;
+                parts.Add(d);
+            }
+            return parts.ToArray();
+        }
+
+        /// <summary>
+        /// Arithmetic on numeric lists without a struct operand (spec §4.2): L * n, n * L, L / n, L ± M (same length), -L; a new
+        /// list of numbers. Null when neither operand is a list; a type-mismatch with the reason for any other list operation.
+        /// </summary>
+        private static object? ListArith(string op, object? a, object? b)
+        {
+            bool la = V.IsList(a), lb = op != "neg" && V.IsList(b);
+            if (!la && !lb) return null;
+            string Mismatch(string why) => $"cannot apply '{(op == "neg" ? "-" : op)}' to {V.Describe(a)}{(op == "neg" ? "" : " and " + V.Describe(b))} ({why})";
+            var pa = la ? NumericList(a) : null;
+            var pb = lb ? NumericList(b) : null;
+            if ((la && pa == null) || (lb && pb == null)) return new RqlError("type-mismatch", Mismatch("every list element must be a number"));
+            if (op == "%") return new RqlError("type-mismatch", Mismatch("'%' is not a vector operation"));
+            List<object?> result;
+            if (op == "neg")
+            {
+                result = new List<object?>(pa!.Length);
+                foreach (var x in pa) result.Add(-x);
+            }
+            else if (pa != null && pb != null)
+            {
+                if (op == "*" || op == "/") return new RqlError("type-mismatch", Mismatch("an element-wise product is not a vector operation; use dot(a, b)"));
+                if (pa.Length != pb.Length) return new RqlError("type-mismatch", Mismatch($"the lists have {pa.Length} and {pb.Length} numbers"));
+                result = new List<object?>(pa.Length);
+                for (int i = 0; i < pa.Length; i++) result.Add(op == "+" ? pa[i] + pb[i] : pa[i] - pb[i]);
+            }
+            else
+            {
+                var list = pa ?? pb!;
+                var operand = pa != null ? b : a;
+                if (!V.TryNumber(operand, out var n))
+                    return new RqlError("type-mismatch", Mismatch(operand == null ? "null is not a number" : $"a list combines with a number or a list of {list.Length} numbers"));
+                if (!(op == "*" || (op == "/" && pa != null)))
+                    return new RqlError("type-mismatch", Mismatch(op == "/" ? "a number cannot be divided by a list" : $"add a list of {list.Length} numbers; multiply or divide by a number"));
+                if (op == "/" && n == 0) return new RqlError("div-by-zero");
+                result = new List<object?>(list.Length);
+                foreach (var x in list) result.Add(op == "*" ? x * n : x / n);
+            }
+            return result;
         }
 
         internal static string ToText(object? v) => v switch
@@ -1096,6 +1170,13 @@ namespace Rql.Execution
                     bool up = name == "upper";
                     return x => CaseOf(a(x), up);
                 }
+                case "length":
+                case "magnitude":
+                case "normalize":
+                case "distance":
+                case "dot":
+                case "lerp":
+                    return CompileVectorFunction(c, name, c.Args, 0);
                 case "abs":
                 case "floor":
                 case "ceil":
@@ -1517,6 +1598,13 @@ namespace Rql.Execution
                 case "trim":
                 case "pad":
                     return CompileStringFunction(c, name, new[] { c.On! }.Concat(c.Args).ToList(), 1);
+                case "length":
+                case "magnitude":
+                case "normalize":
+                case "distance":
+                case "dot":
+                case "lerp":
+                    return CompileVectorFunction(c, name, new[] { c.On! }.Concat(c.Args).ToList(), 1);
             }
             throw new RqlException("unknown-function", $"unknown method '{c.Name}'", c.Span, "methods: " + string.Join(" ", CoreMethods));
         }
@@ -1700,6 +1788,125 @@ namespace Rql.Execution
                 case "avg": return n == 0 ? null : (object)(sum / n);
                 default: return best;
             }
+        }
+    }
+
+    /// <summary>Vector functions over numeric lists and component structs (spec §4.3); components combine in order, each operation rounded.</summary>
+    internal static class Vectors
+    {
+        private sealed class Vec
+        {
+            public double[] Parts = Array.Empty<double>();
+            public object Value = null!;
+            public RqlTypeAdapter? Adapter;
+        }
+
+        internal static string Example(string name, bool method)
+        {
+            string rest = name == "lerp" ? "w, 0.5" : name == "distance" || name == "dot" ? "w" : "";
+            return method ? $"v.{name}({rest})" : $"{name}(v{(rest.Length > 0 ? ", " + rest : "")})";
+        }
+
+        private static Vec? Of(TypeModel model, object v)
+        {
+            var parts = Compiler.Components(model, v, out var adapter);
+            if (parts != null) return new Vec { Parts = parts, Value = v, Adapter = adapter };
+            var list = Compiler.NumericList(v);
+            return list != null ? new Vec { Parts = list, Value = v } : null;
+        }
+
+        private static RqlError NotVector(TypeModel model, string name, object? v) =>
+            new RqlError("type-mismatch", $"{name}() takes a vector: a list of numbers or a struct with component-wise arithmetic, got {V.Describe(v)}"
+                + (v != null && (V.IsString(v) || V.IsList(v) || model.Info(v.GetType()).IsMap) ? "; for the size of a string, list or map use len(…)" : ""));
+
+        public static object? Apply(TypeModel model, string name, object?[] vals)
+        {
+            bool lerp = name == "lerp";
+            double t = 0;
+            bool tOk = lerp && V.TryNumber(vals[2], out t);
+            if (lerp && V.TryNumber(vals[0], out var na) && V.TryNumber(vals[1], out var nb))
+                return tOk ? Lerp1(na, nb, t) : BadT(vals[2]);
+            var a = Of(model, vals[0]!);
+            if (a == null) return NotVector(model, name, vals[0]);
+            Vec? b = null;
+            if (vals.Length > 1)
+            {
+                b = Of(model, vals[1]!);
+                if (b == null) return NotVector(model, name, vals[1]);
+                if (a.Adapter != null && b.Adapter != null && a.Value.GetType() != b.Value.GetType())
+                    return new RqlError("type-mismatch", $"{name}() needs vectors of one type, got {V.Describe(a.Value)} and {V.Describe(b.Value)}");
+                if (a.Parts.Length != b.Parts.Length)
+                    return new RqlError("type-mismatch", $"{name}() needs vectors of the same width, got {a.Parts.Length} and {b.Parts.Length} components");
+            }
+            switch (name)
+            {
+                case "length":
+                case "magnitude":
+                    return Math.Sqrt(Dot(a.Parts, a.Parts));
+                case "dot":
+                    return Dot(a.Parts, b!.Parts);
+                case "distance":
+                {
+                    double sum = 0;
+                    for (int i = 0; i < a.Parts.Length; i++)
+                    {
+                        double d = a.Parts[i] - b!.Parts[i];
+                        double sq = d * d;
+                        sum += sq;
+                    }
+                    return Math.Sqrt(sum);
+                }
+                case "normalize":
+                {
+                    double len = Math.Sqrt(Dot(a.Parts, a.Parts));
+                    if (len == 0) return Build(name, a, (double[])a.Parts.Clone()); // a zero vector stays zero (a new value)
+                    var r = new double[a.Parts.Length];
+                    for (int i = 0; i < r.Length; i++) r[i] = a.Parts[i] / len;
+                    return Build(name, a, r);
+                }
+                default: // lerp
+                {
+                    if (!tOk) return BadT(vals[2]);
+                    var r = new double[a.Parts.Length];
+                    for (int i = 0; i < r.Length; i++) r[i] = Lerp1(a.Parts[i], b!.Parts[i], t);
+                    return Build(name, a, r);
+                }
+            }
+        }
+
+        private static RqlError BadT(object? t) => new RqlError("type-mismatch", $"lerp() expects a number t, got {V.Describe(t)}");
+
+        /// <summary>a + (b - a) × t, each operation rounded separately.</summary>
+        private static double Lerp1(double a, double b, double t)
+        {
+            double span = b - a;
+            double step = span * t;
+            return a + step;
+        }
+
+        /// <summary>Σ pᵢ·qᵢ in order, each product rounded before the sum.</summary>
+        private static double Dot(double[] p, double[] q)
+        {
+            double sum = 0;
+            for (int i = 0; i < p.Length; i++)
+            {
+                double prod = p[i] * q[i];
+                sum += prod;
+            }
+            return sum;
+        }
+
+        /// <summary>A value of the first vector's kind: its struct type through the adapter, else a list of numbers.</summary>
+        private static object? Build(string name, Vec like, double[] parts)
+        {
+            if (like.Adapter == null)
+            {
+                var list = new List<object?>(parts.Length);
+                foreach (var p in parts) list.Add(p);
+                return list;
+            }
+            return Compiler.BuildFromComponents(like.Adapter, like.Value, parts)
+                ?? new RqlError("type-mismatch", $"{name}(): cannot build {V.Describe(like.Value)} from components");
         }
     }
 }

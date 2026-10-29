@@ -378,13 +378,31 @@ namespace Rql.Execution
                     _planSource ??= reg;
                     var rest = new PathExpr(p.Segments.Skip(len).ToList()) { Span = p.Span };
                     var nav = rest.Segments.Count > 0 ? _c.Compile(rest) : null;
-                    var restText = string.Concat(rest.Segments.Select(s => s.Kind == SegmentKind.Member ? "." + s.Name : s.ToString()));
+                    var restText = SegmentsText(rest.Segments);
                     return (() => SourceValue(reg, nav), reg.Name + restText, false);
                 }
                 var head = p.Segments[0].Name!;
                 var close = Suggest.Closest(head, _x.Engine.Sources.Keys.ToList(), 3);
                 throw new RqlException("unknown-source", $"unknown source '{head}'", p.Span,
                     (close.Count > 0 ? "did you mean " + string.Join(" / ", close) + "? " : "") + "sources: " + string.Join(" ", _x.Engine.Sources.Keys));
+            }
+            // A function call or ref(…) followed by navigation (spec §2): unreal.asset("/Game/BP").EventGraph, ref("Node#1").Children[0].
+            if (src is PathExpr navigated && navigated.On is CallExpr && navigated.Segments.Count > 0)
+            {
+                var (baseValue, baseText, quiet) = BindSource(navigated.On);
+                var rest = new PathExpr(navigated.Segments) { Span = navigated.Span };
+                var step = _c.Compile(rest);
+                var restText = SegmentsText(rest.Segments);
+                return (() =>
+                {
+                    var v = baseValue();
+                    // ref() already reported its own error: the stream is empty; an error of the navigation itself fails the query.
+                    if (v is RqlError && quiet) return Missing.Value;
+                    if (v == null || V.IsAbsent(v)) return v;
+                    _x.Current = v;
+                    _x.CurrentPath = null;
+                    return step(_x); // member reads already read destroyed objects as null, as for a registered source's navigation
+                }, baseText + restText, false);
             }
             if (src is CallExpr c && c.On == null && string.Equals(c.Name, "ref", StringComparison.OrdinalIgnoreCase))
                 return (RootValue(_c.Compile(src)), "ref(…)", true);
@@ -763,10 +781,14 @@ namespace Rql.Execution
         internal static bool IsMember(Segment s, string name) => s.Kind == SegmentKind.Member && string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase);
 
         /// <summary>Path text appended by `get`/`recurse via` when the expression is a plain member/index path.</summary>
+        /// <summary>The text of path segments as $path writes them: <c>.Member</c>, <c>[i]</c>, <c>["key"]</c>.</summary>
+        private static string SegmentsText(IEnumerable<Segment> segments) =>
+            string.Concat(segments.Select(s => s.Kind == SegmentKind.Member ? "." + s.Name : s.ToString()));
+
         private static string? PathSuffix(Expr e)
         {
             if (!(e is PathExpr p) || p.On != null || p.Segments.Any(s => s.Kind == SegmentKind.Meta)) return null;
-            return string.Concat(p.Segments.Select(s => s.Kind == SegmentKind.Member ? "." + s.Name : s.ToString()));
+            return SegmentsText(p.Segments);
         }
 
         private IEnumerable<Item> Distinct(IEnumerable<Item> input, Eval? key, KeyTally? tally)

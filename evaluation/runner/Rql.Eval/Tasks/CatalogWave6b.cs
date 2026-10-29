@@ -6,9 +6,9 @@ using Rql.Sample;
 namespace Rql.Eval.Tasks
 {
     /// <summary>
-    /// Catalog "wave6b" (ADR-0011): owned subobjects built from typed literals (instanced literal kind), and counting by the meta
-    /// member $type where a lookalike member (`type`) exists on a few items only (the sparse-key warning). A separate split, so
-    /// the earlier numbers stay comparable.
+    /// Catalog "wave6b" (ADR-0011, ADR-0012): owned subobjects built from typed literals (instanced literal kind), counting by
+    /// the meta member $type where a lookalike member (`type`) exists on a few items only (the sparse-key warning), arithmetic
+    /// on plain number lists and vector functions. A separate split, so the earlier numbers stay comparable.
     /// </summary>
     public static partial class Catalog
     {
@@ -48,6 +48,42 @@ namespace Rql.Eval.Tasks
                     return T($"Which component type (its type name, e.g. RendererComponent) is the most common among the components of the objects "
                         + $"in scene {Q(s.Name)}?", "Answer with just the type name.", Expected.Str(counts[0].Key),
                         h => Rows(h, $"objects | where Scene.Name == {Q(s.Name)} | get Components | group-by $type | sort count desc | first 1")[0][0]!);
+                },
+            };
+            yield return new Template
+            {
+                Id = "wave6b-move-scaled-offset", Category = "update", Split = S, Mutation = true,
+                Make = c =>
+                {
+                    var go = c.All.Where(g => !(g is Character)).OrderBy(g => g.Id).Skip(c.Rng.Next(20)).First();
+                    int dx = 1 + c.Rng.Next(4), dz = 1 + c.Rng.Next(4), k = 2 + c.Rng.Next(4);
+                    return T($"Move the object with Id {go.Id} by the offset ({dx}, 0, {dz}) multiplied by {k}, i.e. add {k} times that offset to "
+                        + "its Transform.Position.", FmtState,
+                        Expected.State(sb =>
+                        {
+                            var t = ById(sb, go.Id).Transform;
+                            var p = t.Position;
+                            t.Position = new Vector3(p.x + dx * k, p.y, p.z + dz * k);
+                        }),
+                        h => Mutate(h, $"objects | where Id == {go.Id} | set Transform.Position = Transform.Position + [{dx}, 0, {dz}] * {k}"));
+                },
+            };
+            yield return new Template
+            {
+                Id = "wave6b-distance", Category = "aggregate", Split = S,
+                Make = c =>
+                {
+                    var all = c.All.OrderBy(g => g.Id).ToList();
+                    var a = all[c.Rng.Next(all.Count)];
+                    var b = all[c.Rng.Next(all.Count)];
+                    if (a == b) return null;
+                    double dx = (double)a.Transform.Position.x - b.Transform.Position.x, dy = (double)a.Transform.Position.y - b.Transform.Position.y,
+                        dz = (double)a.Transform.Position.z - b.Transform.Position.z;
+                    double d = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+                    return T($"What is the straight-line distance between the positions (Transform.Position) of the objects with Id {a.Id} and Id {b.Id}? "
+                        + "Round to 2 decimals.", FmtNumber, Expected.Num(d, 0.0051),
+                        h => Scalar(h, $"objects | where Id == {a.Id} | sum distance(Transform.Position, "
+                            + $"ref(\"{b.GetType().Name}#{b.Id}\").Transform.Position)"));
                 },
             };
         }

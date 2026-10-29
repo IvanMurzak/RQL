@@ -64,8 +64,10 @@ The source is a `postfix` expression evaluated in **root scope**:
 * `ref("Type#id", ...)` resolves stable object references (§7). Unresolvable → `stale-ref`.
   `ref()` may also be used inside expressions (e.g. `set Target = ref("Player#1")`).
 * A call to a registered host extension function (§9), e.g. `unity.assets("t:Material")`, evaluated with no current
-  item; its value is the source value. An error value fails the query with its code. (Implemented in .NET; TS/C++
-  parity pending.)
+  item; its value is the source value. Like a registered source, a function call or `ref(…)` may be followed by
+  navigation (`unreal.asset("/Game/BP").EventGraph`, `ref("Node#1").Children[0]`), which is applied to its value. An error value fails the query with its code
+  (an error of the navigation after `ref(…)` too; only `ref()`'s own `stale-ref`, already reported, leaves the stream empty).
+  (Host function sources: .NET and C++; TypeScript pending. Navigation after `ref(…)`: all runtimes.)
 * The core function **`range(start, end[, step])`** streams numbers: `start + k × step` for k = 0, 1, … while the
   number is below `end` (`step` > 0) or above it (`step` < 0); `step` defaults to 1 and `end` is excluded, so
   `range(0, 300)` gives 0 … 299 (`$index` is the same as the number) and `range(10, 0, -2)` gives 10, 8, 6, 4, 2. The
@@ -193,9 +195,24 @@ Components are computed as numbers (single-precision components widened as in §
 result. Everything else is `error(type-mismatch)` naming both operands: two different struct types (`Vector3 + Vector2`),
 `v + n` / `n - v` / `n / v`, `v % …`, a list whose length differs from the component count or that holds a non-number,
 and a struct whose type declares no components (the message then says so). Division by a zero number or a zero
-component is `error(div-by-zero)`. A list alone is not a vector: `[1, 2, 3] * 2` stays `type-mismatch` (lists only take
-part next to a struct, whose type gives them their meaning). `+` with a string still concatenates. Writes need no
-coercion: `set Scale = Scale * 1.5` assigns a value of the member's own type.
+component is `error(div-by-zero)`. `+` with a string still concatenates. Writes need no coercion: `set Scale = Scale *
+1.5` assigns a value of the member's own type.
+
+**Numeric lists.** Without a struct operand, a list whose elements are all numbers is a vector too, and the result is a
+new list of numbers:
+
+| Expression | Result |
+|---|---|
+| `L * n`, `n * L`, `L / n` | every element multiplied / divided by the number `n` (`[x, 0, z] * k`). |
+| `L + M`, `L - M` | element with element; `M` a numeric list of the same length (`[1, 2] + [3, 4]` → `[4, 6]`). |
+| `-L` | every element negated. |
+
+Everything else is `error(type-mismatch)` naming both operands and the reason: `L + n` / `n - L` / `n / L` (add a list of
+as many numbers instead), lists of different lengths, an element that is not a number (a `missing` or error element is
+not passed through: the operation is a type-mismatch, "every list element must be a number"), `L * M` / `L / M` (an element-wise
+product is not a vector operation: use `dot(a, b)`), and `L % …`. Division by a zero number is `error(div-by-zero)`. A
+numeric list written to a vector member is coerced like any list literal (`set Position = Position + [0, 1, 0] * 2`
+through the struct rules, `set Position = [x, 0, z] * k` through the member type's coercion).
 
 ### 4.3 Functions (portable core)
 
@@ -221,6 +238,24 @@ coercion: `set Scale = Scale * 1.5` assigns a value of the member's own type.
 | `split(s, sep)` | the list of the parts of `s` between occurrences of `sep` (ordinal case-insensitive; empty parts kept: `split("a,,b", ",")` → `["a", "", "b"]`). An empty `sep` is a `type-mismatch` error value. |
 | `trim(s)` | `s` without leading and trailing whitespace (space, tab, LF, CR, vertical tab, form feed). |
 | `pad(v, width[, fill])` | the text of `v` (a string, or a number written as `+` concatenation writes it) left-padded with `fill` (a one-character string, default `"0"`) to at least `width` characters (an integer from 0 to 1024): `pad(3, 2)` → `"03"`, `pad("ab", 4, " ")` → `"  ab"`. Text already that long is returned unchanged; a sign is text like any other (`pad(-3, 4)` → `"00-3"`). |
+
+**Vector functions** take **vectors**: a list of numbers, or a struct whose type adapter declares components (§4.2,
+§13 "Arithmetic"). They are also methods on the vector (`Position.length()`, `a.distance(b)`):
+
+| Function | Result |
+|---|---|
+| `length(v)`, `magnitude(v)` | the Euclidean length √(Σ cᵢ²), a number (`len` stays the size of a string, list or map). |
+| `normalize(v)` | `v` divided by its length, a value of `v`'s kind (struct type or list); a zero vector stays zero. |
+| `distance(a, b)` | `length(a - b)`. |
+| `dot(a, b)` | Σ aᵢ·bᵢ, a number. |
+| `lerp(a, b, t)` | `a + (b - a) × t` for two vectors or two numbers, a value of `a`'s kind (`t` is not clamped). |
+
+Two vector arguments must have the same width (a struct and a list of as many numbers mix, as in §4.2; two structs must
+have the same type). Components are computed as numbers in a fixed order (single precision widened as in §1.1), each
+product and sum rounded separately (no fused multiply-add), so every runtime returns the same digits. A null / missing /
+error argument is returned unchanged (the first one); any other non-vector argument, or vectors of different widths or
+types, is a `type-mismatch` error value naming the function (`length() takes a vector: a list of numbers or a struct
+with component-wise arithmetic, got string`).
 
 Numeric functions return `null` / `missing` / an error value unchanged when an argument is one (the first such argument),
 and a `type-mismatch` error value for any other non-number argument.
@@ -503,8 +538,9 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   target, and `$index`, `$path` and `$depth` are the target's as it entered the stage: `$index` is its position in the
   stream entering `set` / `call` (null and destroyed items, which are skipped, keep their positions), so
   `nodes | where class == "RigidBody3D" | set Position.X = $index * 2` spreads the matches 0, 2, 4, ….
-* **Source-qualified call** `call q.m(args)`: `q` is a source expression (§2: a registered source with optional
-  navigation such as `editor` or `world.Scenes[0]`, `ref(…)`, a host function), evaluated **once**, after the mutation
+* **Source-qualified call** `call q.m(args)`: `q` is a source expression (§2: a registered source, `ref(…)` or a host
+  function, each with optional navigation, such as `editor`, `world.Scenes[0]` or
+  `unreal.asset("/Game/BP").EventGraph`), evaluated **once**, after the mutation
   policy check (a read request is `permission-denied` without evaluating it) and before any item is read; it must yield exactly one object with identity, the **receiver**. Its method `m` runs **once per stream item**,
   and the item is only the scope of the arguments: `$`, `$index`, `$path` and `$depth` in them are the item's, and an
   item may be any value — a number from `range`, a list entry, a string, a projected row, a map entry or an object

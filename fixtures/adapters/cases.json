@@ -7193,9 +7193,10 @@
             {
               "$error": "div-by-zero"
             },
-            {
-              "$error": "type-mismatch"
-            },
+            [
+              2,
+              4
+            ],
             {
               "$error": "type-mismatch"
             },
@@ -9687,6 +9688,557 @@
           ]
         ],
         "total": 1
+      }
+    },
+    {
+      "name": "adapt-vector-functions-struct",
+      "rql": "g.Nodes | recurse Children | where Id == 3 | select l = length(Pos), n = Pos.normalize(), d = distance(Pos, [0, 0]), p = dot(Pos, [2, 0]), i = lerp(Pos, [0.25, 1], 0.5)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Id"
+                  ]
+                },
+                {
+                  "lit": 3
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "l",
+                "expr": {
+                  "call": "length",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "n",
+                "expr": {
+                  "call": "normalize",
+                  "on": {
+                    "path": [
+                      "Pos"
+                    ]
+                  },
+                  "args": []
+                }
+              },
+              {
+                "name": "d",
+                "expr": {
+                  "call": "distance",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 0
+                        },
+                        {
+                          "lit": 0
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "p",
+                "expr": {
+                  "call": "dot",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 2
+                        },
+                        {
+                          "lit": 0
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "i",
+                "expr": {
+                  "call": "lerp",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 0.25
+                        },
+                        {
+                          "lit": 1
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 0.5
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "l",
+          "n",
+          "d",
+          "p",
+          "i"
+        ],
+        "rows": [
+          [
+            3.75,
+            "(0.6, 0.8)",
+            3.75,
+            4.5,
+            "(1.25, 2)"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-vector-functions-struct-list-width",
+      "rql": "g.Nodes | recurse Children | where Id == 3 | select d = distance(Pos, [1, 2, 3])",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "==",
+              "args": [
+                {
+                  "path": [
+                    "Id"
+                  ]
+                },
+                {
+                  "lit": 3
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "d",
+                "expr": {
+                  "call": "distance",
+                  "args": [
+                    {
+                      "path": [
+                        "Pos"
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        },
+                        {
+                          "lit": 3
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "d"
+        ],
+        "rows": [
+          [
+            {
+              "$error": "type-mismatch"
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-list-arith-set-vector",
+      "rql": "ref(\"Node#8\") | set Pos = [2, 0] * 3 + [0, 1]",
+      "options": {
+        "allowMutation": true
+      },
+      "then": "ref(\"Node#8\") | select Pos",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Pos"
+                  ]
+                },
+                "value": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "op": "*",
+                      "args": [
+                        {
+                          "list": [
+                            {
+                              "lit": 2
+                            },
+                            {
+                              "lit": 0
+                            }
+                          ]
+                        },
+                        {
+                          "lit": 3
+                        }
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 0
+                        },
+                        {
+                          "lit": 1
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "Pos",
+            "(-1, -1)",
+            "(6, 1)"
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Pos",
+                "expr": {
+                  "path": [
+                    "Pos"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Pos"
+        ],
+        "rows": [
+          [
+            "(6, 1)"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-call-qualified-ref-navigation",
+      "rql": "range(0, 2) | call ref(\"Node#1\").Children[0].bump($ + 1)",
+      "options": {
+        "allowMutation": true
+      },
+      "then": "ref(\"Node#1\") | select v = Children[0].Value",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "path": [
+                "Children",
+                {
+                  "index": 0
+                }
+              ],
+              "on": {
+                "call": "ref",
+                "args": [
+                  {
+                    "lit": "Node#1"
+                  }
+                ]
+              }
+            },
+            "args": [
+              {
+                "op": "+",
+                "args": [
+                  {
+                    "path": []
+                  },
+                  {
+                    "lit": 1
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#2",
+            "bump(double by)",
+            3.5
+          ],
+          [
+            "Node#2",
+            "bump(double by)",
+            5.5
+          ]
+        ],
+        "total": 2
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#1"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "v",
+                "expr": {
+                  "path": [
+                    "Children",
+                    {
+                      "index": 0
+                    },
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "v"
+        ],
+        "rows": [
+          [
+            5.5
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-call-qualified-ref-navigation-null",
+      "rql": "range(0, 2) | call ref(\"Node#8\").Peer.bump(1)",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "path": [
+                "Peer"
+              ],
+              "on": {
+                "call": "ref",
+                "args": [
+                  {
+                    "lit": "Node#8"
+                  }
+                ]
+              }
+            },
+            "args": [
+              {
+                "lit": 1
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-plan"
+          }
+        ]
       }
     }
   ]

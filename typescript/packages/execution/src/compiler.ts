@@ -18,12 +18,14 @@ export const CORE_FUNCTIONS = [
   'append', 'insert', 'remove-at', 'without', 'range',
   'replace', 'replace-regex', 'substring', 'split', 'trim', 'pad',
   'contains', 'starts-with', 'ends-with', 'matches',
+  'length', 'magnitude', 'normalize', 'distance', 'dot', 'lerp',
 ];
 
 export const CORE_METHODS = [
   'any', 'all', 'count', 'sum', 'min', 'max', 'avg', 'first', 'keys', 'values',
   'contains', 'starts-with', 'ends-with', 'matches', 'lower', 'upper', 'len',
   'replace', 'replace-regex', 'substring', 'split', 'trim', 'pad',
+  'length', 'magnitude', 'normalize', 'distance', 'dot', 'lerp',
 ];
 
 const isList = (x: Exec, v: unknown): v is object => typeof v === 'object' && v !== null && x.types.infoOf(v).isList;
@@ -374,6 +376,13 @@ export class Compiler {
         const up = name === 'upper';
         return (x) => caseOf(a(x), up);
       }
+      case 'length':
+      case 'magnitude':
+      case 'normalize':
+      case 'distance':
+      case 'dot':
+      case 'lerp':
+        return this.compileVectorFunction(c, name, c.args, 0);
       case 'abs':
       case 'floor':
       case 'ceil':
@@ -574,9 +583,36 @@ export class Compiler {
       case 'trim':
       case 'pad':
         return this.compileStringFunction(c, name, [onExpr, ...c.args], 1);
+      case 'length':
+      case 'magnitude':
+      case 'normalize':
+      case 'distance':
+      case 'dot':
+      case 'lerp':
+        return this.compileVectorFunction(c, name, [onExpr, ...c.args], 1);
       default:
         throw new RqlError('unknown-function', `unknown method '${c.name}'`, c.span, 'methods: ' + CORE_METHODS.join(' '));
     }
+  }
+
+  /**
+   * Vector functions (spec §4.3): length / magnitude, normalize, distance, dot, lerp over numeric lists and structs whose
+   * adapter declares components; `receiver` is 1 for the method form (the vector is the first argument).
+   */
+  private compileVectorFunction(c: CallExpr, name: string, argExprs: readonly Expr[], receiver: number): Eval {
+    const n = name === 'lerp' ? 3 : name === 'distance' || name === 'dot' ? 2 : 1;
+    if (argExprs.length !== n)
+      throw new RqlError('arity', `'${name}' takes ${n - receiver} argument(s), got ${argExprs.length - receiver}`, c.span, 'example: ' + vectorExample(name, receiver === 1));
+    const args = argExprs.map((e) => this.compile(e));
+    return (x) => {
+      const vals: unknown[] = [];
+      for (const a of args) {
+        const v = a(x);
+        if (v === null || v === undefined || isAbsent(v)) return v ?? null;
+        vals.push(v);
+      }
+      return vectorFunction(x.types, name, vals);
+    };
   }
 
   /**
@@ -1038,6 +1074,10 @@ export function arith(model: TypeModel, op: string, a: unknown, b: unknown): unk
       const v = structArith(model, op, a, b);
       if (v !== undefined) return v;
     }
+    if (!isStruct(model, a) && !isStruct(model, b)) {
+      const v = listArith(model, op, a, b);
+      if (v !== undefined) return v;
+    }
     return arithMismatch(model, op, a, b);
   }
   switch (op) {
@@ -1091,13 +1131,17 @@ function listInfo(model: TypeModel, v: unknown): TypeInfo | undefined {
 
 /** A list of exactly `width` numbers read as components (spec §4.2), else undefined. */
 function listParts(v: object, info: TypeInfo, width: number): number[] | undefined {
-  const parts: number[] = [];
-  for (const e of elements(v, info)) {
-    const n = toNumber(e);
-    if (n === undefined || parts.length === width) return undefined;
-    parts.push(n);
+  const parts = numericList(v, info);
+  return parts !== undefined && parts.length === width ? parts : undefined;
+}
+
+/** A value of `like`'s class built from components through its adapter, or undefined (spec §4.2, §13). */
+function buildFromComponents(adapter: AnyAdapter, like: object, parts: number[]): unknown {
+  try {
+    return adapter.fromComponents?.(parts, like.constructor as Ctor);
+  } catch {
+    return undefined;
   }
-  return parts.length === width ? parts : undefined;
 }
 
 /**
@@ -1156,13 +1200,152 @@ function structArith(model: TypeModel, op: string, a: unknown, b: unknown): unkn
       result.push(l / r);
     }
   }
-  let built: unknown;
-  try {
-    built = own.adapter.fromComponents?.(result, vector.constructor as Ctor);
-  } catch {
-    built = undefined;
+  return buildFromComponents(own.adapter, vector, result) ?? arithMismatch(model, op, a, b, `cannot build ${describeValue(vector)} from components`);
+}
+
+/** The numbers of a list whose elements are all numbers (spec §4.2 numeric lists), else undefined. */
+function numericList(v: object, info: TypeInfo): number[] | undefined {
+  const parts: number[] = [];
+  for (const e of elements(v, info)) {
+    const n = toNumber(e);
+    if (n === undefined) return undefined;
+    parts.push(n);
   }
-  return built ?? arithMismatch(model, op, a, b, `cannot build ${describeValue(vector)} from components`);
+  return parts;
+}
+
+/**
+ * Arithmetic on numeric lists without a struct operand (spec §4.2): L * n, n * L, L / n, L ± M (same length), -L; a new list
+ * of numbers. Undefined when neither operand is a list; a type-mismatch with the reason for any other list operation.
+ */
+function listArith(model: TypeModel, op: string, a: unknown, b: unknown): unknown {
+  const ia = listInfo(model, a);
+  const ib = op !== 'neg' ? listInfo(model, b) : undefined;
+  const la = ia !== undefined;
+  const lb = ib !== undefined;
+  if (!la && !lb) return undefined;
+  const mismatch = (why: string): ErrorValue =>
+    new ErrorValue('type-mismatch', `cannot apply '${op === 'neg' ? '-' : op}' to ${describeValue(a)}${op === 'neg' ? '' : ' and ' + describeValue(b)} (${why})`);
+  const pa = la ? numericList(a as object, ia) : undefined;
+  const pb = lb ? numericList(b as object, ib) : undefined;
+  if ((la && pa === undefined) || (lb && pb === undefined)) return mismatch('every list element must be a number');
+  if (op === '%') return mismatch("'%' is not a vector operation");
+  const result: number[] = [];
+  if (op === 'neg') {
+    for (const p of pa!) result.push(-p);
+  } else if (pa !== undefined && pb !== undefined) {
+    if (op === '*' || op === '/') return mismatch('an element-wise product is not a vector operation; use dot(a, b)');
+    if (pa.length !== pb.length) return mismatch(`the lists have ${pa.length} and ${pb.length} numbers`);
+    for (let i = 0; i < pa.length; i++) result.push(op === '+' ? pa[i]! + pb[i]! : pa[i]! - pb[i]!);
+  } else {
+    const list = pa ?? pb!;
+    const operand = pa !== undefined ? b : a;
+    const n = toNumber(operand);
+    if (n === undefined) return mismatch(operand === null || operand === undefined ? 'null is not a number' : `a list combines with a number or a list of ${list.length} numbers`);
+    if (!(op === '*' || (op === '/' && pa !== undefined)))
+      return mismatch(op === '/' ? 'a number cannot be divided by a list' : `add a list of ${list.length} numbers; multiply or divide by a number`);
+    if (op === '/' && n === 0) return new ErrorValue('div-by-zero');
+    for (const p of list) result.push(op === '*' ? p * n : p / n);
+  }
+  return result;
+}
+
+type Vec = { parts: readonly number[]; value: object; adapter?: AnyAdapter };
+
+function vectorExample(name: string, method: boolean): string {
+  const rest = name === 'lerp' ? 'w, 0.5' : name === 'distance' || name === 'dot' ? 'w' : '';
+  return method ? `v.${name}(${rest})` : `${name}(v${rest.length > 0 ? ', ' + rest : ''})`;
+}
+
+function vectorOf(model: TypeModel, v: unknown): Vec | undefined {
+  const c = componentsOf(model, v);
+  if (c !== undefined) return { parts: c.parts, value: v as object, adapter: c.adapter };
+  const info = listInfo(model, v);
+  const list = info !== undefined ? numericList(v as object, info) : undefined;
+  return list !== undefined ? { parts: list, value: v as object } : undefined;
+}
+
+function notVector(model: TypeModel, name: string, v: unknown): ErrorValue {
+  const sized = typeof v === 'string' || isMapLike(v) || listInfo(model, v) !== undefined;
+  return new ErrorValue(
+    'type-mismatch',
+    `${name}() takes a vector: a list of numbers or a struct with component-wise arithmetic, got ${describeValue(v)}` + (sized ? '; for the size of a string, list or map use len(…)' : ''),
+  );
+}
+
+/** Σ pᵢ·qᵢ in order, each product rounded before the sum. */
+function dot(p: readonly number[], q: readonly number[]): number {
+  let sum = 0;
+  for (let i = 0; i < p.length; i++) {
+    const prod = p[i]! * q[i]!;
+    sum += prod;
+  }
+  return sum;
+}
+
+/** a + (b - a) × t, each operation rounded separately. */
+function lerp1(a: number, b: number, t: number): number {
+  const span = b - a;
+  const step = span * t;
+  return a + step;
+}
+
+function badT(t: unknown): ErrorValue {
+  return new ErrorValue('type-mismatch', `lerp() expects a number t, got ${describeValue(t)}`);
+}
+
+/** A value of the first vector's kind: its struct type through the adapter, else a list of numbers. */
+function buildVector(name: string, like: Vec, parts: number[]): unknown {
+  if (like.adapter === undefined) return parts;
+  return buildFromComponents(like.adapter, like.value, parts) ?? new ErrorValue('type-mismatch', `${name}(): cannot build ${describeValue(like.value)} from components`);
+}
+
+/** Vector functions over numeric lists and component structs (spec §4.3); components combine in order, each operation rounded. */
+function vectorFunction(model: TypeModel, name: string, vals: unknown[]): unknown {
+  const t = name === 'lerp' ? toNumber(vals[2]) : undefined;
+  if (name === 'lerp') {
+    const na = toNumber(vals[0]);
+    const nb = toNumber(vals[1]);
+    if (na !== undefined && nb !== undefined) return t === undefined ? badT(vals[2]) : lerp1(na, nb, t);
+  }
+  const a = vectorOf(model, vals[0]);
+  if (a === undefined) return notVector(model, name, vals[0]);
+  let b: Vec | undefined;
+  if (vals.length > 1) {
+    b = vectorOf(model, vals[1]);
+    if (b === undefined) return notVector(model, name, vals[1]);
+    if (a.adapter !== undefined && b.adapter !== undefined && a.value.constructor !== b.value.constructor)
+      return new ErrorValue('type-mismatch', `${name}() needs vectors of one type, got ${describeValue(a.value)} and ${describeValue(b.value)}`);
+    if (a.parts.length !== b.parts.length)
+      return new ErrorValue('type-mismatch', `${name}() needs vectors of the same width, got ${a.parts.length} and ${b.parts.length} components`);
+  }
+  switch (name) {
+    case 'length':
+    case 'magnitude':
+      return Math.sqrt(dot(a.parts, a.parts));
+    case 'dot':
+      return dot(a.parts, b!.parts);
+    case 'distance': {
+      let sum = 0;
+      for (let i = 0; i < a.parts.length; i++) {
+        const d = a.parts[i]! - b!.parts[i]!;
+        const sq = d * d;
+        sum += sq;
+      }
+      return Math.sqrt(sum);
+    }
+    case 'normalize': {
+      const len = Math.sqrt(dot(a.parts, a.parts));
+      if (len === 0) return buildVector(name, a, [...a.parts]); // a zero vector stays zero (a new value)
+      return buildVector(name, a, a.parts.map((p) => p / len));
+    }
+    default: {
+      if (t === undefined) return badT(vals[2]);
+      const r: number[] = [];
+      for (let i = 0; i < a.parts.length; i++) r.push(lerp1(a.parts[i]!, b!.parts[i]!, t));
+      return buildVector(name, a, r);
+    }
+  }
 }
 
 /** Text form used for concatenation, map keys in output and sort fallbacks. */
