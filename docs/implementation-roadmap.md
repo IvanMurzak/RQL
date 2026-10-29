@@ -9,14 +9,14 @@
 | M4 safe mutations + experiments | done | `set`/`call`, dry-run, receipts, all-or-nothing, limits; mutation tasks graded by state diff |
 | M5 TS/C++ parity | done for all fixture-covered features | `docs/feature-matrix.md` |
 | Type adapters (spec §13) | done in .NET, TS, C++ (C++: no non-public field inclusion) | `docs/type-adapters.md`, `fixtures/adapters/cases.json` |
-| M6 integration design | design only | `docs/architecture.md` §Integration path; no sibling repo modified |
+| M6 engine integrations | done | Unity-MCP, Godot-MCP (.NET) and Unreal-MCP (C++ with a .NET sidecar); `docs/architecture.md` §Integrations |
 
 ## Next (prioritized)
 
-1. **Unity adapter pack** (spec §13 adapters mirroring Unity-MCP's converters, see `docs/type-adapters.md`) and a
-   Unity-MCP tool set; rerun the eval on a real Unity scene dump.
+1. ~~Unity adapter pack and a Unity-MCP tool set~~ — done in Unity-MCP; still open: rerun the eval on a real Unity
+   scene dump.
 2. ~~Adapter-defined methods and virtual maps~~ — done (spec §13).
-3. **Unreal provider** for the C++ engine (`UClass`/`FProperty`, `TArray`/`TMap` adapters, `IsValid`).
+3. ~~Unreal provider for the C++ engine~~ — done in Unreal-MCP.
 4. **Static binding pass**: type-check member paths against declared types before execution (catch typos
    with zero items in the stream; today `unknown-member` needs at least one evaluated item).
 5. **Destructive-method policy** (`[RqlCallable(Destructive = true)]` requiring a dry-run first).

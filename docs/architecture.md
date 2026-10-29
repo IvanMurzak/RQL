@@ -46,12 +46,16 @@ RQL text ──► Parser (.NET / TS) ──► canonical QueryPlan JSON ──�
 * `dotnet/Rql.Conformance` — golden-vector runner/regenerator; conformance graph as native CLR types.
 * `dotnet/Rql.Bench` — Tier A benchmarks. `evaluation/runner/Rql.Eval` — Tier B agent evaluation.
 
-## Integration path (M6, design only — not implemented)
+## Integrations
 
-* **ReflectorNet**: implement a `TypeModel`/member policy adapter on top of ReflectorNet's reflection
-  and serialization so RQL reuses its converters and Unity-specific rules; RQL stays the query layer.
-* **Unity-MCP**: register `unity.*` sources (scenes, GameObjects, assets) on the CLR engine; expose
-  `rql_query` / `rql_mutate` / `rql_schema` tools.
-* **Unreal-MCP**: the .NET sidecar parses text → plan and forwards the plan over the existing IPC;
-  the C++ engine with an Unreal provider (`UClass`/`FProperty`, `TArray`, `TMap` adapters, `IsValid`
-  liveness) executes on live `UObject`s. See `cpp/README.md` for the provider seam.
+RQL is the data layer of the [AI Game Dev](https://ai-game.dev) engine plugins; each exposes `rql-query`,
+`rql-mutate` and `rql-schema` tools ([`agent-tool-contract.md`](agent-tool-contract.md)) and configures the host hooks of
+[`host-integration.md`](host-integration.md).
+
+* **Unity-MCP**: the .NET engine runs in the Unity Editor. Unity types are shaped by type adapters (the ReflectorNet
+  converter parity table is in [`type-adapters.md`](type-adapters.md)), and the plugin and its extensions contribute
+  `IRqlModule`s discovered through Unity's `TypeCache`.
+* **Godot-MCP**: the .NET engine (NuGet `com.IvanMurzak.Rql`) runs in Godot editor builds.
+* **Unreal-MCP**: the C++ engine runs inside the editor plugin over an Unreal provider (`UClass` / `FProperty`
+  descriptors, `TArray` / `TMap` adapters, `IsValid` liveness); a .NET
+  sidecar parses the text into a plan and renders the result. See `cpp/README.md` for the provider seam.

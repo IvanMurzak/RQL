@@ -111,10 +111,12 @@ engine.Execute("enemies | where Health < 10 | set Health = 100",
     options: new QueryOptions { AllowMutation = true, DryRun = true });
 ```
 
-Members are read through `System.Reflection`. Attributes shape the model: `[RqlId]`, `[RqlDisplay]`, `[RqlReadOnly]`,
+`AddSource<T>` declares the getter's type, so its members are known before any query reads the source. Members are
+read through `System.Reflection`. Attributes shape the model: `[RqlId]`, `[RqlDisplay]`, `[RqlReadOnly]`,
 `[RqlReference]` (non-owning link), `[RqlIgnore]`, `[RqlDescription]`, and `[RqlCallable]` to allow a method in `call`.
 Type adapters and modules customize how host types are read, written and shown
-([docs/type-adapters.md](docs/type-adapters.md)).
+([docs/type-adapters.md](docs/type-adapters.md)); hooks for undo, validation, hints and agent texts are in the
+[host integration guide](docs/host-integration.md).
 
 ### TypeScript
 
@@ -182,7 +184,12 @@ objects | where Components.any($ is LightComponent and Enabled == false) | count
 # projections, aggregation, graph walks
 world.Scenes | select Name n=Objects.count()
 objects | where $ is Enemy | group-by Faction | sort count desc
+objects | where $ is Enemy | group-by Faction, elite=(Level > 10) | select Faction, elite, count, hp = items.avg(Health)
 world.Scenes | get Objects | recurse Children max-depth=16 | where Name starts-with "Chest" | first 2 | select $path
+
+# conditionals, strings, vectors
+objects | where $ is Enemy | select Name tier=(Health > 50 ? "healthy" : "hurt")
+objects | where $ is Enemy and distance([Transform.Position.x, Transform.Position.z], [0, 0]) < 50 | select Name
 
 # introspection
 objects | where $ is Enemy | first 1 | describe
@@ -195,17 +202,22 @@ objects | where $ is Enemy | first 1 | describe
 | `sort k [asc\|desc], …` · `first [n]` · `skip n` · `distinct [e]` | order and slice; `first` stops pulling items upstream |
 | `get e` | replace each item by `e`, flattening lists |
 | `recurse [via …] [max-depth=N]` | cycle-safe depth-first walk over the `via` members, or all owning members |
-| `group-by e[, e …]` · `count` · `sum/min/max/avg e` | aggregate (one key: `key`, `count`; several or named keys: one column each, then `count`) |
+| `group-by e[, e …]` · `count` · `sum/min/max/avg e` | aggregate (one key: `key`, `count`; several or named keys: one column each, then `count`; every group row has its `items`) |
 | `describe` | the schema of the items' runtime types |
 | `set p = e, …` · `call m(args)` · `call src.m(args)` | mutation (see below); `call src.m(…)` runs one source object's method once per item |
 
 Operators include `== != < <= > >=`, `and or not`, `in`, `is Type`, `is null`, `contains`, `starts-with`, `ends-with`,
-`matches`, `+ - * / %`. Collection methods: `any all count sum min max avg first keys values`. Functions include
-`len lower upper abs round floor ceil sqrt pow min max sin cos tan asin acos atan atan2 pi deg rad has if ref append insert remove-at without range` (`if(c, a, b)` is also
-written `c ? a : b`), and string functions
-`replace replace-regex substring split trim pad` (also as methods: `Name.replace("a", "b")`). Hosts register their
-own sources and add namespaced functions and stages (`myapp.fn(...)`). Besides sources, a query may start with
-`ref("Type#id")`, `range(start, end[, step])` (numbers, lazy) or a list literal.
+`matches`, `+ - * / %` and the conditional `c ? a : b` (the same as `if(c, a, b)`; only the taken branch runs). Conditions
+must be booleans (`where Material != null`, not `where Material`). Lists compare by value, structs of one type member by
+member, and a string meets an enum by name (`"Fill"` finds `HAlign_Fill`). Collection methods:
+`any all count sum min max avg first keys values`. Functions include
+`len lower upper abs round floor ceil sqrt pow min max coalesce has if ref append insert remove-at without range`,
+trigonometry in radians `sin cos tan asin acos atan atan2 pi deg rad`, string functions `replace replace-regex substring split trim pad` and vector functions
+`length normalize distance dot lerp` (string and vector functions are also methods: `Name.replace("a", "b")`,
+`Position.length()`). Vectors and colors the host marks, and lists of numbers, compute component by component
+(`Scale * 1.5`, `Position + [0, 1, 0]`, `[x, 0, z] * k`). Hosts register their own sources and add namespaced
+functions and stages (`myapp.fn(...)`). Besides sources, a query may start with `ref("Type#id")`, a host function,
+`range(start, end[, step])` (numbers, lazy) or a list literal.
 
 Mistakes come back as diagnostics the agent can act on:
 
@@ -213,6 +225,7 @@ Mistakes come back as diagnostics the agent can act on:
 warning unknown-member: no member 'Helth' on Enemy - hint: did you mean Health?
 ```
 
+Every stage, operator, function and diagnostic with examples: [`docs/language-reference.md`](docs/language-reference.md).
 Full grammar and semantics: [`spec/grammar.ebnf`](spec/grammar.ebnf), [`spec/semantics.md`](spec/semantics.md).
 
 ## Safe mutations
@@ -221,6 +234,8 @@ Full grammar and semantics: [`spec/grammar.ebnf`](spec/grammar.ebnf), [`spec/sem
 ref("Enemy#233") | set Health = MaxHealth, Transform.Position.y = Transform.Position.y + 2
 objects | where $ is Enemy and Health < 5 | first 2 | call Heal(25)
 range(0, 300) | call editor.CreateObject("Cube", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})
+range(0, 10) | call editor.CreateObject({name: "Tile" + $, position: [$ * 2, 0, 0]})
+objects | where $ is Enemy | set Transform.Scale = Transform.Scale * 1.5
 ```
 
 ```text
@@ -238,6 +253,15 @@ Enemy#233|Transform.Position.y|25.52|27.52
 - Bulk create: `call src.m(args)` runs the method of the one object `src` yields once per stream item, with `$` and
   `$index` the item's, so `range(…)` or a list creates many objects in one validated, undoable call; every invocation
   counts against the target limit and the receipt lists the created objects' `$ref`s.
+- Arguments by name: one object literal binds its keys to parameter names, the rest keep their defaults. Overloads are
+  checked without side effects, so a method that is not chosen never builds anything.
+- Object literals build values (`{x: 1, y: 2}`, `{$type: "BoxMesh", Size: [1, 2, 1]}`); scene objects are never built
+  from a literal, and owned subobjects that the host marks are built for the object they are written into.
+- Receipts list only real changes (`set`: `$ref|member|old|new` with the value read back; unchanged assignments are
+  counted, not listed); long receipts are compacted in the table format.
+- The target limit guards the breadth of a change: the host's default (20 in the library, typically 200 in editors with
+  undo) can be raised per request up to the host's ceiling (1000 by default), never silently clamped.
+- A misspelt member that leaves `set` / `call` nothing to change is an error, not "0 changes".
 - `get Rows | where … | set Value.Health = …` writes through the map the entries came from.
 - Identity members are read-only, `call` only reaches allowlisted methods, and budgets cap targets, rows, depth and
   time. See [docs/security-and-permissions.md](docs/security-and-permissions.md).
@@ -254,6 +278,7 @@ Enemy#233|Transform.Position.y|25.52|27.52
 | Distribution | NuGet `com.IvanMurzak.Rql` | source | source (CMake) |
 
 The QueryPlan protocol version is `0.1` ([spec/versioning.md](spec/versioning.md)); packages version independently.
+`main` may be ahead of the published package: the changelog and the feature matrix mark such additions *unreleased*.
 Conformance counts and every gap between runtimes: [docs/feature-matrix.md](docs/feature-matrix.md).
 
 RQL powers the query tools of [AI Game Dev](https://ai-game.dev) for Unity, Unreal Engine and Godot. The library itself
@@ -280,6 +305,8 @@ up `~/.dotnet` automatically.
 | | |
 |---|---|
 | [ai-game.dev/docs/rql](https://ai-game.dev/docs/rql) | user guide on the website |
+| [`docs/language-reference.md`](docs/language-reference.md) | the query language: sources, stages, operators, functions, mutations, receipts, limits |
+| [`docs/host-integration.md`](docs/host-integration.md) | embedding RQL: sources, modules, mutation policy, literal kinds, hint texts, language rules, per-runtime API names |
 | [`spec/`](spec) | grammar (EBNF), normative semantics, JSON schemas, versioning |
 | [`docs/architecture.md`](docs/architecture.md) | layers, design points, integration path |
 | [`docs/type-adapters.md`](docs/type-adapters.md) | shaping how host types are read, written and shown |
