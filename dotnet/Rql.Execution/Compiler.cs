@@ -20,6 +20,9 @@ namespace Rql.Execution
         /// <summary>Depth of has() arguments being compiled: their member sites are guards (spec §8).</summary>
         private int _guarded;
 
+        /// <summary>Compiling set values / call arguments, where $count is defined (spec §3, §8).</summary>
+        public bool MutationValues { get; set; }
+
         public static readonly string[] CoreFunctions =
         {
             "has", "is-null", "len", "lower", "upper", "abs", "round", "floor", "ceil", "sqrt", "pow", "min", "max", "coalesce", "if", "ref",
@@ -218,6 +221,9 @@ namespace Rql.Execution
                     return x => (double)x.Index;
                 case "count":
                     if (!ofCurrentItem) return _ => Missing.Value;
+                    if (!MutationValues)
+                        _x.Diagnostics.Add(Diagnostic.Warning("unknown-meta", "'$count' is only defined in a set value or call argument",
+                            "it is the number of items entering the set / call stage, so $index / $count runs from 0 towards 1 there"));
                     return x => x.Count >= 0 ? (double)x.Count : (object)Missing.Value;
                 case "depth":
                     if (!ofCurrentItem) return _ => Missing.Value;
@@ -1181,59 +1187,18 @@ namespace Rql.Execution
                 case "dot":
                 case "lerp":
                     return CompileVectorFunction(c, name, c.Args, 0);
+                case "abs":
+                case "floor":
+                case "ceil":
+                case "sqrt":
                 case "sin":
                 case "cos":
                 case "tan":
                 case "asin":
                 case "acos":
                 case "atan":
-                {
-                    Arity(c, 1, 1);
-                    var a = Compile(c.Args[0]);
-                    Func<double, double> f = name switch
-                    {
-                        "sin" => Math.Sin,
-                        "cos" => Math.Cos,
-                        "tan" => Math.Tan,
-                        "asin" => Math.Asin,
-                        "acos" => Math.Acos,
-                        _ => Math.Atan,
-                    };
-                    return x => Num(a(x), v => Trig(f(v)));
-                }
-                case "atan2":
-                {
-                    Arity(c, 2, 2);
-                    var y = Compile(c.Args[0]);
-                    var xx = Compile(c.Args[1]);
-                    return x =>
-                    {
-                        var vy = y(x);
-                        if (vy == null || V.IsAbsent(vy)) return vy;
-                        var vx = xx(x);
-                        if (vx == null || V.IsAbsent(vx)) return vx;
-                        if (!V.TryNumber(vy, out var dy) || !V.TryNumber(vx, out var dx))
-                            return new RqlError("type-mismatch", $"atan2() expects numbers, got {V.Describe(V.TryNumber(vy, out _) ? vx : vy)}");
-                        return Trig(Math.Atan2(dy, dx));
-                    };
-                }
-                case "pi":
-                    Arity(c, 0, 0);
-                    return _ => Math.PI;
                 case "deg":
                 case "rad":
-                {
-                    Arity(c, 1, 1);
-                    var a = Compile(c.Args[0]);
-                    // A fixed order (multiply, then divide), so every runtime returns the same digits; degrees are rounded like
-                    // trig results (60, not 59.99999999999999), radians are not (rad(180) is pi()).
-                    Func<double, double> f = name == "deg" ? v => Trig(v * 180 / Math.PI) : v => v * Math.PI / 180;
-                    return x => Num(a(x), f);
-                }
-                case "abs":
-                case "floor":
-                case "ceil":
-                case "sqrt":
                 {
                     Arity(c, 1, 1);
                     var a = Compile(c.Args[0]);
@@ -1242,20 +1207,35 @@ namespace Rql.Execution
                         "abs" => Math.Abs,
                         "floor" => Math.Floor,
                         "ceil" => Math.Ceiling,
-                        _ => Math.Sqrt,
+                        "sqrt" => Math.Sqrt,
+                        "sin" => v => Trig(Math.Sin(v)),
+                        "cos" => v => Trig(Math.Cos(v)),
+                        "tan" => v => Trig(Math.Tan(v)),
+                        "asin" => v => Trig(Math.Asin(v)),
+                        "acos" => v => Trig(Math.Acos(v)),
+                        "atan" => v => Trig(Math.Atan(v)),
+                        // Multiply, then divide, so every runtime returns the same digits; degrees are rounded like trig
+                        // results (60, not 59.99999999999999), radians are not (rad(180) is pi()).
+                        "deg" => v => Trig(v * 180 / Math.PI),
+                        _ => v => v * Math.PI / 180,
                     };
                     return x => Num(a(x), f);
                 }
+                case "pi":
+                    Arity(c, 0, 0);
+                    return _ => Math.PI;
                 case "pow":
+                case "atan2":
                 case "min":
                 case "max":
                 {
-                    if (name == "pow") Arity(c, 2, 2);
+                    if (name == "pow" || name == "atan2") Arity(c, 2, 2);
                     else Arity(c, 2, 64);
                     var args = c.Args.Select(Compile).ToArray();
                     Func<double, double, double> f = name switch
                     {
                         "pow" => Math.Pow,
+                        "atan2" => (y, xv) => Trig(Math.Atan2(y, xv)),
                         "min" => Math.Min,
                         _ => Math.Max,
                     };
@@ -1688,6 +1668,8 @@ namespace Rql.Execution
             var saved = x.Current;
             var savedPath = x.CurrentPath;
             var savedIndex = x.Index;
+            var savedCount = x.Count;
+            x.Count = -1; // $index is the element's here, and $count is not defined (spec §3)
             x.Outer.Add(saved);
             try
             {
@@ -1738,6 +1720,7 @@ namespace Rql.Execution
                 x.Current = saved;
                 x.CurrentPath = savedPath;
                 x.Index = savedIndex;
+                x.Count = savedCount;
             }
         }
 

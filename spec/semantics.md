@@ -124,8 +124,9 @@ If the source value is a `list` its elements become the item stream; a `map` yie
   reached (§3.1); `$index` — zero-based position of the item in the stream entering the current
   stage (in a `set` value or `call` argument: the target's position in the stream entering the `set` / `call` stage,
   §8); `$count` — in a `set` value or `call` argument only, the number of items in the stream entering the `set` /
-  `call` stage (skipped null and destroyed items included, so `$index` runs from 0 to `$count - 1`), otherwise
-  `missing`; `$depth` — inside/after a `recurse` stage, the item's depth relative to the item the
+  `call` stage (skipped null and destroyed items included, so `$index` runs from 0 to `$count - 1`); it is `missing`
+  inside a collection method's arguments there (where `$index` is the element's) and anywhere else, where it also
+  gets a warning `unknown-meta` ("only defined in a set value or call argument"); `$depth` — inside/after a `recurse` stage, the item's depth relative to the item the
   recursion started from (0 = start item), otherwise `missing`. Unknown meta → `missing` +
   warning `unknown-meta`. On projected rows a column literally named `$name` (from
   `select $path`) shadows the meta member, so `select $path Name | where $path contains "x"` works.
@@ -226,7 +227,7 @@ through the struct rules, `set Position = [x, 0, z] * k` through the member type
 | `lower(s)`, `upper(s)` | invariant case conversion. |
 | `abs(n)`, `round(n[, digits])`, `floor(n)`, `ceil(n)` | numeric. |
 | `sqrt(n)`, `pow(base, exponent)` | numeric (IEEE: `sqrt` of a negative number is NaN). |
-| `sin(x)`, `cos(x)`, `tan(x)`, `asin(x)`, `acos(x)`, `atan(x)`, `atan2(y, x)` | trigonometry in **radians**. The result is rounded to 12 decimal places, half away from zero (`round(r, 12)`), and a zero result is `0`, never `-0`, so every runtime returns the same digits whatever its math library, and `sin(pi())` is `0` (IEEE: `asin(2)` is NaN). `atan2(y, x)` is the angle of the point `(x, y)`, from -π to π. |
+| `sin(x)`, `cos(x)`, `tan(x)`, `asin(x)`, `acos(x)`, `atan(x)`, `atan2(y, x)` | trigonometry in **radians**. The result is rounded to 12 decimal places, half away from zero (`round(r, 12)`), and a zero result is `0`, never `-0`: runtimes whose math libraries differ in the last bit then return the same digits (except in the rare case where that bit decides a half-way rounding), `sin(pi())` is `0`, and a result below 5e-13 in size is `0` (IEEE: `asin(2)` is NaN). `atan2(y, x)` is the angle of the point `(x, y)`, from -π to π. |
 | `pi()` | π as a double (3.141592653589793), not rounded. |
 | `deg(x)`, `rad(x)` | radians to degrees (`x × 180 / π`, rounded like the trigonometric functions: `deg(pi() / 3)` is `60`) and degrees to radians (`x × π / 180`, multiplied first, not rounded: `rad(180)` is `pi()`). |
 | `min(a, b, ...)`, `max(a, b, ...)` | the smallest / largest of two or more numbers (the `min` / `max` *stages* and *methods* aggregate a stream or a collection instead; with one argument the call is an `arity` error). |

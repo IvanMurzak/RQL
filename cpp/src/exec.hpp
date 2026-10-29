@@ -326,6 +326,8 @@ Value member_of(Exec& x, const Value& v, MemberSite& site);
 class Compiler {
 public:
     explicit Compiler(Exec& x) : x_(x) {}
+    /// Compiling set values / call arguments, where $count is defined (spec §3, §8).
+    bool mutation_values = false;
     Eval compile(const Expr& e);
     /// An expression in a predicate position (spec §1.2): a value that is not a boolean, null or absent fails the query.
     Eval compile_condition(const Expr& e);

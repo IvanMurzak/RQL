@@ -33,12 +33,17 @@ struct ScopeGuard {
     Value current;
     PathPtr path;
     int64_t index;
-    explicit ScopeGuard(Exec& e) : x(e), current(e.current), path(e.current_path), index(e.index) { e.outer.push_back(current); }
+    int64_t count;
+    explicit ScopeGuard(Exec& e) : x(e), current(e.current), path(e.current_path), index(e.index), count(e.count) {
+        e.outer.push_back(current);
+        e.count = -1;  // $index is the element's here, and $count is not defined (spec §3)
+    }
     ~ScopeGuard() {
         x.outer.pop_back();
         x.current = current;
         x.current_path = path;
         x.index = index;
+        x.count = count;
     }
 };
 
@@ -972,6 +977,9 @@ Eval Compiler::compile_meta_core(const std::string& name, Eval prev, bool of_cur
     }
     if (name == "count") {
         if (!of_current_item) return [](Exec&) { return Value::missing(); };
+        if (!mutation_values)
+            x_.diagnostics.push_back(Diagnostic::warning("unknown-meta", "'$count' is only defined in a set value or call argument",
+                                                         "it is the number of items entering the set / call stage, so $index / $count runs from 0 towards 1 there"));
         return [](Exec& x) { return x.count >= 0 ? Value::number(static_cast<double>(x.count)) : Value::missing(); };
     }
     if (name == "depth") {
@@ -1679,17 +1687,7 @@ Value case_of(const Value& v, bool upper) {
 /// bit return the same digits (and sin(pi()) is 0, never -0).
 double round_away(double v, int digits);
 double trig(double d) { return round_away(d, 12) + 0.0; }  // -0 + 0 is +0
-double trig_sin(double v) { return trig(std::sin(v)); }
-double trig_cos(double v) { return trig(std::cos(v)); }
-double trig_tan(double v) { return trig(std::tan(v)); }
-double trig_asin(double v) { return trig(std::asin(v)); }
-double trig_acos(double v) { return trig(std::acos(v)); }
-double trig_atan(double v) { return trig(std::atan(v)); }
-// A fixed order (multiply, then divide), so every runtime returns the same digits; degrees are rounded like trig results
-// (60, not 59.99999999999999), radians are not (rad(180) is pi()).
 constexpr double kPi = 3.14159265358979323846;
-double to_deg(double v) { return trig(v * 180 / kPi); }
-double to_rad(double v) { return v * kPi / 180; }
 
 Value num_of(const Value& v, double (*f)(double)) {
     if (v.is_null() || v.is_absent()) return v;
@@ -1925,56 +1923,40 @@ Eval Compiler::compile_function(const Expr& c) {
         bool up = name == "upper";
         return [a, up](Exec& x) { return case_of(a(x), up); };
     }
-    if (name == "sin" || name == "cos" || name == "tan" || name == "asin" || name == "acos" || name == "atan" || name == "deg" ||
-        name == "rad") {
-        arity(c, 1, 1);
-        Eval a = compile(*c.args[0]);
-        double (*f)(double) = name == "sin"    ? trig_sin
-                              : name == "cos"  ? trig_cos
-                              : name == "tan"  ? trig_tan
-                              : name == "asin" ? trig_asin
-                              : name == "acos" ? trig_acos
-                              : name == "atan" ? trig_atan
-                              : name == "deg"  ? to_deg
-                                               : to_rad;
-        return [a, f](Exec& x) { return num_of(a(x), f); };
-    }
-    if (name == "atan2") {
-        arity(c, 2, 2);
-        Eval y = compile(*c.args[0]);
-        Eval xx = compile(*c.args[1]);
-        return [y, xx](Exec& x) -> Value {
-            Value vy = y(x);
-            if (vy.is_null() || vy.is_absent()) return vy;
-            Value vx = xx(x);
-            if (vx.is_null() || vx.is_absent()) return vx;
-            double dy, dx;
-            bool ny = try_number(vy, dy);
-            if (!ny || !try_number(vx, dx)) return Value::error("type-mismatch", "atan2() expects numbers, got " + describe_value(ny ? vx : vy));
-            return Value::number(trig(std::atan2(dy, dx)));
-        };
-    }
     if (name == "pi") {
         arity(c, 0, 0);
         return [](Exec&) { return Value::number(kPi); };
     }
-    if (name == "abs" || name == "floor" || name == "ceil" || name == "sqrt") {
+    if (name == "abs" || name == "floor" || name == "ceil" || name == "sqrt" || name == "sin" || name == "cos" || name == "tan" ||
+        name == "asin" || name == "acos" || name == "atan" || name == "deg" || name == "rad") {
         arity(c, 1, 1);
         Eval a = compile(*c.args[0]);
-        double (*f)(double) = name == "abs"     ? static_cast<double (*)(double)>(std::fabs)
-                              : name == "floor" ? static_cast<double (*)(double)>(std::floor)
-                              : name == "ceil"  ? static_cast<double (*)(double)>(std::ceil)
-                                                : static_cast<double (*)(double)>(std::sqrt);  // IEEE: sqrt(-1) is NaN
+        using Unary = double (*)(double);
+        // deg / rad multiply, then divide, so every runtime returns the same digits; degrees are rounded like trig results
+        // (60, not 59.99999999999999), radians are not (rad(180) is pi()).
+        Unary f = name == "abs"    ? static_cast<Unary>(std::fabs)
+                  : name == "floor" ? static_cast<Unary>(std::floor)
+                  : name == "ceil"  ? static_cast<Unary>(std::ceil)
+                  : name == "sqrt"  ? static_cast<Unary>(std::sqrt)  // IEEE: sqrt(-1) is NaN
+                  : name == "sin"   ? +[](double v) { return trig(std::sin(v)); }
+                  : name == "cos"   ? +[](double v) { return trig(std::cos(v)); }
+                  : name == "tan"   ? +[](double v) { return trig(std::tan(v)); }
+                  : name == "asin"  ? +[](double v) { return trig(std::asin(v)); }
+                  : name == "acos"  ? +[](double v) { return trig(std::acos(v)); }
+                  : name == "atan"  ? +[](double v) { return trig(std::atan(v)); }
+                  : name == "deg"   ? +[](double v) { return trig(v * 180 / kPi); }
+                                    : +[](double v) { return v * kPi / 180; };
         return [a, f](Exec& x) { return num_of(a(x), f); };
     }
-    if (name == "pow" || name == "min" || name == "max") {
-        if (name == "pow") arity(c, 2, 2);
+    if (name == "pow" || name == "atan2" || name == "min" || name == "max") {
+        if (name == "pow" || name == "atan2") arity(c, 2, 2);
         else arity(c, 2, 64);
         std::vector<Eval> args;
         for (auto& e : c.args) args.push_back(compile(*e));
-        double (*f)(double, double) = name == "pow"   ? static_cast<double (*)(double, double)>(std::pow)
-                                      : name == "min" ? math_min
-                                                      : math_max;
+        double (*f)(double, double) = name == "pow"     ? static_cast<double (*)(double, double)>(std::pow)
+                                      : name == "atan2" ? +[](double y, double xv) { return trig(std::atan2(y, xv)); }
+                                      : name == "min"   ? math_min
+                                                        : math_max;
         return [args, f, name](Exec& x) -> Value {
             double acc = 0;
             for (size_t i = 0; i < args.size(); ++i) {

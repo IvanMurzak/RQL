@@ -45,24 +45,9 @@ function host(n = 4): { e: RqlEngine; nodes: Node[]; editor: Editor } {
   return { e, nodes, editor };
 }
 
-function row(e: RqlEngine, q: string): unknown[] {
-  const r = e.execute(q);
-  assert.equal(r.ok, true, JSON.stringify(r.diagnostics));
-  return r.rows![0]!;
-}
-
-test('trig functions work in radians and round to 12 places', () => {
+test('pi() takes no arguments', () => {
+  // Values, null and type errors are in the shared fixtures (trig-functions, trig-null-and-type-mismatch).
   const { e } = host();
-  assert.deepEqual(
-    row(e, 'g | select s = sin(pi() / 2), c = cos(pi()), z = sin(pi()), t = tan(pi() / 4), a = asin(1), b = acos(0), n = atan(1), q = atan2(1, -1), p = pi(), d = deg(pi()), r = rad(180)'),
-    [1, -1, 0, 1, 1.570796326795, 1.570796326795, 0.785398163397, 2.356194490192, Math.PI, 180, Math.PI],
-  );
-});
-
-test('trig functions pass null through and reject other values', () => {
-  const { e } = host();
-  assert.deepEqual(row(e, 'g | select a = sin(null), b = atan2(1, null), c = deg(null)'), [null, null, null]);
-  assert.ok(JSON.stringify(e.execute('g | select a = cos("x"), b = atan2("y", 1)')).includes('type-mismatch'));
   assert.equal(e.execute('g | select pi(1)').ok, false);
 });
 
@@ -85,10 +70,16 @@ test('$count is the item count in source-qualified calls', () => {
   assert.deepEqual(editor.created[5], ['P5of8', -0.707, -0.707]);
 });
 
-test('$count is missing outside set and call', () => {
+test('$count is missing with a warning outside set and call', () => {
   const { e } = host();
   const r = e.execute('g | select c = $count, i = $index');
   assert.equal(r.ok, true, JSON.stringify(r.diagnostics));
   assert.equal(r.rows![0]![0], null);
-  assert.ok(!r.diagnostics.some((d) => d.code === 'unknown-meta'));
+  assert.ok(r.diagnostics.some((d) => d.code === 'unknown-meta' && d.message.includes('only defined in a set value or call argument')));
+  // Inside a collection method of a set value $index is the element's, so $count is not defined there either.
+  const { e: m, nodes } = host(2);
+  const w = m.execute('nodes | set Value = Position.count($count > 0)', {}, mutate);
+  assert.equal(w.ok, true, JSON.stringify(w.diagnostics));
+  assert.deepEqual(nodes.map((n) => n.Value), [0, 0]); // the stage's 2 would count all 3
+  assert.ok(!w.diagnostics.some((d) => d.code === 'unknown-meta'));
 });

@@ -236,6 +236,16 @@ export class Mutator {
    * `method`: for `call`, the method (hints). `perItem`: a source-qualified call, whose items are only the scope of its
    * arguments, so any value may be one (spec §8).
    */
+  /** Compiles set values / call arguments, where `$count` is defined (spec §3, §8). */
+  private mutationValues<T>(compile: () => T): T {
+    this.c.mutationValues = true;
+    try {
+      return compile();
+    } finally {
+      this.c.mutationValues = false;
+    }
+  }
+
   private targets(stream: Iterable<Item>, op: string, method?: string, perItem = false): Target[] {
     const rest = stream[Symbol.iterator]();
     try {
@@ -403,7 +413,7 @@ export class Mutator {
   set(stream: Iterable<Item>, s: SetStage): QueryResult {
     const x = this.x;
     this.checkPolicy('set');
-    const assigns = s.assign.map((a) => ({ target: a.target, value: this.c.compile(a.value), label: label(a.target) }));
+    const assigns = this.mutationValues(() => s.assign.map((a) => ({ target: a.target, value: this.c.compile(a.value), label: label(a.target) })));
     const targets = this.targets(stream, 'set');
     this.checkMixedTargets(targets, s.assign.map((a) => a.target));
     const writes: PlannedWrite[] = [];
@@ -619,7 +629,7 @@ export class Mutator {
     const x = this.x;
     this.checkPolicy('call');
     const receiver = resolveReceiver?.(); // after the policy check: a read request never evaluates the target
-    const args: Eval[] = s.args.map((a) => this.c.compile(a));
+    const args: Eval[] = this.mutationValues(() => s.args.map((a) => this.c.compile(a)));
     const wanted = s.method.toUpperCase();
     // The callable overloads of the method on a target; none: unknown-function (or permission-denied for a method the host
     // does not expose), naming the targets' types and the sources that have it (spec §10).

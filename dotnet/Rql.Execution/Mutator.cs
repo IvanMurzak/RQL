@@ -33,6 +33,14 @@ namespace Rql.Execution
             public object Value => Item.Value!;
         }
 
+        /// <summary>Compiles set values / call arguments, where `$count` is defined (spec §3, §8).</summary>
+        private T MutationValues<T>(Func<T> compile)
+        {
+            _c.MutationValues = true;
+            try { return compile(); }
+            finally { _c.MutationValues = false; }
+        }
+
         /// <summary>`$`, `$index`, `$path` and `$depth` in a set value / call argument are the target's (spec §8).</summary>
         private void EnterScope(Target t) => _x.Enter(t.Item, t.Index);
 
@@ -204,7 +212,7 @@ namespace Rql.Execution
         public QueryResult Set(IEnumerable<Item> stream, SetStage s)
         {
             CheckPolicy("set");
-            var assigns = s.Assignments.Select(a => (target: a.Target, value: _c.Compile(a.Value), label: Label(a.Target))).ToList();
+            var assigns = MutationValues(() => s.Assignments.Select(a => (target: a.Target, value: _c.Compile(a.Value), label: Label(a.Target))).ToList());
             var targets = Targets(stream, "set");
             CheckMixedTargets(targets, s.Assignments.Select(a => a.Target));
             var writes = new List<PlannedWrite>();
@@ -554,7 +562,7 @@ namespace Rql.Execution
         {
             CheckPolicy("call");
             var receiver = resolveReceiver?.Invoke(); // after the policy check: a read request never evaluates the target
-            var args = s.Args.Select(_c.Compile).ToArray();
+            var args = MutationValues(() => s.Args.Select(_c.Compile).ToArray());
             // A source-qualified call checks its receiver's method before reading the stream: a typo fails even with no items.
             var fixedCandidates = receiver != null ? Candidates(receiver, null) : null;
             var targets = Targets(stream, "call", s.Method, perItem: receiver != null);

@@ -26766,7 +26766,13 @@
             1
           ]
         ],
-        "total": 2
+        "total": 2,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-meta"
+          }
+        ]
       }
     }
   ]
