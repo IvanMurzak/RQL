@@ -253,15 +253,13 @@ Enemy#233|Transform.Position.y|25.52|27.52
 - Bulk create: `call src.m(args)` runs the method of the one object `src` yields once per stream item, with `$` and
   `$index` the item's, so `range(…)` or a list creates many objects in one validated, undoable call; every invocation
   counts against the target limit and the receipt lists the created objects' `$ref`s.
-- Arguments by name: one object literal binds its keys to parameter names, the rest keep their defaults. Overloads are
-  checked without side effects, so a method that is not chosen never builds anything.
-- Object literals build values (`{x: 1, y: 2}`, `{$type: "BoxMesh", Size: [1, 2, 1]}`); scene objects are never built
-  from a literal, and owned subobjects that the host marks are built for the object they are written into.
-- Receipts list only real changes (`set`: `$ref|member|old|new` with the value read back; unchanged assignments are
-  counted, not listed); long receipts are compacted in the table format.
+- One object literal binds arguments by name (the rest keep their defaults); overloads are checked without side
+  effects. Literals build values, never scene objects.
+- Receipts list only real changes, with the value read back (unchanged assignments are counted, not listed).
 - The target limit guards the breadth of a change: the host's default (20 in the library, typically 200 in editors with
-  undo) can be raised per request up to the host's ceiling (1000 by default), never silently clamped.
-- A misspelt member that leaves `set` / `call` nothing to change is an error, not "0 changes".
+  undo) is raised per request up to the host's ceiling (1000 by default), never silently clamped. A misspelt member
+  that leaves `set` / `call` nothing to change is an error, not "0 changes". Details:
+  [language reference](docs/language-reference.md#mutations).
 - `get Rows | where … | set Value.Health = …` writes through the map the entries came from.
 - Identity members are read-only, `call` only reaches allowlisted methods, and budgets cap targets, rows, depth and
   time. See [docs/security-and-permissions.md](docs/security-and-permissions.md).
