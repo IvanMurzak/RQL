@@ -145,6 +145,23 @@ namespace Rql.Tests
 
         public sealed class BAdapter : RqlTypeAdapter<Thing> { }
 
+        public sealed class DeclaringSources : IRqlModule
+        {
+            public int Order => 0;
+            public void Configure(RqlModuleContext c) =>
+                c.AddSource("d.things", () => null, "typed things", typeof(List<Thing>)).AddGuide("d", "guide D");
+        }
+
+        [Fact]
+        public void ModuleContextDeclaresSourceTypes()
+        {
+            var e = new RqlEngine();
+            var report = e.AddModules(new[] { typeof(DeclaringSources) }).Single();
+            Assert.Equal(new[] { "d.things" }, report.Sources);
+            Assert.Equal(typeof(List<Thing>), e.Sources["d.things"].DeclaredType);
+            Assert.Equal("typed things", e.Sources["d.things"].Description);
+        }
+
         public sealed class Outer : IRqlModule
         {
             /// <summary>Only the nested-configuration test runs it (assembly scans in other tests find it too).</summary>
