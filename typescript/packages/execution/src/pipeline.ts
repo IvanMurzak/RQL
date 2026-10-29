@@ -374,13 +374,15 @@ export class Pipeline {
       return {
         value: () => {
           const v = base.value();
+          // ref() already reported its own error: the stream is empty; an error of the navigation itself fails the query.
+          if (v instanceof ErrorValue && base.quiet) return MISSING;
           if (v === null || v === undefined || isAbsent(v)) return v;
           x.current = v;
           x.currentPath = null;
           return step(x); // member reads already read destroyed objects as null, as for a registered source's navigation
         },
         pathText: base.pathText + pathSuffixText(rest),
-        quiet: base.quiet,
+        quiet: false,
       };
     }
     if (src.kind === 'call' && src.on === undefined && src.name.toLowerCase() === 'ref') return { value: this.rootValue(this.c.compile(src)), pathText: 'ref(…)', quiet: true };

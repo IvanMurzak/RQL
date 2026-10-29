@@ -26003,6 +26003,70 @@
         ],
         "total": 1
       }
+    },
+    {
+      "name": "source-ref-navigation-path",
+      "rql": "ref(\"Node#1\").Children | select $path, Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "Children"
+          ],
+          "on": {
+            "call": "ref",
+            "args": [
+              {
+                "lit": "Node#1"
+              }
+            ]
+          }
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "$path",
+                "expr": {
+                  "path": [
+                    {
+                      "meta": "path"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$path",
+          "Name"
+        ],
+        "rows": [
+          [
+            "ref(…).Children[0]",
+            "a-1"
+          ],
+          [
+            "ref(…).Children[1]",
+            "a-2"
+          ]
+        ],
+        "total": 2
+      }
     }
   ]
 }

@@ -2229,6 +2229,24 @@ void vector_tests() {
     check(has(why(R"J({"call":"dot","args":[{"path":["Position"]},{"list":[{"lit":1},{"lit":2}]}]})J"), "dot() needs vectors of the same width, got 3 and 2 components"),
           "vectors: width mismatch");
     check(has(why(R"J({"call":"length","args":[{"path":["Name"]}]})J"), "length() takes a vector"), "vectors: not a vector");
+    check(has(why(R"J({"call":"length","args":[{"path":["Name"]}]})J"), "; for the size of a string, list or map use len(â¦)"),
+          "vectors: a string points to len");
+    check(!has(why(R"J({"call":"length","args":[{"lit":true}]})J"), "len("), "vectors: a bool gets no len hint");
+    r = sel(R"J({"call":"normalize","args":[{"list":[{"lit":0},{"lit":0}]}]})J");
+    check(r.ok && (*r.rows)[0][0].is_array() && (*r.rows)[0][0].size() == 2 && (*r.rows)[0][0].at(0).as_number() == 0, "vectors: normalize of a zero list");
+    {
+        rql::Json caps = e.capabilities();
+        auto lists = [&](const char* key, const char* name) {
+            const rql::Json* l = caps.find(key);
+            if (!l) return false;
+            for (size_t i = 0; i < l->size(); ++i)
+                if (l->at(i).as_string() == name) return true;
+            return false;
+        };
+        bool all = true;
+        for (const char* n : {"length", "magnitude", "normalize", "distance", "dot", "lerp"}) all = all && lists("functions", n) && lists("methods", n);
+        check(all, "vectors: the capability manifest lists the vector functions and methods");
+    }
     r = arun(e, actors + R"J({"op":"set","assign":[{"target":{"path":["Position"]},"value":{"op":"+","args":[{"path":["Position"]},{"op":"*","args":[{"list":[{"lit":1},{"lit":2},{"lit":0}]},{"lit":2}]}]}}]}]})J", true);
     check(r.ok && world.Actors[0]->Position.X == 5 && world.Actors[0]->Position.Y == 4, "vectors: set Position = Position + [1, 2, 0] * 2");
 

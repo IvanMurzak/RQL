@@ -968,9 +968,11 @@ SourceBinding bind_source(Exec& x, Compiler& c, const Expr& src) {
         auto base = std::make_shared<SourceBinding>(bind_source(x, c, *src.on));
         Eval nav = c.compile(*plan::path(src.segments));
         const std::string rest_text = segments_text(src.segments);
-        b.kind = base->kind == SourceBinding::Kind::Ref ? SourceBinding::Kind::Ref : SourceBinding::Kind::Value;
+        b.kind = SourceBinding::Kind::Value;
         b.ev = [base, nav](Exec& ex) -> Value {
             Value v = source_value(ex, *base);
+            // ref() already reported its own error: the stream is empty; an error of the navigation itself fails the query.
+            if (v.is_error() && base->kind == SourceBinding::Kind::Ref) return Value::missing();
             if (v.is_null() || v.is_absent()) return v;
             ex.current = v;
             ex.current_path = nullptr;

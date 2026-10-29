@@ -90,3 +90,57 @@ test('vector functions on component structs and lists', () => {
   assert.ok(msg('actors | set Name = length(Name)').includes('length() takes a vector: a list of numbers or a struct with component-wise arithmetic, got'));
   assert.equal(e.execute('actors | select v = Position.lerp([1, 1, 1])').diagnostics[0]!.code, 'arity');
 });
+
+class Holder {
+  Id = 7;
+  Zero: number[] = [0, 0];
+  Copy: number[] | null = null;
+}
+
+function holderEngine(): { e: RqlEngine; h: Holder } {
+  const h = new Holder();
+  const types = new TypeModel().register(Holder, {
+    members: ['Id', { name: 'Zero', type: t.list(t.number) }, { name: 'Copy', type: t.nullable(t.list(t.number)) }],
+    id: 'Id',
+  });
+  const e = new RqlEngine({ types })
+    .addSource('hs', () => [h])
+    .addAdapter({
+      target: Holder,
+      members: (m) =>
+        m.add('Broken', {
+          type: t.string,
+          get: () => {
+            throw new Error('boom');
+          },
+        }),
+    });
+  e.mutations.enabled = true;
+  return { e, h };
+}
+
+test('normalize of a zero vector is a new value', () => {
+  const { e, h } = holderEngine();
+  assert.equal(e.execute('hs | set Copy = normalize(Zero)', {}, mutate).ok, true);
+  assert.deepEqual(h.Copy, [0, 0]);
+  assert.ok(h.Copy !== h.Zero, 'normalize returned its argument');
+});
+
+test('a vector function on a sized value points to len', () => {
+  const { e } = holderEngine();
+  for (const q of ['length("abc")', 'length(["a"])', 'length({a: 1})']) {
+    const r = e.execute(`hs | set Copy = ${q}`, {}, mutate);
+    assert.ok(r.diagnostics[0]!.message.endsWith('; for the size of a string, list or map use len(…)'), r.diagnostics[0]!.message);
+  }
+  assert.ok(!e.execute('hs | set Copy = length(Id)', {}, mutate).diagnostics[0]!.message.includes('len('));
+});
+
+test('navigation after ref() fails on its own error and tracks paths', () => {
+  const { e } = holderEngine();
+  assert.equal(e.execute('ref("Holder#99").Zero | count').diagnostics[0]!.code, 'stale-ref');
+  const broken = e.execute('ref("Holder#7").Broken | count');
+  assert.equal(broken.ok, false);
+  assert.ok(broken.diagnostics[0]!.message.includes("source 'ref(…).Broken' failed"), broken.diagnostics[0]!.message);
+  const paths = e.execute('ref("Holder#7").Zero | select $path');
+  assert.equal(paths.rows![1]![0], 'ref(…).Zero[1]');
+});

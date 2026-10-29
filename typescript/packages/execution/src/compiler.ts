@@ -1265,8 +1265,12 @@ function vectorOf(model: TypeModel, v: unknown): Vec | undefined {
   return list !== undefined ? { parts: list, value: v as object } : undefined;
 }
 
-function notVector(name: string, v: unknown): ErrorValue {
-  return new ErrorValue('type-mismatch', `${name}() takes a vector: a list of numbers or a struct with component-wise arithmetic, got ${describeValue(v)}`);
+function notVector(model: TypeModel, name: string, v: unknown): ErrorValue {
+  const sized = typeof v === 'string' || isMapLike(v) || listInfo(model, v) !== undefined;
+  return new ErrorValue(
+    'type-mismatch',
+    `${name}() takes a vector: a list of numbers or a struct with component-wise arithmetic, got ${describeValue(v)}` + (sized ? '; for the size of a string, list or map use len(…)' : ''),
+  );
 }
 
 /** Σ pᵢ·qᵢ in order, each product rounded before the sum. */
@@ -1305,11 +1309,11 @@ function vectorFunction(model: TypeModel, name: string, vals: unknown[]): unknow
     if (na !== undefined && nb !== undefined) return t === undefined ? badT(vals[2]) : lerp1(na, nb, t);
   }
   const a = vectorOf(model, vals[0]);
-  if (a === undefined) return notVector(name, vals[0]);
+  if (a === undefined) return notVector(model, name, vals[0]);
   let b: Vec | undefined;
   if (vals.length > 1) {
     b = vectorOf(model, vals[1]);
-    if (b === undefined) return notVector(name, vals[1]);
+    if (b === undefined) return notVector(model, name, vals[1]);
     if (a.adapter !== undefined && b.adapter !== undefined && a.value.constructor !== b.value.constructor)
       return new ErrorValue('type-mismatch', `${name}() needs vectors of one type, got ${describeValue(a.value)} and ${describeValue(b.value)}`);
     if (a.parts.length !== b.parts.length)
@@ -1332,7 +1336,7 @@ function vectorFunction(model: TypeModel, name: string, vals: unknown[]): unknow
     }
     case 'normalize': {
       const len = Math.sqrt(dot(a.parts, a.parts));
-      if (len === 0) return a.value; // a zero vector stays zero
+      if (len === 0) return buildVector(name, a, [...a.parts]); // a zero vector stays zero (a new value)
       return buildVector(name, a, a.parts.map((p) => p / len));
     }
     default: {

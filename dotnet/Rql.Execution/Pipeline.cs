@@ -396,11 +396,13 @@ namespace Rql.Execution
                 return (() =>
                 {
                     var v = baseValue();
+                    // ref() already reported its own error: the stream is empty; an error of the navigation itself fails the query.
+                    if (v is RqlError && quiet) return Missing.Value;
                     if (v == null || V.IsAbsent(v)) return v;
                     _x.Current = v;
                     _x.CurrentPath = null;
                     return step(_x); // member reads already read destroyed objects as null, as for a registered source's navigation
-                }, baseText + restText, quiet);
+                }, baseText + restText, false);
             }
             if (src is CallExpr c && c.On == null && string.Equals(c.Name, "ref", StringComparison.OrdinalIgnoreCase))
                 return (RootValue(_c.Compile(src)), "ref(…)", true);

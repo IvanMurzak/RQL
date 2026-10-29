@@ -33,10 +33,12 @@ const char* kFunctionNames[] = {"has", "is-null", "len", "lower", "upper", "abs"
                                 "coalesce", "if", "ref",
                                 "append", "insert", "remove-at", "without", "range",
                                 "replace", "replace-regex", "substring", "split", "trim", "pad",
-                                "contains", "starts-with", "ends-with", "matches"};
+                                "contains", "starts-with", "ends-with", "matches",
+                                "length", "magnitude", "normalize", "distance", "dot", "lerp"};
 const char* kMethodNames[] = {"any", "all", "count", "sum", "min", "max", "avg", "first", "keys", "values",
                               "contains", "starts-with", "ends-with", "matches", "lower", "upper", "len",
-                              "replace", "replace-regex", "substring", "split", "trim", "pad"};
+                              "replace", "replace-regex", "substring", "split", "trim", "pad",
+                              "length", "magnitude", "normalize", "distance", "dot", "lerp"};
 
 }  // namespace
 

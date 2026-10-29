@@ -1815,8 +1815,9 @@ namespace Rql.Execution
             return list != null ? new Vec { Parts = list, Value = v } : null;
         }
 
-        private static RqlError NotVector(string name, object? v) =>
-            new RqlError("type-mismatch", $"{name}() takes a vector: a list of numbers or a struct with component-wise arithmetic, got {V.Describe(v)}");
+        private static RqlError NotVector(TypeModel model, string name, object? v) =>
+            new RqlError("type-mismatch", $"{name}() takes a vector: a list of numbers or a struct with component-wise arithmetic, got {V.Describe(v)}"
+                + (v != null && (V.IsString(v) || V.IsList(v) || model.Info(v.GetType()).IsMap) ? "; for the size of a string, list or map use len(…)" : ""));
 
         public static object? Apply(TypeModel model, string name, object?[] vals)
         {
@@ -1826,12 +1827,12 @@ namespace Rql.Execution
             if (lerp && V.TryNumber(vals[0], out var na) && V.TryNumber(vals[1], out var nb))
                 return tOk ? Lerp1(na, nb, t) : BadT(vals[2]);
             var a = Of(model, vals[0]!);
-            if (a == null) return NotVector(name, vals[0]);
+            if (a == null) return NotVector(model, name, vals[0]);
             Vec? b = null;
             if (vals.Length > 1)
             {
                 b = Of(model, vals[1]!);
-                if (b == null) return NotVector(name, vals[1]);
+                if (b == null) return NotVector(model, name, vals[1]);
                 if (a.Adapter != null && b.Adapter != null && a.Value.GetType() != b.Value.GetType())
                     return new RqlError("type-mismatch", $"{name}() needs vectors of one type, got {V.Describe(a.Value)} and {V.Describe(b.Value)}");
                 if (a.Parts.Length != b.Parts.Length)
@@ -1858,7 +1859,7 @@ namespace Rql.Execution
                 case "normalize":
                 {
                     double len = Math.Sqrt(Dot(a.Parts, a.Parts));
-                    if (len == 0) return a.Value; // a zero vector stays zero
+                    if (len == 0) return Build(name, a, (double[])a.Parts.Clone()); // a zero vector stays zero (a new value)
                     var r = new double[a.Parts.Length];
                     for (int i = 0; i < r.Length; i++) r[i] = a.Parts[i] / len;
                     return Build(name, a, r);

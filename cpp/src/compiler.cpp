@@ -1224,7 +1224,9 @@ Value vector_build(const std::string& name, const Vec& like, const std::vector<d
 }
 
 Value not_vector(const std::string& name, const Value& v) {
-    return Value::error("type-mismatch", name + "() takes a vector: a list of numbers or a struct with component-wise arithmetic, got " + describe_value(v));
+    const bool sized = v.is_string() || v.is_list() || v.is_map();
+    return Value::error("type-mismatch", name + "() takes a vector: a list of numbers or a struct with component-wise arithmetic, got " + describe_value(v) +
+                                             (sized ? "; for the size of a string, list or map use len(â¦)" : ""));
 }
 
 Value bad_t(const Value& t) { return Value::error("type-mismatch", "lerp() expects a number t, got " + describe_value(t)); }
@@ -1258,7 +1260,7 @@ Value vector_function(Exec& x, const std::string& name, const std::vector<Value>
     }
     if (name == "normalize") {
         const double len = std::sqrt(vector_dot(a.parts, a.parts));
-        if (len == 0) return a.value;  // a zero vector stays zero
+        if (len == 0) return vector_build(name, a, a.parts);  // a zero vector stays zero (a new value)
         std::vector<double> r(a.parts.size());
         for (size_t i = 0; i < r.size(); ++i) r[i] = a.parts[i] / len;
         return vector_build(name, a, r);

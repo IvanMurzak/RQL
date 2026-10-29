@@ -65,8 +65,9 @@ The source is a `postfix` expression evaluated in **root scope**:
   `ref()` may also be used inside expressions (e.g. `set Target = ref("Player#1")`).
 * A call to a registered host extension function (§9), e.g. `unity.assets("t:Material")`, evaluated with no current
   item; its value is the source value. Like a registered source, a function call or `ref(…)` may be followed by
-  navigation (`unity.asset("/Game/BP").EventGraph`, `ref("Node#1").Children[0]`), which is applied to its value. An error value fails the query with its code. (Implemented in .NET; TS/C++
-  parity pending.)
+  navigation (`unreal.asset("/Game/BP").EventGraph`, `ref("Node#1").Children[0]`), which is applied to its value. An error value fails the query with its code
+  (an error of the navigation after `ref(…)` too; only `ref()`'s own `stale-ref`, already reported, leaves the stream empty).
+  (Host function sources: .NET and C++; TypeScript pending. Navigation after `ref(…)`: all runtimes.)
 * The core function **`range(start, end[, step])`** streams numbers: `start + k × step` for k = 0, 1, … while the
   number is below `end` (`step` > 0) or above it (`step` < 0); `step` defaults to 1 and `end` is excluded, so
   `range(0, 300)` gives 0 … 299 (`$index` is the same as the number) and `range(10, 0, -2)` gives 10, 8, 6, 4, 2. The
@@ -207,7 +208,8 @@ new list of numbers:
 | `-L` | every element negated. |
 
 Everything else is `error(type-mismatch)` naming both operands and the reason: `L + n` / `n - L` / `n / L` (add a list of
-as many numbers instead), lists of different lengths, an element that is not a number, `L * M` / `L / M` (an element-wise
+as many numbers instead), lists of different lengths, an element that is not a number (a `missing` or error element is
+not passed through: the operation is a type-mismatch, "every list element must be a number"), `L * M` / `L / M` (an element-wise
 product is not a vector operation: use `dot(a, b)`), and `L % …`. Division by a zero number is `error(div-by-zero)`. A
 numeric list written to a vector member is coerced like any list literal (`set Position = Position + [0, 1, 0] * 2`
 through the struct rules, `set Position = [x, 0, z] * k` through the member type's coercion).

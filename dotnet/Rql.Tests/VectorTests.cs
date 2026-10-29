@@ -118,6 +118,53 @@ namespace Rql.Tests
             Assert.Equal("arity", e.Execute("actors | select v = Position.lerp([1, 1, 1])").Diagnostics[0].Code);
         }
 
+        public sealed class Holder
+        {
+            public int Id { get; set; } = 7;
+            public List<double> Zero { get; set; } = new List<double> { 0, 0 };
+            public List<double>? Copy { get; set; }
+            public string Broken => throw new System.InvalidOperationException("boom");
+        }
+
+        [Fact]
+        public void NormalizeOfAZeroVectorIsANewValue()
+        {
+            var h = new Holder();
+            var e = new RqlEngine().AddSource("hs", () => new List<Holder> { h });
+            e.Mutations.Enabled = true;
+            Assert.True(e.Execute("hs | set Copy = normalize(Zero)", options: Mutate).Ok);
+            Assert.Equal(new double[] { 0, 0 }, h.Copy);
+            Assert.NotSame(h.Zero, h.Copy);
+        }
+
+        [Fact]
+        public void VectorFunctionOnASizedValuePointsToLen()
+        {
+            var h = new Holder();
+            var e = new RqlEngine().AddSource("hs", () => new List<Holder> { h });
+            e.Mutations.Enabled = true;
+            foreach (var q in new[] { "length(\"abc\")", "length([\"a\"])", "length({a: 1})" })
+            {
+                var r = e.Execute($"hs | set Copy = {q}", options: Mutate);
+                Assert.EndsWith("; for the size of a string, list or map use len(…)", r.Diagnostics[0].Message);
+            }
+            Assert.DoesNotContain("len(", e.Execute("hs | set Copy = length(Id)", options: Mutate).Diagnostics[0].Message);
+        }
+
+        [Fact]
+        public void NavigationAfterRefFailsOnItsOwnErrorAndTracksPaths()
+        {
+            var h = new Holder();
+            var e = new RqlEngine().AddSource("hs", () => new List<Holder> { h });
+            var stale = e.Execute("ref(\"Holder#99\").Zero | count");
+            Assert.Equal("stale-ref", stale.Diagnostics[0].Code); // ref's own error, reported once
+            var broken = e.Execute("ref(\"Holder#7\").Broken | count");
+            Assert.False(broken.Ok);
+            Assert.Contains("source 'ref(…).Broken' failed", broken.Diagnostics[0].Message);
+            var paths = e.Execute("ref(\"Holder#7\").Zero | select $path");
+            Assert.Equal("ref(…).Zero[1]", paths.Rows![1][0]!.GetValue<string>());
+        }
+
         [Fact]
         public void FunctionSourceAndCallTargetNavigate()
         {
