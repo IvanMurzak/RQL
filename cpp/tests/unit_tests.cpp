@@ -2861,20 +2861,9 @@ void dynamic_subtype_tests() {
     };
     r = e->execute_json(set_triggers("InputTriggerTap", "TapReleaseTimeThreshold"), {}, mutate);
     check(r.ok && asked == 0, "dynamic subtypes: registered types match before the lookup hook is asked");
-    bool threw = false;
-    try {
-        reg.register_descriptor(nullptr);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    check(threw, "dynamic subtypes: register_descriptor(nullptr) throws invalid_argument");
-    threw = false;
-    try {
-        reg.register_descriptor(const_cast<rql::TypeDescriptor*>(reg.list_type(trigger_t, false)));
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    check(threw, "dynamic subtypes: register_descriptor refuses a list type");
+    check(throws([&] { reg.register_descriptor(nullptr); }), "dynamic subtypes: register_descriptor(nullptr) throws");
+    check(throws([&] { reg.register_descriptor(const_cast<rql::TypeDescriptor*>(reg.list_type(trigger_t, false))); }),
+          "dynamic subtypes: register_descriptor refuses a list type");
 }
 
 int main(int argc, char** argv) {
