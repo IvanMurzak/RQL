@@ -105,6 +105,7 @@ Spec: [§3](../spec/semantics.md#3-paths-and-member-access).
 | `$path` | how this query reached the item (`objects[5].Children[1]`), not a host location |
 | `$index` | position in the stream entering the stage; in a `set` value or `call` argument, the target's position |
 | `$depth` | depth below the `recurse` start item |
+| `$count` | in a `set` value or `call` argument only: the number of items entering the stage (`$index` runs from 0 to `$count - 1`) |
 
 ## Values and truth
 
@@ -163,6 +164,8 @@ namespaced ones (`unity.find(…)`).
 | `lower(s)` · `upper(s)` | case conversion |
 | `abs` · `round(n[, digits])` · `floor` · `ceil` · `sqrt` · `pow(b, e)` | numeric |
 | `min(a, b, …)` · `max(a, b, …)` | smallest / largest of two or more numbers |
+| `sin` · `cos` · `tan` · `asin` · `acos` · `atan` · `atan2(y, x)` | trigonometry in **radians**; results are rounded (12 decimals for `sin` / `cos` / `tan`, 14 for the inverses) so every runtime returns the same digits: `sin(pi())` is `0` |
+| `pi()` · `deg(x)` · `rad(x)` | π; radians to degrees (rounded: `deg(atan2(1, 1))` is `45`) and degrees to radians |
 | `coalesce(a, b, …)` | the first argument that has a value |
 | `if(cond, then, else)` | lazy conditional (`cond ? then : else`); only the taken branch runs, so `if(Count > 0, Total / Count, 0)` is safe |
 | `ref("Type#id", …)` | resolve references (root scope) |
@@ -229,6 +232,7 @@ Spec: [§8](../spec/semantics.md#8-mutations).
 ref("Enemy#233") | set Health = MaxHealth, Transform.Position.y = Transform.Position.y + 2
 objects | where $ is Enemy and Health < 5 | first 2 | call Heal(25)
 objects | where name starts-with "Crate" | sort name | set Position.x = $index * 2
+selection | set Position = [5 * cos(2 * pi() * $index / $count), 0, 5 * sin(2 * pi() * $index / $count)]
 range(0, 300) | call editor.CreateObject("Cube", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})
 [["Crate", 1], ["Barrel", 2]] | call editor.CreateObject($[0], $[1])
 range(0, 10) | call editor.CreateObject({name: "Tile" + $, position: [$ * 2, 0, 0]})
@@ -244,6 +248,9 @@ app.Tables | get Rows | where Value.IsElite | set Value.Health = Value.Health * 
   batch validator) before the first call, on dry runs too. A method that throws stops the stage with `call-threw`;
   earlier calls are not undone (hosts with undo record the whole stage as one step).
 - **Dry runs** return the receipt without changing anything.
+- **Target scope.** A value or argument is evaluated per target with `$` the target; `$index` is its position in the
+  stream entering the stage and `$count` the size of that stream, so `$index / $count` spreads targets evenly (the
+  circle above).
 - **Targets** are objects with identity; a scalar or a struct copy (`get Transform.Position | set x = 1`) is
   `invalid-plan`. Map entries streamed by `get` write through their map.
 - **Source-qualified `call src.m(args)`** (bulk create, [ADR-0008](decisions/0008-bulk-create-from-a-range.md)) runs the

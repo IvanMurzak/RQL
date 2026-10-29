@@ -237,6 +237,7 @@ objects | where $ is Enemy and Health < 5 | first 2 | call Heal(25)
 range(0, 300) | call editor.CreateObject("Cube", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})
 range(0, 10) | call editor.CreateObject({name: "Tile" + $, position: [$ * 2, 0, 0]})
 objects | where $ is Enemy and Health < 5 | set Transform.Scale = Transform.Scale * 1.5
+selection | set Position = [5 * cos(2 * pi() * $index / $count), 0, 5 * sin(2 * pi() * $index / $count)]
 ```
 
 ```text
@@ -250,7 +251,8 @@ Enemy#233|Transform.Position.y|25.52|27.52
 - `set` is all-or-nothing: every assignment is resolved and coerced before the first write, and written values are
   restored if a later write fails. `call` validates every target before the first call; calls already made are not
   undone. A host batch validator sees the whole stage first, dry runs included. Dry runs return the receipt without
-  changing anything. In values and arguments `$index` is the target's position in the stream entering `set` / `call`.
+  changing anything. In values and arguments `$index` is the target's position in the stream entering `set` / `call` and `$count`
+  the number of items in it.
 - Bulk create: `call src.m(args)` runs the method of the one object `src` yields once per stream item, with `$` and
   `$index` the item's, so `range(…)` or a list creates many objects in one validated, undoable call; every invocation
   counts against the target limit and the receipt lists the created objects' `$ref`s.
