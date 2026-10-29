@@ -1,0 +1,72 @@
+typescript/tests/src/wave6.test.ts
+  s_7bc72ecaebd05d::t_1f9e6e00a46095 1-277
+  s_7bc72ecaebd05d::t_f074a0d3a4b803 278-279
+cpp/README.md
+  s_7bc72ecaebd05d::t_753aaa1e0726ee 66,126
+cpp/include/rql/adapters.hpp
+  s_7bc72ecaebd05d::t_e2f024e4a30805 35-39,313-322
+cpp/include/rql/engine.hpp
+  s_7bc72ecaebd05d::t_9d85e240e996d2 34-36,93-107,173-177,181,269
+cpp/src/adapters.cpp
+  s_7bc72ecaebd05d::t_6d4ac28d457822 328-329
+cpp/src/compiler.cpp
+  s_7bc72ecaebd05d::t_b1f6b484264ebe 123-128
+cpp/src/engine.cpp
+  s_7bc72ecaebd05d::t_9c223e3aa8dba5 43-44,52,58,122-123
+cpp/src/exec.hpp
+  s_7bc72ecaebd05d::t_8456e3c409b16b 43-44,161,163-167,272-273,389-390,394
+cpp/src/mutator.cpp
+  s_7bc72ecaebd05d::t_43a62bcc80640b 459-460,462-477,479-510,516-517,537-545,548-549,555,557-576,578-579,597,626,630-631,680,749,770,791,793,796-797,890,1105-1106,1121,1146,1297
+cpp/src/pipeline.cpp
+  s_7bc72ecaebd05d::t_eee1c9c24da94f 78-84,88-100,444-465,468-469,482-485,509,610-641,644-645,653,661-664,672-673,682-685,700-702,720-721,742,943,1066,1070,1072,1082-1083,1087,1091,1096,1100,1202-1203,1205,1207-1208,1397-1398
+cpp/tests/conformance_graph.cpp
+  s_7bc72ecaebd05d::t_de75155bf42758 247-254,320-332
+cpp/tests/unit_tests.cpp
+  s_7bc72ecaebd05d::t_389bb471a75bf1 2117-2421,2437
+docs/feature-matrix-cpp.md
+  s_7bc72ecaebd05d::t_a5c8eb3eb6c139 15,21
+docs/feature-matrix-typescript.md
+  s_7bc72ecaebd05d::t_0df6acdc1462fe 13
+dotnet/Rql.SampleRuntime/Model.cs
+  s_7bc72ecaebd05d::t_aaa38cba60fe6e 199-218
+dotnet/Rql.SampleRuntime/SampleHost.cs
+  s_7bc72ecaebd05d::t_213c0aefcbd8d5 32-35,78-83
+evaluation/runner/Rql.Eval/Tasks/Catalog.cs
+  s_7bc72ecaebd05d::t_3b9566a3489eda 710,717
+typescript/README.md
+  s_7bc72ecaebd05d::t_f9ad8c3900610f 47,142-147
+typescript/packages/execution/src/adapters.ts
+  s_7bc72ecaebd05d::t_356dd249e1de8c 96-102,133-144,168,175,191-192,209
+typescript/packages/execution/src/engine.ts
+  s_7bc72ecaebd05d::t_da0272abaedc6a 8,13,19-23,89-108,360-364,366,368,453-454,460-485,489-490,492-508,510-512,514-521,530-532,534
+typescript/packages/execution/src/index.ts
+  s_7bc72ecaebd05d::t_680e046851a763 44
+typescript/packages/execution/src/mutator.ts
+  s_7bc72ecaebd05d::t_744976bf2f687a 9,429,656,995-1002,1009-1016,1019-1021,1157-1162,1164-1177,1197-1205,1210,1212-1220,1226-1227,1235
+typescript/packages/execution/src/pipeline.ts
+  s_7bc72ecaebd05d::t_4eef92d9db037e 33,56-95,190-191,208-210,232-233,251-252,354,544,551-552,598,601,603-605,609-627,668,676,685,692,700,702,711
+typescript/packages/execution/src/suggest.ts
+  s_7bc72ecaebd05d::t_b9771371fc8d43 118-125
+typescript/tests/src/conformance.ts
+  s_7bc72ecaebd05d::t_dacab227f41a77 12,119-120
+typescript/tests/src/test-adapters.ts
+  s_7bc72ecaebd05d::t_4272386b445e3c 133-134,191-200
+evaluation/runner/Rql.Eval/Tasks/CatalogWave6b.cs
+  s_7bc72ecaebd05d::t_0b07c647ed6785 1-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "25dd952ccdc6da9d06c4545794dcfa54e18868b1",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
