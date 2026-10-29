@@ -9,6 +9,6 @@ its native build (dotnet SDK / npm workspaces / CMake). Dependencies: .NET — `
 (netstandard2.1 only; built into net8+), xunit for tests; TS — `typescript` (dev only); C++ — none
 (own small JSON library). Libraries target `netstandard2.1;net8.0` so Unity/ReflectorNet can consume them.
 
-**Consequences.** One commit changes spec + all runtimes + goldens atomically; `scripts/test-all.sh`
+**Consequences.** One commit changes spec + all runtimes + goldens atomically; `scripts/test-all.py`
 gates everything. C++ carries ~600 lines of JSON code instead of a third-party dependency, which keeps
 the future Unreal integration free of dependency conflicts.

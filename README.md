@@ -261,11 +261,10 @@ has no dependency on any engine, MCP or hosted service.
 
 ## Build and test
 
-Requirements: .NET SDK 10, Node.js ≥ 22, CMake ≥ 3.20 with a C++17 compiler.
+Requirements: .NET SDK 10, Node.js ≥ 22, CMake ≥ 3.20 with a C++17 compiler, Python ≥ 3.9 (runs `scripts/test-all.py`).
 
 ```bash
-scripts/test-all.sh        # everything: .NET, TypeScript, C++, conformance, task self-check
-                           # Windows / PowerShell: scripts/test-all.ps1
+python3 scripts/test-all.py   # everything: .NET, TypeScript, C++, conformance, task self-check (Windows: python)
 dotnet test dotnet/Rql.slnx
 dotnet run --project dotnet/Rql.Conformance -- check
 (cd typescript && npm install && npm test)
