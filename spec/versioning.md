@@ -112,3 +112,8 @@
   Two more shared language rules (vectors, missing map entries). **Behaviour change**: `==` compares two structs of one type member by member, recursively
   (§4.1; it was `unknown` without an equality adapter), so a `set` that writes a struct's current value, nested structs
   included, is counted as unchanged.
+* Trigonometry and `$count` (unreleased; protocol stays `0.1`, no new error code, no plan change): functions `sin`, `cos`,
+  `tan` (rounded to 12 decimal places), `asin`, `acos`, `atan`, `atan2(y, x)` (rounded to 14), `pi()`, `deg(x)` (rounded to
+  12) and `rad(x)` (§4.3), so runtimes agree on the digits; the meta member `$count`, the number of items entering a `set` /
+  `call` stage, in set values and call arguments (missing, with an `unknown-meta` warning, elsewhere; §3, §8); a shared
+  language rule with the circle layout `[5 * cos(2 * pi() * $index / $count), 0, 5 * sin(…)]`.

@@ -955,6 +955,8 @@ namespace Rql.Execution
         public readonly List<IsSite> IsSites = new List<IsSite>();
         public readonly Dictionary<string, object?> RefCache = new Dictionary<string, object?>(StringComparer.Ordinal);
         public long Index;
+        /// <summary>`$count` in a set value / call argument: the number of items entering the stage; -1 elsewhere (spec §3, §8).</summary>
+        public long Count = -1;
         /// <summary>Inside has(): an absent map key reads as missing instead of null (spec §3, §4.3).</summary>
         public int KeyProbe;
 

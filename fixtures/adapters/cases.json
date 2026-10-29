@@ -10240,6 +10240,164 @@
           }
         ]
       }
+    },
+    {
+      "name": "adapt-call-qualified-count",
+      "rql": "range(0, 4) | call ref(\"Node#8\").greet($index + \"/\" + $count + \" \" + round(cos(2 * pi() * $index / $count), 3))",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 4
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "greet",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#8"
+                }
+              ]
+            },
+            "args": [
+              {
+                "op": "+",
+                "args": [
+                  {
+                    "op": "+",
+                    "args": [
+                      {
+                        "op": "+",
+                        "args": [
+                          {
+                            "op": "+",
+                            "args": [
+                              {
+                                "path": [
+                                  {
+                                    "meta": "index"
+                                  }
+                                ]
+                              },
+                              {
+                                "lit": "/"
+                              }
+                            ]
+                          },
+                          {
+                            "path": [
+                              {
+                                "meta": "count"
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "lit": " "
+                      }
+                    ]
+                  },
+                  {
+                    "call": "round",
+                    "args": [
+                      {
+                        "call": "cos",
+                        "args": [
+                          {
+                            "op": "/",
+                            "args": [
+                              {
+                                "op": "*",
+                                "args": [
+                                  {
+                                    "op": "*",
+                                    "args": [
+                                      {
+                                        "lit": 2
+                                      },
+                                      {
+                                        "call": "pi",
+                                        "args": []
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "path": [
+                                      {
+                                        "meta": "index"
+                                      }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "path": [
+                                  {
+                                    "meta": "count"
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "lit": 3
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi 0/4 1, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi 1/4 0, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi 2/4 -1, I am lonely"
+          ],
+          [
+            "Node#8",
+            "greet(string who)",
+            "hi 3/4 0, I am lonely"
+          ]
+        ],
+        "total": 4
+      }
     }
   ]
 }

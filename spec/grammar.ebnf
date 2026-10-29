@@ -60,7 +60,7 @@ postfix         = primary , { "." , member | "." , name , call_args | "[" , expr
 primary         = literal | list | object | "(" , expr , ")" | meta | name , [ call_args ] ;
 call_args       = "(" , [ expr , { "," , expr } ] , ")" ;
 member          = name | meta ;
-meta            = "$" , [ ident ] ;               (* "$" alone = current item; $type $ref $path $index *)
+meta            = "$" , [ ident ] ;               (* "$" alone = current item; $type $ref $path $index $count $depth *)
 type_name       = name | string ;
 list            = "[" , [ expr , { "," , expr } ] , "]" ;
 object          = "{" , [ entry , { "," , entry } ] , "}" ;   (* keys unique and non-empty, §4.5 *)

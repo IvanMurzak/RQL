@@ -15,6 +15,7 @@ type Truth = boolean | undefined;
 
 export const CORE_FUNCTIONS = [
   'has', 'is-null', 'len', 'lower', 'upper', 'abs', 'round', 'floor', 'ceil', 'sqrt', 'pow', 'min', 'max', 'coalesce', 'if', 'ref',
+  'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'pi', 'deg', 'rad',
   'append', 'insert', 'remove-at', 'without', 'range',
   'replace', 'replace-regex', 'substring', 'split', 'trim', 'pad',
   'contains', 'starts-with', 'ends-with', 'matches',
@@ -33,6 +34,8 @@ const isList = (x: Exec, v: unknown): v is object => typeof v === 'object' && v 
 export class Compiler {
   /** Depth of has() arguments being compiled: their member sites are guards (spec §8). */
   private guarded = 0;
+  /** Compiling set values / call arguments, where $count is defined (spec §3, §8). */
+  mutationValues = false;
 
   constructor(private readonly x: Exec) {}
 
@@ -176,11 +179,17 @@ export class Compiler {
       case 'index':
         if (!ofCurrentItem) return () => MISSING;
         return (x) => x.index;
+      case 'count':
+        if (!ofCurrentItem) return () => MISSING;
+        if (!this.mutationValues)
+          this.x.warn('unknown-meta', "'$count' is only defined in a set value or call argument",
+            'it is the number of items entering the set / call stage, so $index / $count runs from 0 towards 1 there');
+        return (x) => (x.count >= 0 ? x.count : MISSING);
       case 'depth':
         if (!ofCurrentItem) return () => MISSING;
         return (x) => (x.currentDepth >= 0 ? x.currentDepth : MISSING);
       default:
-        this.x.warn('unknown-meta', `unknown meta member '$${name}'`, 'meta members: $type $ref $path $index $depth');
+        this.x.warn('unknown-meta', `unknown meta member '$${name}'`, 'meta members: $type $ref $path $index $count $depth');
         return () => MISSING;
     }
   }
@@ -386,20 +395,33 @@ export class Compiler {
       case 'abs':
       case 'floor':
       case 'ceil':
-      case 'sqrt': {
+      case 'sqrt':
+      case 'sin':
+      case 'cos':
+      case 'tan':
+      case 'asin':
+      case 'acos':
+      case 'atan':
+      case 'deg':
+      case 'rad': {
         this.arity(c, 1, 1);
         const a = this.compile(c.args[0]!);
-        const f = name === 'abs' ? Math.abs : name === 'floor' ? Math.floor : name === 'ceil' ? Math.ceil : Math.sqrt;
+        const f = UNARY_MATH[name]!;
         return (x) => num(a(x), f);
       }
+      case 'pi':
+        this.arity(c, 0, 0);
+        return () => Math.PI;
       case 'pow':
+      case 'atan2':
       case 'min':
       case 'max': {
-        if (name === 'pow') this.arity(c, 2, 2);
+        if (name === 'pow' || name === 'atan2') this.arity(c, 2, 2);
         else this.arity(c, 2, 64);
         const args = c.args.map((e) => this.compile(e));
         // Math.min / Math.max match .NET (NaN wins; -0 < +0).
-        const f: (l: number, r: number) => number = name === 'pow' ? Math.pow : name === 'min' ? Math.min : Math.max;
+        const f: (l: number, r: number) => number =
+          name === 'pow' ? Math.pow : name === 'atan2' ? (y, xv) => trigInverse(Math.atan2(y, xv)) : name === 'min' ? Math.min : Math.max;
         return (x) => {
           let acc = 0;
           for (let i = 0; i < args.length; i++) {
@@ -1544,6 +1566,35 @@ function expandReplacement(m: RegExpMatchArray, repl: string): string {
   return out;
 }
 
+/** Trigonometric results are rounded to 12 decimal places (spec §4.3), so runtimes whose math libraries differ in the last
+ * bit return the same digits (and sin(pi()) is 0, never -0). */
+function trig(d: number): number {
+  return roundAwayFromZero(d, 12) + 0; // -0 + 0 is +0; NaN stays NaN
+}
+
+/** Inverse trigonometric results (radians) are rounded to 14 places, so deg() of them, rounded to 12, comes out clean:
+ * deg(atan2(1, 1)) is 45 (spec §4.3). */
+function trigInverse(d: number): number {
+  return roundAwayFromZero(d, 14) + 0;
+}
+
+/** The one-argument numeric functions (spec §4.3). deg / rad multiply, then divide, so every runtime returns the same
+ * digits; degrees are rounded like trig results (60, not 59.99999999999999), radians are not (rad(180) is pi()). */
+const UNARY_MATH: Record<string, (d: number) => number> = {
+  abs: Math.abs,
+  floor: Math.floor,
+  ceil: Math.ceil,
+  sqrt: Math.sqrt,
+  sin: (v) => trig(Math.sin(v)),
+  cos: (v) => trig(Math.cos(v)),
+  tan: (v) => trig(Math.tan(v)),
+  asin: (v) => trigInverse(Math.asin(v)),
+  acos: (v) => trigInverse(Math.acos(v)),
+  atan: (v) => trigInverse(Math.atan(v)),
+  deg: (v) => trig((v * 180) / Math.PI),
+  rad: (v) => (v * Math.PI) / 180,
+};
+
 function num(v: unknown, f: (d: number) => number): unknown {
   if (v === null || isAbsent(v)) return v;
   const d = toNumber(v);
@@ -1603,6 +1654,8 @@ function quantify(x: Exec, v: unknown, pred: Eval | undefined, kind: string): un
   const saved = x.current;
   const savedPath = x.currentPath;
   const savedIndex = x.index;
+  const savedCount = x.count;
+  x.count = -1; // $count is not defined in collection-method arguments (spec §3)
   x.outer.push(saved);
   try {
     let count = 0;
@@ -1651,6 +1704,7 @@ function quantify(x: Exec, v: unknown, pred: Eval | undefined, kind: string): un
     x.current = saved;
     x.currentPath = savedPath;
     x.index = savedIndex;
+    x.count = savedCount;
   }
 }
 
@@ -1660,6 +1714,8 @@ function aggregate(x: Exec, v: unknown, sel: Eval | undefined, kind: string): un
   if (els === undefined) return v === null ? null : MISSING;
   const saved = x.current;
   const savedPath = x.currentPath;
+  const savedCount = x.count;
+  x.count = -1; // $count is not defined in collection-method arguments (spec §3)
   x.outer.push(saved);
   try {
     const values: unknown[] = [];
@@ -1677,6 +1733,7 @@ function aggregate(x: Exec, v: unknown, sel: Eval | undefined, kind: string): un
     x.outer.pop();
     x.current = saved;
     x.currentPath = savedPath;
+    x.count = savedCount;
   }
 }
 

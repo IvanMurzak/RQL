@@ -89,6 +89,8 @@ export class Exec {
   /** Depth within the most recent recurse stage (0 = start item); -1 outside recurse. */
   currentDepth = -1;
   index = 0;
+  /** `$count` in a set value / call argument: the number of items entering the stage; -1 elsewhere (spec §3, §8). */
+  count = -1;
   /** Inside has(): an absent map key reads as missing instead of null (spec §3, §4.3). */
   keyProbe = 0;
   /** Enclosing items while evaluating collection-method arguments (scope chain, innermost last). */
