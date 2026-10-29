@@ -327,8 +327,9 @@ namespace Rql.Tests
         {
             int walks = 0;
             var e = new RqlEngine()
-                .AddSource("items", () => new List<Group> { new Group { Label = "a" } })
-                .AddSource("groups", () => { walks++; return new List<SceneNode>(); });
+                // Func<object?>: undeclared sources, whose types are learnt only from their values.
+                .AddSource("items", (Func<object?>)(() => new List<Group> { new Group { Label = "a" } }))
+                .AddSource("groups", (Func<object?>)(() => { walks++; return new List<SceneNode>(); }));
             e.Mutations.Enabled = true;
             e.Execute("items | where Labl == \"x\"");                       // unknown-member warning
             e.Execute("items | where $ is SceneNode | count");               // no-match warning (holders hint)

@@ -204,13 +204,22 @@ namespace Rql.Tests
             Thing[] Things() { reads++; return new[] { new Thing() }; }
             e.AddSource("arr", Things).AddSource("one", () => new Thing())
                 .AddSource("objects", () => new List<object>()).AddSource("anything", () => (object)new Thing())
-                .AddSource("untyped", (Func<object?>)(() => new Thing()));
+                .AddSource("untyped", (Func<object?>)(() => new Thing()))
+                .AddSource("interface", () => (IDisposable)new System.IO.MemoryStream())
+                .AddSource("interfaces", () => new List<IDisposable>())
+                .AddSource("nongeneric", () => (System.Collections.IList)new System.Collections.ArrayList())
+                .AddSource("text", () => "s");
             Assert.Equal(typeof(Thing[]), e.Sources["arr"].DeclaredType);
             Assert.Equal(typeof(Thing), e.Sources["one"].DeclaredType);
             // object, a list of object, or a Func<object?> declare nothing: the type comes from the values.
             Assert.Null(e.Sources["objects"].DeclaredType);
             Assert.Null(e.Sources["anything"].DeclaredType);
             Assert.Null(e.Sources["untyped"].DeclaredType);
+            // Interfaces and untyped lists hide the runtime type: declaring them would hide its members until a read.
+            Assert.Null(e.Sources["interface"].DeclaredType);
+            Assert.Null(e.Sources["interfaces"].DeclaredType);
+            Assert.Null(e.Sources["nongeneric"].DeclaredType);
+            Assert.Equal(typeof(string), e.Sources["text"].DeclaredType);
             Assert.Equal(0, reads); // registering never calls the getter
             var r = e.Execute("arr | count");
             Assert.True(r.Ok, r.ToJson(includeStats: false));

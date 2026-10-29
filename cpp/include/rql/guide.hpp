@@ -30,8 +30,8 @@ inline const char* language_rules() noexcept {
 struct RuleExamples {
     /// The creation call, e.g. "editor.CreateGameObject" (empty: editor.CreateObject).
     std::string create_call;
-    /// Replaces the bulk-create example in full, range included (`range(0, 150) | call …`, a 15-wide grid from $), so it can
-    /// stay within the host's target limit.
+    /// Replaces the bulk-create example in full, range included (the default is `range(0, 300) | call …`, a 15-wide grid from
+    /// $), so a host can keep it within its target limit, e.g. `range(0, 150) | call …`.
     std::string grid;
     /// Replaces the list-literal example in full (`[…] | call ….($[0], $[1])`, one call per entry).
     std::string per_entry;

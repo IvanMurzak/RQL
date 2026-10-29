@@ -343,8 +343,9 @@ namespace Rql.Execution
 
         /// <summary>
         /// Register a source whose declared type (see <see cref="AddSource(string, Func{object}, string, Type)"/>) is the getter's
-        /// return type <typeparamref name="T"/>, so the two cannot drift apart. A getter typed <c>object</c> or as a list of
-        /// <c>object</c> declares nothing: its type is learnt from its values, as without a declared type.
+        /// return type <typeparamref name="T"/>, so the two cannot drift apart. A getter whose item type (a list's element type,
+        /// else <typeparamref name="T"/>) is <c>object</c> or an interface, or that returns a list without an element type,
+        /// declares nothing: such a type hides the runtime type, which is then learnt from the values as without a declared type.
         /// </summary>
         public RqlEngine AddSource<T>(string name, Func<T> getter, string? description = null)
         {
@@ -352,7 +353,8 @@ namespace Rql.Execution
             var type = typeof(T);
             var element = type.IsArray ? type.GetElementType()
                 : TypeModel.FindGeneric(type, typeof(IEnumerable<>))?.GetGenericArguments()[0];
-            bool untyped = type == typeof(object) || element == typeof(object);
+            var item = element ?? (typeof(System.Collections.IEnumerable).IsAssignableFrom(type) ? typeof(object) : type);
+            bool untyped = item == typeof(object) || item.IsInterface;
             return AddSource(name, () => getter(), description, untyped ? null : type);
         }
 

@@ -74,8 +74,8 @@ namespace Rql.Execution
         /// <summary>The creation call, e.g. <c>editor.CreateGameObject</c> (null: <c>editor.CreateObject</c>).</summary>
         public string? CreateCall { get; set; }
         /// <summary>
-        /// Replaces the bulk-create example in full, range included (<c>range(0, 150) | call …</c>, a 15-wide grid from
-        /// <c>$</c>), so it can stay within the host's target limit.
+        /// Replaces the bulk-create example in full, range included (the default is <c>range(0, 300) | call …</c>, a 15-wide
+        /// grid from <c>$</c>), so a host can keep it within its target limit, e.g. <c>range(0, 150) | call …</c>.
         /// </summary>
         public string? Grid { get; set; }
         /// <summary>Replaces the list-literal example in full (<c>[…] | call ….($[0], $[1])</c>, one call per entry).</summary>
