@@ -105,7 +105,7 @@ Spec: [§3](../spec/semantics.md#3-paths-and-member-access).
 | `$path` | how this query reached the item (`objects[5].Children[1]`), not a host location |
 | `$index` | position in the stream entering the stage; in a `set` value or `call` argument, the target's position |
 | `$depth` | depth below the `recurse` start item |
-| `$count` | in a `set` value or `call` argument only: the number of items entering the stage (`$index` runs from 0 to `$count - 1`) |
+| `$count` | in a `set` value or `call` argument only: the number of items entering the stage, skipped null / destroyed items included (`$index` runs from 0 to `$count - 1`); `missing` inside collection-method arguments, and elsewhere `missing` with an `unknown-meta` warning |
 
 ## Values and truth
 
@@ -164,8 +164,8 @@ namespaced ones (`unity.find(…)`).
 | `lower(s)` · `upper(s)` | case conversion |
 | `abs` · `round(n[, digits])` · `floor` · `ceil` · `sqrt` · `pow(b, e)` | numeric |
 | `min(a, b, …)` · `max(a, b, …)` | smallest / largest of two or more numbers |
-| `sin` · `cos` · `tan` · `asin` · `acos` · `atan` · `atan2(y, x)` | trigonometry in **radians**; results are rounded (12 decimals for `sin` / `cos` / `tan`, 14 for the inverses) so every runtime returns the same digits: `sin(pi())` is `0` |
-| `pi()` · `deg(x)` · `rad(x)` | π; radians to degrees (rounded: `deg(atan2(1, 1))` is `45`) and degrees to radians |
+| `sin` · `cos` · `tan` · `asin` · `acos` · `atan` · `atan2(y, x)` | trigonometry in **radians**; results are rounded (12 decimals for `sin` / `cos` / `tan`, 14 for the inverses) so runtimes agree on the digits (except rare half-way cases and results above about 9000): `sin(pi())` is `0` |
+| `pi()` · `deg(x)` · `rad(x)` | π (not rounded); radians to degrees (rounded to 12 decimals: `deg(atan2(1, 1))` is `45`) and degrees to radians (not rounded: `rad(180)` is `pi()`) |
 | `coalesce(a, b, …)` | the first argument that has a value |
 | `if(cond, then, else)` | lazy conditional (`cond ? then : else`); only the taken branch runs, so `if(Count > 0, Total / Count, 0)` is safe |
 | `ref("Type#id", …)` | resolve references (root scope) |
