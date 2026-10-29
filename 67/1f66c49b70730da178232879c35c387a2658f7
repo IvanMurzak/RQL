@@ -1,0 +1,102 @@
+dotnet/Rql.Tests/VectorTests.cs
+  s_7bc72ecaebd05d::t_82dad0553590ad 1-120,168-184
+  s_7bc72ecaebd05d::t_df198d1b82614d 121-167
+docs/decisions/0012-list-vectors-vector-functions-qualified-paths.md
+  s_7bc72ecaebd05d::t_c132629d8f3276 1-53
+dotnet/Rql.Execution/Compiler.cs
+  s_7bc72ecaebd05d::t_21abe65110d90a 29,37,857,973-998,1002-1014,1016-1021,1023-1024,1027-1031,1034-1043,1046,1048-1049,1173-1179,1601-1607,1793-1811,1813-1817,1821-1823,1829,1831,1833-1834,1836-1844,1846,1849-1852,1856,1858-1860,1863-1868,1870,1872-1876,1889-1890,1892,1895,1897-1901,1910-1911
+  s_7bc72ecaebd05d::t_ce78fad3f423ca 888,901-904,906-907,970,999-1001,1015,1022,1025-1026,1032-1033,1044-1045,1047,1812,1824-1828,1832,1845,1847-1848,1853-1855,1857,1861,1869,1871,1877-1888,1891,1893-1894,1896,1902-1909
+  s_7bc72ecaebd05d::t_ea55d479ab3514 1818-1820,1830,1835,1862
+dotnet/Rql.Execution/Pipeline.cs
+  s_7bc72ecaebd05d::t_d949eb4d64d4f7 389-394,396-398,402-403,406
+  s_7bc72ecaebd05d::t_c6c0e1bdde8991 381,395,401,404,784-787,791
+  s_7bc72ecaebd05d::t_9fd95d42c4615f 399-400,405
+  s_7bc72ecaebd05d::t_89a4a78c980785 1282-1317
+evaluation/runner/Rql.Eval/Tasks/CatalogWave6b.cs
+  s_7bc72ecaebd05d::t_ff2b64b46361b0 9-11,53-88
+fixtures/adapters/cases.json
+  s_7bc72ecaebd05d::t_e65be55a7c90b8 7196-7199,9692-10242
+fixtures/execution/cases.json
+  s_7bc72ecaebd05d::t_24386374308cad 24718-26005
+  s_7bc72ecaebd05d::t_a63f6e55fb6101 26006-26069
+spec/semantics.md
+  s_7bc72ecaebd05d::t_4cc839f42504c6 67,198-210,213-215,242-259,545-547
+  s_7bc72ecaebd05d::t_6ac92f8a1779da 68-70,211-212
+  s_7bc72ecaebd05d::t_b2bb18f09ac8d5 531-536,641-644,874-876
+cpp/src/pipeline.cpp
+  s_7bc72ecaebd05d::t_6d49dd80e6f2af 966,968-969,972-973,976-978,980-983
+  s_7bc72ecaebd05d::t_ac274e662abf28 206-212,216,218,953,967,970,979
+  s_7bc72ecaebd05d::t_0ff4c87c8041e5 971,974-975
+typescript/tests/src/vectors.test.ts
+  s_7bc72ecaebd05d::t_b030d936982c51 1-92
+  s_7be60963fe3603::t_8e55cd42a9825e 93-146
+cpp/tests/unit_tests.cpp
+  s_7bc72ecaebd05d::t_048e1dc3f8a181 2163-2231,2250-2266,2268-2270,2581
+  s_7bc72ecaebd05d::t_ee1cb1b045cd7b 2267
+  s_7bc72ecaebd05d::t_8ecf0db9c3ab56 2232-2249
+cpp/src/compiler.cpp
+  s_7bc72ecaebd05d::t_5d534250b8927c 1141-1159,1161,1164-1167,1170-1180,1183,1185-1200,1203,1207,1216-1220,1222-1226,1230-1231,1234-1235,1240-1241,1243-1249,1253-1254,1258,1260-1261,1264-1267,1269,1271-1277,1287-1288,1426-1427,1430-1431,2022-2026,2079-2083,2089-2097,2099-2101,2103-2111
+  s_7bc72ecaebd05d::t_f40890149efd1c 1059-1060,1064-1069,1074-1085,1136,1160,1162-1163,1168-1169,1181-1182,1184,1201-1202,1204-1206,1208-1215,1221,1232-1233,1236-1239,1242,1250-1252,1255-1257,1259,1262,1268,1270,2098,2102
+  s_7bc72ecaebd05d::t_025071d03a5bd2 1227-1229,1263
+cpp/src/exec.hpp
+  s_7bc72ecaebd05d::t_1b92c0de7e2155 342
+docs/feature-matrix-typescript.md
+  s_7bc72ecaebd05d::t_b49bc0bab9f976 20
+typescript/packages/execution/src/compiler.ts
+  s_7bc72ecaebd05d::t_2bb0a274b6eb13 21,28,379-385,586-592,598-617,1077-1080,1206,1208,1210-1221,1226-1228,1231-1262,1265-1267,1274-1275,1278,1282,1295-1299,1301-1304,1306-1308,1310-1311,1313,1315,1317-1324,1329-1330,1334,1336-1337,1340-1342,1344,1346-1350
+  s_7bc72ecaebd05d::t_5d3d0efe41ce7f 1134-1143,1203,1207,1209,1222-1225,1229-1230,1263-1264,1276-1277,1279-1281,1283-1294,1300,1305,1309,1314,1325-1328,1331-1333,1335,1338,1343,1345
+  s_7bc72ecaebd05d::t_f4ed4cfcf6676f 1268-1273,1312,1316,1339
+typescript/packages/execution/src/pipeline.ts
+  s_7bc72ecaebd05d::t_e0af0d2c0033a5 369-376,379-381,383-384,386-387
+  s_7bc72ecaebd05d::t_c46ecf562a5649 382
+  s_7bc72ecaebd05d::t_1b7df2ceade6be 377-378,385
+cpp/src/engine.cpp
+  s_7bc72ecaebd05d::t_38cf0331541e0d 36-37,40-41
+docs/feature-matrix-cpp.md
+  s_7bc72ecaebd05d::t_c7e90c36b18691 16
+docs/feature-matrix.md
+  s_7bc72ecaebd05d::t_df4709df0d8f17 43
+  s_7bc72ecaebd05d::t_5690a5f3e414b1 44
+docs/decisions/0013-hints-and-host-texts.md
+  s_7bc72ecaebd05d::t_26f89f3747309e 1-41
+dotnet/Rql.Tests/HintTests.cs
+  s_7bc72ecaebd05d::t_d52472e84a3881 1-130
+docs/agent-tool-contract.md
+  s_7bc72ecaebd05d::t_68af6540dec2bd 26-33
+dotnet/Rql.Execution/AgentFormat.cs
+  s_7bc72ecaebd05d::t_5acd0bca5cb171 35-42,71-75,118-120
+dotnet/Rql.Execution/Encoder.cs
+  s_7bc72ecaebd05d::t_cf99840c050ce9 32-34,45-48
+dotnet/Rql.Execution/Modules.cs
+  s_7bc72ecaebd05d::t_f3f9b408f5803b 49-57,59-69,77-114,152,156,158
+dotnet/Rql.Execution/Mutator.cs
+  s_7bc72ecaebd05d::t_95467063832507 287,617,749-751,806-809
+dotnet/Rql.Execution/RqlLanguageGuide.cs
+  s_7bc72ecaebd05d::t_e3bb6e5078ca5c 16,20,22-33
+fixtures/guide/language-rules.txt
+  s_7bc72ecaebd05d::t_1bb613cf0d840c 5,9,11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "671f66c49b70730da178232879c35c387a2658f7",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    },
+    "s_7be60963fe3603": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c306a43-6f1a-4fe9-9b57-09acf4bc1a65",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
