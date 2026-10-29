@@ -97,6 +97,45 @@ export function memberHint(name: string, members: readonly string[], declaring: 
   return parts.join('; ');
 }
 
+/**
+ * The parameter a misspelt argument name stands for (spec §8): the closest name by the suggestion rules, else the name one
+ * of whose camelCase / snake_case words is close ('klass' → 'className'); undefined when none qualifies.
+ */
+export function closestParameter(key: string, names: readonly string[]): string | undefined {
+  const close = closest(key, names, 1);
+  if (close.length > 0) return close[0];
+  const lower = key.toLowerCase();
+  const limit = Math.max(1, Math.floor(key.length / 3));
+  let best: string | undefined;
+  let bestD = Number.MAX_SAFE_INTEGER;
+  for (const n of names) {
+    for (const w of nameWords(n)) {
+      if (w.length < 3) continue;
+      const d = distance(lower, w);
+      if (d <= limit && d < bestD) {
+        best = n;
+        bestD = d;
+      }
+    }
+  }
+  return best;
+}
+
+const isUpper = (c: string): boolean => c >= 'A' && c <= 'Z';
+
+/** The lower-case words of a camelCase / PascalCase / snake_case name ('className' → class, name). */
+function nameWords(name: string): string[] {
+  const words: string[] = [];
+  let start = 0;
+  for (let i = 1; i <= name.length; i++) {
+    if (i === name.length || name[i] === '_' || (isUpper(name[i]!) && !isUpper(name[i - 1]!))) {
+      if (i > start) words.push(name.substring(start, i).replace(/^_+|_+$/g, '').toLowerCase());
+      start = i;
+    }
+  }
+  return words;
+}
+
 /** Optimal string alignment distance: Levenshtein plus adjacent transpositions at cost 1 ("Lable" → "Label" = 1). */
 export function distance(a: string, b: string): number {
   // Rows i-2, i-1 and i of the DP matrix.

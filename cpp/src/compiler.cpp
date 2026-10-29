@@ -83,6 +83,51 @@ static bool signals_typo(const std::string& name, const std::string& c) {
     return (name.size() >= 3 && icontains(c, name)) || (c.size() * 2 >= name.size() && icontains(name, c));
 }
 
+namespace {
+bool ascii_upper_char(char c) { return c >= 'A' && c <= 'Z'; }
+
+/// The lower-case words of a camelCase / PascalCase / snake_case name ("className" → class, name).
+std::vector<std::string> name_words(const std::string& name) {
+    std::vector<std::string> words;
+    size_t start = 0;
+    for (size_t i = 1; i <= name.size(); ++i) {
+        if (i == name.size() || name[i] == '_' || (ascii_upper_char(name[i]) && !ascii_upper_char(name[i - 1]))) {
+            if (i > start) {
+                std::string w = name.substr(start, i - start);
+                size_t b = w.find_first_not_of('_'), e = w.find_last_not_of('_');
+                w = b == std::string::npos ? std::string() : w.substr(b, e - b + 1);
+                for (auto& c : w)
+                    if (ascii_upper_char(c)) c = static_cast<char>(c + 32);
+                words.push_back(w);
+            }
+            start = i;
+        }
+    }
+    return words;
+}
+}  // namespace
+
+std::string closest_parameter(const std::string& key, const std::vector<std::string>& names) {
+    std::vector<std::string> close = suggest_closest(key, names, 1);
+    if (!close.empty()) return close[0];
+    std::string lower = key;
+    for (auto& c : lower)
+        if (ascii_upper_char(c)) c = static_cast<char>(c + 32);
+    const size_t limit = std::max<size_t>(1, key.size() / 3);
+    std::string best;
+    size_t best_d = static_cast<size_t>(-1);
+    for (auto& n : names)
+        for (auto& w : name_words(n)) {
+            if (w.size() < 3) continue;
+            size_t d = osa_distance(lower, w);
+            if (d <= limit && d < best_d) {
+                best = n;
+                best_d = d;
+            }
+        }
+    return best;
+}
+
 std::vector<std::string> suggest_closest(const std::string& name, const std::vector<std::string>& candidates, size_t max) {
     return suggest_members(name, candidates, {}, max);
 }

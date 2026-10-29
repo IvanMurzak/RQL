@@ -962,7 +962,7 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
         }
         rows.push_back({Value::string(w.ref), Value::string(w.label), w.old_value, w.new_value});
     }
-    QueryResult r = enc.rows({"$ref", "member", "old", "new"}, rows);
+    QueryResult r = enc.rows({"$ref", "member", "old", "new"}, rows, true);
     r.dry_run = x.options.dry_run;
     r.unchanged = unchanged;
     return r;
@@ -1084,9 +1084,11 @@ bool bind_names(const MethodDescriptor& m, const Value& literal, std::vector<siz
         return false;
     }
     if (!unknown.empty()) {
-        std::vector<std::string> close = suggest_closest(unknown, names, 1);
-        misses.push_back({&m, true, known, 0,
-                          "no parameter '" + unknown + "'" + (close.empty() ? std::string() : " (did you mean '" + close[0] + "'?)") +
+        // A key close to a parameter's name is that parameter misspelt: it counts as bound and the miss as deep, so
+        // "no parameter 'klass' (did you mean 'className'?)" beats an overload that cannot take the literal (spec §8).
+        const std::string close = closest_parameter(unknown, names);
+        misses.push_back({&m, true, known + (close.empty() ? 0 : 1), close.empty() ? 0 : 2,
+                          "no parameter '" + unknown + "'" + (close.empty() ? std::string() : " (did you mean '" + close + "'?)") +
                               (ps.empty() ? std::string("; it takes no parameters") : "; parameters: " + join(names, ", "))});
         return false;
     }
@@ -1349,7 +1351,7 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
         rows.push_back({Value::string(x.ref_of(created ? result : p.item)), Value::string(p.item.type()->signature(*p.method)), result});
     }
     committed(x, records);
-    QueryResult r = enc.rows({"$ref", "method", "result"}, rows);
+    QueryResult r = enc.rows({"$ref", "method", "result"}, rows, true);
     r.dry_run = x.options.dry_run;
     return r;
 }

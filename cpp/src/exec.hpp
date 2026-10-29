@@ -306,6 +306,9 @@ size_t distinct_hash(Exec& x, const Value& v);
 bool elements(const Value& v, std::vector<Value>& out);
 size_t collection_size(const Value& v);
 std::vector<std::string> suggest_closest(const std::string& name, const std::vector<std::string>& candidates, size_t max);
+/// The parameter a misspelt argument name stands for (spec §8): the closest name by the suggestion rules, else the name one
+/// of whose camelCase / snake_case words is close ("klass" → "className"); empty when none qualifies.
+std::string closest_parameter(const std::string& key, const std::vector<std::string>& names);
 /// Names ordered by their distance to `name` (then ordinal), duplicates dropped: the nearest come first in a capped list.
 std::vector<std::string> by_similarity(const std::string& name, const std::vector<std::string>& names);
 /// Optimal string alignment distance (Levenshtein plus adjacent transposition, each cost 1).
@@ -350,7 +353,9 @@ public:
     explicit Encoder(Exec& x) : x_(x) {}
     Json encode(const Value& v, int depth = 0);
     Json summary(const Value& obj);
-    QueryResult rows(const std::vector<std::string>& columns, const std::vector<std::vector<Value>>& rows);
+    /// `receipt`: a set / call receipt (spec §8): when the byte budget shortens it, the hint says that every change was made
+    /// (or, on a dry run, checked) instead of suggesting paging, which would repeat the mutation.
+    QueryResult rows(const std::vector<std::string>& columns, const std::vector<std::vector<Value>>& rows, bool receipt = false);
     QueryResult items(const std::vector<Value>& items);
     static Json number(double d, bool single);
 

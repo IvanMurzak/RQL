@@ -1,0 +1,96 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { LANGUAGE_RULES, RqlEngine, TypeModel, languageRules, t } from '@rql/execution';
+
+// ADR-0013: misspelt parameter names rank first, the host's creation call in the rules, receipts never suggest paging.
+// Mirrors dotnet/Rql.Tests/HintTests.cs (AgentFormat and module reports are .NET only).
+
+class NodeOptions {
+  name = '';
+  position: number[] = [];
+}
+
+class Godot {
+  made: string[] = [];
+}
+
+class Thing {
+  Id = 0;
+  Name = '';
+}
+
+const M = { allowMutation: true };
+
+function godot(): { e: RqlEngine; g: Godot } {
+  const model = new TypeModel()
+    .register(NodeOptions, { members: ['name', { name: 'position', type: t.list(t.number) }] })
+    .register(Godot, {
+      members: [],
+      methods: [
+        {
+          name: 'CreateNode',
+          params: [{ name: 'options', type: t.of(NodeOptions) }],
+          returns: t.string,
+          invoke: (g, args) => {
+            (g as Godot).made.push((args[0] as NodeOptions).name);
+            return (args[0] as NodeOptions).name;
+          },
+        },
+        {
+          name: 'CreateNode',
+          params: [
+            { name: 'className', type: t.string },
+            { name: 'name', type: t.string, default: '' },
+            { name: 'position', type: t.list(t.number), default: null },
+          ],
+          returns: t.string,
+          invoke: (g, args) => {
+            (g as Godot).made.push(args[0] as string);
+            return args[0] as string;
+          },
+        },
+      ],
+    });
+  const g = new Godot();
+  const e = new RqlEngine({ types: model }).addSource('godot', () => g);
+  e.mutations.enabled = true;
+  return { e, g };
+}
+
+test('a misspelt parameter name beats the options overload', () => {
+  const { e, g } = godot();
+  const r = e.execute('[1] | call godot.CreateNode({klass: "MeshInstance3D"})', {}, M);
+  assert.equal(r.diagnostics[0]!.code, 'coercion-failed');
+  assert.ok(r.diagnostics[0]!.message.includes("no parameter 'klass' (did you mean 'className'?)"), r.diagnostics[0]!.message);
+  const other = e.execute('[1] | call godot.CreateNode({zzzzzz: 1})', {}, M);
+  assert.ok(!other.diagnostics[0]!.message.includes('did you mean'), other.diagnostics[0]!.message);
+  assert.equal(g.made.length, 0);
+});
+
+test('the rules take the host creation call', () => {
+  const text = languageRules('editor.CreateGameObject');
+  assert.ok(!text.includes('editor.CreateObject'));
+  assert.ok(!text.includes('stands for'));
+  assert.ok(text.includes('call editor.CreateGameObject("Cube"'));
+  assert.ok(text.includes('call editor.CreateGameObject($[0], $[1])'));
+  assert.equal(languageRules(), LANGUAGE_RULES);
+  assert.equal(languageRules(''), LANGUAGE_RULES);
+});
+
+test('shortened receipts never suggest paging', () => {
+  const things: Thing[] = [];
+  for (let i = 1; i <= 200; i++) things.push(Object.assign(new Thing(), { Id: i, Name: `t${i}` }));
+  const model = new TypeModel().register(Thing, { members: [{ name: 'Id', type: t.int }, 'Name'] });
+  const e = new RqlEngine({ types: model }).addSource('things', () => things);
+  e.mutations.enabled = true;
+  e.mutations.maxTargets = 500;
+  const r = e.execute('things | set Name = Name + "-a-fairly-long-suffix-to-fill-the-receipt"', { maxOutputBytes: 2000 }, M);
+  assert.equal(r.ok, true, JSON.stringify(r.diagnostics));
+  assert.equal(r.truncated, true);
+  const w = r.diagnostics.find((d) => d.code === 'output-truncated')!;
+  assert.ok(w.hint!.includes('the receipt is shortened, not the change: all 200 changes were made'), w.hint);
+  assert.ok(!w.hint!.includes('page'));
+  assert.equal(things.filter((x) => x.Name.endsWith('suffix-to-fill-the-receipt')).length, 200);
+  const dry = e.execute('things | set Name = Name + "-b-fairly-long-suffix-to-fill-the-receipt"', { maxOutputBytes: 2000 }, { allowMutation: true, dryRun: true });
+  assert.ok(dry.diagnostics.find((d) => d.code === 'output-truncated')!.hint!.includes('planned changes were checked (dry run)'));
+});

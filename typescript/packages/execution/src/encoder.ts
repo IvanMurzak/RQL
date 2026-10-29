@@ -46,7 +46,11 @@ export class Encoder {
     return true;
   }
 
-  rows(columns: readonly string[], rows: readonly (readonly unknown[])[]): QueryResult {
+  /**
+   * @param receipt a set / call receipt (spec §8): when the byte budget shortens it, the hint says that every change was made
+   * (or, on a dry run, checked) instead of suggesting paging, which would repeat the mutation.
+   */
+  rows(columns: readonly string[], rows: readonly (readonly unknown[])[], receipt = false): QueryResult {
     const r: QueryResult = { ok: true, kind: 'rows', columns: [...columns], rows: [], diagnostics: [], stats: emptyStats() };
     const out = r.rows!;
     let bytes = 0;
@@ -56,7 +60,14 @@ export class Encoder {
       if (bytes > this.x.maxOutputBytes && out.length > 0) {
         r.truncated = true;
         r.diagnostics.push(
-          diagnostic('warning', 'output-truncated', `output limited to ${this.x.maxOutputBytes} bytes; ${out.length} of ${rows.length} rows returned`, 'select fewer/smaller columns or page with skip/first'),
+          diagnostic(
+            'warning',
+            'output-truncated',
+            `output limited to ${this.x.maxOutputBytes} bytes; ${out.length} of ${rows.length} rows returned`,
+            receipt
+              ? `the receipt is shortened, not the change: all ${rows.length} ${this.x.options.dryRun ? 'planned changes were checked (dry run)' : 'changes were made'}; do not repeat it`
+              : 'select fewer/smaller columns or page with skip/first',
+          ),
         );
         break;
       }
