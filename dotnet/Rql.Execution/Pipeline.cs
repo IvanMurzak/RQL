@@ -1280,6 +1280,42 @@ namespace Rql.Execution
         public static List<string> Closest(string name, IReadOnlyCollection<string> candidates, int max) => ClosestMembers(name, candidates, null, max);
 
         /// <summary>
+        /// The parameter a misspelt argument name stands for (spec §8): the closest name by the suggestion rules, else the name one
+        /// of whose camelCase / snake_case words is close (<c>klass</c> → <c>className</c>); null when none qualifies.
+        /// </summary>
+        public static string? ClosestParameter(string key, IReadOnlyList<string> names)
+        {
+            var close = Closest(key, names, 1);
+            if (close.Count > 0) return close[0];
+            var lower = key.ToLowerInvariant();
+            int limit = Math.Max(1, key.Length / 3);
+            string? best = null;
+            int bestD = int.MaxValue;
+            foreach (var n in names)
+                foreach (var w in Words(n))
+                {
+                    if (w.Length < 3) continue;
+                    int d = Distance(lower, w);
+                    if (d <= limit && d < bestD) { best = n; bestD = d; }
+                }
+            return best;
+        }
+
+        /// <summary>The lower-case words of a camelCase / PascalCase / snake_case name ("className" → class, name).</summary>
+        private static IEnumerable<string> Words(string name)
+        {
+            int start = 0;
+            for (int i = 1; i <= name.Length; i++)
+            {
+                if (i == name.Length || name[i] == '_' || (char.IsUpper(name[i]) && !char.IsUpper(name[i - 1])))
+                {
+                    if (i > start) yield return name.Substring(start, i - start).Trim('_').ToLowerInvariant();
+                    start = i;
+                }
+            }
+        }
+
+        /// <summary>
         /// Containment that signals a typo or a partial name: the candidate contains the name (at least 3 characters), or the
         /// name contains a candidate at least half its length (so "NoSuchType" does not suggest "Type").
         /// </summary>

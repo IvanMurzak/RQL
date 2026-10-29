@@ -284,7 +284,7 @@ namespace Rql.Execution
             // (spec §8 receipt); a write the host refused or clamped back to the old value stays listed.
             var changed = writes.Where(w => !(Compiler.Equal(_x.Types, w.Old, w.Planned) == true && Compiler.Equal(_x.Types, w.Old, w.New) == true)).ToList();
             var rows = changed.Select(w => new object?[] { w.Ref, w.Label, w.Old, w.New }).ToList();
-            var r = _enc.Rows(new[] { "$ref", "member", "old", "new" }, rows);
+            var r = _enc.Rows(new[] { "$ref", "member", "old", "new" }, rows, receipt: true);
             r.DryRun = _x.Options.DryRun;
             r.Receipt = true;
             if (changed.Count < writes.Count) r.Unchanged = writes.Count - changed.Count;
@@ -614,7 +614,7 @@ namespace Rql.Execution
                 rows.Add(new object?[] { _x.Engine.RefOf(refOf), method.Signature, result });
             }
             RunHook(_x.Engine.Mutations.Committed, callRecords, veto: false);
-            var r = _enc.Rows(new[] { "$ref", "method", "result" }, rows);
+            var r = _enc.Rows(new[] { "$ref", "method", "result" }, rows, receipt: true);
             r.DryRun = _x.Options.DryRun;
             r.Receipt = true;
             return r;
@@ -746,6 +746,9 @@ namespace Rql.Execution
             return cv;
         }
 
+        /// <summary>Failure depth of a misspelt parameter name: deeper than a member missing inside a literal (depth 1).</summary>
+        private const int NamedTypoDepth = 2;
+
         /// <summary>The fewest arguments a call can pass: up to the last parameter without a default.</summary>
         private static int MinArity(IReadOnlyList<CallableParameter> ps)
         {
@@ -800,8 +803,10 @@ namespace Rql.Execution
             string all = string.Join(", ", ps.Select(p => p.Name));
             if (unknown != null)
             {
-                var close = Suggest.Closest(unknown, ps.Select(p => p.Name).ToList(), 1);
-                misses.Add(new Miss(m, true, known, 0, $"no parameter '{unknown}'" + (close.Count > 0 ? $" (did you mean '{close[0]}'?)" : "")
+                var close = Suggest.ClosestParameter(unknown, ps.Select(p => p.Name).ToList());
+                // A key close to a parameter's name is that parameter misspelt: it counts as bound and the miss as deep, so
+                // "no parameter 'klass' (did you mean 'className'?)" beats an overload that cannot take the literal (spec §8).
+                misses.Add(new Miss(m, true, known + (close != null ? 1 : 0), close != null ? NamedTypoDepth : 0, $"no parameter '{unknown}'" + (close != null ? $" (did you mean '{close}'?)" : "")
                     + (ps.Count > 0 ? $"; parameters: {all}" : "; it takes no parameters")));
                 return null;
             }

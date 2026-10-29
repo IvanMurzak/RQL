@@ -23,7 +23,14 @@ recommended for MCP integrations.
   out too (the result still shows `Type#id(Name)`); and only the first 50 rows are listed, followed by
   `… N more row(s) not shown (the json format lists every row)`. So `range(0, 300) | call editor.CreateNode(…)`
   prints the signature once and 50 short result cells instead of 300 rows of `$ref|signature|result`. Hosts that need
-  every row pass a larger limit (`AgentFormat.Render(result, format, maxReceiptRows)`, 0 = all) or use json.
+  every row pass a larger limit (`AgentFormat.Render(result, format, maxReceiptRows)`, 0 = all) or use json. Hosts
+  whose tools offer no json format replace the note after the count (`AgentFormat.Render(result, format,
+  maxReceiptRows, moreRowsNote)`; `""` leaves it out). A receipt the byte budget shortens says so ("N of M receipt rows
+  (the receipt is shortened, not the change)") and never suggests paging.
+  **Shared language rules**: hosts append `RqlLanguageGuide.Rules` (TS `LANGUAGE_RULES`, C++ `rql::language_rules()`)
+  to their guide; `RqlLanguageGuide.RulesFor("editor.CreateGameObject")` (TS `languageRules(createCall)`, C++
+  `rql::language_rules_for(create_call)`) puts the host's own creation call into the examples instead of the
+  placeholder `editor.CreateObject`.
 * **json**: the conformance `QueryResult` without stats.
 
 Experiment E5 compared both (see `RESULTS.md`).

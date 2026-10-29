@@ -528,8 +528,12 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   dry runs are the same whichever way the arguments were bound. When no overload fits, the stage fails with
   `coercion-failed` naming the **best-matching** overload's reason: among overloads whose arity fits (or that
   were bound by name), the one with the most arguments that convert (for binding by name: the keys that name a
-  parameter), then the one whose failure is deepest inside a value (a misspelt member inside an object literal is
-  closer than a literal the parameter type cannot take at all); an overload that passed the check and failed only in
+  parameter, a key whose name is close to a parameter's counted as naming it: close by the §10 suggestion rules, or
+  close to one word of a camelCase / snake_case parameter name, `klass` → `className`), then the one whose
+  failure is deepest inside a value (a misspelt member inside an object literal is closer than a literal the parameter
+  type cannot take at all, and a misspelt parameter name closer still, so `call godot.CreateNode({klass: "Mesh"})`
+  reports "no parameter 'klass' (did you mean 'className'?)" rather than an options overload's "no member 'klass'");
+  an overload that passed the check and failed only in
   the real coercion is the closest. When several overloads come equally close, each one's reason is listed after its
   signature (`no overload fits: Sig1: …; Sig2: …`). Binding by name reports `no parameter 'k'` (with the closest name
   and the parameter list) or `missing parameter 'p'`. When no overload's arity fits, the message names the argument
@@ -634,8 +638,10 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   setter or the host may clamp, normalise or ignore a value: `set mass = -1` can report `1E-07`, an unknown tag can
   keep the old one). On a dry run nothing is written and `new` is the planned (coerced) value. If the read-back fails,
   `new` is the planned value and the query gets a `getter-threw` warning. Host committed hooks (§13) receive the
-  read-back values too. The JSON receipt always lists every row; the tool layer's compact text MAY shorten a long
-  receipt (a method every row shares printed once, a `$ref` that repeats the result's reference left out, only the
+  read-back values too. The JSON receipt lists every row unless the output byte budget (§10) cuts it; a receipt is
+  then shortened, never the change, and its `output-truncated` hint says that every change was made (on a dry run:
+  checked) instead of suggesting `skip` / `first` paging, which would repeat the mutation. The tool layer's compact text
+  MAY shorten a long receipt (a method every row shares printed once, a `$ref` that repeats the result's reference left out, only the
   first rows listed with a count of the rest, `docs/agent-tool-contract.md`).
 
 ## 9. Extensions
@@ -865,7 +871,9 @@ building nested values; (3) **error paths** — a nested failure's reason is pre
 **Modules (non-normative, host convenience).** Adapters, type exclusions, sources and functions are contributed by
 *modules* (order + configure). Runtimes with module/assembly reflection discover modules by scan (or take them from a
 host's type index), configure them in
-order (then by name), isolate failures (a failing module is reported, the others still configure) and report the result.
+order (then by name), isolate failures (a failing module is reported, the others still configure) and report the result,
+including what each module registered (sources, functions, stages, guides, adapters; .NET `RqlModuleReport`), so a host
+can tell which module owns a source or a function.
 Modules may also contribute agent-facing *guides* (topic + markdown) that hosts render into their help or skill files.
 A module that lives in an optional package exists exactly when that package is installed, so enabling or disabling an
 engine feature (e.g. Unity's Particle System) enables or disables its adapters.

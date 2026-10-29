@@ -46,12 +46,70 @@ namespace Rql.Execution
     {
         internal RqlModuleReport(string module, int order, string? error) { Module = module; Order = order; Error = error; }
 
+        internal RqlModuleReport(string module, int order, string? error, Registrations registered) : this(module, order, error)
+        {
+            Sources = registered.Sources;
+            Functions = registered.Functions;
+            Stages = registered.Stages;
+            Guides = registered.Guides;
+            Adapters = registered.Adapters;
+        }
+
         public string Module { get; }
+
+        /// <summary>The sources this module registered (names), so a host can tell which module owns a source.</summary>
+        public IReadOnlyList<string> Sources { get; } = Array.Empty<string>();
+        /// <summary>The host functions this module registered (names).</summary>
+        public IReadOnlyList<string> Functions { get; } = Array.Empty<string>();
+        /// <summary>The extension stages this module registered (names).</summary>
+        public IReadOnlyList<string> Stages { get; } = Array.Empty<string>();
+        /// <summary>The guide topics this module added.</summary>
+        public IReadOnlyList<string> Guides { get; } = Array.Empty<string>();
+        /// <summary>The type adapters this module added.</summary>
+        public IReadOnlyList<RqlTypeAdapter> Adapters { get; } = Array.Empty<RqlTypeAdapter>();
         public int Order { get; }
         /// <summary>Null when the module configured successfully; otherwise why it was skipped.</summary>
         public string? Error { get; }
         public bool Ok => Error == null;
         public override string ToString() => Ok ? $"{Module} (order {Order})" : $"{Module}: FAILED — {Error}";
+    }
+
+    /// <summary>What one module registered on the engine (a diff of the engine's registrations around its Configure).</summary>
+    internal sealed class Registrations
+    {
+        public IReadOnlyList<string> Sources = Array.Empty<string>();
+        public IReadOnlyList<string> Functions = Array.Empty<string>();
+        public IReadOnlyList<string> Stages = Array.Empty<string>();
+        public IReadOnlyList<string> Guides = Array.Empty<string>();
+        public IReadOnlyList<RqlTypeAdapter> Adapters = Array.Empty<RqlTypeAdapter>();
+
+        /// <summary>Registrations made since <paramref name="before"/>: new names and names registered again (replaced).</summary>
+        public static Registrations Since(RqlEngine engine, Snapshot before) => new Registrations
+        {
+            Sources = engine.Sources.Where(kv => !before.Sources.TryGetValue(kv.Key, out var old) || !ReferenceEquals(old, kv.Value)).Select(kv => kv.Key).ToList(),
+            Functions = engine.Functions.Where(kv => !before.Functions.TryGetValue(kv.Key, out var old) || !ReferenceEquals(old, kv.Value)).Select(kv => kv.Key).ToList(),
+            Stages = engine.Stages.Where(kv => !before.Stages.TryGetValue(kv.Key, out var old) || !ReferenceEquals(old, kv.Value)).Select(kv => kv.Key).ToList(),
+            Guides = engine.Guides.Where(g => !before.Guides.Any(o => o.Key == g.Key && ReferenceEquals(o.Value, g.Value))).Select(g => g.Key).ToList(),
+            Adapters = engine.Adapters.Skip(before.AdapterCount).ToList(),
+        };
+
+        public sealed class Snapshot
+        {
+            public Dictionary<string, SourceRegistration> Sources = null!;
+            public Dictionary<string, Func<object?[], object?>> Functions = null!;
+            public Dictionary<string, StageHandler> Stages = null!;
+            public List<KeyValuePair<string, string>> Guides = null!;
+            public int AdapterCount;
+
+            public static Snapshot Of(RqlEngine e) => new Snapshot
+            {
+                Sources = e.Sources.ToDictionary(kv => kv.Key, kv => kv.Value),
+                Functions = e.Functions.ToDictionary(kv => kv.Key, kv => kv.Value),
+                Stages = e.Stages.ToDictionary(kv => kv.Key, kv => kv.Value),
+                Guides = e.Guides.ToList(),
+                AdapterCount = e.Adapters.Count,
+            };
+        }
     }
 
     internal static class ModuleDiscovery
@@ -91,12 +149,13 @@ namespace Rql.Execution
             }
             foreach (var (module, name, order) in modules.OrderBy(m => m.order).ThenBy(m => m.name, StringComparer.Ordinal))
             {
+                var before = Registrations.Snapshot.Of(engine);
                 try
                 {
                     module.Configure(new RqlModuleContext(engine));
-                    reports.Add(new RqlModuleReport(name, order, null));
+                    reports.Add(new RqlModuleReport(name, order, null, Registrations.Since(engine, before)));
                 }
-                catch (Exception ex) { reports.Add(new RqlModuleReport(name, order, (ex.InnerException ?? ex).Message)); }
+                catch (Exception ex) { reports.Add(new RqlModuleReport(name, order, (ex.InnerException ?? ex).Message, Registrations.Since(engine, before))); }
             }
             return reports;
         }
