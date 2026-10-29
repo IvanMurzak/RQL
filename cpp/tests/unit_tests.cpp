@@ -2630,6 +2630,15 @@ void hint_tests() {
         check(rql::language_rules_for("") == std::string(rql::language_rules()), "hints: no call keeps the shared rules");
         check(rql::language_rules_for("  ") == std::string(rql::language_rules()), "hints: a blank call keeps the shared rules");
         check(has(rql::language_rules_for(" editor.CreateGameObject "), "call editor.CreateGameObject(\"Cube\""), "hints: the call is trimmed");
+        rql::RuleExamples spawn;
+        spawn.create_call = "editor.SpawnActor";
+        spawn.grid = "editor.SpawnActor(\"StaticMeshActor\", \"Tile\" + $, [($ % 15) * 200, floor($ / 15) * 200, 0])";
+        spawn.per_entry = "[[\"A\", [0, 0, 0]], [\"B\", [200, 0, 0]]] | call editor.SpawnActor(\"PointLight\", $[0], $[1])";
+        const std::string own = rql::language_rules_for(spawn);
+        check(has(own, "range(0, 300) | call " + spawn.grid + " builds a 15-wide grid") && has(own, spawn.per_entry + " one object per entry") &&
+                  has(own, "call editor.SpawnActor({name: \"Tile\" + $") && !has(own, "editor.CreateObject") && !has(own, "stands for"),
+              "hints: host-supplied examples appear verbatim; a missing one keeps the default with the host call");
+        check(rql::language_rules_for(rql::RuleExamples{}) == std::string(rql::language_rules()), "hints: no examples keep the shared rules");
     }
     {
         rql::TypeRegistry reg;

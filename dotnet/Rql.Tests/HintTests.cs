@@ -56,6 +56,25 @@ namespace Rql.Tests
             Assert.Equal(RqlLanguageGuide.Rules, RqlLanguageGuide.RulesFor("  "));
         }
 
+        [Fact]
+        public void RulesTakeTheHostsExamples()
+        {
+            var spawn = new RqlRuleExamples
+            {
+                CreateCall = "editor.SpawnActor",
+                Grid = "editor.SpawnActor(\"StaticMeshActor\", \"Tile\" + $, [($ % 15) * 200, floor($ / 15) * 200, 0])",
+                PerEntry = "[[\"A\", [0, 0, 0]], [\"B\", [200, 0, 0]]] | call editor.SpawnActor(\"PointLight\", $[0], $[1])",
+            };
+            var text = RqlLanguageGuide.RulesWith(spawn);
+            Assert.Contains("range(0, 300) | call " + spawn.Grid + " builds a 15-wide grid", text);
+            Assert.Contains(spawn.PerEntry + " one object per entry", text);
+            Assert.Contains("call editor.SpawnActor({name: \"Tile\" + $", text); // left out: the default with the host call
+            Assert.DoesNotContain("editor.CreateObject", text);
+            Assert.DoesNotContain("stands for", text);
+            Assert.Equal(RqlLanguageGuide.Rules, RqlLanguageGuide.RulesWith(null));
+            Assert.Equal(RqlLanguageGuide.Rules, RqlLanguageGuide.RulesWith(new RqlRuleExamples { Grid = " " }));
+        }
+
         public sealed class Painter
         {
             [RqlCallable("By number.")] public string Set(int color) => "int";

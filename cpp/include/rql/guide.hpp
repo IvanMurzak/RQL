@@ -24,21 +24,65 @@ inline const char* language_rules() noexcept {
         ;
 }
 
+/// The host's examples for the shared rules (language_rules_for): each empty field keeps the default example, with
+/// create_call in place of the placeholder editor.CreateObject. Hosts whose creation call does not take (name, {properties})
+/// write their own examples, e.g. Unreal's editor.SpawnActor(ClassName, Label, Location, …).
+struct RuleExamples {
+    /// The creation call, e.g. "editor.CreateGameObject" (empty: editor.CreateObject).
+    std::string create_call;
+    /// The call of the bulk-create example after `range(0, 300) | call `, building a 15-wide grid from $, e.g.
+    /// editor.SpawnActor("StaticMeshActor", "Tile" + $, [($ % 15) * 200, floor($ / 15) * 200, 0]).
+    std::string grid;
+    /// The list-literal example in full: a list streamed into one call per entry, e.g.
+    /// [["A", [0, 0, 0]], ["B", [200, 0, 0]]] | call editor.SpawnActor("PointLight", $[0], $[1]).
+    std::string per_entry;
+    /// The arguments-by-name call after `range(0, 10) | call `, e.g.
+    /// editor.SpawnActor({ClassName: "StaticMeshActor", Label: "Tile" + $, Location: [$ * 200, 0, 0]}).
+    std::string named;
+};
+
+/// language_rules() with the host's examples (RuleExamples); the "stands for" note on the placeholder is left out once
+/// anything is given. All fields empty or blank: language_rules() unchanged. Every text is trimmed.
+inline std::string language_rules_for(const RuleExamples& examples) {
+    auto trim = [](const std::string& s) {
+        const char* blank = " \t\r\n\v\f";
+        const size_t first = s.find_first_not_of(blank);
+        return first == std::string::npos ? std::string() : s.substr(first, s.find_last_not_of(blank) - first + 1);
+    };
+    const std::string call = trim(examples.create_call), grid = trim(examples.grid), per_entry = trim(examples.per_entry),
+                      named = trim(examples.named);
+    std::string text = language_rules();
+    if (call.empty() && grid.empty() && per_entry.empty() && named.empty()) return text;
+    auto replace_once = [&text](const std::string& from, const std::string& to) {
+        const size_t at = text.find(from);
+        if (at != std::string::npos) text.replace(at, from.size(), to);
+    };
+    const std::string placeholder = "editor.CreateObject";
+    // An example the host leaves out keeps the default, with its creation call.
+    auto example = [&](const std::string& given, std::string fallback) {
+        if (!given.empty()) return given;
+        if (!call.empty())
+            for (size_t at = fallback.find(placeholder); at != std::string::npos; at = fallback.find(placeholder, at + call.size()))
+                fallback.replace(at, placeholder.size(), call);
+        return fallback;
+    };
+    replace_once(" (editor.CreateObject stands for the host's source and creation method)", "");
+    replace_once("editor.CreateObject(\"Cube\", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})",
+                 example(grid, "editor.CreateObject(\"Cube\", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})"));
+    replace_once("[[\"A\", 1], [\"B\", 2]] | call editor.CreateObject($[0], $[1])",
+                 example(per_entry, "[[\"A\", 1], [\"B\", 2]] | call editor.CreateObject($[0], $[1])"));
+    replace_once("editor.CreateObject({name: \"Tile\" + $, position: [$ * 2, 0, 0]})",
+                 example(named, "editor.CreateObject({name: \"Tile\" + $, position: [$ * 2, 0, 0]})"));
+    return text;
+}
+
 /// language_rules() with the host's own creation call in the examples (e.g. "editor.CreateGameObject",
 /// "godot.CreateNode") instead of the placeholder editor.CreateObject, whose "stands for" note is then left out.
 /// An empty or blank call returns language_rules() unchanged; the call is trimmed.
-inline std::string language_rules_for(const std::string& create_call_text) {
-    std::string text = language_rules();
-    const char* blank = " \t\r\n\v\f";
-    const size_t first = create_call_text.find_first_not_of(blank);
-    if (first == std::string::npos) return text;  // empty or blank: the default rules
-    const std::string create_call = create_call_text.substr(first, create_call_text.find_last_not_of(blank) - first + 1);
-    auto replace_all = [&text](const std::string& from, const std::string& to) {
-        for (size_t at = text.find(from); at != std::string::npos; at = text.find(from, at + to.size())) text.replace(at, from.size(), to);
-    };
-    replace_all(" (editor.CreateObject stands for the host's source and creation method)", "");
-    replace_all("editor.CreateObject", create_call);
-    return text;
+inline std::string language_rules_for(const std::string& create_call) {
+    RuleExamples examples;
+    examples.create_call = create_call;
+    return language_rules_for(examples);
 }
 
 }  // namespace rql

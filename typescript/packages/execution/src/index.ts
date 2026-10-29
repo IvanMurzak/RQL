@@ -47,3 +47,4 @@ export {
   type VirtualMemberSpec,
 } from './adapters.js';
 export { LANGUAGE_RULES, languageRules } from './guide.js';
+export type { LanguageRuleExamples } from './guide.js';

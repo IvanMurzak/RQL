@@ -1,3 +1,6 @@
+using System;
+using System.Linq;
+
 namespace Rql.Execution
 {
     /// <summary>
@@ -23,13 +26,59 @@ namespace Rql.Execution
 
         private const string ExampleCall = "editor.CreateObject";
         private const string ExampleNote = " (editor.CreateObject stands for the host's source and creation method)";
+        private const string GridExample = "editor.CreateObject(\"Cube\", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})";
+        private const string PerEntryExample = "[[\"A\", 1], [\"B\", 2]] | call editor.CreateObject($[0], $[1])";
+        private const string NamedExample = "editor.CreateObject({name: \"Tile\" + $, position: [$ * 2, 0, 0]})";
 
         /// <summary>
         /// <see cref="Rules"/> with the host's own creation call in the examples (e.g. <c>"editor.CreateGameObject"</c>,
         /// <c>"godot.CreateNode"</c>) instead of the placeholder <c>editor.CreateObject</c>, whose "stands for" note is then left
         /// out. Null, empty or blank returns <see cref="Rules"/> unchanged.
         /// </summary>
-        public static string RulesFor(string? createCall) =>
-            string.IsNullOrWhiteSpace(createCall) ? Rules : Rules.Replace(ExampleNote, "").Replace(ExampleCall, createCall!.Trim());
+        public static string RulesFor(string? createCall) => RulesWith(new RqlRuleExamples { CreateCall = createCall });
+
+        /// <summary>
+        /// <see cref="Rules"/> with the host's examples (<see cref="RqlRuleExamples"/>), for hosts whose creation call does not
+        /// take <c>(name, {properties})</c>; the "stands for" note is left out once anything is given. Nothing given (null,
+        /// empty or blank): <see cref="Rules"/> unchanged. Every text is trimmed.
+        /// </summary>
+        public static string RulesWith(RqlRuleExamples? examples)
+        {
+            string? Given(string? s) => string.IsNullOrWhiteSpace(s) ? null : s!.Trim();
+            var call = Given(examples?.CreateCall);
+            string?[] given = { Given(examples?.Grid), Given(examples?.PerEntry), Given(examples?.Named) };
+            if (call == null && given.All(g => g == null)) return Rules;
+            // An example the host leaves out keeps the default, with its creation call.
+            string Example(string? g, string fallback) => g ?? (call == null ? fallback : fallback.Replace(ExampleCall, call));
+            return ReplaceOnce(ReplaceOnce(ReplaceOnce(ReplaceOnce(Rules, ExampleNote, ""),
+                GridExample, Example(given[0], GridExample)),
+                PerEntryExample, Example(given[1], PerEntryExample)),
+                NamedExample, Example(given[2], NamedExample));
+        }
+
+        private static string ReplaceOnce(string text, string from, string to)
+        {
+            int at = text.IndexOf(from, StringComparison.Ordinal);
+            return at < 0 ? text : text.Substring(0, at) + to + text.Substring(at + from.Length);
+        }
+    }
+
+    /// <summary>
+    /// The host's examples for <see cref="RqlLanguageGuide.RulesWith"/>: each null or blank one keeps the default example,
+    /// with <see cref="CreateCall"/> in place of the placeholder <c>editor.CreateObject</c>.
+    /// </summary>
+    public sealed class RqlRuleExamples
+    {
+        /// <summary>The creation call, e.g. <c>editor.CreateGameObject</c> (null: <c>editor.CreateObject</c>).</summary>
+        public string? CreateCall { get; set; }
+        /// <summary>The call of the bulk-create example after <c>range(0, 300) | call </c>, building a 15-wide grid from <c>$</c>,
+        /// e.g. <c>editor.SpawnActor("StaticMeshActor", "Tile" + $, [($ % 15) * 200, floor($ / 15) * 200, 0])</c>.</summary>
+        public string? Grid { get; set; }
+        /// <summary>The list-literal example in full, one call per entry, e.g.
+        /// <c>[["A", [0, 0, 0]], ["B", [200, 0, 0]]] | call editor.SpawnActor("PointLight", $[0], $[1])</c>.</summary>
+        public string? PerEntry { get; set; }
+        /// <summary>The arguments-by-name call after <c>range(0, 10) | call </c>, e.g.
+        /// <c>editor.SpawnActor({ClassName: "StaticMeshActor", Label: "Tile" + $, Location: [$ * 200, 0, 0]})</c>.</summary>
+        public string? Named { get; set; }
     }
 }
