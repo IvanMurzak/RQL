@@ -30,7 +30,7 @@ import { Encoder } from './encoder.js';
 import type { ArgEvaluator, SourceRegistration } from './engine.js';
 import { PathNode, type Exec } from './exec.js';
 import { Mutator } from './mutator.js';
-import { closest, closestMembers, memberHint, metaNamed, nestedMembers } from './suggest.js';
+import { closest, closestMembers, memberHint, metaHint, nestedMembers } from './suggest.js';
 import { EnumType, EnumValue, unwrapNullable, type TypeInfo, type TypeRef } from './types.js';
 import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, isAbsent, originOf, streamedEntry, toNumber, type EntryOrigin } from './values.js';
 
@@ -68,7 +68,7 @@ class KeyTally {
 
   /** A tally for a plain member path (no meta member); undefined for any other key. */
   static for(e: Expr): KeyTally | undefined {
-    if (e.kind !== 'path' || e.segments.some((s) => s.kind === 'meta')) return undefined;
+    if (pathSuffix(e) === undefined) return undefined;
     const text = pathText(e);
     return text !== undefined ? new KeyTally(text, e.span) : undefined;
   }
@@ -80,13 +80,13 @@ class KeyTally {
 
   report(x: Exec, fate: string): void {
     if (this.present === 0 || this.missing <= this.present) return;
-    const meta = metaNamed(this.text);
+    const meta = metaHint(this.text);
     x.diagnostics.push(
       diagnostic(
         'warning',
         'unknown-member',
         `member '${this.text}' exists on ${this.present} of ${this.present + this.missing} item(s); the other ${this.missing} ${fate}`,
-        meta !== undefined ? `did you mean ${meta} (the meta member)?` : `filter to the items that have it first: where has(${this.text})`,
+        meta ?? `filter to the items that have it first: where has(${this.text})`,
         this.span,
       ),
     );
@@ -187,8 +187,8 @@ export class Pipeline {
       const close = closestMembers(site.name, candidates, nested, 3);
       const declaring = x.engine.typesDeclaring(site.name, types);
       let hint = memberHint(site.name, candidates, declaring, nested);
-      const meta = metaNamed(site.name);
-      if (meta !== undefined) hint = `did you mean ${meta} (the meta member)?` + (hint.length > 0 ? '; ' + hint : '');
+      const meta = metaHint(site.name);
+      if (meta !== undefined) hint = meta + (hint.length > 0 ? '; ' + hint : '');
       if (close.length === 0 && declaring.length === 0 && /^\p{Lu}/u.test(site.name)) {
         hint += (hint.length > 0 ? '; ' : '') + `if '${site.name}' is a value, quote it: "${site.name}"`;
       }
@@ -607,12 +607,13 @@ export class Pipeline {
     for (const it of input) {
       this.enter(it, i++);
       const kv = keys.map((k) => k.ev(this.x));
-      kv.forEach((v, k) => {
+      for (let k = 0; k < kv.length; k++) {
+        const v = kv[k];
         if (v instanceof ErrorValue) {
           failed[k]!++;
           firstError[k] ??= v;
         }
-      });
+      }
       rows.push({ it, kv });
     }
     failed.forEach((n, k) => {

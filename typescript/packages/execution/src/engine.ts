@@ -457,32 +457,36 @@ export class RqlEngine {
     if (typeof value !== 'object' || value === null) return;
     let seen = this.sourceTypes.get(source);
     if (seen === undefined) this.sourceTypes.set(source, (seen = new Set()));
-    const learn = (v: object): void => {
-      const info = this.types.infoOf(v);
-      if (!seen.has(info)) {
-        seen.add(info);
-        this.knownMembers = undefined;
-      }
-      if (info.dynamic === undefined) return;
-      let names = this.sourceNames.get(source);
-      if (names === undefined) this.sourceNames.set(source, (names = new Set()));
-      for (const m of info.membersOf(v)) {
-        if (names.has(m.name)) continue;
-        names.add(m.name);
-        this.knownMembers = undefined;
-      }
-    };
-    learn(value);
     const info = this.types.infoOf(value);
-    // Only re-iterable collections are sampled: a one-shot iterator (a generator) belongs to the query reading it.
-    if ((info.isList || info.isMap) && (Array.isArray(value) || value instanceof Map || value instanceof Set || isMapLike(value))) {
+    const first = this.learnSourceType(source, seen, value, info);
+    // Elements are sampled the first time the source shows its type; only re-iterable collections, since a one-shot
+    // iterator (a generator) belongs to the query reading it.
+    if (first && (info.isList || info.isMap) && (Array.isArray(value) || value instanceof Set || isMapLike(value))) {
       let n = 0;
       for (const e of elements(value, info)) {
         const ev = e instanceof MapEntry ? e.Value : e;
-        if (typeof ev === 'object' && ev !== null) learn(ev);
+        if (typeof ev === 'object' && ev !== null) this.learnSourceType(source, seen, ev, this.types.infoOf(ev));
         if (++n >= 8) break;
       }
     }
+  }
+
+  /** Records one value's type for a source (and the members of an undeclared object); true when the type is new. */
+  private learnSourceType(source: string, seen: Set<TypeInfo>, v: object, info: TypeInfo): boolean {
+    const first = !seen.has(info);
+    if (first) {
+      seen.add(info);
+      this.knownMembers = undefined;
+    }
+    if (info.dynamic === undefined) return first;
+    let names = this.sourceNames.get(source);
+    if (names === undefined) this.sourceNames.set(source, (names = new Set()));
+    for (const m of info.membersOf(v)) {
+      if (names.has(m.name)) continue;
+      names.add(m.name);
+      this.knownMembers = undefined;
+    }
+    return first;
   }
 
   private readonly sourceTypes = new Map<string, Set<TypeInfo>>();
@@ -525,14 +529,8 @@ export class RqlEngine {
     const add = (n: string): void => {
       if (!names.has(n.toUpperCase())) names.set(n.toUpperCase(), n);
     };
-    const roots: TypeInfo[] = [];
-    for (const s of this.sourceMap.values()) {
-      if (s.type === undefined) continue;
-      const info = this.types.infoForCtor(s.type);
-      if (info !== undefined && !roots.includes(info)) roots.push(info);
-    }
+    const roots = [...new Set(this.sourceTypeInfos().map((r) => r.info))];
     for (const [name, learned] of this.sourceNames) if (this.sourceMap.has(name)) for (const n of learned) add(n);
-    for (const [name, seen] of this.sourceTypes) if (this.sourceMap.has(name)) for (const info of seen) if (!roots.includes(info)) roots.push(info);
     const types = reachableTypes(this.types, roots, 1000);
     for (const t of types) for (const m of t.members) add(m.name);
     // Adapters' target classes count as known too (their virtual members included), reachable or not (spec §8): hosts add

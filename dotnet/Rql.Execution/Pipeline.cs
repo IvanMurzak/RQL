@@ -126,7 +126,7 @@ namespace Rql.Execution
                 var close = Suggest.ClosestMembers(site.Name, candidates, nested, 3);
                 var declaring = _x.Engine.TypesDeclaring(site.Name, types);
                 string hint = Suggest.MemberHint(site.Name, candidates, declaring, nested);
-                if (Suggest.MetaNamed(site.Name) is string meta) hint = $"did you mean {meta} (the meta member)?" + (hint.Length > 0 ? "; " + hint : "");
+                if (Suggest.MetaHint(site.Name) is string meta) hint = meta + (hint.Length > 0 ? "; " + hint : "");
                 if (close.Count == 0 && declaring.Count == 0 && char.IsUpper(site.Name[0]))
                     hint += (hint.Length > 0 ? "; " : "") + $"if '{site.Name}' is a value, quote it: \"{site.Name}\"";
                 var diag = new Diagnostic(DiagnosticSeverity.Warning, "unknown-member", $"no member '{site.Name}' on {typeNames}", site.Span, hint);
@@ -799,7 +799,7 @@ namespace Rql.Execution
 
             /// <summary>A tally for a plain member path (no meta member); null for any other key.</summary>
             public static KeyTally? For(Expr e) =>
-                e is PathExpr p && p.Segments.All(s => s.Kind != SegmentKind.Meta) && Compiler.PathText(e) is string text ? new KeyTally(text, e.Span) : null;
+                PathSuffix(e) != null && Compiler.PathText(e) is string text ? new KeyTally(text, e.Span) : null;
 
             public void Count(object? v)
             {
@@ -810,10 +810,10 @@ namespace Rql.Execution
             public void Report(Exec x, string fate)
             {
                 if (_present == 0 || _missing <= _present) return;
-                var meta = Suggest.MetaNamed(_text);
+                var meta = Suggest.MetaHint(_text);
                 x.Diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, "unknown-member",
                     $"member '{_text}' exists on {_present} of {_present + _missing} item(s); the other {_missing} {fate}", _at,
-                    meta != null ? $"did you mean {meta} (the meta member)?" : $"filter to the items that have it first: where has({_text})"));
+                    meta ?? $"filter to the items that have it first: where has({_text})"));
             }
         }
 
@@ -1239,10 +1239,10 @@ namespace Rql.Execution
     {
         private static readonly string[] MetaNames = { "type", "ref", "path", "index", "depth" };
 
-        /// <summary>The meta member a bare name stands for (<c>type</c> → <c>$type</c>, any case), or null (spec §5, §10).</summary>
-        internal static string? MetaNamed(string name)
+        /// <summary>"did you mean $type (the meta member)?" for a bare name that is a meta member's name (any case), or null (spec §5, §10).</summary>
+        internal static string? MetaHint(string name)
         {
-            foreach (var m in MetaNames) if (string.Equals(m, name, StringComparison.OrdinalIgnoreCase)) return "$" + m;
+            foreach (var m in MetaNames) if (string.Equals(m, name, StringComparison.OrdinalIgnoreCase)) return $"did you mean ${m} (the meta member)?";
             return null;
         }
 

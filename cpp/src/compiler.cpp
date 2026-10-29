@@ -120,9 +120,9 @@ size_t collection_size(const Value& v) {
     return 0;
 }
 
-std::string meta_named(const std::string& name) {
+std::string meta_hint(const std::string& name) {
     for (const char* m : {"type", "ref", "path", "index", "depth"})
-        if (iequals(name, m)) return std::string("$") + m;
+        if (iequals(name, m)) return std::string("did you mean $") + m + " (the meta member)?";
     return {};
 }
 

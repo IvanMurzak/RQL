@@ -405,6 +405,7 @@ export class Mutator {
     const targets = this.targets(stream, 'set');
     this.checkMixedTargets(targets, s.assign.map((a) => a.target));
     const writes: PlannedWrite[] = [];
+    const rules = hostRules(x);
     for (const t of targets) {
       const it = t.item;
       const item = it.value as object;
@@ -426,7 +427,7 @@ export class Mutator {
         const { slot, container } = resolved;
         const owner = holder !== undefined && resolved.owner === root ? holder : resolved.owner;
         if (!slot.writable(x)) throw new RqlError(slot.denyCode, `'${lbl}' on ${itemRef} is not writable${slot.denyReason}`);
-        const co = coerce(x.types, nv, slot.type, { ...hostRules(x), outer: owner });
+        const co = coerce(x.types, nv, slot.type, { ...rules, outer: owner });
         if (!co.ok) throw new RqlError(co.code ?? 'coercion-failed', `cannot assign ${describeValue(nv)} to '${lbl}' (${friendlyName(slot.type, x.types)}): ${co.why}`);
         // Validation runs while the mutation is planned, before any write (spec §13).
         const rejected = slot.validate(container, co.value);
@@ -648,12 +649,13 @@ export class Mutator {
     const planned: { item: object; method: MethodAccessor; args: unknown[]; index: number }[] = [];
     // Where a failure is: the target, or for a source-qualified call the receiver and the item's position.
     const at = (item: object, index: number): string => x.engine.refOf(item) + (receiver !== undefined ? ` for item ${index}` : '');
+    const rules = hostRules(x);
     for (const t of targets) {
       const item = receiver ?? (t.item.value as object);
       const candidates = fixed ?? candidatesOf(item, targets);
       this.enterScope(t);
       const vals = args.map((a) => a(x));
-      const resolved = resolveOverload(x.types, { ...hostRules(x), outer: item }, candidates, vals);
+      const resolved = resolveOverload(x.types, { ...rules, outer: item }, candidates, vals);
       if ('denied' in resolved) throw new RqlError('permission-denied', `cannot call ${s.method} on ${at(item, t.index)}: ${resolved.denied}`);
       if ('why' in resolved) {
         throw new RqlError('coercion-failed', `cannot call ${s.method} on ${at(item, t.index)}: ${resolved.why}`, undefined, 'signature: ' + candidates.map((m) => m.signature(x.types)).join(', '));
@@ -1207,7 +1209,7 @@ function construct(model: TypeModel, literal: ObjectValue, ctor: Ctor, ti: TypeI
   let instance: object | undefined;
   if (rules.probe !== true) {
     try {
-      instance = createForLiteral(model, concrete, rules.outer === PROBE_OUTER ? undefined : rules.outer, rules);
+      instance = createForLiteral(model, concrete, rules.outer, rules);
     } catch (e) {
       return { ok: false, why: `building ${name} failed: ${errorMessage(e)}` };
     }

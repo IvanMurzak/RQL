@@ -443,25 +443,34 @@ int compare_one(Exec& x, const Value& a, const Value& b, bool desc) {
 
 /// Sort keys that evaluated to an error (spec §5): they sort last like null, and each failing key gets one warning with the
 /// first error's code, so a key that fails on every item is not mistaken for a sort that kept the order.
-void report_sort_key_errors(Exec& x, const std::vector<const Expr*>& exprs, const std::vector<std::vector<Value>*>& rows) {
-    for (size_t k = 0; k < exprs.size(); ++k) {
-        int64_t failed = 0;
-        const Value* first = nullptr;
-        for (auto* kv : rows) {
-            const Value& v = (*kv)[k];
-            if (!v.is_error()) continue;
-            ++failed;
-            if (!first) first = &v;
+class SortKeyErrors {
+public:
+    explicit SortKeyErrors(size_t keys) : failed_(keys, 0), first_(keys) {}
+    void note(const std::vector<Value>& kv) {
+        ++items_;
+        for (size_t k = 0; k < kv.size(); ++k) {
+            if (!kv[k].is_error()) continue;
+            if (failed_[k]++ == 0) first_[k] = kv[k];
         }
-        if (failed == 0) continue;
-        const std::string text = path_text(*exprs[k]);
-        const std::string label = !text.empty() ? "sort key '" + text + "'" : "sort key " + std::to_string(k + 1);
-        const std::string& detail = first->error_detail();
-        x.diagnostics.push_back(Diagnostic::warning(first->error_code(), label + " failed for " + std::to_string(failed) + " of " +
-                                                                             std::to_string(rows.size()) + " item(s) (" + first->error_code() +
-                                                                             (detail.empty() ? std::string() : ": " + detail) + "); they sort last"));
     }
-}
+    void report(Exec& x, const std::vector<const Expr*>& exprs) const {
+        for (size_t k = 0; k < exprs.size(); ++k) {
+            if (failed_[k] == 0) continue;
+            const Value& first = first_[k];
+            const std::string text = path_text(*exprs[k]);
+            const std::string label = !text.empty() ? "sort key '" + text + "'" : "sort key " + std::to_string(k + 1);
+            const std::string& detail = first.error_detail();
+            x.diagnostics.push_back(Diagnostic::warning(first.error_code(), label + " failed for " + std::to_string(failed_[k]) + " of " +
+                                                                                std::to_string(items_) + " item(s) (" + first.error_code() +
+                                                                                (detail.empty() ? std::string() : ": " + detail) + "); they sort last"));
+        }
+    }
+
+private:
+    std::vector<int64_t> failed_;
+    std::vector<Value> first_;
+    int64_t items_ = 0;
+};
 
 class SortStream final : public Stream {
 public:
@@ -472,17 +481,16 @@ public:
             sorted_ = true;
             Item it;
             int64_t i = 0;
+            SortKeyErrors errors(keys_.size());
             while (in_->next(it)) {
                 set_scope(x_, it, i++);
                 std::vector<Value> kv;
                 kv.reserve(keys_.size());
                 for (auto& k : keys_) kv.push_back(k(x_));
+                errors.note(kv);
                 rows_.push_back({std::move(it), std::move(kv)});
             }
-            std::vector<std::vector<Value>*> keys;
-            keys.reserve(rows_.size());
-            for (auto& r : rows_) keys.push_back(&r.keys);
-            report_sort_key_errors(x_, exprs_, keys);
+            errors.report(x_, exprs_);
             x_.check_time();
             std::stable_sort(rows_.begin(), rows_.end(), [this](const Row& a, const Row& b) {
                 for (size_t k = 0; k < desc_.size(); ++k) {
@@ -613,11 +621,10 @@ class KeyTally {
 public:
     /// A tally for a plain member path (no meta member); nullopt for any other key.
     static std::optional<KeyTally> of(const Expr* e) {
-        if (!e || e->kind != ExprKind::Path || e->on || e->segments.empty()) return std::nullopt;
-        for (auto& s : e->segments)
-            if (s.kind == SegmentKind::Meta) return std::nullopt;
+        if (!e || !path_suffix(*e)) return std::nullopt;
         KeyTally t;
         t.text_ = path_text(*e);
+        if (t.text_.empty()) return std::nullopt;
         return t;
     }
     void count(const Value& v) {
@@ -626,12 +633,12 @@ public:
     }
     void report(Exec& x, const std::string& fate) const {
         if (present_ == 0 || missing_ <= present_) return;
-        const std::string meta = meta_named(text_);
+        const std::string meta = meta_hint(text_);
         x.diagnostics.push_back(Diagnostic::warning(
             "unknown-member",
             "member '" + text_ + "' exists on " + std::to_string(present_) + " of " + std::to_string(present_ + missing_) + " item(s); the other " +
                 std::to_string(missing_) + " " + fate,
-            !meta.empty() ? "did you mean " + meta + " (the meta member)?" : "filter to the items that have it first: where has(" + text_ + ")"));
+            !meta.empty() ? meta : "filter to the items that have it first: where has(" + text_ + ")"));
     }
 
 private:
@@ -1203,9 +1210,7 @@ QueryResult collect(Exec& x, Stream& stream, Encoder& enc) {
 /// that is null right now keeps them) and the types they declare; the query's own source is read once when it has none.
 std::vector<const TypeDescriptor*> reachable_types(Exec& x, std::vector<std::pair<std::string, const TypeDescriptor*>>* roots_out) {
     x.ensure_plan_source_type();
-    std::vector<std::pair<std::string, const TypeDescriptor*>> roots;
-    for (auto& h : x.source_type_history())
-        if (std::find(roots.begin(), roots.end(), h) == roots.end()) roots.push_back(h);
+    auto roots = x.source_type_history();
     std::vector<const TypeDescriptor*> types;
     std::vector<const TypeDescriptor*> queue;
     for (auto& r : roots) queue.push_back(r.second);
@@ -1394,8 +1399,8 @@ std::vector<Diagnostic> add_warnings(Exec& x, QueryResult& r, bool only_general)
         auto close = suggest_members(site.name, candidates, nested, 3);
         auto declaring = types_declaring(x, site.name, site.miss_types);
         std::string hint = member_hint(site.name, candidates, declaring, nested);
-        const std::string meta = meta_named(site.name);
-        if (!meta.empty()) hint = "did you mean " + meta + " (the meta member)?" + (hint.empty() ? std::string() : "; " + hint);
+        const std::string meta = meta_hint(site.name);
+        if (!meta.empty()) hint = meta + (hint.empty() ? std::string() : "; " + hint);
         if (close.empty() && declaring.empty() && !site.name.empty() && site.name[0] >= 'A' && site.name[0] <= 'Z')
             hint += (hint.empty() ? "" : "; ") + std::string("if '") + site.name + "' is a value, quote it: \"" + site.name + "\"";
         r.diagnostics.push_back(Diagnostic::warning("unknown-member", "no member '" + site.name + "' on " + join(type_names, ", "), hint));

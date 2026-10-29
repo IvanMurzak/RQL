@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace Rql.Execution
 {
@@ -32,8 +33,6 @@ namespace Rql.Execution
         {
             Types = types;
             _mutations = mutations;
-            WritePolicy = mutations?.CanWrite;
-            TextCoercion = mutations?.CoerceText;
         }
 
         private readonly MutationPolicy? _mutations;
@@ -45,6 +44,8 @@ namespace Rql.Execution
         /// </summary>
         internal LiteralKind KindOf(Type type)
         {
+            // Hooks answer per type and cannot change within one execution (this kernel's lifetime): ask them once.
+            if (_kinds != null && _kinds.TryGetValue(type, out var known)) return known;
             var info = Types.Info(type);
             LiteralKind? kind = _mutations?.LiteralKindOf?.Invoke(type);
             if (kind == null)
@@ -53,8 +54,11 @@ namespace Rql.Execution
             var k = kind ?? (info.IdentityAdapters.Length == 0 && info.LivenessAdapters.Length == 0 ? LiteralKind.Value : LiteralKind.Engine);
             if (_mutations?.CanConstructFromLiteral?.Invoke(type) is bool decided)
                 k = !decided ? LiteralKind.Engine : k == LiteralKind.Engine ? LiteralKind.Value : k;
+            if (_mutations != null) (_kinds ??= new Dictionary<Type, LiteralKind>())[type] = k; // write kernels belong to one execution
             return k;
         }
+
+        private Dictionary<Type, LiteralKind>? _kinds;
 
         /// <summary>Whether a factory (the host's or an adapter's) may build <paramref name="type"/>: a probe then needs no constructor.</summary>
         internal bool HasFactory(Type type) => _mutations?.CreateForLiteral != null || Types.Info(type).FactoryAdapters.Length > 0;
@@ -83,10 +87,10 @@ namespace Rql.Execution
         public TypeModel Types { get; }
 
         /// <summary>The host's per-member write policy; applied by the kernel to every member a coercion assigns.</summary>
-        internal Func<Type, MemberAccessor, bool>? WritePolicy { get; }
+        internal Func<Type, MemberAccessor, bool>? WritePolicy => _mutations?.CanWrite;
 
         /// <summary>The host's text coercion for struct / object types no adapter handles (spec §8); null outside writes.</summary>
-        internal Func<Type, string, object?>? TextCoercion { get; }
+        internal Func<Type, string, object?>? TextCoercion => _mutations?.CoerceText;
 
         /// <summary>
         /// Coerce <paramref name="value"/> to <paramref name="target"/> exactly as a <c>set</c> would (adapters, object literals,

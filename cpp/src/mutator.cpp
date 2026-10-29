@@ -545,35 +545,29 @@ std::optional<Value> construct(Exec& x, const Value& literal, const TypeDescript
         why = concrete->name + " is an instanced subobject: it is built only for the object that owns it (write it to a member of that object or pass it to a call)";
         return std::nullopt;
     }
+    // A factory builds first (never in a probe, where it counts as constructible), then the type's own create().
     const bool factory = has_factory(x, concrete);
-    if (!factory && !concrete->create) {
+    std::optional<Value> made;
+    if (!probe && factory) {
+        if (auto failure = capture_failure([&] { made = create_for_literal(x, concrete, outer); })) {
+            why = "building " + concrete->name + " failed: " + *failure;
+            return std::nullopt;
+        }
+        if (made && !is_instance_of(*made, concrete))
+            throw std::logic_error("the literal factory built " + type_name_of(*made) + ", not " + concrete->name);
+    }
+    if (!made && !concrete->create && !(probe && factory)) {
         why = "cannot construct " + concrete->friendly_name() + " (register it constructible(), or add an adapter that coerces object literals)";
         return std::nullopt;
     }
     std::shared_ptr<void> data;
     Value instance;
-    bool host_built = false;
-    if (!probe) {
-        std::optional<Value> made;
-        if (factory) {
-            const Value& real_outer = &outer == &probe_outer() ? Value::null() : outer;
-            if (auto failure = capture_failure([&] { made = create_for_literal(x, concrete, real_outer); })) {
-                why = "building " + concrete->name + " failed: " + *failure;
-                return std::nullopt;
-            }
-            if (made && !is_instance_of(*made, concrete))
-                throw std::logic_error("the literal factory built " + type_name_of(*made) + ", not " + concrete->name);
-        }
-        if (made) {
-            instance = *made;
-            host_built = true;
-        } else if (!concrete->create) {
-            why = "cannot construct " + concrete->friendly_name() + " (register it constructible(), or add an adapter that coerces object literals)";
-            return std::nullopt;
-        } else {
-            data = concrete->create();
-            instance = concrete->kind == TypeKind::Struct ? Value::structure(concrete, data) : Value::object(concrete, data.get(), data);
-        }
+    const bool host_built = made.has_value();
+    if (made) {
+        instance = *made;
+    } else if (!probe) {
+        data = concrete->create();
+        instance = concrete->kind == TypeKind::Struct ? Value::structure(concrete, data) : Value::object(concrete, data.get(), data);
     }
     // Values nested in an object literal belong to the object it builds; a struct passes its own outer on.
     const Value& inner = concrete->kind == TypeKind::Object ? (probe ? probe_outer() : instance) : outer;

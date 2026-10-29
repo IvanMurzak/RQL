@@ -118,8 +118,8 @@ export function distance(a: string, b: string): number {
 
 const META_NAMES = ['type', 'ref', 'path', 'index', 'depth'];
 
-/** The meta member a bare name stands for (`type` → `$type`, any case), or undefined (spec §5, §10). */
-export function metaNamed(name: string): string | undefined {
-  const lower = name.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
-  return META_NAMES.includes(lower) ? '$' + lower : undefined;
+/** "did you mean $type (the meta member)?" for a bare name that is a meta member's name (any case), or undefined (spec §5, §10). */
+export function metaHint(name: string): string | undefined {
+  const lower = name.toLowerCase();
+  return META_NAMES.includes(lower) ? `did you mean $${lower} (the meta member)?` : undefined;
 }

@@ -269,8 +269,8 @@ using Eval = std::function<Value(Exec&)>;
 
 /// The text of a plain relative path (Renderer.sharedMaterial, Tags[0]), or empty for other expressions.
 std::string path_text(const Expr& e);
-/// The meta member a bare name stands for ("type" -> "$type", any case), or empty (spec §5, §10).
-std::string meta_named(const std::string& name);
+/// "did you mean $type (the meta member)?" for a bare name that is a meta member's name (any case), or empty (spec §5, §10).
+std::string meta_hint(const std::string& name);
 /// The hint of an unknown member (spec §10): the known types that have it, then the closest names, else the members
 /// ranked by similarity to the name.
 /// `nested`: dotted paths of the members of struct-typed members (nested_members), ranked by their last segment.
