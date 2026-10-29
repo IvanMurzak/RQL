@@ -1,0 +1,55 @@
+cpp/include/rql/guide.hpp
+  s_7bc72ecaebd05d::t_edec57c181768c 20
+cpp/src/compiler.cpp
+  s_7bc72ecaebd05d::t_fe4560813ea483 99,111
+cpp/src/encoder.cpp
+  s_7bc72ecaebd05d::t_d36e3fcab80d8e 167,189-190
+cpp/src/exec.hpp
+  s_7bc72ecaebd05d::t_8b0a631946e7cc 358
+cpp/src/mutator.cpp
+  s_7bc72ecaebd05d::t_348cadb5b9d383 965,1090,1354
+docs/agent-tool-contract.md
+  s_7bc72ecaebd05d::t_0a6533bb12147c 28-29
+docs/decisions/0013-hints-and-host-texts.md
+  s_7bc72ecaebd05d::t_70e3a1a8ad1564 24-25,32-33,35
+dotnet/Rql.Execution/AgentFormat.cs
+  s_7bc72ecaebd05d::t_b936508d442f8a 119
+dotnet/Rql.Execution/Encoder.cs
+  s_7bc72ecaebd05d::t_3360f085951b2f 32-35,37,47-48
+dotnet/Rql.Execution/Modules.cs
+  s_7bc72ecaebd05d::t_d75ee1a4db5619 77,80-84,86-88,129,133,135-136
+dotnet/Rql.Execution/Mutator.cs
+  s_7bc72ecaebd05d::t_d35188cb88d730 287,616,802-804
+dotnet/Rql.Execution/RqlEngine.cs
+  s_7bc72ecaebd05d::t_13bfaa9c64a973 240-242,255,338,452,472,484
+dotnet/Rql.Execution/RqlLanguageGuide.cs
+  s_7bc72ecaebd05d::t_e66f33a936a2a3 19,33
+dotnet/Rql.Tests/HintTests.cs
+  s_7bc72ecaebd05d::t_00e4b613617b0e 87
+fixtures/guide/language-rules.txt
+  s_7bc72ecaebd05d::t_a3593ba8cf912e 8
+spec/semantics.md
+  s_7bc72ecaebd05d::t_5b9575cbab9b4a 534-535
+typescript/packages/execution/src/encoder.ts
+  s_7bc72ecaebd05d::t_a91eaabf15a1df 53,67-68
+typescript/packages/execution/src/guide.ts
+  s_7bc72ecaebd05d::t_028f712fa8957b 15,29
+typescript/packages/execution/src/mutator.ts
+  s_7bc72ecaebd05d::t_68c5d631ec744c 10,485,712,872
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "133919346007464b6075bf86ab87e6de303e3d82",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
