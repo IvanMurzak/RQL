@@ -188,6 +188,7 @@ objects | where $ is Enemy | group-by Faction, elite=(Level > 10) | select Facti
 world.Scenes | get Objects | recurse Children max-depth=16 | where Name starts-with "Chest" | first 2 | select $path
 
 # conditionals, strings, vectors
+objects | where $ is Enemy and Name starts-with "Orc_" | select n = Name.replace("Orc_", "")
 objects | where $ is Enemy | select Name tier=(Health > 50 ? "healthy" : "hurt")
 objects | where $ is Enemy and distance([Transform.Position.x, Transform.Position.z], [0, 0]) < 50 | select Name
 
@@ -216,7 +217,7 @@ trigonometry in radians `sin cos tan asin acos atan atan2 pi deg rad`, string fu
 `length normalize distance dot lerp` (string and vector functions are also methods: `Name.replace("a", "b")`,
 `Position.length()`). Vectors and colors the host marks, and lists of numbers, compute component by component
 (`Scale * 1.5`, `Position + [0, 1, 0]`, `[x, 0, z] * k`). Hosts register their own sources and add namespaced
-functions and stages (`myapp.fn(...)`). Besides sources, a query may start with `ref("Type#id")`, a host function,
+functions and stages (`myapp.fn(...)`). Besides sources, a query may start with `ref("Type#id")`, a host function (.NET and C++),
 `range(start, end[, step])` (numbers, lazy) or a list literal.
 
 Mistakes come back as diagnostics the agent can act on:
@@ -235,7 +236,7 @@ ref("Enemy#233") | set Health = MaxHealth, Transform.Position.y = Transform.Posi
 objects | where $ is Enemy and Health < 5 | first 2 | call Heal(25)
 range(0, 300) | call editor.CreateObject("Cube", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})
 range(0, 10) | call editor.CreateObject({name: "Tile" + $, position: [$ * 2, 0, 0]})
-objects | where $ is Enemy | set Transform.Scale = Transform.Scale * 1.5
+objects | where $ is Enemy and Health < 5 | set Transform.Scale = Transform.Scale * 1.5
 ```
 
 ```text

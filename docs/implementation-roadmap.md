@@ -17,8 +17,9 @@
    scene dump.
 2. ~~Adapter-defined methods and virtual maps~~ — done (spec §13).
 3. ~~Unreal provider for the C++ engine~~ — done in Unreal-MCP.
-4. **Static binding pass**: type-check member paths against declared types before execution (catch typos
-   with zero items in the stream; today `unknown-member` needs at least one evaluated item).
+4. **Static binding pass**: type-check member paths against declared types before execution. Partly covered: names
+   that no known type declares are reported even when never evaluated (spec §10), and such a typo that empties a
+   `set` / `call` is an error (spec §8).
 5. **Destructive-method policy** (`[RqlCallable(Destructive = true)]` requiring a dry-run first).
 6. **Plan cache** (parse/compile once per text) — not needed at current latencies (<15 ms on 145k objects).
 7. Broaden the evaluation: second model family, larger task catalog v2 with fresh holdout templates.

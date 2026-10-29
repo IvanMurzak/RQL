@@ -30,7 +30,7 @@ query names them, never ahead of time.
 var engine = new RqlEngine()
     .AddSource("objects", () => scene.AllObjects, "every object in the scene")   // AddSource<T>: declares T
     .AddSource("selection", () => editor.Selection, "the selected objects", typeof(List<GameObject>));
-engine.IsAlive = o => o is not UnityEngine.Object u || u != null;                // destroyed objects read as null
+engine.IsAlive = o => !(o is UnityEngine.Object u) || u != null;               // destroyed objects read as null
 engine.ResolveStableRef = (type, id) => FindById(type, id);                      // fast ref("Type#id")
 ```
 
@@ -49,9 +49,10 @@ polymorphic (every component or node class), supplies a known-member hook (name 
 
 - **Functions and stages** are namespaced (`myapp.find(…)`, `myapp.expand …`): `AddFunction` / `AddStage` (.NET),
   `addFunction` / `addStage` (TS), `add_function` / `add_stage` (C++). A registered function may also be a source
-  (`myapp.find("Player") | …`; TypeScript pending) and a call receiver (`call myapp.asset("/x").Graph.AddNode(…)`).
+  (`myapp.find("Player") | …`) and a call receiver (`call myapp.asset("/x").Graph.AddNode(…)`); both are pending in
+  TypeScript.
 - **Modules** (.NET) bundle adapters, sources, functions, exclusions and agent guides:
-  `IRqlModule { int Order; void Configure(RqlModuleContext ctx); }`, discovered with `engine.AddModulesFrom(assemblies)`
+  `IRqlModule { int Order { get; } void Configure(RqlModuleContext context); }`, discovered with `engine.AddModulesFrom(assemblies)`
   or `engine.AddModules(types)` (hosts with a type index, such as Unity's `TypeCache`). Failures are isolated and
   reported; every `RqlModuleReport` lists what the module registered (`Sources`, `Functions`, `Stages`, `Guides`,
   `Adapters`), so a host can tell which package owns a source.
@@ -123,18 +124,20 @@ Object literals build values on writes ([spec §4.5](../spec/semantics.md#45-obj
 [ADR-0011](decisions/0011-literal-kinds-known-names-key-warnings.md)). Each type has a literal kind: **engine** (never
 built; the default for a type with an identity or liveness adapter), **value** (built fresh) or **instanced** (built as
 a subobject of its outer: the owner of the written member, the call's target, or the object an enclosing literal
-builds). The kind is the first answer of the host hook, then the adapters, then the default.
+builds). The kind is the first answer of the host hook, then the adapters, then the default; finally
+`CanConstructFromLiteral`, when it answers, overrides it.
 
 | Hook | Use |
 |---|---|
 | `Mutations.LiteralKindOf(type)` | mark value-like engine types (Godot resources) as value, Unreal `EditInlineNew` classes as instanced |
 | `Mutations.CreateForLiteral(type, outer)` | build the empty value with its outer (Unreal `NewObject(Outer, Class)`, Unity `ScriptableObject.CreateInstance`) |
-| `Mutations.CanConstructFromLiteral(type)` | older override: false → engine, true → value |
+| `Mutations.CanConstructFromLiteral(type)` | older override, applied last: false → engine, true → an engine kind becomes value (instanced stays instanced) |
 | `Mutations.LiteralRefusalHint(type)` | the advice after an engine-object refusal (e.g. "use unity.find(…) or an asset path") |
 | C++ `MutationPolicy::resolve_subtype(target, name)` | lazy lookup of a literal's `$type` for runtime-built types (Unreal `UClass`es); answers are not cached and must not construct anything. .NET sees every loaded type and TypeScript registration is public, so they need no hook |
 
 Overload resolution checks every candidate without constructing anything (ADR-0010), so factories and constructors run
-only for the chosen overload; construction still happens while planning, so it runs on dry runs too.
+only for an overload that passes the check (normally the chosen one; a value that only a member validator rejects is
+found during the real coercion). Construction happens while planning, so it runs on dry runs too.
 
 ## Hints and host texts
 
@@ -157,9 +160,9 @@ list equality, group items, receipts, `call` and bulk create, vectors, missing m
 literals; [`fixtures/guide/language-rules.txt`](../fixtures/guide/language-rules.txt)). Append them to the agent guide:
 
 ```csharp
-string rules = RqlLanguageGuide.Rules;                                   // placeholder editor.CreateObject
-string rules = RqlLanguageGuide.RulesFor("editor.CreateGameObject");     // the host's creation call
-string rules = RqlLanguageGuide.RulesWith(new RqlRuleExamples           // the host's own examples
+string rules = RqlLanguageGuide.Rules;                                       // placeholder editor.CreateObject
+string rulesFor = RqlLanguageGuide.RulesFor("editor.CreateGameObject");      // the host's creation call
+string rulesWith = RqlLanguageGuide.RulesWith(new RqlRuleExamples           // the host's own examples
 {
     CreateCall = "editor.SpawnActor",
     Grid = "range(0, 150) | call editor.SpawnActor(\"StaticMeshActor\", \"Tile\" + $, [($ % 15) * 200, floor($ / 15) * 200, 0])",

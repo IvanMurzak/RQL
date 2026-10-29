@@ -5,11 +5,9 @@ A practical reference for writing RQL queries. The normative contract is [`spec/
 the spec wins where the two differ. Host-specific sources, functions and methods (`objects`, `editor.CreateObject`,
 `myapp.find`) are examples: each host lists its own with its schema tool.
 
-This page describes the language on `main`. Additions that are not in a published package yet (for example string
-functions, multi-key `group-by`, `if` / `?:`, `range` and list sources, source-qualified `call`, arguments by name, vector
-arithmetic and literal kinds at the time of writing) are marked *unreleased* in the changelog of
-[`spec/versioning.md`](../spec/versioning.md) and in [`feature-matrix.md`](feature-matrix.md). The QueryPlan protocol is
-`0.1`.
+This page describes the language on `main`. Features that are not in a published package yet are marked *unreleased*
+in [`feature-matrix.md`](feature-matrix.md) and in the changelog of [`spec/versioning.md`](../spec/versioning.md). The
+QueryPlan protocol is `0.1`.
 
 ## Contents
 
@@ -46,7 +44,7 @@ Spec: [§2](../spec/semantics.md#2-sources).
 |---|---|---|
 | A registered source, optionally navigated | `objects`, `world.Scenes[0].Objects` | a list streams its elements, a map its entries, anything else is one item |
 | `ref("Type#id", …)` | `ref("Enemy#233")`, `ref("Node#1").Children[0]` | the referenced object(s); `stale-ref` when gone |
-| A host function, optionally navigated | `unity.assets("t:Material")`, `unreal.asset("/Game/BP").EventGraph` | the function's value |
+| A host function, optionally navigated | `unity.assets("t:Material")`, `unreal.asset("/Game/BP").EventGraph` | the function's value (.NET and C++; TypeScript pending) |
 | `range(start, end[, step])` | `range(0, 300)`, `range(10, 0, -2)` | numbers, lazily (`end` excluded); each counts against `maxVisited` |
 | A list literal | `[["Crate", 1], ["Barrel", 2]]` | its elements, evaluated with no current item |
 
@@ -64,7 +62,7 @@ Spec: [§5](../spec/semantics.md#5-stages).
 | `first [n]` · `skip n` | slicing (`first` defaults to 1, stops pulling items upstream; `limit n` is an alias) |
 | `count` | terminal: the number of items |
 | `get e` | replaces each item by `e`, flattening lists; `null` / `missing` dropped |
-| `recurse [via …] [max-depth=N] [include-self=false]` | cycle-safe depth-first walk over the `via` members, or over every owning member; emits the start item at depth 0 unless `include-self=false` |
+| `recurse [via …] [max-depth=N] [include-self=false]` | cycle-safe depth-first walk over the `via` members, or over every owning member; emits the start item at depth 0 unless `include-self=false`; `max-depth` defaults to 8 |
 | `distinct [e]` | keeps the first **item** per distinct value of `e` (default `$`); project first (`select Tag \| distinct`) to list values |
 | `group-by e` | rows `key`, `count` in order of first appearance; every row also has `items`, the group's items, for per-group aggregates |
 | `group-by [n=]e, [n=]e …` | several or named keys: one column per key, then `count` (`group-by Folder, kind=$type`) |
@@ -78,7 +76,7 @@ Terminal stages must be last (`invalid-plan` otherwise). Hosts add namespaced st
 
 ```text
 objects | where $ is Enemy | group-by Faction | sort count desc
-objects | where $ is Light | group-by type | select key, count, avg = items.avg(Intensity)
+objects | where $ is Light | group-by Shadows | select key, count, avg = items.avg(Intensity)
 world.Scenes | get Objects | recurse Children max-depth=16 | where Name starts-with "Chest" | select $path
 ```
 
@@ -175,12 +173,12 @@ namespaced ones (`unity.find(…)`).
 | `substring(s, start[, length])` | positions clamp to the string; negative `start` counts from the end |
 | `split(s, sep)` · `trim(s)` · `pad(v, width[, fill])` | split (empty parts kept), trim whitespace, left-pad (`pad(3, 2)` → `"03"`) |
 | `length(v)` · `magnitude(v)` | Euclidean length of a vector (`len` stays the size of a string or list) |
-| `normalize(v)` · `distance(a, b)` · `dot(a, b)` · `lerp(a, b, t)` | vector functions on numeric lists and component structs; results keep the first vector's kind |
+| `normalize(v)` · `distance(a, b)` · `dot(a, b)` · `lerp(a, b, t)` | vector functions on numeric lists and component structs; `distance` and `dot` return numbers, `normalize` and `lerp` a value of the first vector's kind |
 | `contains(a, b)` · `starts-with` · `ends-with` · `matches` | function forms of the operators |
 
 String and vector functions are also methods: `Name.replace("Pillar_", "Column_")`, `Label.trim()`,
-`Position.length()`, `a.distance(b)`. Functions return a `null` / `missing` / error argument unchanged and a
-`type-mismatch` error value for other wrong kinds.
+`Position.length()`, `a.distance(b)`. Numeric, string and vector functions return a `null` / `missing` / error
+argument unchanged and a `type-mismatch` error value for other wrong kinds.
 
 ```text
 objects | where name starts-with "Pillar_" | set name = name.replace("Pillar_", "Column_")
@@ -219,7 +217,9 @@ kind**:
 - **engine**: never built (scene objects: nodes, game objects, actors, components). Pass an existing one
   (`ref("Type#id")`, the host's finder or an asset path) or create it with a host method.
 
-Type adapters also accept text forms on writes and comparisons: `"(0, 1, 0)"`, `"#ff8800"`.
+Type adapters may accept text forms on writes and comparisons: numeric tuples such as `"(0, 1, 0)"`
+([§13](../spec/semantics.md#13-type-adapters-host-extension-normative-behaviour)), and host-specific forms such as hex
+colors.
 
 ## Mutations
 
@@ -232,7 +232,7 @@ objects | where name starts-with "Crate" | sort name | set Position.x = $index *
 range(0, 300) | call editor.CreateObject("Cube", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})
 [["Crate", 1], ["Barrel", 2]] | call editor.CreateObject($[0], $[1])
 range(0, 10) | call editor.CreateObject({name: "Tile" + $, position: [$ * 2, 0, 0]})
-get Rows | where Value.IsElite | set Value.Health = Value.Health * 1.1
+app.Tables | get Rows | where Value.IsElite | set Value.Health = Value.Health * 1.1
 ```
 
 - **Two switches.** Writes need the host's mutation switch **and** a mutation request; a mutation request must end in
@@ -271,7 +271,7 @@ form).
   stored). An assignment that leaves the value unchanged is still written but left out and counted in `unchanged`.
 - `call`: one row per invocation, `$ref|method|result`. For a source-qualified call that returns an object, `$ref` is
   the created object's.
-- The agent table format compacts long receipts: a method shared by every row is printed once, a `$ref` equal to the
+- The .NET agent table format compacts long receipts: a method shared by every row is printed once, a `$ref` equal to the
   result's is dropped, and only the first 50 rows are listed with a count of the rest.
 - A receipt cut by the output byte budget says that every change was made (on a dry run: checked); it never suggests
   paging, which would repeat the change.
@@ -292,7 +292,7 @@ Spec: [§10](../spec/semantics.md#10-budgets-and-errors), [§8 target limit](../
 | `maxVisited` | 1 000 000 | `budget-exceeded` |
 | `maxRows` | 50 | truncation (`N of M`) |
 | `maxListItems` | 20 per encoded list | `…+N` marker |
-| `maxDepth` (recurse) | 16 | clamp + warning |
+| `maxDepth` (cap on `recurse max-depth`) | 16 | clamp + warning |
 | `timeoutMs` | 2 000 | `timeout` |
 | `maxOutputBytes` | 65 536 | rows cut + `output-truncated` |
 | `maxMutationTargets` | the host's default (20 unless the host sets it) | `mutation-limit`, nothing changed |

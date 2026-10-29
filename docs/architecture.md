@@ -48,8 +48,8 @@ RQL text ──► Parser (.NET / TS) ──► canonical QueryPlan JSON ──�
 
 ## Integrations
 
-RQL is the data layer of the [AI Game Dev](https://ai-game.dev) engine plugins; each exposes `rql-query`,
-`rql-mutate` and `rql-schema` tools ([`agent-tool-contract.md`](agent-tool-contract.md)) and configures the host hooks of
+RQL is the data layer of the [AI Game Dev](https://ai-game.dev) engine plugins; each exposes the query, mutate and schema
+tools of the [agent tool contract](agent-tool-contract.md) (named `rql-query`, `rql-mutate`, `rql-schema` there) and configures the host hooks of
 [`host-integration.md`](host-integration.md).
 
 * **Unity-MCP**: the .NET engine runs in the Unity Editor. Unity types are shaped by type adapters (the ReflectorNet
