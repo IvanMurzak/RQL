@@ -1,0 +1,55 @@
+cpp/include/rql/guide.hpp
+  s_7bc72ecaebd05d::t_4b9616761354c3 29-30,32-35
+cpp/src/compiler.cpp
+  s_7be60963fe3603::t_25d8a669df2eda 90-91,95,97-99,104,116
+cpp/src/mutator.cpp
+  s_7be60963fe3603::t_63fcd005e53449 1034-1035,1041,1090-1096,1098-1099,1156-1157
+cpp/tests/unit_tests.cpp
+  s_7be60963fe3603::t_3784527b470b0d 2572,2630-2672
+dotnet/Rql.Execution/AgentFormat.cs
+  s_7bc72ecaebd05d::t_3743b722169f0c 73-76
+dotnet/Rql.Execution/Modules.cs
+  s_7bc72ecaebd05d::t_9c4dd57149a5b7 129,137
+dotnet/Rql.Execution/Mutator.cs
+  s_7bc72ecaebd05d::t_0e94303a465c5d 658-659,665-666,668-671,736-737,807-811
+dotnet/Rql.Execution/Pipeline.cs
+  s_7bc72ecaebd05d::t_8464db44f57432 1290,1305-1315,1318-1319,1323-1326,1328-1329
+dotnet/Rql.Execution/RqlLanguageGuide.cs
+  s_7bc72ecaebd05d::t_b941094366f7dd 30,33
+dotnet/Rql.Tests/HintTests.cs
+  s_7be60963fe3603::t_ee38ac06eb4389 10,56-83,122-125,148-173
+dotnet/Rql.Tests/ParityTests.cs
+  s_7be60963fe3603::t_35a1864c37e2d7 10
+typescript/packages/execution/src/guide.ts
+  s_7bc72ecaebd05d::t_d8551a021feef2 25,28-30
+typescript/packages/execution/src/mutator.ts
+  s_7be60963fe3603::t_f214e3a1b89a4d 731-732,736-746,785-786,875-876,879,884-885
+typescript/packages/execution/src/suggest.ts
+  s_7be60963fe3603::t_25be2791dc4963 107-108,125-127,129-132,137-144
+typescript/tests/src/hints.test.ts
+  s_7bc72ecaebd05d::t_e284273656c8b0 78-123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f454b04175ad731fd58baa63e936a0d97fc2ab90",
+  "prompts": {},
+  "sessions": {
+    "s_7bc72ecaebd05d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40274cb2-edf8-49ba-9a73-33b83cb5be53",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    },
+    "s_7be60963fe3603": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c306a43-6f1a-4fe9-9b57-09acf4bc1a65",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Ivan Murzak <Ivan.D.Murzak@gmail.com>"
+    }
+  }
+}
