@@ -960,6 +960,23 @@ SourceBinding bind_source(Exec& x, Compiler& c, const Expr& src) {
         throw RqlException("unknown-source", "unknown source '" + head + "'",
                            (close.empty() ? std::string() : "did you mean " + join(close, " / ") + "? ") + "sources: " + join(names, " "));
     }
+    // A function call or ref(…) followed by navigation (spec §2): unreal.asset("/Game/BP").EventGraph, ref("Node#1").Children[0].
+    if (src.kind == ExprKind::Path && src.on && (src.on->kind == ExprKind::Call || src.on->kind == ExprKind::Path) && !src.segments.empty()) {
+        auto base = std::make_shared<SourceBinding>(bind_source(x, c, *src.on));
+        Eval nav = c.compile(*plan::path(src.segments));
+        std::string rest_text;
+        for (auto& s : src.segments) rest_text += s.kind == SegmentKind::Member ? "." + s.name : s.to_string();
+        b.kind = base->kind == SourceBinding::Kind::Ref ? SourceBinding::Kind::Ref : SourceBinding::Kind::Value;
+        b.ev = [base, nav](Exec& ex) -> Value {
+            Value v = source_value(ex, *base);
+            if (v.is_null() || v.is_absent()) return v;
+            ex.current = v;
+            ex.current_path = nullptr;
+            return ex.live(nav(ex));
+        };
+        b.text = base->text + rest_text;
+        return b;
+    }
     if (src.kind == ExprKind::Call && !src.on && iequals(src.name, "ref")) {
         b.kind = SourceBinding::Kind::Ref;
         b.ev = c.compile(src);

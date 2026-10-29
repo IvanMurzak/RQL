@@ -1130,6 +1130,161 @@ std::optional<Value> struct_arith(Exec& x, std::string op, const Value& a, const
     return built;
 }
 
+/// The numbers of a list whose elements are all numbers (spec §4.2 numeric lists).
+bool numeric_list(const Value& v, std::vector<double>& out) {
+    if (!v.is_list()) return false;
+    auto& l = v.list();
+    out.clear();
+    const size_t n = l.size();
+    for (size_t i = 0; i < n; ++i) {
+        Value e = l.at(i);
+        double d;
+        if (!try_number(e, d)) return false;
+        out.push_back(d);
+    }
+    return true;
+}
+
+Value number_list(const std::vector<double>& parts) {
+    std::vector<Value> items;
+    items.reserve(parts.size());
+    for (double d : parts) items.push_back(Value::number(d));
+    return Value::list_of(std::move(items));
+}
+
+/// Arithmetic on numeric lists without a struct operand (spec §4.2): L * n, n * L, L / n, L ± M (same length), -L; a new
+/// list of numbers. nullopt when neither operand is a list; a type-mismatch with the reason for any other list operation.
+std::optional<Value> list_arith(const std::string& op, const Value& a, const Value& b) {
+    const bool la = a.is_list(), lb = op != "neg" && b.is_list();
+    if (!la && !lb) return std::nullopt;
+    auto mismatch = [&](const std::string& why) {
+        return Value::error("type-mismatch", "cannot apply '" + std::string(op == "neg" ? "-" : op) + "' to " + describe_value(a) +
+                                                 (op == "neg" ? std::string() : " and " + describe_value(b)) + " (" + why + ")");
+    };
+    std::vector<double> pa, pb;
+    if ((la && !numeric_list(a, pa)) || (lb && !numeric_list(b, pb))) return mismatch("every list element must be a number");
+    if (op == "%") return mismatch("'%' is not a vector operation");
+    std::vector<double> result;
+    if (op == "neg") {
+        for (double d : pa) result.push_back(-d);
+    } else if (la && lb) {
+        if (op == "*" || op == "/") return mismatch("an element-wise product is not a vector operation; use dot(a, b)");
+        if (pa.size() != pb.size())
+            return mismatch("the lists have " + std::to_string(pa.size()) + " and " + std::to_string(pb.size()) + " numbers");
+        for (size_t i = 0; i < pa.size(); ++i) result.push_back(op == "+" ? pa[i] + pb[i] : pa[i] - pb[i]);
+    } else {
+        const std::vector<double>& list = la ? pa : pb;
+        const Value& operand = la ? b : a;
+        double n;
+        if (!try_number(operand, n))
+            return mismatch(operand.is_null() ? std::string("null is not a number")
+                                              : "a list combines with a number or a list of " + std::to_string(list.size()) + " numbers");
+        if (!(op == "*" || (op == "/" && la)))
+            return mismatch(op == "/" ? std::string("a number cannot be divided by a list")
+                                      : "add a list of " + std::to_string(list.size()) + " numbers; multiply or divide by a number");
+        if (op == "/" && n == 0) return Value::error("div-by-zero");
+        for (double d : list) result.push_back(op == "*" ? d * n : d / n);
+    }
+    return number_list(result);
+}
+
+/// A vector (spec §4.3): a numeric list or a struct whose adapter declares components.
+struct Vec {
+    std::vector<double> parts;
+    Value value;
+    const TypeAdapter* adapter = nullptr;
+};
+
+bool vector_of(Exec& x, const Value& v, Vec& out) {
+    out.value = v;
+    out.adapter = nullptr;
+    if (components_of(x, v, out.parts, out.adapter)) return true;
+    return numeric_list(v, out.parts);
+}
+
+/// The Euclidean length; every product and sum rounded separately (no fused multiply-add, spec §4.3).
+double vector_length(const std::vector<double>& parts) {
+    volatile double sum = 0;
+    for (double p : parts) {
+        volatile double sq = p * p;
+        sum = sum + sq;
+    }
+    return std::sqrt(static_cast<double>(sum));
+}
+
+/// A value of the first vector's kind: its struct type through the adapter, else a list of numbers.
+Value vector_build(const std::string& name, const Vec& like, const std::vector<double>& parts) {
+    if (!like.adapter) return number_list(parts);
+    std::optional<Value> built;
+    try {
+        if (like.adapter->from_components) built = like.adapter->from_components(*like.value.type(), parts);
+    } catch (const std::exception&) {
+        built.reset();
+    }
+    if (!built) return Value::error("type-mismatch", name + "(): cannot build " + describe_value(like.value) + " from components");
+    return *built;
+}
+
+Value not_vector(const std::string& name, const Value& v) {
+    return Value::error("type-mismatch", name + "() takes a vector: a list of numbers or a struct with component-wise arithmetic, got " + describe_value(v));
+}
+
+/// Vector functions (spec §4.3): length / magnitude, normalize, distance, dot, lerp.
+Value vector_function(Exec& x, const std::string& name, const std::vector<Value>& vals) {
+    double na, nb;
+    if (name == "lerp" && try_number(vals[0], na) && try_number(vals[1], nb)) {
+        double t;
+        if (!try_number(vals[2], t)) return Value::error("type-mismatch", "lerp() expects a number t, got " + describe_value(vals[2]));
+        volatile double span = nb - na;
+        volatile double step = span * t;
+        return Value::number(na + step);
+    }
+    Vec a, b;
+    if (!vector_of(x, vals[0], a)) return not_vector(name, vals[0]);
+    if (name == "distance" || name == "dot" || name == "lerp") {
+        if (!vector_of(x, vals[1], b)) return not_vector(name, vals[1]);
+        if (a.adapter && b.adapter && a.value.type() != b.value.type())
+            return Value::error("type-mismatch", name + "() needs vectors of one type, got " + describe_value(a.value) + " and " + describe_value(b.value));
+        if (a.parts.size() != b.parts.size())
+            return Value::error("type-mismatch", name + "() needs vectors of the same width, got " + std::to_string(a.parts.size()) + " and " +
+                                                     std::to_string(b.parts.size()) + " components");
+    }
+    if (name == "length" || name == "magnitude") return Value::number(vector_length(a.parts));
+    if (name == "dot") {
+        volatile double sum = 0;
+        for (size_t i = 0; i < a.parts.size(); ++i) {
+            volatile double p = a.parts[i] * b.parts[i];
+            sum = sum + p;
+        }
+        return Value::number(sum);
+    }
+    if (name == "distance") {
+        std::vector<double> d(a.parts.size());
+        for (size_t i = 0; i < d.size(); ++i) d[i] = a.parts[i] - b.parts[i];
+        return Value::number(vector_length(d));
+    }
+    if (name == "normalize") {
+        const double len = vector_length(a.parts);
+        if (len == 0) return a.value;  // a zero vector stays zero
+        std::vector<double> r(a.parts.size());
+        for (size_t i = 0; i < r.size(); ++i) r[i] = a.parts[i] / len;
+        return vector_build(name, a, r);
+    }
+    double t;  // lerp
+    if (!try_number(vals[2], t)) return Value::error("type-mismatch", "lerp() expects a number t, got " + describe_value(vals[2]));
+    std::vector<double> r(a.parts.size());
+    for (size_t i = 0; i < r.size(); ++i) {
+        volatile double span = b.parts[i] - a.parts[i];
+        volatile double step = span * t;
+        r[i] = a.parts[i] + step;
+    }
+    return vector_build(name, a, r);
+}
+
+bool is_vector_function(const std::string& name) {
+    return name == "length" || name == "magnitude" || name == "normalize" || name == "distance" || name == "dot" || name == "lerp";
+}
+
 Value arith(Exec& x, const std::string& op, const Value& a, const Value& b) {
     if (a.is_missing() || b.is_missing()) return Value::missing();
     if (a.is_error()) return a;
@@ -1139,6 +1294,8 @@ Value arith(Exec& x, const std::string& op, const Value& a, const Value& b) {
     if (!try_number(a, l) || !try_number(b, r)) {
         if (x.has_capability(Capability::Components))
             if (auto v = struct_arith(x, op, a, b)) return *v;
+        if (!a.is_struct() && !b.is_struct())
+            if (auto v = list_arith(op, a, b)) return *v;
         return arith_mismatch(x, op, a, b);
     }
     if (op == "neg") return Value::number(-l);
@@ -1276,10 +1433,12 @@ const char* kCoreFunctions[] = {"has", "is-null", "len", "lower", "upper", "abs"
                                 "coalesce", "if", "ref",
                                 "append", "insert", "remove-at", "without", "range",
                                 "replace", "replace-regex", "substring", "split", "trim", "pad",
-                                "contains", "starts-with", "ends-with", "matches"};
+                                "contains", "starts-with", "ends-with", "matches",
+                                "length", "magnitude", "normalize", "distance", "dot", "lerp"};
 const char* kCoreMethods[] = {"any", "all", "count", "sum", "min", "max", "avg", "first", "keys", "values",
                               "contains", "starts-with", "ends-with", "matches", "lower", "upper", "len",
-                              "replace", "replace-regex", "substring", "split", "trim", "pad"};
+                              "replace", "replace-regex", "substring", "split", "trim", "pad",
+                              "length", "magnitude", "normalize", "distance", "dot", "lerp"};
 
 // ------------------------------------------------------------------ string functions (spec §4.3)
 
@@ -1870,6 +2029,11 @@ Eval Compiler::compile_function(const Expr& c) {
         for (auto& a : c.args) args.push_back(a.get());
         return compile_string_function(c, name, args, 0);
     }
+    if (is_vector_function(name)) {
+        std::vector<const Expr*> args;
+        for (auto& a : c.args) args.push_back(a.get());
+        return compile_vector_function(c, name, args, 0);
+    }
     std::vector<std::string> known;
     for (auto* f : kCoreFunctions) known.push_back(f);
     for (auto& kv : x_.engine.functions()) known.push_back(kv.first);
@@ -1922,9 +2086,35 @@ Eval Compiler::compile_method(const Expr& c) {
         for (auto& a : c.args) args.push_back(a.get());
         return compile_string_function(c, name, args, 1);
     }
+    if (is_vector_function(name)) {
+        std::vector<const Expr*> args{c.on.get()};
+        for (auto& a : c.args) args.push_back(a.get());
+        return compile_vector_function(c, name, args, 1);
+    }
     std::vector<std::string> known;
     for (auto* m : kCoreMethods) known.push_back(m);
     throw RqlException("unknown-function", "unknown method '" + c.name + "'", "methods: " + join(known, " "));
+}
+
+Eval Compiler::compile_vector_function(const Expr& /*c*/, const std::string& name, const std::vector<const Expr*>& argExprs, size_t receiver) {
+    const size_t n = name == "lerp" ? 3 : name == "distance" || name == "dot" ? 2 : 1;
+    if (argExprs.size() != n) {
+        const std::string rest = n == 3 ? "w, 0.5" : n == 2 ? "w" : "";
+        const std::string example = receiver == 1 ? "v." + name + "(" + rest + ")" : name + "(v" + (rest.empty() ? std::string() : ", " + rest) + ")";
+        throw RqlException("arity", "'" + name + "' takes " + std::to_string(n - receiver) + " argument(s), got " + std::to_string(argExprs.size() - receiver),
+                           "example: " + example);
+    }
+    std::vector<Eval> args;
+    for (auto* e : argExprs) args.push_back(compile(*e));
+    return [args, name](Exec& x) {
+        std::vector<Value> vals;
+        for (auto& a : args) {
+            Value v = a(x);
+            if (v.is_null() || v.is_absent()) return v;  // null / missing / error propagate (first one)
+            vals.push_back(std::move(v));
+        }
+        return vector_function(x, name, vals);
+    };
 }
 
 Eval Compiler::compile_string_function(const Expr& c, const std::string& name, const std::vector<const Expr*>& argExprs, size_t receiver) {

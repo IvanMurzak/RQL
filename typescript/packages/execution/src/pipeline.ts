@@ -366,6 +366,23 @@ export class Pipeline {
       const close = closest(head, names, 3);
       throw new RqlError('unknown-source', `unknown source '${head}'`, src.span, (close.length > 0 ? `did you mean ${close.join(' / ')}? ` : '') + 'sources: ' + names.join(' '));
     }
+    // ref(…) followed by navigation (spec §2): ref("Node#1").Children[0]. (Host function sources are pending in TS.)
+    if (src.kind === 'path' && src.on !== undefined && src.on.kind === 'call' && src.segments.length > 0) {
+      const base = this.bindSource(src.on);
+      const rest: PathExpr = { kind: 'path', segments: src.segments, ...(src.span !== undefined ? { span: src.span } : {}) };
+      const step = this.c.compile(rest);
+      return {
+        value: () => {
+          const v = base.value();
+          if (v === null || v === undefined || isAbsent(v)) return v;
+          x.current = v;
+          x.currentPath = null;
+          return x.live(step(x));
+        },
+        pathText: base.pathText + pathSuffixText(rest),
+        quiet: base.quiet,
+      };
+    }
     if (src.kind === 'call' && src.on === undefined && src.name.toLowerCase() === 'ref') return { value: this.rootValue(this.c.compile(src)), pathText: 'ref(…)', quiet: true };
     // A list literal streams its elements, evaluated with no current item (spec §2).
     // An error element fails the query; an element that reads nothing (a bare path) is dropped like null.

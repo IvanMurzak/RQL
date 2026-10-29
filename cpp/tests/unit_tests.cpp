@@ -2160,6 +2160,96 @@ struct W6Lamp {
     std::string type = "Point";
 };
 
+// ADR-0012: numeric lists as vectors, vector functions, function / ref() sources and call targets that navigate.
+struct VGraph {
+    std::vector<std::string> Events;
+    std::string AddCustomEvent(std::string name) {
+        Events.push_back(name);
+        return name;
+    }
+};
+struct VBlueprint {
+    std::string Path;
+    VGraph EventGraph;
+};
+struct VActor {
+    std::string Name;
+    FVec3f Position;
+};
+struct VWorld {
+    std::vector<std::unique_ptr<VActor>> Actors;
+};
+
+void vector_tests() {
+    auto has = [](const std::string& s, const std::string& part) { return s.find(part) != std::string::npos; };
+    rql::TypeRegistry reg;
+    reg.structure<FVec3f>("FVector3f").member("X", &FVec3f::X).member("Y", &FVec3f::Y).member("Z", &FVec3f::Z);
+    reg.object<VActor>("VActor").member("Name", &VActor::Name).member("Position", &VActor::Position).no_identity();
+    reg.object<VWorld>("VWorld").member("Actors", &VWorld::Actors);
+    reg.object<VGraph>("VGraph").member("Events", &VGraph::Events).method("AddCustomEvent", &VGraph::AddCustomEvent, {"name"}).no_identity();
+    reg.object<VBlueprint>("VBlueprint").member("Path", &VBlueprint::Path).member("EventGraph", &VBlueprint::EventGraph).no_identity();
+    VWorld world;
+    world.Actors.push_back(std::make_unique<VActor>());
+    world.Actors[0]->Name = "a";
+    world.Actors[0]->Position = FVec3f{3, 0, 4};
+    rql::Engine e(reg);
+    e.add_object_source("w", &world);
+    e.mutations().enabled = true;
+    rql::TypeRegistry* rp = &reg;
+    rql::TypeAdapter vec;
+    vec.target = reg.descriptor<FVec3f>();
+    vec.components = [rp](const rql::Value& v) -> std::optional<std::vector<double>> {
+        const FVec3f* p = rql::value_as<FVec3f>(*rp, v);
+        if (!p) return std::nullopt;
+        return std::vector<double>{rql::widen_single(p->X), rql::widen_single(p->Y), rql::widen_single(p->Z)};
+    };
+    vec.from_components = [rp](const rql::TypeDescriptor&, const std::vector<double>& c) -> std::optional<rql::Value> {
+        if (c.size() != 3) return std::nullopt;
+        FVec3f out{rql::to_single(c[0]), rql::to_single(c[1]), rql::to_single(c[2])};
+        return rql::Traits<FVec3f>::get(*rp, out);
+    };
+    e.add_adapter(std::move(vec));
+    const std::string actors = R"J({"rql":"0.1","source":{"path":["w","Actors"]},"stages":[)J";
+    auto sel = [&](const std::string& expr) {
+        return arun(e, actors + R"J({"op":"select","fields":[{"name":"v","expr":)J" + expr + "}]}]}");
+    };
+    // The reason of a failing expression: set Name = expr fails with it (error cells carry only the code).
+    auto why = [&](const std::string& expr) {
+        auto res = arun(e, actors + R"J({"op":"set","assign":[{"target":{"path":["Name"]},"value":)J" + expr + "}]}]}", true);
+        return res.diagnostics.empty() ? std::string("(ok)") : res.diagnostics[0].message;
+    };
+    auto r = sel(R"J({"op":"*","args":[{"list":[{"lit":1},{"lit":2},{"lit":0}]},{"lit":3}]})J");
+    check(r.ok && r.rows && (*r.rows)[0][0].is_array() && (*r.rows)[0][0].at(1).as_number() == 6, "vectors: [1, 2, 0] * 3");
+    check(has(why(R"J({"op":"+","args":[{"list":[{"lit":1},{"lit":2}]},{"lit":1}]})J"), "add a list of 2 numbers"), "vectors: [1, 2] + 1 says why");
+    check(has(why(R"J({"op":"*","args":[{"list":[{"lit":1},{"lit":2}]},{"list":[{"lit":3},{"lit":4}]}]})J"), "use dot(a, b)"), "vectors: list * list refused");
+    r = sel(R"J({"call":"length","on":{"path":["Position"]},"args":[]})J");
+    check(r.ok && (*r.rows)[0][0].as_number() == 5, "vectors: Position.length()");
+    r = sel(R"J({"call":"normalize","args":[{"path":["Position"]}]})J");
+    check(r.ok && (*r.rows)[0][0].is_object() && (*r.rows)[0][0].find("Z") && (*r.rows)[0][0].find("Z")->as_number() == 0.8, "vectors: normalize keeps the struct type");
+    check(has(why(R"J({"call":"dot","args":[{"path":["Position"]},{"list":[{"lit":1},{"lit":2}]}]})J"), "dot() needs vectors of the same width, got 3 and 2 components"),
+          "vectors: width mismatch");
+    check(has(why(R"J({"call":"length","args":[{"path":["Name"]}]})J"), "length() takes a vector"), "vectors: not a vector");
+    r = arun(e, actors + R"J({"op":"set","assign":[{"target":{"path":["Position"]},"value":{"op":"+","args":[{"path":["Position"]},{"op":"*","args":[{"list":[{"lit":1},{"lit":2},{"lit":0}]},{"lit":2}]}]}}]}]})J", true);
+    check(r.ok && world.Actors[0]->Position.X == 5 && world.Actors[0]->Position.Y == 4, "vectors: set Position = Position + [1, 2, 0] * 2");
+
+    // A host function call followed by navigation is a qualified call target, evaluated once (spec §2, §8).
+    VBlueprint bp;
+    bp.Path = "/Game/BP";
+    int resolved = 0;
+    e.add_function("unreal.asset", [&bp, &resolved, rp](const std::vector<rql::Value>& a) {
+        ++resolved;
+        return !a.empty() && a[0].is_string() && a[0].as_string() == bp.Path ? rp->wrap(&bp) : rql::Value::null();
+    });
+    const std::string target = R"J({"path":["EventGraph"],"on":{"call":"asset","on":{"path":["unreal"]},"args":[{"lit":"/Game/BP"}]}})J";
+    r = arun(e, R"J({"rql":"0.1","source":{"list":[{"lit":"Jump"},{"lit":"Land"}]},"stages":[{"op":"call","method":"AddCustomEvent","on":)J" + target +
+                    R"J(,"args":[{"path":[]}]}]})J",
+             true);
+    check(r.ok && bp.EventGraph.Events.size() == 2 && bp.EventGraph.Events[1] == "Land" && resolved == 1,
+          "vectors: call unreal.asset(...).EventGraph.AddCustomEvent($) once per item");
+    r = arun(e, R"J({"rql":"0.1","source":{"path":["Events",{"index":1}],"on":)J" + target + "},\"stages\":[]}");
+    check(r.ok && r.items && (*r.items).size() == 1 && (*r.items)[0].as_string() == "Land", "vectors: function source with navigation");
+}
+
 void wave6_tests() {
     auto has = [](const std::string& s, const std::string& part) { return s.find(part) != std::string::npos; };
     rql::TypeRegistry reg;
@@ -2470,6 +2560,7 @@ int main(int argc, char** argv) {
         wave5_tests();
         overload_tests();
         wave6_tests();
+        vector_tests();
     } catch (const std::exception& ex) {
         std::cout << "FATAL " << ex.what() << "\n";
         return 2;
