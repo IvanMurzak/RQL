@@ -95,7 +95,7 @@ jobs:
           esac
       # A full run before publishing is a deliberate gate, even when ci.yml already passed this commit.
       - name: Test all runtimes + conformance (no LLM)
-        run: scripts/test-all.sh
+        run: python3 scripts/test-all.py
       - uses: actions/upload-artifact@v7
         with:
           name: nupkg

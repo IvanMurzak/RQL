@@ -83,7 +83,7 @@ jobs:
         id: chain
         run: ${{ env.CHAIN_PY }} .github/scripts/chain_feed.py apply --node rql --job test-all
       - name: Test all runtimes + conformance + task self-check (no LLM)
-        run: scripts/test-all.sh
+        run: ${{ env.CHAIN_PY }} scripts/test-all.py
       # On a chain run the pack is at the lock's ws version into .artifacts/nuget, where `record` proves the three
       # assemblies' ProductVersion (not uploaded: consumer legs self-build RQL). Otherwise: ./packages, own version.
       - name: Pack com.IvanMurzak.Rql and check the package
