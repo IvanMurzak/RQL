@@ -44,7 +44,7 @@ engine.execute('world.units | where Kind == "alpha" and Hp < 20 | select $ref Na
 engine.execute('ref("Unit#1") | set Pos.x = 5', {}, { allowMutation: true, dryRun: true });
 ```
 
-Engine hooks: `addSource`, `addFunction('ns.fn', args => ...)`, `addStage('ns.stage', (items, args, named) => iterable)`,
+Engine hooks: `addSource(name, getter, description?, type?)` (`type`: the class of the source's value or of its elements; known member names never evaluate a source, so a declared type makes its members known before any query reads it), `addFunction('ns.fn', args => ...)`, `addStage('ns.stage', (items, args, named) => iterable)`,
 `mutations.canWrite`, `isAlive(o)` (liveness), `resolveStableRef(type, id)` (falls back to a bounded
 search of owning members of all sources), `defaults` (budgets/hard caps), `alwaysTrackPaths`.
 
@@ -139,8 +139,12 @@ are non-owning by default; a virtual setter must round-trip its getter (rollback
 - `engine.mutations.validateBatch(records)` sees every planned change of a `set` / `call` stage (call records
   carry `args`) before anything runs, dry runs included; a returned reason refuses the stage (`invalid-value`).
   `engine.mutations.coerceText(ctor, text)` converts strings for struct / object types no adapter coerces;
-  `engine.mutations.canConstructFromLiteral(ctor)` decides which classes object literals may build (default: every class
-  without a `stableId` / `isAlive` adapter, so engine objects never are, spec §4.5);
+  literal kinds (ADR-0011, spec §4.5): an adapter's `literalKind(ctor)` (or `engine.mutations.literalKindOf(ctor)`, asked
+  first) answers `'engine'` (never built; default for a class with a `stableId` / `isAlive` adapter), `'value'` (built
+  fresh: plain data, value-like assets) or `'instanced'` (built as a subobject of its outer: the owner of the written
+  member, the call's target, or the object an enclosing literal builds); `createForLiteral(ctor, outer)` (host hook, then
+  adapters) builds the empty value before `new ctor()`; `engine.mutations.canConstructFromLiteral(ctor)` still overrides
+  (false → engine, true → value) and `engine.mutations.literalRefusalHint(ctor)` replaces the refusal's advice;
   `engine.mutations.limitHint(op, limit)` replaces the `mutation-limit` hint; `engine.defaults.budgetsAdjustable
   = false` keeps hints from advising `budgets.*`; `engine.findHint` names the host's finder in `ref()` hints;
   `engine.schemaHint` (e.g. `rql-schema`) names the host's schema tool in hints and `engine.mutateHint` (e.g. `rql-mutate`)

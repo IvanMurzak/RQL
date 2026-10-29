@@ -29,6 +29,10 @@ namespace Rql.Sample
             Engine.Mutations.Enabled = allowMutations;
             // Scene objects and components are engine objects: only the scene's methods create them, never an object literal.
             Engine.Mutations.CanConstructFromLiteral = t => typeof(GameObject).IsAssignableFrom(t) || typeof(Component).IsAssignableFrom(t) ? false : (bool?)null;
+            // Audio filters are instanced subobjects (ADR-0011): a literal builds one owned by the audio source it is written to.
+            Engine.Mutations.LiteralKindOf = t => typeof(AudioFilter).IsAssignableFrom(t) ? LiteralKind.Instanced : (LiteralKind?)null;
+            Engine.Mutations.CreateForLiteral = (t, outer) =>
+                typeof(AudioFilter).IsAssignableFrom(t) && Activator.CreateInstance(t) is AudioFilter f ? Own(f, outer as AudioSourceComponent) : null;
             Engine.IsAlive = IsAlive;
             Engine.ResolveStableRef = Resolve;
             Engine.SchemaHint = "rql_schema"; // the evaluation agent's schema tool (docs/agent-tool-contract.md)
@@ -69,6 +73,12 @@ namespace Rql.Sample
                 if (family.TryGetValue(id, out var o) && Engine.Types.Info(o.GetType()).IsA(type)) return o;
             }
             return null;
+        }
+
+        private static AudioFilter Own(AudioFilter f, AudioSourceComponent? owner)
+        {
+            f.Owner = owner;
+            return f;
         }
 
         private static bool IsAlive(object o) => o switch

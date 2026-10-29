@@ -63,7 +63,7 @@ reg.object<Special>("Special").base<Node>().member("Power", &Special::Power);
 // (Special overrides it to return rql::type_key<Special>()), or register .dynamic_type(fn).
 
 rql::Engine engine(reg);
-engine.add_object_source("world", &world);          // or add_source(name, [] { return rql::Value...; })
+engine.add_object_source("world", &world);          // or add_source(name, [] { return rql::Value...; }, description, declared_type)
 engine.add_function("myapp.dist", fn);              // namespaced extensions
 engine.add_stage("myapp.expand", handler);
 engine.mutations().enabled = true;                  // + per request: QueryOptions::allow_mutation = true
@@ -123,7 +123,7 @@ struct handle — e.g. the material when setting through a mesh component) for u
 Host controls for agent-facing tools (spec §8, §10): `MutationPolicy::validate_batch` sees every planned
 change of a `set` / `call` stage (call records carry the coerced `args`) before anything runs, dry runs
 included, and refuses the stage by returning a reason; `MutationPolicy::coerce_text` converts a string
-written to a struct / object type that no adapter coerces (e.g. `ExportText` forms); `MutationPolicy::can_construct_from_literal` decides which types object literals may build (default: `constructible()` types without a `stable_id` / `is_alive` adapter, so engine objects never are, spec §4.5);
+written to a struct / object type that no adapter coerces (e.g. `ExportText` forms); object literals build by **literal kind** (ADR-0011, spec §4.5): `LiteralKind::Engine` (never; default for types with a `stable_id` / `is_alive` adapter), `Value` (built fresh: value-like assets) or `Instanced` (built as a subobject of its outer, the object it is written into: Unreal `EditInlineNew` objects via `NewObject(Outer, Class)`), decided by `MutationPolicy::literal_kind_of`, then the adapters' `literal_kind`, then `can_construct_from_literal` (false → engine, true → an engine type becomes value); factories (`MutationPolicy::create_for_literal`, adapter `create_for_literal`, both given the outer; host-owned) run before `create()`, and `MutationPolicy::literal_refusal_hint` replaces the engine-object refusal advice;
 `MutationPolicy::limit_hint` replaces the `mutation-limit` hint; `EngineDefaults::budgets_adjustable =
 false` keeps hints from advising `budgets.*` when the host's tool takes no budgets; `MutationPolicy::max_targets`
 is the host's default target limit (editor hosts with undo: e.g. 200) and `MutationPolicy::limit_argument` names the

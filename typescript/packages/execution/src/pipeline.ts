@@ -30,7 +30,7 @@ import { Encoder } from './encoder.js';
 import type { ArgEvaluator, SourceRegistration } from './engine.js';
 import { PathNode, type Exec } from './exec.js';
 import { Mutator } from './mutator.js';
-import { closest, closestMembers, memberHint, nestedMembers } from './suggest.js';
+import { closest, closestMembers, memberHint, metaNamed, nestedMembers } from './suggest.js';
 import { EnumType, EnumValue, unwrapNullable, type TypeInfo, type TypeRef } from './types.js';
 import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, isAbsent, originOf, streamedEntry, toNumber, type EntryOrigin } from './values.js';
 
@@ -52,6 +52,46 @@ const ROW_COLUMN_HINT =
   'select produces rows with only the listed columns; to navigate into objects select the full path (select Path.Member) or put `get Path` before the select';
 
 const item = (value: unknown, path: PathNode | null, depth = -1): Item => ({ value, path, depth });
+
+/**
+ * Counts how often a group-by / distinct key that is a member path is missing (spec §5 sparse key members): a member that most
+ * items lack (a polymorphic `group-by type`) is reported instead of silently forming the null group.
+ */
+class KeyTally {
+  private present = 0;
+  private missing = 0;
+
+  private constructor(
+    private readonly text: string,
+    private readonly span: Expr['span'],
+  ) {}
+
+  /** A tally for a plain member path (no meta member); undefined for any other key. */
+  static for(e: Expr): KeyTally | undefined {
+    if (e.kind !== 'path' || e.segments.some((s) => s.kind === 'meta')) return undefined;
+    const text = pathText(e);
+    return text !== undefined ? new KeyTally(text, e.span) : undefined;
+  }
+
+  count(v: unknown): void {
+    if (v === MISSING) this.missing++;
+    else this.present++;
+  }
+
+  report(x: Exec, fate: string): void {
+    if (this.present === 0 || this.missing <= this.present) return;
+    const meta = metaNamed(this.text);
+    x.diagnostics.push(
+      diagnostic(
+        'warning',
+        'unknown-member',
+        `member '${this.text}' exists on ${this.present} of ${this.present + this.missing} item(s); the other ${this.missing} ${fate}`,
+        meta !== undefined ? `did you mean ${meta} (the meta member)?` : `filter to the items that have it first: where has(${this.text})`,
+        this.span,
+      ),
+    );
+  }
+}
 
 export class Pipeline {
   private readonly c: Compiler;
@@ -147,6 +187,8 @@ export class Pipeline {
       const close = closestMembers(site.name, candidates, nested, 3);
       const declaring = x.engine.typesDeclaring(site.name, types);
       let hint = memberHint(site.name, candidates, declaring, nested);
+      const meta = metaNamed(site.name);
+      if (meta !== undefined) hint = `did you mean ${meta} (the meta member)?` + (hint.length > 0 ? '; ' + hint : '');
       if (close.length === 0 && declaring.length === 0 && /^\p{Lu}/u.test(site.name)) {
         hint += (hint.length > 0 ? '; ' : '') + `if '${site.name}' is a value, quote it: "${site.name}"`;
       }
@@ -162,6 +204,9 @@ export class Pipeline {
    * not has() guards, not never-evaluated names: a filter that matched nothing leaves those unevaluated), see emptyMutation.
    */
   private readonly unknownMembers: { name: string; warning: Diagnostic }[] = [];
+
+  /** The registered source the query starts from, if any: known names may read it (spec §8). */
+  private planSource: string | undefined;
 
   /**
    * A mutation that reached no target because a misspelt member emptied its stream is an error, not "0 changes" (spec §8):
@@ -184,6 +229,8 @@ export class Pipeline {
 
   /** Known member names (keyed upper-cased) plus the plan's select field names. */
   private knownNames(): ReadonlyMap<string, string> {
+    // The query's own source counts even when the stream never pulled it (`first 0`); no other source is evaluated.
+    if (this.planSource !== undefined) this.x.engine.ensureSourceType(this.planSource);
     const names = new Map(this.x.engine.knownMemberNames());
     // Group rows have their items (spec §5); elsewhere `items` is an ordinary member name.
     if (this.x.plan.stages.some((st) => st.kind === 'group-by' || (st.kind === 'expr' && st.op === 'group-by'))) names.set('ITEMS', 'items');
@@ -201,16 +248,8 @@ export class Pipeline {
   /** Where objects of a type live: sources and "Type.Member" paths, from declared reachability. */
   private holders(typeName: string): string[] {
     const x = this.x;
-    const roots: { source: string; info: TypeInfo }[] = [];
-    for (const s of x.engine.sources.values()) {
-      let v: unknown;
-      try {
-        v = s.getter();
-      } catch {
-        continue;
-      }
-      if (v !== null && v !== undefined) roots.push({ source: s.name, info: x.types.infoOf(v) });
-    }
+    // The types the sources have produced or declare: a hint never evaluates a source (spec §8 known names).
+    const roots = x.engine.sourceTypeInfos();
     const types = reachableTypes(x.types, roots.map((r) => r.info));
     const targets = types.filter((t) => t.isA(typeName));
     if (targets.length === 0) return [];
@@ -312,6 +351,7 @@ export class Pipeline {
         const name = src.segments.slice(0, len).map(memberName).join('.');
         const reg = this.findSource(name);
         if (reg === undefined) continue;
+        this.planSource ??= reg.name;
         const rest: PathExpr = { kind: 'path', segments: src.segments.slice(len), ...(src.span !== undefined ? { span: src.span } : {}) };
         const nav = rest.segments.length > 0 ? this.c.compile(rest) : undefined;
         return { value: () => this.sourceValue(reg, nav), pathText: reg.name + pathSuffixText(rest), quiet: false };
@@ -501,15 +541,15 @@ export class Pipeline {
       case 'select':
         return this.select(input, st);
       case 'group-by':
-        return this.groupBy(input, st.keys.map((k) => this.c.compile(k.expr)), st.keys.map((k) => k.name), st);
+        return this.groupBy(input, st.keys.map((k) => this.c.compile(k.expr)), st.keys.map((k) => k.name), st, st.keys.map((k) => KeyTally.for(k.expr)));
       case 'sort':
         return this.sort(input, st);
       case 'limit':
         return st.op === 'first' ? first(input, st.n) : skip(input, st.n);
       case 'expr':
         if (st.op === 'get') return this.get(input, st.expr!);
-        if (st.op === 'distinct') return this.distinct(input, st.expr !== undefined ? this.c.compile(st.expr) : undefined);
-        if (st.op === 'group-by') return this.groupBy(input, [this.c.compile(st.expr!)], ['key'], st);
+        if (st.op === 'distinct') return this.distinct(input, st.expr !== undefined ? this.c.compile(st.expr) : undefined, st.expr !== undefined ? KeyTally.for(st.expr) : undefined);
+        if (st.op === 'group-by') return this.groupBy(input, [this.c.compile(st.expr!)], ['key'], st, [KeyTally.for(st.expr!)]);
         break;
       case 'recurse':
         return this.recurse(input, st);
@@ -555,16 +595,36 @@ export class Pipeline {
 
   private sort(input: Iterable<Item>, s: SortStage): Iterable<Item> {
     const keys = s.keys.map((k) => ({ ev: this.c.compile(k.expr), desc: k.desc }));
-    return this.sortIter(input, keys);
+    return this.sortIter(input, keys, s);
   }
 
-  private *sortIter(input: Iterable<Item>, keys: readonly { ev: Eval; desc: boolean }[]): Generator<Item> {
+  private *sortIter(input: Iterable<Item>, keys: readonly { ev: Eval; desc: boolean }[], s: SortStage): Generator<Item> {
     const rows: { it: Item; kv: unknown[] }[] = [];
+    // Keys that evaluated to an error sort last like null and warn once per key (spec §5).
+    const failed = keys.map(() => 0);
+    const firstError: (ErrorValue | undefined)[] = keys.map(() => undefined);
     let i = 0;
     for (const it of input) {
       this.enter(it, i++);
-      rows.push({ it, kv: keys.map((k) => k.ev(this.x)) });
+      const kv = keys.map((k) => k.ev(this.x));
+      kv.forEach((v, k) => {
+        if (v instanceof ErrorValue) {
+          failed[k]!++;
+          firstError[k] ??= v;
+        }
+      });
+      rows.push({ it, kv });
     }
+    failed.forEach((n, k) => {
+      if (n === 0) return;
+      const e = firstError[k]!;
+      const expr = s.keys[k]!.expr;
+      const text = pathText(expr);
+      const label = text !== undefined ? `sort key '${text}'` : `sort key ${k + 1}`;
+      this.x.diagnostics.push(
+        diagnostic('warning', e.code, `${label} failed for ${n} of ${rows.length} item(s) (${e.code}${e.detail !== undefined ? ': ' + e.detail : ''}); they sort last`, undefined, expr.span),
+      );
+    });
     this.x.checkTime();
     // Array.prototype.sort is stable.
     rows.sort((a, b) => {
@@ -605,7 +665,7 @@ export class Pipeline {
     }
   }
 
-  private *distinct(input: Iterable<Item>, key: Eval | undefined): Generator<Item> {
+  private *distinct(input: Iterable<Item>, key: Eval | undefined, tally: KeyTally | undefined): Generator<Item> {
     const seen = new Set<unknown>();
     let i = 0;
     for (const it of input) {
@@ -613,6 +673,7 @@ export class Pipeline {
       if (key !== undefined) {
         this.enter(it, i);
         k = key(this.x);
+        tally?.count(k);
       }
       i++;
       const dk = distinctKey(this.x, k);
@@ -621,13 +682,14 @@ export class Pipeline {
         yield it;
       }
     }
+    tally?.report(this.x, 'are kept as one');
   }
 
   /**
    * group-by: one row per distinct key tuple, in order of first appearance: the key columns, then count
    * (null/missing key values group as null).
    */
-  private *groupBy(input: Iterable<Item>, keys: readonly Eval[], keyColumns: readonly string[], stage: Stage): Generator<Item> {
+  private *groupBy(input: Iterable<Item>, keys: readonly Eval[], keyColumns: readonly string[], stage: Stage, tallies: readonly (KeyTally | undefined)[]): Generator<Item> {
     const x = this.x;
     const groups = new Map<unknown, { tuple: unknown[]; count: number; items: unknown[] | undefined }>();
     // Per-group aggregates read the group's items: items.avg(Weight) (spec §5).
@@ -635,8 +697,9 @@ export class Pipeline {
     let i = 0;
     for (const it of input) {
       this.enter(it, i++);
-      const tuple = keys.map((k) => {
+      const tuple = keys.map((k, n) => {
         const v = normalize(k(x));
+        tallies[n]?.count(v);
         return v === MISSING || v === UNKNOWN ? null : v;
       });
       const dk = tuple.length === 1 ? (tuple[0] === null ? NULL_GROUP : distinctKey(x, tuple[0])) : distinctKey(x, new RowValue([...keyColumns], tuple));
@@ -645,6 +708,7 @@ export class Pipeline {
       else groups.set(dk, (g = { tuple, count: 1, items: keepItems ? [] : undefined }));
       g.items?.push(it.value);
     }
+    for (const t of tallies) t?.report(x, 'group as null');
     const cols = [...keyColumns, 'count'];
     for (const g of groups.values()) yield item(new RowValue(cols, [...g.tuple, g.count], true, g.items), null);
   }

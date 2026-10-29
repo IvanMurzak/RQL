@@ -196,6 +196,26 @@ namespace Rql.Sample
         public float Volume { get; set; } = 1;
         public bool Loop { get; set; }
         public bool PlayOnAwake { get; set; }
+        /// <summary>Effects owned by this source (instanced subobjects, ADR-0011): built from a typed literal for their owner.</summary>
+        public List<AudioFilter> Filters { get; set; } = new List<AudioFilter>();
+    }
+
+    [RqlDescription("An audio effect owned by one audio source; write it as a typed literal, e.g. {$type: \"LowPassFilter\", Cutoff: 800}.")]
+    public abstract class AudioFilter
+    {
+        [RqlReference] public AudioSourceComponent? Owner { get; set; }
+        public float Mix { get; set; } = 1;
+    }
+
+    public sealed class LowPassFilter : AudioFilter
+    {
+        public float Cutoff { get; set; } = 5000;
+    }
+
+    public sealed class EchoFilter : AudioFilter
+    {
+        public float Delay { get; set; } = 0.5f;
+        public float Decay { get; set; } = 0.5f;
     }
 
     public sealed class ScriptComponent : Component

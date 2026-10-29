@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { RqlError, deserializePlan, parseBudgets, planToJson, resultToJson, type Budgets, type JsonValue, type QueryOptions, type QueryResult } from '@rql/contracts';
 import { RqlEngine } from '@rql/execution';
 import { parse } from '@rql/parser';
-import { conformanceModel, loadGraph } from './graph.js';
+import { Graph, conformanceModel, loadGraph } from './graph.js';
 import { registerTestAdapters } from './test-adapters.js';
 
 export interface Vector {
@@ -116,7 +116,8 @@ function caseVectors(suite: 'execution' | 'adapters', file: string, setup: (e: R
   for (const c of cases(fixture(file))) {
     const name = c.name as string;
     const graph = loadGraph(graphJson);
-    const engine = setup(new RqlEngine({ types: model }).addSource('g', () => graph));
+    // Declared: known names never evaluate a source (spec §8).
+    const engine = setup(new RqlEngine({ types: model }).addSource('g', () => graph, undefined, Graph));
     engine.mutations.enabled = true;
     const budgets: Budgets = c.budgets !== undefined ? parseBudgets(c.budgets) : {};
     const o = (c.options ?? {}) as { allowMutation?: boolean; dryRun?: boolean };

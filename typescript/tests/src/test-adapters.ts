@@ -130,6 +130,8 @@ export const nodeAdapter: TypeAdapter<Node> = {
         '(at.x + at.y) * scale',
       )
       .method('pin', [{ name: 'peer', type: t.of(Node) }], t.number, (_n, peer: Node) => peer.Id, "the peer's Id")
+      // Literal kinds (spec §4.5): a Special literal is an instanced subobject built for the call's target.
+      .method('adopt', [{ name: 'child', type: t.of(Node) }], t.string, (_n, child: Node) => child.Parent?.Name ?? null, "the Name of the child's Parent (no state change)")
       // Arguments by name: place({name: "box", side: "up"}).
       .method(
         'place',
@@ -186,6 +188,16 @@ const LABELS = ['name', 'kind'];
 export const specialAdapter: TypeAdapter<Special> = {
   target: Special,
   members: (m) => m.add('powerLevel', { type: t.number, get: (s) => s.Power / 1000, description: 'Power / 1000' }).display('title'),
+  // Literal kinds (spec §4.5, §13): a Special is an instanced subobject although Node is an engine object (liveness adapter);
+  // the factory makes it a child of its outer (Parent = the owning Node).
+  literalKind: () => 'instanced',
+  createForLiteral: (_target, outer) => {
+    const s = new Special();
+    s.Parent = outer instanceof Node ? outer : null;
+    s.Kind = NodeKind.Alpha;
+    s.Enabled = true;
+    return s;
+  },
 };
 
 /** The fixture's batch validator ("engine" in fixtures/adapters/cases.json). */

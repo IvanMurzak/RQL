@@ -244,6 +244,14 @@ void register_test_adapters(rql::Engine& engine, rql::TypeRegistry& reg) {
                 "pin", {rql::ParamDescriptor{"peer", node_type, false, false, rql::Value()}}, rql::builtin::double_type(),
                 [r](Node&, const std::vector<rql::Value>& args) { return rql::Value::number(rql::value_as<Node>(*r, args[0])->Id); },
                 "the peer's Id")
+            // Literal kinds (spec §4.5): a Special literal is an instanced subobject built for the call's target.
+            .method<Node>(
+                "adopt", {rql::ParamDescriptor{"child", node_type, false, false, rql::Value()}}, rql::builtin::string_type(),
+                [r](Node&, const std::vector<rql::Value>& args) {
+                    const Node* child = rql::value_as<Node>(*r, args[0]);
+                    return child && child->Parent ? rql::Value::string(child->Parent->Name) : rql::Value::null();
+                },
+                "the Name of the child's Parent (no state change)")
             // Arguments by name: place({name: "box", side: "up"}).
             .method<Node>(
                 "place",
@@ -308,6 +316,19 @@ void register_test_adapters(rql::Engine& engine, rql::TypeRegistry& reg) {
     special.target = reg.descriptor<Special>();
     special.configure_members = [](rql::MemberTable& t) {
         t.computed<Special>("powerLevel", [](Special& s) { return s.Power / 1000.0; }, "Power / 1000").display("title");
+    };
+    // Literal kinds (spec §4.5, §13): a Special is an instanced subobject although Node is an engine object (liveness
+    // adapter); the factory makes it a child of its outer (Parent = the owning Node). Built objects are host-owned: the
+    // harness keeps them alive for the engine's lifetime (raw Peer / Parent links may reach them).
+    special.literal_kind = [](const rql::TypeDescriptor&) -> std::optional<rql::LiteralKind> { return rql::LiteralKind::Instanced; };
+    auto built = std::make_shared<std::vector<std::shared_ptr<Special>>>();
+    special.create_for_literal = [r, built](const rql::TypeDescriptor&, const rql::Value& outer) -> std::optional<rql::Value> {
+        auto s = std::make_shared<Special>();
+        s->Parent = rql::value_as<Node>(*r, outer);
+        s->Kind = NodeKind::Alpha;
+        s->Enabled = true;
+        built->push_back(s);
+        return r->wrap(s.get());
     };
     engine.add_adapter(std::move(special));
 }
