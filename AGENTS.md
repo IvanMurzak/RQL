@@ -38,6 +38,6 @@ on ReflectorNet, Unity, Unreal, MCP or any hosted service.
 - Conformance (.NET): `dotnet run --project dotnet/Rql.Conformance -- check`.
 - TS: `cd typescript && npm install && npm test`.
 - C++: `cmake -S cpp -B cpp/build && cmake --build cpp/build && ctest --test-dir cpp/build`.
-- Everything: `python3 scripts/test-all.py` (stdlib Python 3.9+; no PowerShell or bash-only scripts in CI).
+- Everything: `python3 scripts/test-all.py` (stdlib Python 3.9+; the repo has no PowerShell).
 - NuGet package (pack + check, no publish): `scripts/pack.sh [out-dir]`.
 - README art (`docs/assets/*.svg`): edit and run `scripts/readme-assets.py`, never hand-edit the generated SVGs.

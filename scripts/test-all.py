@@ -31,22 +31,9 @@ def run(step, args, cwd=None, quiet=False):
         sys.exit(1)
 
 
-def cpp_conformance_exe():
-    # Single-config generators (Makefiles, Ninja) put it in build/; multi-config ones (Visual Studio, Xcode) in
-    # build/Release/.
-    name = "rql_conformance.exe" if os.name == "nt" else "rql_conformance"
-    for path in (os.path.join(CPP_BUILD, name), os.path.join(CPP_BUILD, "Release", name)):
-        if os.path.isfile(path):
-            return path
-    print("test-all: FAILED: %s not built under %s" % (name, CPP_BUILD), file=sys.stderr)
-    sys.exit(1)
-
-
 def main():
     home_dotnet = os.path.join(os.path.expanduser("~"), ".dotnet")
-    if not os.environ.get("DOTNET_ROOT") and os.access(
-        os.path.join(home_dotnet, "dotnet.exe" if os.name == "nt" else "dotnet"), os.X_OK
-    ):
+    if not os.environ.get("DOTNET_ROOT") and shutil.which("dotnet", path=home_dotnet):
         os.environ["DOTNET_ROOT"] = home_dotnet
         os.environ["PATH"] = home_dotnet + os.pathsep + os.environ.get("PATH", "")
     dotnet, npm, cmake, ctest = tool("dotnet"), tool("npm"), tool("cmake"), tool("ctest")
@@ -65,8 +52,8 @@ def main():
     print("== C++")
     run("C++ configure", [cmake, "-S", os.path.join(ROOT, "cpp"), "-B", CPP_BUILD, "-DCMAKE_BUILD_TYPE=Release"], quiet=True)
     run("C++ build", [cmake, "--build", CPP_BUILD, "--config", "Release", "-j", "8"])
+    # ctest also runs rql_conformance against the goldens (cpp/CMakeLists.txt).
     run("C++ tests", [ctest, "--test-dir", CPP_BUILD, "-C", "Release", "--output-on-failure"])
-    run("C++ conformance", [cpp_conformance_exe(), ROOT])
 
     print("== Task catalog self-check (reference agent, no LLM)")
     run("task self-check", [dotnet, "run", "--project", os.path.join(ROOT, "evaluation", "runner", "Rql.Eval"), "-v", "q", "--",
