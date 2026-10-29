@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <iostream>
@@ -2717,6 +2718,156 @@ void hint_tests() {
     }
 }
 
+// A host type system built at runtime (Unreal's UClass model): descriptors come from descriptor_for(class) and are filled
+// from the class, never through object<T>(), so "$type" finds them only through register_descriptor or resolve_subtype.
+struct DynClass {
+    std::string name;
+    const DynClass* super = nullptr;
+    std::vector<std::string> numbers;
+    bool has_triggers = false;
+};
+struct DynObj {
+    const DynClass* cls = nullptr;
+    void* outer = nullptr;
+    std::map<std::string, double> num;
+    std::vector<DynObj*> triggers;
+};
+
+void dynamic_subtype_tests() {
+    auto has = [](const std::string& s, const std::string& part) { return s.find(part) != std::string::npos; };
+    const DynClass action_cls{"InputAction", nullptr, {}, true};
+    const DynClass trigger_cls{"InputTrigger", nullptr, {"ActuationThreshold"}};
+    const DynClass hold_cls{"InputTriggerHold", &trigger_cls, {"HoldTimeThreshold"}};
+    const DynClass tap_cls{"InputTriggerTap", &trigger_cls, {"TapReleaseTimeThreshold"}};
+    rql::TypeRegistry reg;
+    std::function<rql::TypeDescriptor*(const DynClass*)> describe = [&](const DynClass* c) {
+        rql::TypeDescriptor* d = reg.descriptor_for(c);
+        if (d->name != "?") return d;
+        d->name = d->friendly = c->name;
+        d->kind = rql::TypeKind::Object;
+        if (c->super) {
+            d->base = describe(c->super);
+            d->to_base = d->from_base = [](void* p) { return p; };
+            d->members = d->base->members;
+        }
+        for (const std::string& n : c->numbers) {
+            rql::MemberDescriptor m;
+            m.name = n;
+            m.type = rql::builtin::double_type();
+            m.getter = [n](void* self) { return rql::Value::number(static_cast<DynObj*>(self)->num[n]); };
+            m.setter = [n](void* self, const rql::Value& v) { static_cast<DynObj*>(self)->num[n] = v.as_number(); };
+            d->members.push_back(std::move(m));
+        }
+        if (c->has_triggers) {
+            rql::MemberDescriptor m;
+            m.name = "Triggers";
+            m.type = reg.list_type(describe(&trigger_cls), false);
+            m.getter = [&describe](void* self) {
+                std::vector<rql::Value> items;
+                for (DynObj* t : static_cast<DynObj*>(self)->triggers) items.push_back(rql::Value::object(describe(t->cls), t));
+                return rql::Value::list_of(std::move(items));
+            };
+            m.setter = [](void* self, const rql::Value& v) {
+                std::vector<DynObj*> items;
+                for (size_t i = 0; i < v.list().size(); ++i) items.push_back(static_cast<DynObj*>(v.list().at(i).ptr()));
+                static_cast<DynObj*>(self)->triggers = std::move(items);
+            };
+            d->members.push_back(std::move(m));
+        }
+        return d;
+    };
+    const rql::TypeDescriptor* action_t = describe(&action_cls);
+    const rql::TypeDescriptor* trigger_t = describe(&trigger_cls);
+    DynObj action;
+    action.cls = &action_cls;
+    std::vector<std::unique_ptr<DynObj>> built;
+    int resolved = 0;
+    auto engine = [&]() {
+        auto e = std::make_unique<rql::Engine>(reg);
+        e->add_source("action", [&] { return rql::Value::object(action_t, &action); }, "", action_t);
+        e->mutations().enabled = true;
+        e->mutations().literal_kind_of = [trigger_t](const rql::TypeDescriptor& t) -> std::optional<rql::LiteralKind> {
+            return t.derives_from(trigger_t) ? rql::LiteralKind::Instanced : rql::LiteralKind::Engine;
+        };
+        e->mutations().create_for_literal = [&](const rql::TypeDescriptor& t, const rql::Value& outer) -> std::optional<rql::Value> {
+            built.push_back(std::make_unique<DynObj>());
+            built.back()->cls = static_cast<const DynClass*>(t.native_key);
+            built.back()->outer = outer.ptr();
+            return rql::Value::object(&t, built.back().get());
+        };
+        return e;
+    };
+    rql::QueryOptions mutate;
+    mutate.allow_mutation = true;
+    auto set_triggers = [](const std::string& type, const std::string& member) {
+        return R"J({"rql":"0.1","source":{"path":["action"]},"stages":[{"op":"set","assign":[{"target":{"path":["Triggers"]},"value":{"list":[{"object":[{"key":"$type","value":{"lit":")J" +
+               type + R"J("}},{"key":")J" + member + R"J(","value":{"lit":0.5}}]}]}}]}]})J";
+    };
+    auto why = [](const rql::QueryResult& r) { return r.diagnostics.empty() ? std::string() : r.diagnostics[0].message; };
+
+    // Without registration or a lookup hook a runtime-built subtype is unknown.
+    auto e = engine();
+    rql::QueryResult r = e->execute_json(set_triggers("InputTriggerHold", "HoldTimeThreshold"), {}, mutate);
+    check(first_code(r) == "coercion-failed" && has(why(r), "no concrete type named 'InputTriggerHold' derives from InputTrigger") && action.triggers.empty(),
+          "dynamic subtypes: an unregistered runtime descriptor is not found by $type");
+
+    // The host's lazy lookup resolves it.
+    e->mutations().resolve_subtype = [&](const rql::TypeDescriptor& target, const std::string& name) -> const rql::TypeDescriptor* {
+        ++resolved;
+        for (const DynClass* c : {&hold_cls, &tap_cls})
+            if (c->name == name && describe(c)->derives_from(&target)) return describe(c);
+        return nullptr;
+    };
+    r = e->execute_json(set_triggers("InputTriggerHold", "HoldTimeThreshold"), {}, mutate);
+    check(r.ok && action.triggers.size() == 1 && action.triggers[0]->cls == &hold_cls && action.triggers[0]->num["HoldTimeThreshold"] == 0.5 &&
+              action.triggers[0]->outer == &action && resolved >= 1,
+          "dynamic subtypes: resolve_subtype builds an instanced literal of a runtime-built subtype for its outer");
+    r = e->execute_json(set_triggers("InputTriggerHold", "ActuationThreshold"), {}, mutate);
+    check(r.ok && action.triggers[0]->num["ActuationThreshold"] == 0.5, "dynamic subtypes: inherited members of a resolved subtype are writable");
+    r = e->execute_json(set_triggers("InputTriggerPulse", "HoldTimeThreshold"), {}, mutate);
+    check(first_code(r) == "coercion-failed" && has(why(r), "no concrete type named 'InputTriggerPulse'"), "dynamic subtypes: a lookup without an answer fails as before");
+    e->mutations().resolve_subtype = [action_t](const rql::TypeDescriptor&, const std::string&) -> const rql::TypeDescriptor* { return action_t; };
+    r = e->execute_json(set_triggers("InputTriggerHold", "HoldTimeThreshold"), {}, mutate);
+    check(first_code(r) == "coercion-failed" && has(why(r), "resolved 'InputTriggerHold' to InputAction, which does not derive from InputTrigger"),
+          "dynamic subtypes: a resolved type that does not derive from the target is refused");
+    e->mutations().resolve_subtype = [](const rql::TypeDescriptor&, const std::string&) -> const rql::TypeDescriptor* { throw std::runtime_error("class table locked"); };
+    r = e->execute_json(set_triggers("InputTriggerHold", "HoldTimeThreshold"), {}, mutate);
+    check(first_code(r) == "coercion-failed" && has(why(r), "class table locked"), "dynamic subtypes: a throwing lookup fails the literal with its message");
+
+    // Eager registration of a runtime descriptor (the engine's subtype cache notices it).
+    e->mutations().resolve_subtype = nullptr;
+    r = e->execute_json(set_triggers("InputTriggerTap", "TapReleaseTimeThreshold"), {}, mutate);
+    check(first_code(r) == "coercion-failed", "dynamic subtypes: an unregistered descriptor stays unknown without a hook");
+    const size_t before = reg.registered_count();
+    reg.register_descriptor(describe(&tap_cls));
+    reg.register_descriptor(describe(&tap_cls));
+    check(reg.registered_count() == before + 1, "dynamic subtypes: register_descriptor is idempotent");
+    r = e->execute_json(set_triggers("InputTriggerTap", "TapReleaseTimeThreshold"), {}, mutate);
+    check(r.ok && action.triggers.size() == 1 && action.triggers[0]->cls == &tap_cls && action.triggers[0]->num["TapReleaseTimeThreshold"] == 0.5,
+          "dynamic subtypes: a registered runtime descriptor is found by $type");
+    int asked = 0;
+    e->mutations().resolve_subtype = [&asked](const rql::TypeDescriptor&, const std::string&) -> const rql::TypeDescriptor* {
+        ++asked;
+        return nullptr;
+    };
+    r = e->execute_json(set_triggers("InputTriggerTap", "TapReleaseTimeThreshold"), {}, mutate);
+    check(r.ok && asked == 0, "dynamic subtypes: registered types match before the lookup hook is asked");
+    bool threw = false;
+    try {
+        reg.register_descriptor(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    check(threw, "dynamic subtypes: register_descriptor(nullptr) throws invalid_argument");
+    threw = false;
+    try {
+        reg.register_descriptor(const_cast<rql::TypeDescriptor*>(reg.list_type(trigger_t, false)));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    check(threw, "dynamic subtypes: register_descriptor refuses a list type");
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) repo_root = argv[1];
     try {
@@ -2735,6 +2886,7 @@ int main(int argc, char** argv) {
         wave6_tests();
         vector_tests();
         hint_tests();
+        dynamic_subtype_tests();
     } catch (const std::exception& ex) {
         std::cout << "FATAL " << ex.what() << "\n";
         return 2;

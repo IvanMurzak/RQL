@@ -311,8 +311,8 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
 * type adapters' coercion (§13) runs first;
 * a **map** type is built entry by entry (keys coerced to the key type, values to the value type);
 * an **object or struct** type is constructed and its members assigned: the concrete type is the target type, or the
-  type named by the key `"$type"` (short or full name) among concrete types assignable to the target (no match or an
-  ambiguous name → `coercion-failed`); the type must be constructible (a default/parameterless constructor, a factory
+  type named by the key `"$type"` (short or full name) among concrete types assignable to the target, which includes
+  types the host resolves on demand (§13 "Subtype lookup") (no match or an ambiguous name → `coercion-failed`); the type must be constructible (a default/parameterless constructor, a factory
   (below) or an adapter that coerces object literals); every other key must name a writable member of that type (unknown or read-only →
   `coercion-failed`), the host's per-member write policy applies to it exactly as to `set` (`permission-denied`), and
   its value is coerced recursively to the member type and validated like a `set`. Excluded types (§13) are never
@@ -885,6 +885,18 @@ suggestions. `x is T`, `ref("T#id")` and an object literal's `"$type"` accept bo
 short name. .NET: `RqlEngine.TypeDisplayName` (type → name or null, cached per type); TypeScript and C++ name types at
 registration (`TypeSpec.name` plus the extra `is` names in `interfaces` / the `TypeRegistry` name plus
 `ClassBuilder::also_is`), which already gives both.
+
+**Subtype lookup.** The candidates for an object literal's `"$type"` (§4.5) are the types the runtime knows: .NET every
+loaded type (reflection over the loaded assemblies), TypeScript the registered classes, C++ the
+registered descriptors. A host whose types are created at runtime and are too many to register up front (Unreal's
+`UClass`es) supplies a **subtype lookup**: (target type, name) → a type of the target's kind that is or derives from the
+target, or no answer. It is asked only when no known type matches the name, also while overload resolution probes a
+literal, and its answers are not cached by the engine; it must not construct objects. An answer that does not derive
+from the target is `coercion-failed`, and so is a lookup that fails (its message as the reason). C++:
+`MutationPolicy::resolve_subtype`, plus `TypeRegistry::register_descriptor` to register a runtime-built descriptor
+eagerly (it then counts like a builder-registered type: `"$type"`, known names, schemas). .NET and TypeScript need no
+hook: .NET already sees every loaded type, and TypeScript registration (`TypeModel.register`) is public and callable at
+any time, which a class needs anyway for its members to be reflected.
 
 **Listing.** Engines list their registered adapters in registration order (.NET `RqlEngine.Adapters`, TypeScript
 `engine.adapters`, C++ `Engine::adapters()`). The members of adapters' target types, adapter-defined members included,

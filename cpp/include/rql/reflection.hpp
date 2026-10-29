@@ -253,6 +253,14 @@ public:
     /// Registered object/struct/enum descriptors in registration order.
     std::vector<const TypeDescriptor*> registered() const;
     size_t registered_count() const noexcept { return order_.size(); }
+    /// Registers a descriptor the host built at runtime instead of through object<T>() / structure<T>() /
+    /// enumeration<T>() (e.g. Unreal: descriptor_for(UClass*) filled from the class), so it counts like those: an
+    /// object literal's "$type" finds it among the subtypes of a target (spec §4.5), and it takes part in known names
+    /// and the schema. `d` is usually descriptor_for(key); a host-owned descriptor must outlive the registry. Its kind
+    /// must be Object, Struct or Enum and its name set (std::invalid_argument otherwise). Idempotent. Not synchronized,
+    /// like every registration: register before queries run or between them, never concurrently with one. Hosts with
+    /// many types need not register each one: MutationPolicy::resolve_subtype resolves "$type" names lazily.
+    void register_descriptor(TypeDescriptor* d);
 
     /// Wrap a native pointer as an object Value with its most-derived registered type.
     template <class T>

@@ -105,6 +105,14 @@ struct MutationPolicy {
     /// The advice that ends the engine-object refusal for a type (spec §4.5), replacing "pass an existing one (e.g.
     /// ref("…"))", e.g. "use unreal.find(…) or an asset path"; empty keeps the default.
     std::function<std::string(const TypeDescriptor& type)> literal_refusal_hint;
+    /// Resolves an object literal's "$type" name the registered types do not match (spec §4.5, §13 "Subtype lookup"):
+    /// (target type, name) -> a descriptor of the target's kind that is or derives from the target, or nullptr when
+    /// the host knows no such type. Asked only when no registered subtype of the target has the name, also while
+    /// overload resolution probes a literal, and never cached by the engine: hosts with many runtime types (Unreal
+    /// UClasses) build and cache descriptors on demand here instead of registering every type up front
+    /// (TypeRegistry::register_descriptor registers one eagerly). An answer that does not derive from the target is
+    /// coercion-failed; a throw fails the literal with its message. It must not construct objects.
+    std::function<const TypeDescriptor*(const TypeDescriptor& target, const std::string& name)> resolve_subtype;
     /// After planning, before any write (not on dry-run): e.g. record undo for the owners. Throwing (any
     /// exception) vetoes the whole mutation → permission-denied, nothing changed.
     MutationHook before_write;
