@@ -9,9 +9,16 @@ namespace Rql.Execution
     /// <summary>Outcome of an adapter capability that may decline: not handled (defer), succeeded, or failed with a reason.</summary>
     public enum AdapterOutcome { NotHandled, Ok, Failed }
 
+    /// <summary>
+    /// How object literals build values of a type (spec §4.5, §13 "Literal construction"): never (<see cref="Engine"/>: scene
+    /// objects), as a fresh value (<see cref="Value"/>: plain data, value-like assets such as Godot resources), or as a
+    /// subobject owned by the object it is written into (<see cref="Instanced"/>: Unreal's EditInlineNew objects).
+    /// </summary>
+    public enum LiteralKind { Engine, Value, Instanced }
+
     /// <summary>Capabilities an adapter overrides (detected at registration, so hot paths skip adapters that never answer).</summary>
     [Flags]
-    internal enum AdapterCaps { None = 0, Encode = 1, Coerce = 2, Equality = 4, Ordering = 8, Identity = 16, Liveness = 32, Arithmetic = 64 }
+    internal enum AdapterCaps { None = 0, Encode = 1, Coerce = 2, Equality = 4, Ordering = 8, Identity = 16, Liveness = 32, Arithmetic = 64, Literal = 128, Factory = 256 }
 
     /// <summary>
     /// A host extension that customises how values of a type family are read, shown, written and compared (spec §13).
@@ -81,6 +88,23 @@ namespace Rql.Execution
         /// <summary>A value of <paramref name="type"/> built from components in the order <see cref="GetComponents"/> returns them; null when it cannot be built.</summary>
         public virtual object? MakeFromComponents(Type type, double[] components) => null;
 
+        /// <summary>
+        /// The literal kind of <paramref name="type"/> (the adapter's type or a subtype; spec §4.5): engine (never built from an
+        /// object literal), value (built fresh) or instanced (built as a subobject of its outer); null defers. Without an answer
+        /// a type with an identity or liveness adapter is an engine object and every other type a value.
+        /// </summary>
+        public virtual LiteralKind? LiteralKindOf(Type type) => null;
+
+        /// <summary>
+        /// Builds an empty value of the concrete <paramref name="type"/> for an object literal whose kind is value or instanced
+        /// (spec §13 "Literal construction"); the literal's members are assigned afterwards. <paramref name="outer"/> is the
+        /// object that will own the value (the owner of the written member, the call's target, or the object an enclosing
+        /// literal builds), null for a value written outside any object. Return null to defer (next adapter, then the default
+        /// constructor). Runs while the mutation is planned, dry runs included: create objects nothing references until the
+        /// write (e.g. Unreal's <c>NewObject(Outer, Class)</c> without attaching it).
+        /// </summary>
+        public virtual object? CreateForLiteral(Type type, object? outer) => null;
+
         /// <summary>A float as RQL computes with it: the double of its shortest decimal (spec §1.1). Use it for single-precision components.</summary>
         protected static double Widen(float f) => V.Widen(f);
 
@@ -102,6 +126,8 @@ namespace Rql.Execution
             if (Overrides("StableId", "Id")) caps |= AdapterCaps.Identity;
             if (Overrides("IsAlive", "Alive")) caps |= AdapterCaps.Liveness;
             if (OverridesArithmetic()) caps |= AdapterCaps.Arithmetic;
+            if (Overrides("LiteralKindOf")) caps |= AdapterCaps.Literal;
+            if (Overrides("CreateForLiteral")) caps |= AdapterCaps.Factory;
             Caps = caps;
         }
 

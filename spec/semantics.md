@@ -277,17 +277,34 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
 * a **map** type is built entry by entry (keys coerced to the key type, values to the value type);
 * an **object or struct** type is constructed and its members assigned: the concrete type is the target type, or the
   type named by the key `"$type"` (short or full name) among concrete types assignable to the target (no match or an
-  ambiguous name → `coercion-failed`); the type must be constructible (a default/parameterless constructor or an adapter
-  that coerces object literals); every other key must name a writable member of that type (unknown or read-only →
+  ambiguous name → `coercion-failed`); the type must be constructible (a default/parameterless constructor, a factory
+  (below) or an adapter that coerces object literals); every other key must name a writable member of that type (unknown or read-only →
   `coercion-failed`), the host's per-member write policy applies to it exactly as to `set` (`permission-denied`), and
   its value is coerced recursively to the member type and validated like a `set`. Excluded types (§13) are never
-  constructed, and neither are **engine objects**: a type that has an identity or a liveness adapter (§13), or that
-  the host's **literal-construction hook** (type → yes / no / no answer) refuses; the hook can also allow such a type.
-  A literal written to an engine object is `coercion-failed` ("… is an engine object and cannot be built from an
-  object literal; pass an existing one") and nothing is constructed — the engine creates those objects (a scene object
-  built by its constructor would join the scene even on a dry run), so a method that creates one takes plain data
-  (names, positions, a settings struct) instead. Construction of plain data happens while the mutation is planned, so
-  those constructors run even for a dry-run or a vetoed mutation; overload resolution never constructs anything for
+  constructed. Every other object or struct type has a **literal kind** (§13 "Literal construction"), which separates
+  *having an identity* from *being a live scene object*:
+  * **value** — built from the literal. The default for plain data (structs, records, settings objects); a host marks
+    value-like engine types the same way, e.g. asset resources that are built fresh and embedded where they are written
+    (Godot `Resource`s such as `BoxMesh` or a material: `set Mesh = {$type: "BoxMesh", Size: [1, 2, 1]}`).
+  * **instanced** — built as a subobject owned by the object it is written into, its **outer**, e.g. Unreal's instanced
+    (`EditInlineNew`) objects such as an input action's triggers and modifiers:
+    `set Triggers = [{$type: "InputTriggerHold", HoldTimeThreshold: 0.5}]`. The outer is the object that will own the
+    value: for a `set`, the owner of the written member (the nearest enclosing object on the target path, §13); for a
+    `call` argument, the call's target (the receiver of a source-qualified call); for a value nested in a literal, the
+    object that literal builds (a struct or map literal passes its own outer on). The type's factory (§13) receives the
+    outer; a literal of an instanced type where there is no outer is `coercion-failed`.
+  * **engine** — never built: a scene object (node, game object, actor, component). By default a type with an identity
+    or a liveness adapter (§13) is an engine object. A literal written to an engine object is `coercion-failed` ("… is
+    an engine object and cannot be built from an object literal; pass an existing one (e.g. ref(…))", the advice after
+    the semicolon replaceable by the host per type, e.g. "use unity.find(…) or an asset path") and nothing is
+    constructed — the engine creates those objects (a scene object built by its constructor would join the scene even
+    on a dry run), so a method that creates one takes plain data (names, positions, a settings struct) instead. This
+    check comes before the abstract-type check: a literal for an abstract engine-object type is refused as an engine
+    object, not told to add `"$type"`.
+
+  Construction (default constructors and factories) happens while the mutation is planned, so it runs even for a
+  dry-run or a vetoed mutation; a value that is not written is discarded (factories therefore create objects nothing
+  references until the write, e.g. a transient subobject); overload resolution never constructs anything for
   an overload it does not choose (§8 "Overloads"). Members not
   named keep the type's defaults (numbers `0`, strings `""`, booleans `false`, empty lists/maps, null references) —
   an object literal builds a new value, it does not patch the old one (use member paths for that);
@@ -299,7 +316,7 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
 |---|---|
 | `where e` | keep items whose `e` is `true`. |
 | `select [n=]e ...` | project each item to a row with the listed columns. Column name = alias, or the item's source text. |
-| `sort k [asc\|desc], ...` | stable sort. `null`/`missing` last regardless of direction; mixed kinds ordered number < string < bool < other. |
+| `sort k [asc\|desc], ...` | stable sort. `null`/`missing` last regardless of direction; mixed kinds ordered number < string < bool < other. A key that evaluates to an **error** (a getter that throws, a division by zero, a type mismatch) sorts last like `null`, and the query gets one warning per failing key, with the first error's code, naming the key and how many items failed (`sort key 'Mass / Volume' failed for 3 of 40 item(s) (div-by-zero: …); they sort last`), so a key that fails on every item is not mistaken for a sort that kept the order. |
 | `first [n]` | first n items (default 1). MUST stop pulling upstream items afterwards (lazy). |
 | `skip n` | drop first n. |
 | `count` | terminal: number of items. |
@@ -313,6 +330,15 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
 | `set p = e, ...` | mutation (§8). |
 | `call m(args)` | mutation: invoke an allowlisted method on each item (§8). |
 | `call q.m(args)` | mutation: invoke the method `m` of the one object the source expression `q` yields, once per item (source-qualified call, §8). |
+
+**Sparse key members** (`group-by`, `distinct`). When a key is a member path (no meta member) that is `missing` on more
+of the items than it is present on, but present on at least one, the query gets an `unknown-member` **warning** naming
+the counts: "member 'type' exists on 1 of 200 item(s); the other 199 group as null" (`distinct`: "are kept as one"). Its
+hint asks "did you mean $type?" when the name is a meta member's name without the `$` (`type`, `ref`, `path`, `index`,
+`depth`, any case), and otherwise suggests filtering to the items that have it (`where has(type)`). A polymorphic stream
+grouped by a member that only a few item types have thus says so instead of silently putting nearly everything in the
+`null` group. A key missing on every item keeps the ordinary `unknown-member` warning (§10), whose hint also offers the
+meta member for such a name.
 
 **Struct keys** (`distinct`, `group-by`). A struct is keyed by its type and the values of its members (the members its
 default encoding shows, §6: explicit-only members excluded, and members of the struct's own type — derived values such
@@ -399,8 +425,12 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
 * **Empty through a typo**: when no item reaches the `set` / `call` stage, every `unknown-member` warning of a member
   read that was **tested on items and missed on all of them** becomes an `unknown-member` **error** (its message adds
   that nothing was changed), provided **no known type declares** the name — no type statically reachable from the
-  sources (the types the sources have produced so far: a source that is null right now, such as an empty selection, keeps
-  the types it had, so runtimes MAY cache the names by those types), no target type of a registered type adapter (§13;
+  sources (the types the sources have produced so far while queries read them, plus the type a host declares for a
+  source when it registers it: a source that is null right now, such as an empty selection, keeps the types it had, so
+  runtimes MAY cache the names by those types; computing known names, and every other warning or hint that needs them,
+  **never evaluates a source the query does not name** — a source getter may walk a whole scene — so a source that no
+  query has read yet contributes only its declared type; the query's own source, when its stream never pulled it
+  (`… | first 0`), is read once for its type), no target type of a registered type adapter (§13;
   its adapter-defined members included), no `select` / `group-by` column and nothing the host's known-member hook
   accepts:
   `objects | where name == "X" | get transfrom | set position = …` fails instead of reporting "0 changes". These stay
@@ -737,7 +767,8 @@ removed again on rollback), and entries are never removed. Schemas show the type
 | Encode | Replace the output encoding of values of the type (first adapter that encodes wins). |
 | Coerce | Convert a value supplied by a query (literal, list, other type) to the type on writes (`set`, `call` arguments). Values already of the target type bypass it. A failure carries a reason → `coercion-failed`, reason in the message. |
 | Compare | Equality and/or ordering of a value of the type with any other value (first adapter of the left operand that answers wins, then of the right operand with the result mirrored). Ordering applies everywhere values are ordered: comparison operators, `sort`, `min` / `max` (which also accept values whose type has an ordering adapter). An adapter typically coerces the other operand, so `Pos == "(1, -1)"` works. |
-| Identity / liveness | Stable id for `$ref`, resolution of `Type#id`, and an `IsAlive` verdict. A destroyed object (the liveness verdict — first answering adapter, then the host's liveness hook; only objects, never collections, maps, structs or scalars, are asked — is "not alive", e.g. Unity's fake-null) **reads as null everywhere**: the conversion happens where values enter expressions (member reads, list / map elements, sources), so `== null` / `is null` / `coalesce` / sort / `distinct` / encoding all see `null`, members of it read as members of null (no getter runs), stream expansion skips it like a null element (collection methods still see the `null`, e.g. `targets.any($ == null)`), it is therefore never a mutation target, and `ref()` to it is `stale-ref`. Adapters may choose the **identity** and **display** members by name (e.g. Unity's lowercase `name`). A type with an identity or liveness adapter is an **engine object**: object literals never construct it (§4.5); the host's literal-construction hook can decide otherwise per type, either way. |
+| Identity / liveness | Stable id for `$ref`, resolution of `Type#id`, and an `IsAlive` verdict. A destroyed object (the liveness verdict — first answering adapter, then the host's liveness hook; only objects, never collections, maps, structs or scalars, are asked — is "not alive", e.g. Unity's fake-null) **reads as null everywhere**: the conversion happens where values enter expressions (member reads, list / map elements, sources), so `== null` / `is null` / `coalesce` / sort / `distinct` / encoding all see `null`, members of it read as members of null (no getter runs), stream expansion skips it like a null element (collection methods still see the `null`, e.g. `targets.any($ == null)`), it is therefore never a mutation target, and `ref()` to it is `stale-ref`. Adapters may choose the **identity** and **display** members by name (e.g. Unity's lowercase `name`). A type with an identity or liveness adapter is an **engine object** by default: object literals never construct it (§4.5) unless its literal kind says otherwise (below). |
+| Literal construction | The **literal kind** of a type (§4.5): *engine* (never built from a literal), *value* (built from it) or *instanced* (built as a subobject of its outer), and optionally a **factory** that builds an empty value of a concrete type given its outer (null where there is none: a value-kind literal outside any object). The kind of a type is the first answer of: the host's **literal-kind hook** (type → kind or no answer); the adapters (most specific first); otherwise *engine* for a type with an identity or liveness adapter and *value* for every other type. The host's older **literal-construction hook** (type → yes / no / no answer) then overrides: *no* makes the type *engine*, *yes* makes an *engine* type *value*. The factory is the host's (type, outer → value or no answer), then the adapters' (most specific first), then the type's default constructor. A host MAY also supply the **refusal advice** for engine objects per type (§4.5). Hosts mark value-like engine types (asset resources built fresh: Godot `Resource`, Unity assets that are values) *value* and owned inline subobjects (Unreal `EditInlineNew` / instanced objects) *instanced*; scene objects stay *engine*. |
 | Write-back | A member can be marked **copy-on-read** (its getter returns a copy, e.g. Unity's `Renderer.sharedMaterials`, `Gradient.colorKeys`): writes into its value are assigned back through the member's setter exactly like value types (§8), with the same writability rules and rollback. A value type can be marked **writes-through** (a handle to shared state, e.g. Unity's `ParticleSystem.MainModule`): writes to its copies are live, so no write-back to the owner happens, get-only owners are fine, virtual setters on it are allowed, and its values may be mutation targets. |
 | Exclusion | Hide members by predicate (e.g. every `[Obsolete]` member), and engine-wide exclude member **types** (a member is dropped when its type, element type or a generic argument matches), e.g. delegates, native pointers or assemblies that must never be touched. |
 | Literals | Coercion receives object literals (§4.5) and may build values itself; an adapter may publish a JSON Schema of the literals it accepts, shown by `describe` as `literal`. |

@@ -28,27 +28,56 @@ namespace Rql.Execution
             public int Op;
         }
 
-        internal RqlKernel(TypeModel types, Func<Type, MemberAccessor, bool>? writePolicy, Func<Type, string, object?>? textCoercion = null,
-            Func<Type, bool?>? canConstruct = null)
+        internal RqlKernel(TypeModel types, MutationPolicy? mutations)
         {
             Types = types;
-            WritePolicy = writePolicy;
-            TextCoercion = textCoercion;
-            _canConstruct = canConstruct;
+            _mutations = mutations;
+            WritePolicy = mutations?.CanWrite;
+            TextCoercion = mutations?.CoerceText;
         }
 
-        private readonly Func<Type, bool?>? _canConstruct;
+        private readonly MutationPolicy? _mutations;
 
         /// <summary>
-        /// Whether an object literal may build <paramref name="type"/> (spec §4.5): the host's answer, else every type that is
-        /// not an engine object (no identity or liveness adapter).
+        /// The literal kind of <paramref name="type"/> (spec §4.5, §13): the host's literal-kind hook, else the adapters (most
+        /// specific first), else engine for a type with an identity or liveness adapter and value for any other; then the host's
+        /// <see cref="MutationPolicy.CanConstructFromLiteral"/> (false → engine, true → an engine type becomes value).
         /// </summary>
-        internal bool CanConstruct(Type type)
+        internal LiteralKind KindOf(Type type)
         {
-            if (_canConstruct?.Invoke(type) is bool decided) return decided;
             var info = Types.Info(type);
-            return info.IdentityAdapters.Length == 0 && info.LivenessAdapters.Length == 0;
+            LiteralKind? kind = _mutations?.LiteralKindOf?.Invoke(type);
+            if (kind == null)
+                foreach (var a in info.LiteralAdapters)
+                    if ((kind = a.LiteralKindOf(type)) != null) break;
+            var k = kind ?? (info.IdentityAdapters.Length == 0 && info.LivenessAdapters.Length == 0 ? LiteralKind.Value : LiteralKind.Engine);
+            if (_mutations?.CanConstructFromLiteral?.Invoke(type) is bool decided)
+                k = !decided ? LiteralKind.Engine : k == LiteralKind.Engine ? LiteralKind.Value : k;
+            return k;
         }
+
+        /// <summary>Whether a factory (the host's or an adapter's) may build <paramref name="type"/>: a probe then needs no constructor.</summary>
+        internal bool HasFactory(Type type) => _mutations?.CreateForLiteral != null || Types.Info(type).FactoryAdapters.Length > 0;
+
+        /// <summary>The value a factory builds for a literal of <paramref name="type"/> (host first, then adapters); null: none answered.</summary>
+        internal object? Create(Type type, object? outer)
+        {
+            var made = _mutations?.CreateForLiteral?.Invoke(type, outer);
+            if (made == null)
+                foreach (var a in Types.Info(type).FactoryAdapters)
+                    if ((made = a.CreateForLiteral(type, outer)) != null) break;
+            return made;
+        }
+
+        /// <summary>The advice ending the engine-object refusal (spec §4.5): the host's for the type, else "pass an existing one".</summary>
+        internal string RefusalAdvice(Type type) =>
+            _mutations?.LiteralRefusalHint?.Invoke(type) is string hint && hint.Length > 0 ? hint : "pass an existing one (e.g. ref(\"…\"))";
+
+        /// <summary>
+        /// The outer of the coercion an adapter is running (spec §4.5): nested <see cref="TryCoerce"/> calls build instanced values
+        /// for the same owner.
+        /// </summary>
+        [ThreadStatic] internal static object? AmbientOuter;
 
         /// <summary>The engine's type model (member tables, kinds, adapters).</summary>
         public TypeModel Types { get; }
@@ -75,7 +104,7 @@ namespace Rql.Execution
             _depth++;
             try
             {
-                var ok = Coerce.TryTo(this, value, target, out result, out var why);
+                var ok = Coerce.TryTo(this, value, target, out result, out var why, AmbientOuter);
                 reason = ok ? null : Prefix(path, why);
                 return ok;
             }

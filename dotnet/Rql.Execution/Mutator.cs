@@ -234,7 +234,7 @@ namespace Rql.Execution
                     }
                     if (!slot.Writable(_x))
                         throw new RqlException(slot.DenyCode, $"'{label}' on {itemRef} is not writable{slot.DenyReason}");
-                    if (!Coerce.TryTo(_x.Kernel, nv, slot.Type, out var coerced, out var why))
+                    if (!Coerce.TryTo(_x.Kernel, nv, slot.Type, out var coerced, out var why, owner))
                         throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' ({_x.Types.FriendlyNameOf(slot.Type)}): {why}");
                     if (slot.Validate(container, coerced) is string rejected)
                         throw new RqlException("invalid-value", $"invalid value {ValueText(nv)} for '{label}' on {itemRef}: {rejected}");
@@ -567,7 +567,7 @@ namespace Rql.Execution
                 var candidates = fixedCandidates ?? Candidates(item, targets);
                 EnterScope(t);
                 var vals = args.Select(a => a(_x)).ToArray();
-                var (chosen, coerced, why, denied) = Overloads.Resolve(_x.Kernel, candidates, vals);
+                var (chosen, coerced, why, denied) = Overloads.Resolve(_x.Kernel, candidates, vals, item);
                 if (chosen == null)
                     throw new RqlException(denied ? "permission-denied" : "coercion-failed", $"cannot call {s.Method} on {At(item, t.Index)}: {why}", null,
                         denied ? null : "signature: " + string.Join(", ", candidates.Select(m => m.Signature)));
@@ -672,7 +672,8 @@ namespace Rql.Execution
         /// The chosen overload and its coerced arguments (defaults filled in); or none, with the reason and whether it is a
         /// host policy denial (permission-denied) rather than a coercion failure.
         /// </summary>
-        public static (CallableMethod? method, object?[]? args, string why, bool denied) Resolve(RqlKernel kernel, IReadOnlyList<CallableMethod> candidates, object?[] given)
+        /// <param name="outer">The call's target: instanced object literals among the arguments are built for it (spec §4.5).</param>
+        public static (CallableMethod? method, object?[]? args, string why, bool denied) Resolve(RqlKernel kernel, IReadOnlyList<CallableMethod> candidates, object?[] given, object? outer)
         {
             var misses = new List<Miss>();
             string? denied = null;
@@ -683,7 +684,7 @@ namespace Rql.Execution
                 var ps = m.Parameters;
                 if (ps.Count < given.Length || ps.Skip(given.Length).Any(p => !p.HasDefault)) { misses.Add(new Miss(m, false, 0, 0, "")); continue; }
                 var slots = Enumerable.Range(0, given.Length).ToArray();
-                if (Bind(kernel, m, given, slots, "argument", misses, ref denied) is object?[] args) return (m, args, "", false);
+                if (Bind(kernel, m, given, slots, "argument", outer, misses, ref denied) is object?[] args) return (m, args, "", false);
             }
             // 2. By name: a single object literal that no overload took positionally names the parameters (missing ones take
             //    their defaults).
@@ -693,7 +694,7 @@ namespace Rql.Execution
                 foreach (var m in candidates)
                 {
                     var slots = BindNames(m, literal, misses);
-                    if (slots != null && Bind(kernel, m, vals, slots, "parameter", misses, ref denied) is object?[] args) return (m, args, "", false);
+                    if (slots != null && Bind(kernel, m, vals, slots, "parameter", outer, misses, ref denied) is object?[] args) return (m, args, "", false);
                 }
             }
             // A host policy denial met on the way is what blocked the call; otherwise the best candidate's reason.
@@ -705,7 +706,7 @@ namespace Rql.Execution
         /// arguments (defaults filled in), or null with a miss recorded. A policy denial is remembered (the first one), not
         /// thrown, so an overload that would not be chosen cannot veto the call.
         /// </summary>
-        private static object?[]? Bind(RqlKernel kernel, CallableMethod m, object?[] vals, int[] slots, string kind, List<Miss> misses, ref string? denied)
+        private static object?[]? Bind(RqlKernel kernel, CallableMethod m, object?[] vals, int[] slots, string kind, object? outer, List<Miss> misses, ref string? denied)
         {
             var ps = m.Parameters;
             int matched = 0, depth = 0;
@@ -716,7 +717,7 @@ namespace Rql.Execution
                 bool ok;
                 string w;
                 int d;
-                try { ok = Coerce.CanConvert(kernel, vals[k], p.Type, out w, out d); }
+                try { ok = Coerce.CanConvert(kernel, vals[k], p.Type, out w, out d, outer); }
                 catch (RqlException ex) when (ex.Code == "permission-denied")
                 {
                     denied ??= $"{kind} '{p.Name}': {ex.Message}";
@@ -736,7 +737,7 @@ namespace Rql.Execution
             for (int k = 0; k < slots.Length; k++)
             {
                 var p = ps[slots[k]];
-                if (Coerce.TryTo(kernel, vals[k], p.Type, out cv[slots[k]], out var w)) continue;
+                if (Coerce.TryTo(kernel, vals[k], p.Type, out cv[slots[k]], out var w, outer)) continue;
                 // Only the real coercion sees what the probe cannot (member validators, constructors that throw); a candidate
                 // that passed the probe is the closest match, so its reason is the one reported.
                 misses.Add(new Miss(m, true, int.MaxValue, 0, $"{kind} '{p.Name}': {w}"));
@@ -869,7 +870,7 @@ namespace Rql.Execution
         /// Build <paramref name="target"/> from an object literal: concrete type, construction, member assignment (spec §4.5).
         /// A <paramref name="probe"/> checks the same rules without constructing, assigning or validating anything.
         /// </summary>
-        private static bool TryConstruct(RqlKernel kernel, ObjectValue literal, Type target, bool probe, out object? result, out string why, out int depth)
+        private static bool TryConstruct(RqlKernel kernel, ObjectValue literal, Type target, bool probe, object? outer, out object? result, out string why, out int depth)
         {
             var model = kernel.Types;
             var policy = kernel.WritePolicy;
@@ -896,7 +897,7 @@ namespace Rql.Execution
                 foreach (var kv in literal)
                 {
                     if (!Compiler.TryCoerceKey(kv.Key, keyType, out var key, kernel.Types) || key == null) { why = $"invalid key '{kv.Key}' for {TypeModel.FriendlyName(target)}"; depth = 1; return false; }
-                    if (!Convert(kernel, kv.Value, valueType, probe, out var mv, out var w, out var d)) { why = $"'{kv.Key}': {w}"; depth = d + 1; return false; }
+                    if (!Convert(kernel, kv.Value, valueType, probe, outer, out var mv, out var w, out var d)) { why = $"'{kv.Key}': {w}"; depth = d + 1; return false; }
                     if (map != null) map[key] = mv;
                 }
                 result = map;
@@ -922,24 +923,44 @@ namespace Rql.Execution
                 if (found.Length > 1) { why = $"'{tn}' is ambiguous: " + string.Join(", ", found.Select(t => t.FullName)); return false; }
                 concrete = found[0];
             }
+            // Engine objects are never built from literals (spec §4.5), abstract or not: only existing ones can be passed.
+            var kind = kernel.KindOf(concrete);
+            if (kind == LiteralKind.Engine)
+            {
+                why = $"{model.Info(concrete).ShortName} is an engine object and cannot be built from an object literal; {kernel.RefusalAdvice(concrete)}";
+                return false;
+            }
             if (concrete.IsAbstract || concrete.IsInterface)
             {
                 why = $"{TypeModel.FriendlyName(concrete)} is abstract; add \"$type\" to choose a concrete type";
                 return false;
             }
-            // Engine objects are never built from literals (spec §4.5): only existing ones can be passed.
-            if (!kernel.CanConstruct(concrete))
+            // An instanced subobject is built for the object that owns it (spec §4.5).
+            if (kind == LiteralKind.Instanced && outer == null)
             {
-                why = $"{model.Info(concrete).ShortName} is an engine object and cannot be built from an object literal; pass an existing one (e.g. ref(\"…\"))";
+                why = $"{model.Info(concrete).ShortName} is an instanced subobject: it is built only for the object that owns it (write it to a member of that object or pass it to a call)";
                 return false;
             }
             object? instance = null;
             if (probe)
             {
-                if (!Instantiable(concrete, out why)) return false;
+                if (!kernel.HasFactory(concrete) && !Instantiable(concrete, out why)) return false;
             }
-            else if (!TryInstantiate(concrete, out instance, out why)) return false;
+            else
+            {
+                try { instance = kernel.Create(concrete, ReferenceEquals(outer, ProbeOuter) ? null : outer); }
+                catch (Exception ex) when (!(ex is OutOfMemoryException))
+                {
+                    why = $"building {model.Info(concrete).ShortName} failed: {ex.Message}";
+                    return false;
+                }
+                if (instance != null && !concrete.IsInstanceOfType(instance))
+                    throw new InvalidOperationException($"the literal factory built {instance.GetType().Name}, not {concrete.Name}");
+                if (instance == null && !TryInstantiate(concrete, out instance, out why)) return false;
+            }
             var ci = model.Info(concrete);
+            // Values nested in an object literal belong to the object it builds; a struct passes its own outer on.
+            var inner = ci.IsObject ? instance ?? ProbeOuter : outer;
             foreach (var kv in literal)
             {
                 if (kv.Key == "$type") continue;
@@ -950,7 +971,7 @@ namespace Rql.Execution
                 // Building a value assigns members, so the host's per-member write policy applies as for `set`.
                 if (policy != null && !policy(concrete, m))
                     throw new RqlException("permission-denied", $"member '{m.Name}' of {ci.ShortName} may not be written (denied by host policy)");
-                if (!Convert(kernel, kv.Value, m.Type, probe, out var mv, out var w, out var d)) { why = $"'{m.Name}': {w}"; depth = d + 1; return false; }
+                if (!Convert(kernel, kv.Value, m.Type, probe, inner, out var mv, out var w, out var d)) { why = $"'{m.Name}': {w}"; depth = d + 1; return false; }
                 if (probe) continue;
                 if (m.Validate?.Invoke(instance!, mv) is string rejected) { why = $"'{m.Name}': {rejected}"; return false; }
                 try { m.SetValue(instance!, mv); }
@@ -984,8 +1005,9 @@ namespace Rql.Execution
         }
 
         /// <summary>The one coercion pipeline (spec §8, §13): adapters, object literals, lists, scalars. Nested coercions reuse the kernel.</summary>
-        internal static bool TryTo(RqlKernel kernel, object? v, Type target, out object? result, out string why) =>
-            Convert(kernel, v, target, probe: false, out result, out why, out _);
+        /// <param name="outer">The object that will own the value (spec §4.5): instanced literals are built for it.</param>
+        internal static bool TryTo(RqlKernel kernel, object? v, Type target, out object? result, out string why, object? outer = null) =>
+            Convert(kernel, v, target, probe: false, outer, out result, out why, out _);
 
         /// <summary>
         /// Whether <paramref name="v"/> converts to <paramref name="target"/>, checked without side effects (overload resolution,
@@ -993,10 +1015,13 @@ namespace Rql.Execution
         /// host's text coercion answer as usual. On failure <paramref name="depth"/> is how deep inside the value it failed
         /// (0: the value itself, 1: a member or element of it, …).
         /// </summary>
-        internal static bool CanConvert(RqlKernel kernel, object? v, Type target, out string why, out int depth) =>
-            Convert(kernel, v, target, probe: true, out _, out why, out depth);
+        internal static bool CanConvert(RqlKernel kernel, object? v, Type target, out string why, out int depth, object? outer = null) =>
+            Convert(kernel, v, target, probe: true, outer, out _, out why, out depth);
 
-        private static bool Convert(RqlKernel kernel, object? v, Type target, bool probe, out object? result, out string why, out int depth)
+        /// <summary>Stands for the object a probed literal would build (nothing is constructed), so its nested values have an outer.</summary>
+        private static readonly object ProbeOuter = new object();
+
+        private static bool Convert(RqlKernel kernel, object? v, Type target, bool probe, object? outer, out object? result, out string why, out int depth)
         {
             var model = kernel.Types;
             why = "";
@@ -1022,8 +1047,10 @@ namespace Rql.Execution
                     AdapterOutcome outcome;
                     object? adapted;
                     string? reason;
+                    var ambient = RqlKernel.AmbientOuter;
+                    RqlKernel.AmbientOuter = outer; // the adapter's nested kernel coercions build for the same owner
                     try { outcome = ad.TryCoerce(v, target, kernel, out adapted, out reason); }
-                    finally { RqlKernel.Exit(); }
+                    finally { RqlKernel.Exit(); RqlKernel.AmbientOuter = ambient; }
                     switch (outcome)
                     {
                         case AdapterOutcome.Ok:
@@ -1038,7 +1065,7 @@ namespace Rql.Execution
                 }
             }
 
-            if (v is ObjectValue literal) return TryConstruct(kernel, literal, target, probe, out result, out why, out depth);
+            if (v is ObjectValue literal) return TryConstruct(kernel, literal, target, probe, outer, out result, out why, out depth);
 
             // The host's text form for struct / object types no adapter handled (spec §8).
             if (kernel.TextCoercion != null && V.IsString(v) && target != typeof(string) && !target.IsEnum && !target.IsPrimitive
@@ -1109,7 +1136,7 @@ namespace Rql.Execution
                 var items = new List<object?>();
                 foreach (var el in src)
                 {
-                    if (!Convert(kernel, el, elem, probe, out var ce, out var w, out var d)) { why = $"[{items.Count}]: " + w; depth = d + 1; return false; }
+                    if (!Convert(kernel, el, elem, probe, outer, out var ce, out var w, out var d)) { why = $"[{items.Count}]: " + w; depth = d + 1; return false; }
                     items.Add(ce);
                 }
                 if (probe)

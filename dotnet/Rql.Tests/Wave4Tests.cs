@@ -111,7 +111,8 @@ namespace Rql.Tests
             e.Mutations.Enabled = true;
             for (int i = 0; i < 5; i++)
                 Assert.False(e.Execute("items | where nmae == \"x\" | set Name = \"y\"", options: Mutate).Ok);
-            Assert.Equal(1, reads);
+            // Known names never evaluate a source the query does not name (spec §8): a source getter may walk a whole scene.
+            Assert.Equal(0, reads);
             // A type a source produced once stays known after the source turns null.
             object? selected = new GpuParticles3D();
             var e2 = new RqlEngine().AddSource("items", () => items).AddSource("selection", () => selected);
@@ -196,7 +197,7 @@ namespace Rql.Tests
         public void NestedSetPathDoesNotSuggestFilteringTheStream()
         {
             var e = new RqlEngine().AddSource("items", () => new List<Item> { new Item { Name = "a", Other = new Item() } })
-                .AddSource("lights", () => new List<OmniLight3D>());
+                .AddSource("lights", () => new List<OmniLight3D>(), null, typeof(List<OmniLight3D>));
             e.Mutations.Enabled = true;
             var d = e.Execute("items | set Other.Energy = 2", options: Mutate).Diagnostics[0];
             Assert.Equal("unknown-member", d.Code);
@@ -230,9 +231,12 @@ namespace Rql.Tests
         public void ReadOfAMemberOtherKnownTypesHaveSuggestsFiltering()
         {
             var items = new List<Item> { new Item { Name = "a" } };
-            var e = new RqlEngine().AddSource("items", () => items).AddSource("lights", () => new List<OmniLight3D>());
+            int reads = 0;
+            var e = new RqlEngine().AddSource("items", () => items).AddSource("lights", () => { reads++; return new List<OmniLight3D>(); }, null, typeof(List<OmniLight3D>));
             var d = e.Execute("items | where Energy > 1").Diagnostics.First(x => x.Code == "unknown-member");
             Assert.Contains("'Energy' is a member of OmniLight3D", d.Hint);
+            // The declared type is known without evaluating the source (spec §8).
+            Assert.Equal(0, reads);
         }
 
         // ------------------------------------------------------------ #12 group items, #14 no-op receipts, adapter list
