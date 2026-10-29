@@ -378,7 +378,7 @@ namespace Rql.Execution
                     _planSource ??= reg;
                     var rest = new PathExpr(p.Segments.Skip(len).ToList()) { Span = p.Span };
                     var nav = rest.Segments.Count > 0 ? _c.Compile(rest) : null;
-                    var restText = string.Concat(rest.Segments.Select(s => s.Kind == SegmentKind.Member ? "." + s.Name : s.ToString()));
+                    var restText = SegmentsText(rest.Segments);
                     return (() => SourceValue(reg, nav), reg.Name + restText, false);
                 }
                 var head = p.Segments[0].Name!;
@@ -392,14 +392,14 @@ namespace Rql.Execution
                 var (baseValue, baseText, quiet) = BindSource(navigated.On);
                 var rest = new PathExpr(navigated.Segments) { Span = navigated.Span };
                 var step = _c.Compile(rest);
-                var restText = string.Concat(rest.Segments.Select(s => s.Kind == SegmentKind.Member ? "." + s.Name : s.ToString()));
+                var restText = SegmentsText(rest.Segments);
                 return (() =>
                 {
                     var v = baseValue();
-                    if (v == null || v is RqlError || V.IsAbsent(v)) return v;
+                    if (v == null || V.IsAbsent(v)) return v;
                     _x.Current = v;
                     _x.CurrentPath = null;
-                    return _x.Types.Live(step(_x));
+                    return step(_x); // member reads already read destroyed objects as null, as for a registered source's navigation
                 }, baseText + restText, quiet);
             }
             if (src is CallExpr c && c.On == null && string.Equals(c.Name, "ref", StringComparison.OrdinalIgnoreCase))
@@ -779,10 +779,14 @@ namespace Rql.Execution
         internal static bool IsMember(Segment s, string name) => s.Kind == SegmentKind.Member && string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase);
 
         /// <summary>Path text appended by `get`/`recurse via` when the expression is a plain member/index path.</summary>
+        /// <summary>The text of path segments as $path writes them: <c>.Member</c>, <c>[i]</c>, <c>["key"]</c>.</summary>
+        private static string SegmentsText(IEnumerable<Segment> segments) =>
+            string.Concat(segments.Select(s => s.Kind == SegmentKind.Member ? "." + s.Name : s.ToString()));
+
         private static string? PathSuffix(Expr e)
         {
             if (!(e is PathExpr p) || p.On != null || p.Segments.Any(s => s.Kind == SegmentKind.Meta)) return null;
-            return string.Concat(p.Segments.Select(s => s.Kind == SegmentKind.Member ? "." + s.Name : s.ToString()));
+            return SegmentsText(p.Segments);
         }
 
         private IEnumerable<Item> Distinct(IEnumerable<Item> input, Eval? key, KeyTally? tally)

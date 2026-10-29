@@ -1131,13 +1131,17 @@ function listInfo(model: TypeModel, v: unknown): TypeInfo | undefined {
 
 /** A list of exactly `width` numbers read as components (spec §4.2), else undefined. */
 function listParts(v: object, info: TypeInfo, width: number): number[] | undefined {
-  const parts: number[] = [];
-  for (const e of elements(v, info)) {
-    const n = toNumber(e);
-    if (n === undefined || parts.length === width) return undefined;
-    parts.push(n);
+  const parts = numericList(v, info);
+  return parts !== undefined && parts.length === width ? parts : undefined;
+}
+
+/** A value of `like`'s class built from components through its adapter, or undefined (spec §4.2, §13). */
+function buildFromComponents(adapter: AnyAdapter, like: object, parts: number[]): unknown {
+  try {
+    return adapter.fromComponents?.(parts, like.constructor as Ctor);
+  } catch {
+    return undefined;
   }
-  return parts.length === width ? parts : undefined;
 }
 
 /**
@@ -1196,22 +1200,13 @@ function structArith(model: TypeModel, op: string, a: unknown, b: unknown): unkn
       result.push(l / r);
     }
   }
-  let built: unknown;
-  try {
-    built = own.adapter.fromComponents?.(result, vector.constructor as Ctor);
-  } catch {
-    built = undefined;
-  }
-  return built ?? arithMismatch(model, op, a, b, `cannot build ${describeValue(vector)} from components`);
+  return buildFromComponents(own.adapter, vector, result) ?? arithMismatch(model, op, a, b, `cannot build ${describeValue(vector)} from components`);
 }
 
 /** The numbers of a list whose elements are all numbers (spec §4.2 numeric lists), else undefined. */
-function numericList(model: TypeModel, v: unknown): number[] | undefined {
-  if (typeof v === 'string') return undefined;
-  const info = listInfo(model, v);
-  if (info === undefined) return undefined;
+function numericList(v: object, info: TypeInfo): number[] | undefined {
   const parts: number[] = [];
-  for (const e of elements(v as object, info)) {
+  for (const e of elements(v, info)) {
     const n = toNumber(e);
     if (n === undefined) return undefined;
     parts.push(n);
@@ -1224,13 +1219,15 @@ function numericList(model: TypeModel, v: unknown): number[] | undefined {
  * of numbers. Undefined when neither operand is a list; a type-mismatch with the reason for any other list operation.
  */
 function listArith(model: TypeModel, op: string, a: unknown, b: unknown): unknown {
-  const la = listInfo(model, a) !== undefined;
-  const lb = op !== 'neg' && listInfo(model, b) !== undefined;
+  const ia = listInfo(model, a);
+  const ib = op !== 'neg' ? listInfo(model, b) : undefined;
+  const la = ia !== undefined;
+  const lb = ib !== undefined;
   if (!la && !lb) return undefined;
   const mismatch = (why: string): ErrorValue =>
     new ErrorValue('type-mismatch', `cannot apply '${op === 'neg' ? '-' : op}' to ${describeValue(a)}${op === 'neg' ? '' : ' and ' + describeValue(b)} (${why})`);
-  const pa = la ? numericList(model, a) : undefined;
-  const pb = lb ? numericList(model, b) : undefined;
+  const pa = la ? numericList(a as object, ia) : undefined;
+  const pb = lb ? numericList(b as object, ib) : undefined;
   if ((la && pa === undefined) || (lb && pb === undefined)) return mismatch('every list element must be a number');
   if (op === '%') return mismatch("'%' is not a vector operation");
   const result: number[] = [];
@@ -1263,7 +1260,8 @@ function vectorExample(name: string, method: boolean): string {
 function vectorOf(model: TypeModel, v: unknown): Vec | undefined {
   const c = componentsOf(model, v);
   if (c !== undefined) return { parts: c.parts, value: v as object, adapter: c.adapter };
-  const list = numericList(model, v);
+  const info = listInfo(model, v);
+  const list = info !== undefined ? numericList(v as object, info) : undefined;
   return list !== undefined ? { parts: list, value: v as object } : undefined;
 }
 
@@ -1271,44 +1269,45 @@ function notVector(name: string, v: unknown): ErrorValue {
   return new ErrorValue('type-mismatch', `${name}() takes a vector: a list of numbers or a struct with component-wise arithmetic, got ${describeValue(v)}`);
 }
 
-function vectorLength(parts: readonly number[]): number {
+/** Σ pᵢ·qᵢ in order, each product rounded before the sum. */
+function dot(p: readonly number[], q: readonly number[]): number {
   let sum = 0;
-  for (const p of parts) {
-    const sq = p * p;
-    sum += sq;
+  for (let i = 0; i < p.length; i++) {
+    const prod = p[i]! * q[i]!;
+    sum += prod;
   }
-  return Math.sqrt(sum);
+  return sum;
+}
+
+/** a + (b - a) × t, each operation rounded separately. */
+function lerp1(a: number, b: number, t: number): number {
+  const span = b - a;
+  const step = span * t;
+  return a + step;
+}
+
+function badT(t: unknown): ErrorValue {
+  return new ErrorValue('type-mismatch', `lerp() expects a number t, got ${describeValue(t)}`);
 }
 
 /** A value of the first vector's kind: its struct type through the adapter, else a list of numbers. */
 function buildVector(name: string, like: Vec, parts: number[]): unknown {
   if (like.adapter === undefined) return parts;
-  let built: unknown;
-  try {
-    built = like.adapter.fromComponents?.(parts, like.value.constructor as Ctor);
-  } catch {
-    built = undefined;
-  }
-  return built ?? new ErrorValue('type-mismatch', `${name}(): cannot build ${describeValue(like.value)} from components`);
+  return buildFromComponents(like.adapter, like.value, parts) ?? new ErrorValue('type-mismatch', `${name}(): cannot build ${describeValue(like.value)} from components`);
 }
 
 /** Vector functions over numeric lists and component structs (spec §4.3); components combine in order, each operation rounded. */
 function vectorFunction(model: TypeModel, name: string, vals: unknown[]): unknown {
+  const t = name === 'lerp' ? toNumber(vals[2]) : undefined;
   if (name === 'lerp') {
     const na = toNumber(vals[0]);
     const nb = toNumber(vals[1]);
-    if (na !== undefined && nb !== undefined) {
-      const t = toNumber(vals[2]);
-      if (t === undefined) return new ErrorValue('type-mismatch', `lerp() expects a number t, got ${describeValue(vals[2])}`);
-      const span = nb - na;
-      const step = span * t;
-      return na + step;
-    }
+    if (na !== undefined && nb !== undefined) return t === undefined ? badT(vals[2]) : lerp1(na, nb, t);
   }
   const a = vectorOf(model, vals[0]);
   if (a === undefined) return notVector(name, vals[0]);
   let b: Vec | undefined;
-  if (name === 'distance' || name === 'dot' || name === 'lerp') {
+  if (vals.length > 1) {
     b = vectorOf(model, vals[1]);
     if (b === undefined) return notVector(name, vals[1]);
     if (a.adapter !== undefined && b.adapter !== undefined && a.value.constructor !== b.value.constructor)
@@ -1319,34 +1318,27 @@ function vectorFunction(model: TypeModel, name: string, vals: unknown[]): unknow
   switch (name) {
     case 'length':
     case 'magnitude':
-      return vectorLength(a.parts);
-    case 'dot': {
+      return Math.sqrt(dot(a.parts, a.parts));
+    case 'dot':
+      return dot(a.parts, b!.parts);
+    case 'distance': {
       let sum = 0;
       for (let i = 0; i < a.parts.length; i++) {
-        const p = a.parts[i]! * b!.parts[i]!;
-        sum += p;
+        const d = a.parts[i]! - b!.parts[i]!;
+        const sq = d * d;
+        sum += sq;
       }
-      return sum;
-    }
-    case 'distance': {
-      const d: number[] = [];
-      for (let i = 0; i < a.parts.length; i++) d.push(a.parts[i]! - b!.parts[i]!);
-      return vectorLength(d);
+      return Math.sqrt(sum);
     }
     case 'normalize': {
-      const len = vectorLength(a.parts);
+      const len = Math.sqrt(dot(a.parts, a.parts));
       if (len === 0) return a.value; // a zero vector stays zero
       return buildVector(name, a, a.parts.map((p) => p / len));
     }
     default: {
-      const t = toNumber(vals[2]);
-      if (t === undefined) return new ErrorValue('type-mismatch', `lerp() expects a number t, got ${describeValue(vals[2])}`);
+      if (t === undefined) return badT(vals[2]);
       const r: number[] = [];
-      for (let i = 0; i < a.parts.length; i++) {
-        const span = b!.parts[i]! - a.parts[i]!;
-        const step = span * t;
-        r.push(a.parts[i]! + step);
-      }
+      for (let i = 0; i < a.parts.length; i++) r.push(lerp1(a.parts[i]!, b!.parts[i]!, t));
       return buildVector(name, a, r);
     }
   }

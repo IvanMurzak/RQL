@@ -203,15 +203,19 @@ bool plan_uses_meta(const QueryPlan& p, const std::string& meta) {
     return plan_uses_segment(p, [&](const Segment& s) { return s.kind == SegmentKind::Meta && s.name == meta; });
 }
 
+/// The text of path segments as $path writes them: .Member, [i], ["key"].
+std::string segments_text(const std::vector<Segment>& segments) {
+    std::string s;
+    for (auto& seg : segments) s += seg.kind == SegmentKind::Member ? "." + seg.name : seg.to_string();
+    return s;
+}
+
 /// Path text appended by get/recurse-via when the expression is a plain member/index path.
 std::optional<std::string> path_suffix(const Expr& e) {
     if (e.kind != ExprKind::Path || e.on) return std::nullopt;
-    std::string s;
-    for (auto& seg : e.segments) {
+    for (auto& seg : e.segments)
         if (seg.kind == SegmentKind::Meta) return std::nullopt;
-        s += seg.kind == SegmentKind::Member ? "." + seg.name : seg.to_string();
-    }
-    return s;
+    return segments_text(e.segments);
 }
 
 // ------------------------------------------------------------------ streams
@@ -946,8 +950,7 @@ SourceBinding bind_source(Exec& x, Compiler& c, const Expr& src) {
             const SourceRegistration* reg = x.engine.find_source(join(parts, "."));
             if (!reg) continue;
             std::vector<Segment> rest(src.segments.begin() + static_cast<std::ptrdiff_t>(len), src.segments.end());
-            std::string rest_text;
-            for (auto& s : rest) rest_text += s.kind == SegmentKind::Member ? "." + s.name : s.to_string();
+            const std::string rest_text = segments_text(rest);
             b.reg = reg;
             if (!x.plan_source) x.plan_source = reg;
             if (!rest.empty()) b.nav = c.compile(*plan::path(rest));
@@ -961,18 +964,17 @@ SourceBinding bind_source(Exec& x, Compiler& c, const Expr& src) {
                            (close.empty() ? std::string() : "did you mean " + join(close, " / ") + "? ") + "sources: " + join(names, " "));
     }
     // A function call or ref(…) followed by navigation (spec §2): unreal.asset("/Game/BP").EventGraph, ref("Node#1").Children[0].
-    if (src.kind == ExprKind::Path && src.on && (src.on->kind == ExprKind::Call || src.on->kind == ExprKind::Path) && !src.segments.empty()) {
+    if (src.kind == ExprKind::Path && src.on && src.on->kind == ExprKind::Call && !src.segments.empty()) {
         auto base = std::make_shared<SourceBinding>(bind_source(x, c, *src.on));
         Eval nav = c.compile(*plan::path(src.segments));
-        std::string rest_text;
-        for (auto& s : src.segments) rest_text += s.kind == SegmentKind::Member ? "." + s.name : s.to_string();
+        const std::string rest_text = segments_text(src.segments);
         b.kind = base->kind == SourceBinding::Kind::Ref ? SourceBinding::Kind::Ref : SourceBinding::Kind::Value;
         b.ev = [base, nav](Exec& ex) -> Value {
             Value v = source_value(ex, *base);
             if (v.is_null() || v.is_absent()) return v;
             ex.current = v;
             ex.current_path = nullptr;
-            return ex.live(nav(ex));
+            return nav(ex);  // member reads already read destroyed objects as null, as for a registered source's navigation
         };
         b.text = base->text + rest_text;
         return b;

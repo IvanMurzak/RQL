@@ -1056,18 +1056,31 @@ Value arith_mismatch(Exec& x, const std::string& op, const Value& a, const Value
     return Value::error("type-mismatch", why.empty() ? message : message + " (" + why + ")");
 }
 
-/// A list of exactly `width` numbers read as components (spec §4.2).
-bool list_parts(const Value& v, size_t width, std::vector<double>& out) {
+/// The numbers of a list whose elements are all numbers (spec §4.2 numeric lists).
+bool numeric_list(const Value& v, std::vector<double>& out) {
     if (!v.is_list()) return false;
     auto& l = v.list();
-    if (l.size() != width) return false;
     out.clear();
-    for (size_t i = 0; i < width; ++i) {
-        Value e = l.at(i);
-        if (!e.is_number()) return false;
-        out.push_back(e.as_number());
+    const size_t n = l.size();
+    out.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+        double d;
+        if (!try_number(l.at(i), d)) return false;
+        out.push_back(d);
     }
     return true;
+}
+
+/// A list of exactly `width` numbers read as components (spec §4.2).
+bool list_parts(const Value& v, size_t width, std::vector<double>& out) { return numeric_list(v, out) && out.size() == width; }
+
+/// A value of `like`'s struct type built from components through its adapter, or nullopt (spec §4.2, §13).
+std::optional<Value> build_from_components(const TypeAdapter& adapter, const Value& like, const std::vector<double>& parts) {
+    try {
+        if (adapter.from_components) return adapter.from_components(*like.type(), parts);
+    } catch (const std::exception&) {
+    }
+    return std::nullopt;
 }
 
 /// Component-wise arithmetic on structs whose adapter declares components (spec §4.2): v * n, n * v, v / n, v ± w, v * w,
@@ -1120,29 +1133,9 @@ std::optional<Value> struct_arith(Exec& x, std::string op, const Value& a, const
             result[i] = l / r;
         }
     }
-    std::optional<Value> built;
-    try {
-        if (adapter->from_components) built = adapter->from_components(*vector.type(), result);
-    } catch (const std::exception&) {
-        built.reset();
-    }
+    std::optional<Value> built = build_from_components(*adapter, vector, result);
     if (!built) return arith_mismatch(x, op, a, b, "cannot build " + describe_value(vector) + " from components");
     return built;
-}
-
-/// The numbers of a list whose elements are all numbers (spec §4.2 numeric lists).
-bool numeric_list(const Value& v, std::vector<double>& out) {
-    if (!v.is_list()) return false;
-    auto& l = v.list();
-    out.clear();
-    const size_t n = l.size();
-    for (size_t i = 0; i < n; ++i) {
-        Value e = l.at(i);
-        double d;
-        if (!try_number(e, d)) return false;
-        out.push_back(d);
-    }
-    return true;
 }
 
 Value number_list(const std::vector<double>& parts) {
@@ -1164,14 +1157,16 @@ std::optional<Value> list_arith(const std::string& op, const Value& a, const Val
     std::vector<double> pa, pb;
     if ((la && !numeric_list(a, pa)) || (lb && !numeric_list(b, pb))) return mismatch("every list element must be a number");
     if (op == "%") return mismatch("'%' is not a vector operation");
-    std::vector<double> result;
+    std::vector<Value> result;
     if (op == "neg") {
-        for (double d : pa) result.push_back(-d);
+        result.reserve(pa.size());
+        for (double d : pa) result.push_back(Value::number(-d));
     } else if (la && lb) {
         if (op == "*" || op == "/") return mismatch("an element-wise product is not a vector operation; use dot(a, b)");
         if (pa.size() != pb.size())
             return mismatch("the lists have " + std::to_string(pa.size()) + " and " + std::to_string(pb.size()) + " numbers");
-        for (size_t i = 0; i < pa.size(); ++i) result.push_back(op == "+" ? pa[i] + pb[i] : pa[i] - pb[i]);
+        result.reserve(pa.size());
+        for (size_t i = 0; i < pa.size(); ++i) result.push_back(Value::number(op == "+" ? pa[i] + pb[i] : pa[i] - pb[i]));
     } else {
         const std::vector<double>& list = la ? pa : pb;
         const Value& operand = la ? b : a;
@@ -1183,9 +1178,10 @@ std::optional<Value> list_arith(const std::string& op, const Value& a, const Val
             return mismatch(op == "/" ? std::string("a number cannot be divided by a list")
                                       : "add a list of " + std::to_string(list.size()) + " numbers; multiply or divide by a number");
         if (op == "/" && n == 0) return Value::error("div-by-zero");
-        for (double d : list) result.push_back(op == "*" ? d * n : d / n);
+        result.reserve(list.size());
+        for (double d : list) result.push_back(Value::number(op == "*" ? d * n : d / n));
     }
-    return number_list(result);
+    return Value::list_of(std::move(result));
 }
 
 /// A vector (spec §4.3): a numeric list or a struct whose adapter declares components.
@@ -1202,25 +1198,27 @@ bool vector_of(Exec& x, const Value& v, Vec& out) {
     return numeric_list(v, out.parts);
 }
 
-/// The Euclidean length; every product and sum rounded separately (no fused multiply-add, spec §4.3).
-double vector_length(const std::vector<double>& parts) {
+/// Σ pᵢ·qᵢ in order; every product and sum rounded separately (no fused multiply-add, spec §4.3).
+double vector_dot(const std::vector<double>& p, const std::vector<double>& q) {
     volatile double sum = 0;
-    for (double p : parts) {
-        volatile double sq = p * p;
-        sum = sum + sq;
+    for (size_t i = 0; i < p.size(); ++i) {
+        volatile double prod = p[i] * q[i];
+        sum = sum + prod;
     }
-    return std::sqrt(static_cast<double>(sum));
+    return sum;
+}
+
+/// a + (b - a) × t, each operation rounded separately.
+double lerp1(double a, double b, double t) {
+    volatile double span = b - a;
+    volatile double step = span * t;
+    return a + step;
 }
 
 /// A value of the first vector's kind: its struct type through the adapter, else a list of numbers.
 Value vector_build(const std::string& name, const Vec& like, const std::vector<double>& parts) {
     if (!like.adapter) return number_list(parts);
-    std::optional<Value> built;
-    try {
-        if (like.adapter->from_components) built = like.adapter->from_components(*like.value.type(), parts);
-    } catch (const std::exception&) {
-        built.reset();
-    }
+    std::optional<Value> built = build_from_components(*like.adapter, like.value, parts);
     if (!built) return Value::error("type-mismatch", name + "(): cannot build " + describe_value(like.value) + " from components");
     return *built;
 }
@@ -1229,19 +1227,17 @@ Value not_vector(const std::string& name, const Value& v) {
     return Value::error("type-mismatch", name + "() takes a vector: a list of numbers or a struct with component-wise arithmetic, got " + describe_value(v));
 }
 
+Value bad_t(const Value& t) { return Value::error("type-mismatch", "lerp() expects a number t, got " + describe_value(t)); }
+
 /// Vector functions (spec §4.3): length / magnitude, normalize, distance, dot, lerp.
 Value vector_function(Exec& x, const std::string& name, const std::vector<Value>& vals) {
-    double na, nb;
-    if (name == "lerp" && try_number(vals[0], na) && try_number(vals[1], nb)) {
-        double t;
-        if (!try_number(vals[2], t)) return Value::error("type-mismatch", "lerp() expects a number t, got " + describe_value(vals[2]));
-        volatile double span = nb - na;
-        volatile double step = span * t;
-        return Value::number(na + step);
-    }
+    const bool lerp = name == "lerp";
+    double t = 0, na, nb;
+    const bool t_ok = lerp && try_number(vals[2], t);
+    if (lerp && try_number(vals[0], na) && try_number(vals[1], nb)) return t_ok ? Value::number(lerp1(na, nb, t)) : bad_t(vals[2]);
     Vec a, b;
     if (!vector_of(x, vals[0], a)) return not_vector(name, vals[0]);
-    if (name == "distance" || name == "dot" || name == "lerp") {
+    if (vals.size() > 1) {
         if (!vector_of(x, vals[1], b)) return not_vector(name, vals[1]);
         if (a.adapter && b.adapter && a.value.type() != b.value.type())
             return Value::error("type-mismatch", name + "() needs vectors of one type, got " + describe_value(a.value) + " and " + describe_value(b.value));
@@ -1249,35 +1245,27 @@ Value vector_function(Exec& x, const std::string& name, const std::vector<Value>
             return Value::error("type-mismatch", name + "() needs vectors of the same width, got " + std::to_string(a.parts.size()) + " and " +
                                                      std::to_string(b.parts.size()) + " components");
     }
-    if (name == "length" || name == "magnitude") return Value::number(vector_length(a.parts));
-    if (name == "dot") {
+    if (name == "length" || name == "magnitude") return Value::number(std::sqrt(vector_dot(a.parts, a.parts)));
+    if (name == "dot") return Value::number(vector_dot(a.parts, b.parts));
+    if (name == "distance") {
         volatile double sum = 0;
         for (size_t i = 0; i < a.parts.size(); ++i) {
-            volatile double p = a.parts[i] * b.parts[i];
-            sum = sum + p;
+            volatile double d = a.parts[i] - b.parts[i];
+            volatile double sq = d * d;
+            sum = sum + sq;
         }
-        return Value::number(sum);
-    }
-    if (name == "distance") {
-        std::vector<double> d(a.parts.size());
-        for (size_t i = 0; i < d.size(); ++i) d[i] = a.parts[i] - b.parts[i];
-        return Value::number(vector_length(d));
+        return Value::number(std::sqrt(static_cast<double>(sum)));
     }
     if (name == "normalize") {
-        const double len = vector_length(a.parts);
+        const double len = std::sqrt(vector_dot(a.parts, a.parts));
         if (len == 0) return a.value;  // a zero vector stays zero
         std::vector<double> r(a.parts.size());
         for (size_t i = 0; i < r.size(); ++i) r[i] = a.parts[i] / len;
         return vector_build(name, a, r);
     }
-    double t;  // lerp
-    if (!try_number(vals[2], t)) return Value::error("type-mismatch", "lerp() expects a number t, got " + describe_value(vals[2]));
+    if (!t_ok) return bad_t(vals[2]);  // lerp
     std::vector<double> r(a.parts.size());
-    for (size_t i = 0; i < r.size(); ++i) {
-        volatile double span = b.parts[i] - a.parts[i];
-        volatile double step = span * t;
-        r[i] = a.parts[i] + step;
-    }
+    for (size_t i = 0; i < r.size(); ++i) r[i] = lerp1(a.parts[i], b.parts[i], t);
     return vector_build(name, a, r);
 }
 
@@ -2105,9 +2093,11 @@ Eval Compiler::compile_vector_function(const Expr& /*c*/, const std::string& nam
                            "example: " + example);
     }
     std::vector<Eval> args;
+    args.reserve(argExprs.size());
     for (auto* e : argExprs) args.push_back(compile(*e));
     return [args, name](Exec& x) {
         std::vector<Value> vals;
+        vals.reserve(args.size());
         for (auto& a : args) {
             Value v = a(x);
             if (v.is_null() || v.is_absent()) return v;  // null / missing / error propagate (first one)

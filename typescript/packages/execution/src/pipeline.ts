@@ -377,7 +377,7 @@ export class Pipeline {
           if (v === null || v === undefined || isAbsent(v)) return v;
           x.current = v;
           x.currentPath = null;
-          return x.live(step(x));
+          return step(x); // member reads already read destroyed objects as null, as for a registered source's navigation
         },
         pathText: base.pathText + pathSuffixText(rest),
         quiet: base.quiet,

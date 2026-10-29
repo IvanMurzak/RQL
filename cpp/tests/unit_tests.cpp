@@ -2246,7 +2246,7 @@ void vector_tests() {
              true);
     check(r.ok && bp.EventGraph.Events.size() == 2 && bp.EventGraph.Events[1] == "Land" && resolved == 1,
           "vectors: call unreal.asset(...).EventGraph.AddCustomEvent($) once per item");
-    r = arun(e, R"J({"rql":"0.1","source":{"path":["Events",{"index":1}],"on":)J" + target + "},\"stages\":[]}");
+    r = arun(e, R"J({"rql":"0.1","source":{"path":["EventGraph","Events",{"index":1}],"on":{"call":"asset","on":{"path":["unreal"]},"args":[{"lit":"/Game/BP"}]}},"stages":[]})J");
     check(r.ok && r.items && (*r.items).size() == 1 && (*r.items)[0].as_string() == "Land", "vectors: function source with navigation");
 }
 
