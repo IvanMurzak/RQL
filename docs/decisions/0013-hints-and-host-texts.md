@@ -27,7 +27,8 @@ and 27 (finding 5, the engine-object refusal advice, is ADR-0011).
    host's creation call for the placeholder and drops the "stands for" note; the constant stays the shared default.
    Hosts whose creation call is not `(name, {properties})` (Unreal `editor.SpawnActor(ClassName, Label, Location, …)`)
    give the examples themselves: `RulesWith(RqlRuleExamples)` (TS `languageRules({createCall, grid, perEntry, named})`,
-   C++ `language_rules_with(RuleExamples)`); an example left out keeps the default with the host's call. The
+   C++ `language_rules_with(RuleExamples)`); an example left out keeps the default with the host's call. A grid
+   example with a `|` replaces the whole `range(0, 300) | call …`, so a host can keep it within its target limit. The
    rules also gain the ADR-0011 / ADR-0012 lines: `$type` for grouping by type, list vectors and vector functions,
    typed literals for value-like assets and owned subobjects.
 3. **Receipt note override.** `AgentFormat.Render(result, format, maxReceiptRows, moreRowsNote)`; `""` omits the note.

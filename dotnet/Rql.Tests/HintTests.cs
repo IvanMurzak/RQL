@@ -79,6 +79,18 @@ namespace Rql.Tests
                 RqlLanguageGuide.RulesFor(" x$'y "));
         }
 
+        [Fact]
+        public void AGridWithAPipeIsTheWholeExample()
+        {
+            // The host sets the range too, e.g. to stay within its target limit (Unreal: 200).
+            var whole = "range(0, 150) | call editor.SpawnActor(\"StaticMeshActor\", \"Tile\" + $, [($ % 15) * 200, floor($ / 15) * 200, 0])";
+            var text = RqlLanguageGuide.RulesWith(new RqlRuleExamples { CreateCall = "editor.SpawnActor", Grid = " " + whole + " " });
+            Assert.Contains("one call creates many objects: " + whole + " builds a 15-wide grid", text);
+            Assert.DoesNotContain("range(0, 300)", text);
+            Assert.DoesNotContain("editor.CreateObject", text);
+            Assert.Contains("stands for", RqlLanguageGuide.RulesWith(new RqlRuleExamples { Grid = whole })); // other placeholders are left
+        }
+
         public sealed class Painter
         {
             [RqlCallable("By number.")] public string Set(int color) => "int";

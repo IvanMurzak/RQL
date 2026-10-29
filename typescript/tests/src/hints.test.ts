@@ -94,6 +94,12 @@ test('the rules take the host creation call', () => {
   assert.equal(languageRules(null as unknown as string), LANGUAGE_RULES);
   assert.ok(languageRules({ grid: spawn.grid }).includes(note), 'a placeholder left in an example keeps its note');
   assert.ok(languageRules('  editor.CreateGameObject ').includes('call editor.CreateGameObject("Cube"'));
+  // A grid with a pipe is the whole example: the host sets the range (e.g. within its target limit).
+  const whole = `range(0, 150) | call ${spawn.grid}`;
+  const ranged = languageRules({ ...spawn, grid: ` ${whole} ` });
+  assert.ok(ranged.includes(`one call creates many objects: ${whole} builds a 15-wide grid`));
+  assert.ok(!ranged.includes('range(0, 300)') && !ranged.includes('editor.CreateObject'));
+  assert.ok(languageRules({ grid: whole }).includes(note), 'a whole grid example still leaves the other placeholders');
 });
 
 class Painter {}

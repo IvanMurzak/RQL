@@ -30,7 +30,7 @@ inline const char* language_rules() noexcept {
 struct RuleExamples {
     /// The creation call, e.g. "editor.CreateGameObject" (empty: editor.CreateObject).
     std::string create_call;
-    /// Replaces the bulk-create call after `range(0, 300) | call ` (it builds a 15-wide grid from $).
+    /// Replaces the bulk-create example. A whole pipeline (it has a `|`, e.g. `range(0, 150) | call …`) replaces `range(0, 300) | call …` range included, so the example stays within the host's target limit; a bare call replaces only the call after `range(0, 300) | call `. Either way it builds a 15-wide grid from $.
     std::string grid;
     /// Replaces the list-literal example in full (`[…] | call ….($[0], $[1])`, one call per entry).
     std::string per_entry;
@@ -43,6 +43,7 @@ struct RuleExamples {
 inline std::string language_rules_with(const RuleExamples& examples) {
     static constexpr const char* placeholder = "editor.CreateObject";
     static constexpr const char* note = " (editor.CreateObject stands for the host's source and creation method)";
+    static constexpr const char* grid_range = "range(0, 300) | call ";
     static constexpr const char* grid_example = "editor.CreateObject(\"Cube\", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})";
     static constexpr const char* per_entry_example = "[[\"A\", 1], [\"B\", 2]] | call editor.CreateObject($[0], $[1])";
     static constexpr const char* named_example = "editor.CreateObject({name: \"Tile\" + $, position: [$ * 2, 0, 0]})";
@@ -67,7 +68,9 @@ inline std::string language_rules_with(const RuleExamples& examples) {
     };
     // The note explains the placeholder: it goes once no example keeps it.
     if (!call.empty() || (!grid.empty() && !per_entry.empty() && !named.empty())) replace(text, note, "", false);
-    put(grid_example, grid);
+    // A grid with a pipe is the whole example, range included (the host's target limit may be below 300).
+    if (grid.find('|') != std::string::npos) replace(text, std::string(grid_range) + grid_example, grid, false);
+    else put(grid_example, grid);
     put(per_entry_example, per_entry);
     put(named_example, named);
     return text;

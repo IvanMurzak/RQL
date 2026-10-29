@@ -2651,6 +2651,19 @@ void hint_tests() {
                 old.replace(at, 19, "x$'y");
             check(rql::language_rules_for(" x$'y ") == old, "hints: the call-only rules are unchanged");
         }
+        {
+            // A grid with a pipe is the whole example: the host sets the range (e.g. within its target limit).
+            rql::RuleExamples ranged = spawn;
+            const std::string whole = "range(0, 150) | call " + spawn.grid;
+            ranged.grid = " " + whole + " ";
+            const std::string text = rql::language_rules_with(ranged);
+            check(has(text, "one call creates many objects: " + whole + " builds a 15-wide grid") && !has(text, "range(0, 300)") &&
+                      !has(text, "editor.CreateObject"),
+                  "hints: a grid with a pipe replaces the whole example, range included");
+            rql::RuleExamples whole_only;
+            whole_only.grid = whole;
+            check(has(rql::language_rules_with(whole_only), "stands for"), "hints: a whole grid example leaves the other placeholders");
+        }
     }
     {
         rql::TypeRegistry reg;
