@@ -213,8 +213,8 @@ must be booleans (`where Material != null`, not `where Material`). Lists compare
 member, and a string meets an enum by name (`"Fill"` finds `HAlign_Fill`). Collection methods:
 `any all count sum min max avg first keys values`. Functions include
 `len lower upper abs round floor ceil sqrt pow min max coalesce has if ref append insert remove-at without range`,
-trigonometry in radians `sin cos tan asin acos atan atan2 pi deg rad`, string functions `replace replace-regex substring split trim pad` and vector functions
-`length normalize distance dot lerp` (string and vector functions are also methods: `Name.replace("a", "b")`,
+trigonometry in radians `sin cos tan asin acos atan atan2 pi deg rad`, string functions
+`replace replace-regex substring split trim pad` and vector functions `length normalize distance dot lerp` (string and vector functions are also methods: `Name.replace("a", "b")`,
 `Position.length()`). Vectors and colors the host marks, and lists of numbers, compute component by component
 (`Scale * 1.5`, `Position + [0, 1, 0]`, `[x, 0, z] * k`). Hosts register their own sources and add namespaced
 functions and stages (`myapp.fn(...)`). Besides sources, a query may start with `ref("Type#id")`, a host function (.NET and C++),
@@ -251,8 +251,8 @@ Enemy#233|Transform.Position.y|25.52|27.52
 - `set` is all-or-nothing: every assignment is resolved and coerced before the first write, and written values are
   restored if a later write fails. `call` validates every target before the first call; calls already made are not
   undone. A host batch validator sees the whole stage first, dry runs included. Dry runs return the receipt without
-  changing anything. In values and arguments `$index` is the target's position in the stream entering `set` / `call` and `$count`
-  the number of items in it.
+  changing anything. In values and arguments `$index` is the target's position in the stream entering `set` /
+  `call` and `$count` the number of items in it.
 - Bulk create: `call src.m(args)` runs the method of the one object `src` yields once per stream item, with `$` and
   `$index` the item's, so `range(…)` or a list creates many objects in one validated, undoable call; every invocation
   counts against the target limit and the receipt lists the created objects' `$ref`s.
