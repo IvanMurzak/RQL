@@ -707,13 +707,14 @@ namespace Rql.Eval.Tasks
             "bulk" => BulkSeeds,
             "wave5" => Wave5Seeds,
             "wave6" => Wave6Seeds,
+            "wave6b" => Wave6bSeeds,
             _ => DevSeeds,
         };
 
         public static List<TaskInstance> Build(string split)
         {
             var list = new List<TaskInstance>();
-            foreach (var t in Templates().Concat(TemplatesV2()).Concat(TemplatesBulk()).Concat(TemplatesWave5()).Concat(TemplatesWave6()).Where(t => t.Split == split || split == "all"))
+            foreach (var t in Templates().Concat(TemplatesV2()).Concat(TemplatesBulk()).Concat(TemplatesWave5()).Concat(TemplatesWave6()).Concat(TemplatesWave6b()).Where(t => t.Split == split || split == "all"))
             {
                 foreach (var seed in SeedsFor(t.Split))
                 {

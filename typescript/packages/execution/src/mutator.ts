@@ -6,7 +6,7 @@ import type { Encoder } from './encoder.js';
 import { errorMessage, type Exec } from './exec.js';
 import type { MutationRecord, TextCoercion } from './engine.js';
 import type { Item } from './pipeline.js';
-import { adapterName } from './adapters.js';
+import { adapterName, firstAnswer, type LiteralKind } from './adapters.js';
 import { closest, memberHint, nestedMembers } from './suggest.js';
 import {
   EnumType,
@@ -405,6 +405,7 @@ export class Mutator {
     const targets = this.targets(stream, 'set');
     this.checkMixedTargets(targets, s.assign.map((a) => a.target));
     const writes: PlannedWrite[] = [];
+    const rules = hostRules(x);
     for (const t of targets) {
       const it = t.item;
       const item = it.value as object;
@@ -426,7 +427,9 @@ export class Mutator {
         const { slot, container } = resolved;
         const owner = holder !== undefined && resolved.owner === root ? holder : resolved.owner;
         if (!slot.writable(x)) throw new RqlError(slot.denyCode, `'${lbl}' on ${itemRef} is not writable${slot.denyReason}`);
-        const co = coerce(x.types, nv, slot.type, hostRules(x));
+        // The outer of an instanced literal is the owning object, never a map, list or struct (spec §4.5).
+        const outer = typeof owner === 'object' && owner !== null && x.types.infoOf(owner).kind === 'object' ? owner : undefined;
+        const co = coerce(x.types, nv, slot.type, { ...rules, outer });
         if (!co.ok) throw new RqlError(co.code ?? 'coercion-failed', `cannot assign ${describeValue(nv)} to '${lbl}' (${friendlyName(slot.type, x.types)}): ${co.why}`);
         // Validation runs while the mutation is planned, before any write (spec §13).
         const rejected = slot.validate(container, co.value);
@@ -648,12 +651,13 @@ export class Mutator {
     const planned: { item: object; method: MethodAccessor; args: unknown[]; index: number }[] = [];
     // Where a failure is: the target, or for a source-qualified call the receiver and the item's position.
     const at = (item: object, index: number): string => x.engine.refOf(item) + (receiver !== undefined ? ` for item ${index}` : '');
+    const rules = hostRules(x);
     for (const t of targets) {
       const item = receiver ?? (t.item.value as object);
       const candidates = fixed ?? candidatesOf(item, targets);
       this.enterScope(t);
       const vals = args.map((a) => a(x));
-      const resolved = resolveOverload(x.types, hostRules(x), candidates, vals);
+      const resolved = resolveOverload(x.types, { ...rules, outer: item }, candidates, vals);
       if ('denied' in resolved) throw new RqlError('permission-denied', `cannot call ${s.method} on ${at(item, t.index)}: ${resolved.denied}`);
       if ('why' in resolved) {
         throw new RqlError('coercion-failed', `cannot call ${s.method} on ${at(item, t.index)}: ${resolved.why}`, undefined, 'signature: ' + candidates.map((m) => m.signature(x.types)).join(', '));
@@ -992,14 +996,35 @@ export interface CoerceRules {
   policy?: WritePolicy;
   text?: TextCoercion | undefined;
   canConstruct?: ((ctor: Ctor) => boolean | null | undefined) | undefined;
+  /** The host's literal-kind hook (spec §4.5, §13): asked before the adapters. */
+  literalKind?: ((ctor: Ctor) => LiteralKind | null | undefined) | undefined;
+  /** The host's literal factory (ctor, outer): asked before the adapters' factories and `new ctor()`. */
+  create?: ((ctor: Ctor, outer: object | undefined) => object | null | undefined) | undefined;
+  /** The host's advice ending the engine-object refusal. */
+  refusalHint?: ((ctor: Ctor) => string | null | undefined) | undefined;
+  /** The object that will own the value (spec §4.5): instanced literals are built for it. */
+  outer?: object | undefined;
   probe?: boolean;
+  /** Literal kinds already resolved for this stage: the hooks answer per class and cannot change within it. */
+  kinds?: Map<Ctor, LiteralKind>;
 }
 
 /** The rules of an execution's host. */
 export function hostRules(x: Exec): CoerceRules {
   const m = x.engine.mutations;
-  return { policy: m.canWrite, text: m.coerceText, canConstruct: m.canConstructFromLiteral };
+  return {
+    policy: m.canWrite,
+    text: m.coerceText,
+    canConstruct: m.canConstructFromLiteral,
+    literalKind: m.literalKindOf,
+    create: m.createForLiteral,
+    refusalHint: m.literalRefusalHint,
+    kinds: new Map(),
+  };
 }
+
+/** Stands for the object a probed literal would build (nothing is constructed), so its nested values have an outer. */
+const PROBE_OUTER: object = Object.freeze({});
 
 /** A nested failure with more context; keeps a policy denial's code and counts one level deeper. */
 const nested = (co: { why: string; code?: 'permission-denied'; depth?: number }, prefix: string): Coerced => {
@@ -1136,12 +1161,30 @@ function fromLiteral(model: TypeModel, literal: ObjectValue, t: TypeRef, target:
   return { ok: false, why: `an object literal cannot become ${friendlyName(target, model)}` };
 }
 
-/** Whether an object literal may build `ctor` (spec §4.5): the host's answer, else every class that is not an engine object. */
-function constructible(model: TypeModel, ctor: Ctor, rules: CoerceRules): boolean {
-  const decided = rules.canConstruct?.(ctor);
-  if (decided === true || decided === false) return decided;
+/**
+ * The literal kind of `ctor` (spec §4.5, §13): the host's literal-kind hook, else the adapters (most specific first), else
+ * engine for a class with a stableId or isAlive adapter and value for any other; then the host's canConstructFromLiteral
+ * (false → engine, true → an engine class becomes value).
+ */
+function literalKindOf(model: TypeModel, ctor: Ctor, rules: CoerceRules): LiteralKind {
+  const cached = rules.kinds?.get(ctor);
+  if (cached !== undefined) return cached;
   const set = model.adapterSetFor(ctor);
-  return set.stableId.length === 0 && set.isAlive.length === 0;
+  let kind = rules.literalKind?.(ctor) ?? undefined;
+  if (kind === undefined) kind = firstAnswer(set.literalKind, (a) => a.literalKind!(ctor));
+  let k: LiteralKind = kind ?? (set.stableId.length === 0 && set.isAlive.length === 0 ? 'value' : 'engine');
+  const decided = rules.canConstruct?.(ctor);
+  if (decided === false) k = 'engine';
+  else if (decided === true && k === 'engine') k = 'value';
+  rules.kinds?.set(ctor, k);
+  return k;
+}
+
+/** The value a factory builds for a literal of `ctor` (host first, then adapters); undefined: none answered. */
+function createForLiteral(model: TypeModel, ctor: Ctor, outer: object | undefined, rules: CoerceRules): object | undefined {
+  const made = rules.create?.(ctor, outer) ?? undefined;
+  if (made !== undefined) return made;
+  return firstAnswer(model.adapterSetFor(ctor).createForLiteral, (a) => a.createForLiteral!(ctor, outer) ?? undefined);
 }
 
 /**
@@ -1161,21 +1204,37 @@ function construct(model: TypeModel, literal: ObjectValue, ctor: Ctor, ti: TypeI
     concrete = hits[0]!;
   }
   // Engine objects are never built from literals (spec §4.5): only existing ones can be passed.
-  if (!constructible(model, concrete, rules)) {
-    const name = model.infoForCtor(concrete)?.shortName ?? concrete.name;
-    return { ok: false, why: `${name} is an engine object and cannot be built from an object literal; pass an existing one (e.g. ref("…"))` };
+  const kind = literalKindOf(model, concrete, rules);
+  const name = model.infoForCtor(concrete)?.shortName ?? concrete.name;
+  if (kind === 'engine') {
+    const hint = rules.refusalHint?.(concrete);
+    return { ok: false, why: `${name} is an engine object and cannot be built from an object literal; ${hint !== undefined && hint !== null && hint !== '' ? hint : 'pass an existing one (e.g. ref("…"))'}` };
+  }
+  // An instanced subobject is built for the object that owns it (spec §4.5).
+  if (kind === 'instanced' && rules.outer === undefined) {
+    return { ok: false, why: `${name} is an instanced subobject: it is built only for the object that owns it (write it to a member of that object or pass it to a call)` };
   }
   let instance: object | undefined;
   if (rules.probe !== true) {
     try {
-      instance = new (concrete as unknown as new () => object)();
+      instance = createForLiteral(model, concrete, rules.outer, rules);
     } catch (e) {
-      return { ok: false, why: `cannot construct ${concrete.name} (needs a constructor without required arguments, or an adapter that coerces object literals): ${errorMessage(e)}` };
+      return { ok: false, why: `building ${name} failed: ${errorMessage(e)}` };
+    }
+    if (instance !== undefined && !isInstance(model, instance, concrete, model.infoForCtor(concrete))) throw new Error(`the literal factory built ${describeValue(instance)}, not ${concrete.name}`);
+    if (instance === undefined) {
+      try {
+        instance = new (concrete as unknown as new () => object)();
+      } catch (e) {
+        return { ok: false, why: `cannot construct ${concrete.name} (needs a constructor without required arguments, or an adapter that coerces object literals): ${errorMessage(e)}` };
+      }
     }
   }
   const ci = instance !== undefined ? model.infoOf(instance) : model.infoForCtor(concrete);
   // A probe cannot see the members of a class whose member table depends on the instance: the real coercion checks them.
   if (ci === undefined || (instance === undefined && ci.dynamic !== undefined)) return { ok: true, value: undefined };
+  // Values nested in an object literal belong to the object it builds; a struct passes its own outer on.
+  const inner: CoerceRules = ci.kind === 'object' ? { ...rules, outer: instance ?? PROBE_OUTER } : rules;
   for (const [key, value] of literal) {
     if (key === '$type') continue;
     const m = ci.find(key, instance);
@@ -1183,7 +1242,7 @@ function construct(model: TypeModel, literal: ObjectValue, ctor: Ctor, ti: TypeI
     if (!m.canWrite || m.set === undefined) return { ok: false, why: `member '${m.name}' of ${ci.shortName} is read-only`, depth: 1 };
     // Construction is a write: the host policy applies to every member assigned (spec §13).
     if (rules.policy !== undefined && !rules.policy(ci, m)) return { ok: false, why: `member '${m.name}' of ${ci.shortName} is denied by host policy`, code: 'permission-denied', depth: 1 };
-    const co = coerce(model, value === undefined ? null : value, m.type, rules);
+    const co = coerce(model, value === undefined ? null : value, m.type, inner);
     if (!co.ok) return nested(co, `'${m.name}': `);
     if (instance === undefined) continue;
     const rejected = m.validate?.(instance, co.value);

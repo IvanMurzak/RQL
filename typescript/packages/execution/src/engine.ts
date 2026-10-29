@@ -5,17 +5,22 @@
 import { diagnostic, failResult, formatNumber, type Budgets, type JsonObject, type QueryOptions, type QueryPlan, type QueryResult } from '@rql/contracts';
 import { isIdentStart, tryParse } from '@rql/parser';
 import { reachableTypes, typeDescriptor } from './describe.js';
-import { firstAnswer, type ClassAdapter, type InterfaceAdapter, type TypeAdapter } from './adapters.js';
+import { firstAnswer, type ClassAdapter, type InterfaceAdapter, type LiteralKind, type TypeAdapter } from './adapters.js';
 import { Exec, now } from './exec.js';
 import { Pipeline } from './pipeline.js';
 import { EnumValue, TypeModel, type Ctor, type MemberAccessor, type MethodAccessor, type TypeInfo, type TypeRef } from './types.js';
 import { MapEntry } from './values.js';
-import { elements } from './collections.js';
+import { elements, isMapLike } from './collections.js';
 
 export interface SourceRegistration {
   readonly name: string;
   readonly getter: () => unknown;
   readonly description: string | undefined;
+  /**
+   * The class the host declares for the source's value (for a source that yields a list: its elements' class), or undefined
+   * (spec §8 known names). Known member names never evaluate a source; a source no query has read yet contributes only this.
+   */
+  readonly type?: Ctor | undefined;
 }
 
 /** Extension function `ns.fn(args)`: receives evaluated arguments (may include MISSING/ErrorValue). */
@@ -82,6 +87,26 @@ export interface MutationPolicy {
    */
   canConstructFromLiteral?: (ctor: Ctor) => boolean | null | undefined;
   /**
+   * The literal kind of a class (spec §4.5, §13 "Literal construction"), asked before the adapters: `engine` (never built
+   * from an object literal), `value` (built fresh: plain data, value-like assets) or `instanced` (built as a subobject of
+   * the object it is written into, its outer); undefined/null keeps the adapters' answer or the default (stableId / isAlive
+   * adapter → engine, else value). `canConstructFromLiteral` still applies afterwards (false → engine, true → an engine
+   * class becomes value).
+   */
+  literalKindOf?: (ctor: Ctor) => LiteralKind | null | undefined;
+  /**
+   * Builds an empty value of a class for an object literal of kind value or instanced, given its outer (the owner of the
+   * written member, the call's target, or the object an enclosing literal builds; undefined outside any object). Return
+   * undefined/null to defer to the adapters' factories, then `new ctor()`. Runs while the mutation is planned, dry runs
+   * included: create objects nothing references until the write.
+   */
+  createForLiteral?: (ctor: Ctor, outer: object | undefined) => object | null | undefined;
+  /**
+   * The advice that ends the engine-object refusal for a class (spec §4.5), replacing `pass an existing one (e.g.
+   * ref("…"))`, e.g. "use unity.find(…) or an asset path"; undefined/null/empty keeps the default.
+   */
+  literalRefusalHint?: (ctor: Ctor) => string | null | undefined;
+  /**
    * Runs after planning and before anything is written (not on dry-run), e.g. to record undo state of the
    * owners. Throwing vetoes the whole mutation (→ permission-denied, nothing changed).
    */
@@ -135,6 +160,9 @@ export interface EngineOptions {
   /** Type descriptors (shareable between engines). Default: a new empty model. */
   types?: TypeModel;
 }
+
+/** Most member names learned per source from undeclared (dynamic) objects (spec §8 known names). */
+const MAX_LEARNED_NAMES = 200;
 
 export class RqlEngine {
   /** Reflection model (descriptors + adapters). Replaced by a private fork on the first `addAdapter` if shared. */
@@ -332,10 +360,15 @@ export class RqlEngine {
     return this.stageMap;
   }
 
-  addSource(name: string, getter: () => unknown, description?: string): this {
+  /**
+   * Register a source. `type` declares the class of its value (of its elements for a source that yields a list): its members
+   * are known names before any query has read the source (spec §8), since known names never evaluate a source.
+   */
+  addSource(name: string, getter: () => unknown, description?: string, type?: Ctor): this {
     validateName(name, false);
-    this.sourceMap.set(name, { name, getter, description });
+    this.sourceMap.set(name, { name, getter, description, type });
     this.sourceTypes.delete(name);
+    this.sourceNames.delete(name);
     this.knownMembers = undefined;
     return this;
   }
@@ -418,68 +451,88 @@ export class RqlEngine {
   }
 
   /**
-   * Member names declared by any type statically reachable from the sources (plus the universal
-   * key/value/count/Length), keyed by upper-cased name; used to flag never-evaluated bare names as typos.
-   */
-  /**
    * Records the type of a source's value (queries call it as they read a source). Known names come from the types the
    * sources have produced, not only their current values: a source that is null right now keeps the types it had (spec §8).
+   * Undeclared (dynamic) objects and a few elements of a collection are learned here, while the query reads the source,
+   * because known names never evaluate a source.
    */
   noteSourceType(source: string, value: unknown): void {
     if (typeof value !== 'object' || value === null) return;
-    const info = this.types.infoOf(value);
     let seen = this.sourceTypes.get(source);
     if (seen === undefined) this.sourceTypes.set(source, (seen = new Set()));
-    if (seen.has(info)) return;
-    seen.add(info);
-    this.knownMembers = undefined;
+    const info = this.types.infoOf(value);
+    this.learnSourceType(source, seen, value, info);
+    // A few elements are sampled on every read (a source that starts empty learns its elements later); only re-iterable
+    // collections, since a one-shot iterator (a generator) belongs to the query reading it.
+    if ((info.isList || info.isMap) && (Array.isArray(value) || value instanceof Set || isMapLike(value))) {
+      let n = 0;
+      for (const e of elements(value, info)) {
+        const ev = e instanceof MapEntry ? e.Value : e;
+        if (typeof ev === 'object' && ev !== null) this.learnSourceType(source, seen, ev, this.types.infoOf(ev));
+        if (++n >= 8) break;
+      }
+    }
+  }
+
+  /** Records one value's type for a source (and the members of an undeclared object, at most MAX_LEARNED_NAMES per source). */
+  private learnSourceType(source: string, seen: Set<TypeInfo>, v: object, info: TypeInfo): void {
+    if (!seen.has(info)) {
+      seen.add(info);
+      this.knownMembers = undefined;
+    }
+    if (info.dynamic === undefined) return;
+    let names = this.sourceNames.get(source);
+    if (names === undefined) this.sourceNames.set(source, (names = new Set()));
+    for (const m of info.membersOf(v)) {
+      if (names.size >= MAX_LEARNED_NAMES) return; // keyed-by-id objects must not grow the names without bound
+      if (names.has(m.name)) continue;
+      names.add(m.name);
+      this.knownMembers = undefined;
+    }
   }
 
   private readonly sourceTypes = new Map<string, Set<TypeInfo>>();
+  /** Member names of undeclared (dynamic) objects learned per source while queries read it. */
+  private readonly sourceNames = new Map<string, Set<string>>();
 
-  knownMemberNames(): ReadonlyMap<string, string> {
-    // Sources that never produced a value are read again; the others keep the types they had.
-    for (const s of this.sourceMap.values()) {
-      if (this.sourceTypes.has(s.name)) continue;
-      try {
-        this.noteSourceType(s.name, s.getter());
-      } catch {
-        // no type yet
-      }
+  /**
+   * Reads a source the current query names once for its type when it has neither produced a value yet nor declares a type
+   * (a lazy stream such as `first 0` never pulled it); known names never evaluate any other source (spec §8).
+   */
+  ensureSourceType(name: string): void {
+    const s = this.sourceMap.get(name);
+    if (s === undefined || this.sourceTypes.has(name) || (s.type !== undefined && this.types.infoForCtor(s.type) !== undefined)) return;
+    try {
+      this.noteSourceType(name, s.getter());
+    } catch {
+      // no type yet
     }
+  }
+
+  /** The types each registered source has produced so far or declares, without evaluating any (spec §8). */
+  sourceTypeInfos(): { source: string; info: TypeInfo }[] {
+    const out: { source: string; info: TypeInfo }[] = [];
+    for (const s of this.sourceMap.values()) {
+      const declared = s.type !== undefined ? this.types.infoForCtor(s.type) : undefined;
+      if (declared !== undefined) out.push({ source: s.name, info: declared });
+      for (const info of this.sourceTypes.get(s.name) ?? []) if (info !== declared) out.push({ source: s.name, info });
+    }
+    return out;
+  }
+
+  /**
+   * Member names declared by any type statically reachable from the types the sources have produced or declare (plus the
+   * universal key/value/count/Length), keyed by upper-cased name. Never evaluates a source (spec §8).
+   */
+  knownMemberNames(): ReadonlyMap<string, string> {
     const cached = this.knownMembers;
     if (cached !== undefined && cached.version === this.types.version) return cached.names;
     const names = new Map<string, string>(['key', 'value', 'count', 'Count', 'Length'].map((n) => [n.toUpperCase(), n]));
     const add = (n: string): void => {
       if (!names.has(n.toUpperCase())) names.set(n.toUpperCase(), n);
     };
-    const roots: TypeInfo[] = [];
-    for (const s of this.sourceMap.values()) {
-      let v: unknown;
-      try {
-        v = s.getter();
-      } catch {
-        continue;
-      }
-      if (v === null || v === undefined) continue;
-      const info = this.types.infoOf(v);
-      roots.push(info);
-      // Undeclared roots: learn members from the instance itself (and a few elements of collections).
-      if (info.dynamic !== undefined) for (const m of info.membersOf(v)) add(m.name);
-      if ((info.isList || info.isMap) && typeof v === 'object') {
-        let n = 0;
-        for (const e of elements(v, info)) {
-          const ev = e instanceof MapEntry ? e.Value : e;
-          if (typeof ev === 'object' && ev !== null) {
-            const ei = this.types.infoOf(ev);
-            roots.push(ei);
-            for (const m of ei.membersOf(ev)) add(m.name);
-          }
-          if (++n >= 8) break;
-        }
-      }
-    }
-    for (const [name, seen] of this.sourceTypes) if (this.sourceMap.has(name)) for (const info of seen) if (!roots.includes(info)) roots.push(info);
+    const roots = [...new Set(this.sourceTypeInfos().map((r) => r.info))];
+    for (const [name, learned] of this.sourceNames) if (this.sourceMap.has(name)) for (const n of learned) add(n);
     const types = reachableTypes(this.types, roots, 1000);
     for (const t of types) for (const m of t.members) add(m.name);
     // Adapters' target classes count as known too (their virtual members included), reachable or not (spec §8): hosts add

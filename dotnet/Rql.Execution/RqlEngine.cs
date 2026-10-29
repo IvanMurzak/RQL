@@ -10,13 +10,19 @@ namespace Rql.Execution
 {
     public sealed class SourceRegistration
     {
-        internal SourceRegistration(string name, Func<object?> getter, string? description)
+        internal SourceRegistration(string name, Func<object?> getter, string? description, Type? declaredType = null)
         {
-            Name = name; Getter = getter; Description = description;
+            Name = name; Getter = getter; Description = description; DeclaredType = declaredType;
         }
         public string Name { get; }
         public Func<object?> Getter { get; }
         public string? Description { get; }
+
+        /// <summary>
+        /// The type the host declares for the source's value (spec §8 known names), or null. Known member names never evaluate a
+        /// source; a source no query has read yet contributes only this type.
+        /// </summary>
+        public Type? DeclaredType { get; }
     }
 
     /// <summary>Per-item evaluator handed to extension stages: evaluates an argument expression with $ = item.</summary>
@@ -93,6 +99,30 @@ namespace Rql.Execution
         /// liveness only through <see cref="RqlEngine.IsAlive"/> (no adapter) get no default protection and set this hook.
         /// </summary>
         public Func<Type, bool?>? CanConstructFromLiteral { get; set; }
+
+        /// <summary>
+        /// The literal kind of a type (spec §4.5, §13 "Literal construction"), asked before the adapters: engine (never built
+        /// from an object literal), value (built fresh: plain data, value-like assets such as Godot resources) or instanced
+        /// (built as a subobject of the object it is written into, its outer: Unreal's EditInlineNew objects); null keeps the
+        /// adapters' answer or the default (identity / liveness adapter → engine, else value). <see cref="CanConstructFromLiteral"/>
+        /// still applies afterwards (false → engine, true → an engine type becomes value).
+        /// </summary>
+        public Func<Type, LiteralKind?>? LiteralKindOf { get; set; }
+
+        /// <summary>
+        /// Builds an empty value of a concrete type for an object literal of kind value or instanced, given its outer (the
+        /// owner of the written member, the call's target, or the object an enclosing literal builds; null outside any object):
+        /// e.g. Unreal's <c>NewObject(outer, class)</c>, Unity's <c>ScriptableObject.CreateInstance</c>. Return null to defer
+        /// to the adapters' factories, then the default constructor. Runs while the mutation is planned, dry runs included:
+        /// create objects nothing references until the write.
+        /// </summary>
+        public Func<Type, object?, object?>? CreateForLiteral { get; set; }
+
+        /// <summary>
+        /// The advice that ends the engine-object refusal for a type (spec §4.5), replacing "pass an existing one (e.g.
+        /// ref(\"…\"))", e.g. "use unity.find(…) or an asset path"; null or empty keeps the default.
+        /// </summary>
+        public Func<Type, string?>? LiteralRefusalHint { get; set; }
 
         /// <summary>
         /// Runs after planning and before anything is written (not on dry-run): e.g. Undo.RecordObjects on the owners.
@@ -290,10 +320,17 @@ namespace Rql.Execution
         public IReadOnlyDictionary<string, Func<object?[], object?>> Functions => _functions;
         public IReadOnlyDictionary<string, StageHandler> Stages => _stages;
 
-        public RqlEngine AddSource(string name, Func<object?> getter, string? description = null)
+        public RqlEngine AddSource(string name, Func<object?> getter, string? description = null) => AddSource(name, getter, description, null);
+
+        /// <summary>
+        /// Register a source whose value has the declared type <paramref name="declaredType"/> (a list type for a source that
+        /// yields many objects, e.g. <c>typeof(List&lt;Node&gt;)</c>): its members are known names before any query has read the
+        /// source (spec §8), since known names never evaluate a source.
+        /// </summary>
+        public RqlEngine AddSource(string name, Func<object?> getter, string? description, Type? declaredType)
         {
             ValidateName(name, allowDots: true);
-            _sources[name] = new SourceRegistration(name, getter, description);
+            _sources[name] = new SourceRegistration(name, getter, description, declaredType);
             lock (_sourceTypes) _sourceTypes.Remove(name);
             InvalidateKnownMembers();
             return this;
@@ -325,30 +362,47 @@ namespace Rql.Execution
         }
 
         /// <summary>
-        /// Every member name of every type statically reachable from the types the sources have produced (case-insensitive),
-        /// cached by those types. Only sources that never produced a value are read again.
+        /// Every member name of every type statically reachable from the types the sources have produced and the types they
+        /// declare (case-insensitive), cached by those types. Never evaluates a source (spec §8): a source getter may be
+        /// expensive (a scene walk), and warnings must not run it for a query that never named the source.
         /// </summary>
         internal HashSet<string> KnownMemberNames() => Known().names;
+
+        /// <summary>
+        /// Reads a source the current query names once for its type when it has neither produced a value yet nor declares a type
+        /// (a lazy stream such as <c>first 0</c> never pulled it); known names never evaluate any other source (spec §8).
+        /// </summary>
+        internal void EnsureSourceType(SourceRegistration s)
+        {
+            if (s.DeclaredType != null) return;
+            lock (_sourceTypes) if (_sourceTypes.ContainsKey(s.Name)) return;
+            try { NoteSourceType(s.Name, s.Getter()); } catch { /* no type yet */ }
+        }
+
+        /// <summary>The types each source has produced so far or declares, by source (registered sources only), without evaluating any.</summary>
+        internal List<(string source, Type type)> SourceTypes()
+        {
+            var result = new List<(string, Type)>();
+            lock (_sourceTypes)
+            {
+                foreach (var s in _sources.Values)
+                {
+                    if (s.DeclaredType != null) result.Add((s.Name, s.DeclaredType));
+                    if (_sourceTypes.TryGetValue(s.Name, out var seen))
+                        foreach (var t in seen) if (t != s.DeclaredType) result.Add((s.Name, t));
+                }
+            }
+            return result;
+        }
 
         /// <summary>The known names and the reachable types they came from, as one consistent pair.</summary>
         private (HashSet<string> names, List<Type> types) Known()
         {
-            foreach (var s in _sources.Values)
-            {
-                bool seen;
-                lock (_sourceTypes) seen = _sourceTypes.ContainsKey(s.Name);
-                if (seen) continue;
-                try { NoteSourceType(s.Name, s.Getter()); } catch { /* no type yet */ }
-            }
             lock (_sourceTypes)
                 if (_knownMembers != null && _knownTypes != null) return (_knownMembers, _knownTypes);
-            List<Type> roots;
             int version;
-            lock (_sourceTypes)
-            {
-                version = _knownVersion;
-                roots = _sourceTypes.Where(kv => _sources.ContainsKey(kv.Key)).SelectMany(kv => kv.Value).Distinct().ToList();
-            }
+            lock (_sourceTypes) version = _knownVersion;
+            var roots = SourceTypes().Select(st => st.type).Distinct().ToList();
             var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "key", "value", "count", "Count", "Length" };
             var reachable = Describe.Reachable(Types, roots, 1000);
             foreach (var t in reachable)
@@ -854,7 +908,7 @@ namespace Rql.Execution
         private RqlKernel? _kernel;
 
         /// <summary>The kernel for this execution's writes: the engine's types and the host's write policy.</summary>
-        public RqlKernel Kernel => _kernel ??= new RqlKernel(Types, Engine.Mutations.CanWrite, Engine.Mutations.CoerceText, Engine.Mutations.CanConstructFromLiteral);
+        public RqlKernel Kernel => _kernel ??= new RqlKernel(Types, Engine.Mutations);
 
         public QueryOptions Options { get; }
         public QueryPlan Plan { get; }

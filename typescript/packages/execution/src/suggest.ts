@@ -115,3 +115,11 @@ export function distance(a: string, b: string): number {
   }
   return prev[b.length]!;
 }
+
+const META_NAMES = ['type', 'ref', 'path', 'index', 'depth'];
+
+/** "did you mean $type (the meta member)?" for a bare name that is a meta member's name (any case), or undefined (spec §5, §10). */
+export function metaHint(name: string): string | undefined {
+  const lower = name.toLowerCase();
+  return META_NAMES.includes(lower) ? `did you mean $${lower} (the meta member)?` : undefined;
+}

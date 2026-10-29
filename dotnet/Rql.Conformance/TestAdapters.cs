@@ -153,6 +153,9 @@ namespace Rql.Conformance
                         (o, args) => (((Vec2)args[0]!).x + ((Vec2)args[0]!).y) * (double)args[1]!, "(at.x + at.y) * scale")
                     .AddMethod("pin", new[] { new CallableParameter("peer", typeof(Node)) }, typeof(double),
                         (o, args) => (double)((Node)args[0]!).Id, "the peer's Id")
+                    // Literal kinds (spec §4.5): a Special literal is an instanced subobject built for the call's target.
+                    .AddMethod("adopt", new[] { new CallableParameter("child", typeof(Node)) }, typeof(string),
+                        (o, args) => ((Node)args[0]!).Parent?.Name, "the Name of the child's Parent (no state change)")
                     // Arguments by name: place({name: "box", side: "up"}).
                     .AddMethod("place", new[]
                         {
@@ -186,6 +189,13 @@ namespace Rql.Conformance
         {
             protected override void Members(MemberTable<Special> members) =>
                 members.Add("powerLevel", s => s.Power / 1000.0, description: "Power / 1000").Display("title");
+
+            // Literal kinds (spec §4.5, §13): a Special is an instanced subobject although Node is an engine object (liveness
+            // adapter); the factory makes it a child of its outer (Parent = the owning Node).
+            public override LiteralKind? LiteralKindOf(Type type) => LiteralKind.Instanced;
+
+            public override object? CreateForLiteral(Type type, object? outer) =>
+                new Special { Parent = outer as Node, Kind = NodeKind.Alpha, Enabled = true };
         }
     }
 }

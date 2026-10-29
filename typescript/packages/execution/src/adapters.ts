@@ -93,6 +93,13 @@ export interface MemberTable<T extends object = object> {
   display(name: string): this;
 }
 
+/**
+ * How object literals build values of a class (spec §4.5, §13 "Literal construction"): never (`engine`: scene objects), as a
+ * fresh value (`value`: plain data, value-like assets such as Godot resources), or as a subobject owned by the object it is
+ * written into (`instanced`: Unreal's EditInlineNew objects).
+ */
+export type LiteralKind = 'engine' | 'value' | 'instanced';
+
 interface AdapterCapabilities<T extends object> {
   /** Tie-break among adapters of equal specificity (higher first). Default 0. */
   priority?: number;
@@ -123,6 +130,18 @@ interface AdapterCapabilities<T extends object> {
   components?(value: T): readonly number[] | undefined;
   /** A value of `target` built from components in the order `components` returns them; `undefined` when it cannot be built. */
   fromComponents?(components: readonly number[], target: Ctor): T | undefined;
+  /**
+   * The literal kind of `target` (the adapter's class or a subclass, spec §4.5); `undefined` defers. Without an answer a
+   * class with a stableId or isAlive adapter is an engine object and every other class a value.
+   */
+  literalKind?(target: Ctor): LiteralKind | undefined;
+  /**
+   * Builds an empty value of `target` for an object literal of kind value or instanced; its members are assigned afterwards.
+   * `outer` is the object that will own the value (the owner of the written member, the call's target, or the object an
+   * enclosing literal builds), `undefined` outside any object. `undefined` defers (next adapter, then `new target()`). Runs
+   * while the mutation is planned, dry runs included: create objects nothing references until the write.
+   */
+  createForLiteral?(target: Ctor, outer: object | undefined): object | undefined;
 }
 
 /** Adapter for a class and its subclasses. */
@@ -146,14 +165,14 @@ export type AnyAdapter = AdapterCapabilities<object> & { target?: Ctor; interfac
 const INTERFACE_RANK = 10000;
 
 /** Value capabilities an adapter may implement (member shaping is applied at type build time). */
-export const CAPABILITIES = ['equals', 'compare', 'encode', 'coerce', 'stableId', 'isAlive', 'components'] as const;
+export const CAPABILITIES = ['equals', 'compare', 'encode', 'coerce', 'stableId', 'isAlive', 'components', 'literalKind', 'createForLiteral'] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
 /** Applicable adapters of one type split per capability, most specific first. */
 export type AdapterSet = { readonly [C in Capability]: readonly AnyAdapter[] };
 
 const EMPTY: readonly AnyAdapter[] = [];
-export const NO_ADAPTERS: AdapterSet = { equals: EMPTY, compare: EMPTY, encode: EMPTY, coerce: EMPTY, stableId: EMPTY, isAlive: EMPTY, components: EMPTY };
+export const NO_ADAPTERS: AdapterSet = { equals: EMPTY, compare: EMPTY, encode: EMPTY, coerce: EMPTY, stableId: EMPTY, isAlive: EMPTY, components: EMPTY, literalKind: EMPTY, createForLiteral: EMPTY };
 
 export function adapterSet(adapters: readonly AnyAdapter[]): AdapterSet {
   if (adapters.length === 0) return NO_ADAPTERS;
@@ -169,6 +188,8 @@ export function adapterSet(adapters: readonly AnyAdapter[]): AdapterSet {
     stableId: pick('stableId'),
     isAlive: pick('isAlive'),
     components: pick('components'),
+    literalKind: pick('literalKind'),
+    createForLiteral: pick('createForLiteral'),
   };
 }
 
@@ -185,7 +206,7 @@ export function firstAnswer<R>(adapters: readonly AnyAdapter[], ask: (a: AnyAdap
 export class AdapterRegistry {
   private readonly list: AnyAdapter[] = [];
   private readonly byCtor = new Map<Ctor, readonly AnyAdapter[]>();
-  private readonly any: Record<Capability, boolean> = { equals: false, compare: false, encode: false, coerce: false, stableId: false, isAlive: false, components: false };
+  private readonly any: Record<Capability, boolean> = { equals: false, compare: false, encode: false, coerce: false, stableId: false, isAlive: false, components: false, literalKind: false, createForLiteral: false };
 
   /** @param internal engine-internal classes (rows, map entries, absent markers, errors): never adapted. */
   constructor(private readonly internal: ReadonlySet<object>) {}

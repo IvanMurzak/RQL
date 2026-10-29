@@ -139,6 +139,8 @@ namespace Rql.Execution
         internal RqlTypeAdapter[] IdentityAdapters = Array.Empty<RqlTypeAdapter>();
         internal RqlTypeAdapter[] LivenessAdapters = Array.Empty<RqlTypeAdapter>();
         internal RqlTypeAdapter[] ArithmeticAdapters = Array.Empty<RqlTypeAdapter>();
+        internal RqlTypeAdapter[] LiteralAdapters = Array.Empty<RqlTypeAdapter>();
+        internal RqlTypeAdapter[] FactoryAdapters = Array.Empty<RqlTypeAdapter>();
 
         public bool IsList => Kind == TypeKind.List;
         public bool IsMap => Kind == TypeKind.Map;
@@ -369,6 +371,8 @@ namespace Rql.Execution
                 IdentityAdapters = With(adapters, AdapterCaps.Identity),
                 LivenessAdapters = With(adapters, AdapterCaps.Liveness),
                 ArithmeticAdapters = With(adapters, AdapterCaps.Arithmetic),
+                LiteralAdapters = With(adapters, AdapterCaps.Literal),
+                FactoryAdapters = With(adapters, AdapterCaps.Factory),
             };
 
             var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

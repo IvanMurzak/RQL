@@ -2114,6 +2114,346 @@ void overload_tests() {
     check(res.ok && (*res.rows)[0][2].as_string() == "made", "overloads: the host can allow an engine object");
 }
 
+// ADR-0011: literal kinds (engine / value / instanced with an outer), the engine-object check before "cannot construct" and
+// the host's refusal advice, known names that never evaluate a source, warnings for failing sort keys and sparse group-by /
+// distinct keys. Mirrors dotnet/Rql.Tests/Wave6Tests.cs.
+int w6_nodes_built = 0;
+int w6_subs_built = 0;
+struct W6Asset {
+    int Id = 0;
+    std::string Name;
+};
+struct W6Box : W6Asset {
+    double Size = 1;
+};
+struct W6Node;
+struct W6Sub {
+    int Id = 0;
+    W6Node* Outer = nullptr;
+    W6Sub* Parent = nullptr;
+    W6Sub* Inner = nullptr;
+    double Threshold = 0;
+};
+struct W6Place {
+    W6Sub* Trigger = nullptr;
+    double X = 0;
+};
+struct W6Node {
+    W6Node() { ++w6_nodes_built; }
+    int Id = 1;
+    std::string Name;
+    W6Asset* Mesh = nullptr;
+    W6Sub* Trigger = nullptr;
+    W6Place Where;
+    std::vector<std::string> added;
+};
+struct W6Thing {
+    std::string Name;
+    double Mass = 0;
+    double Volume = 0;
+};
+struct W6Bag {
+    std::vector<std::shared_ptr<W6Thing>> Items;
+};
+struct W6Lamp {
+    std::string Name;
+    std::string type = "Point";
+};
+
+void wave6_tests() {
+    auto has = [](const std::string& s, const std::string& part) { return s.find(part) != std::string::npos; };
+    rql::TypeRegistry reg;
+    reg.object<W6Asset>("W6Asset").member("Id", &W6Asset::Id).member("Name", &W6Asset::Name);
+    reg.object<W6Box>("W6Box").base<W6Asset>().member("Size", &W6Box::Size).constructible();
+    reg.object<W6Sub>("W6Sub").member("Id", &W6Sub::Id).member("Threshold", &W6Sub::Threshold).member("Inner", &W6Sub::Inner).constructible();
+    reg.structure<W6Place>("W6Place").member("Trigger", &W6Place::Trigger).member("X", &W6Place::X);
+    reg.object<W6Node>("W6Node")
+        .member("Id", &W6Node::Id)
+        .member("Name", &W6Node::Name)
+        .member("Mesh", &W6Node::Mesh)
+        .member("Trigger", &W6Node::Trigger)
+        .member("Where", &W6Node::Where)
+        .constructible();
+    reg.object<W6Thing>("W6Thing").member("Name", &W6Thing::Name).member("Mass", &W6Thing::Mass).member("Volume", &W6Thing::Volume).no_identity();
+    reg.object<W6Bag>("W6Bag").member("Items", &W6Bag::Items).no_identity();
+    reg.object<W6Lamp>("W6Lamp").member("Name", &W6Lamp::Name).member("type", &W6Lamp::type).no_identity();
+    rql::TypeRegistry* r = &reg;
+    const rql::TypeDescriptor* node_t = reg.descriptor<W6Node>();
+    const rql::TypeDescriptor* asset_t = reg.descriptor<W6Asset>();
+    const rql::TypeDescriptor* box_t = reg.descriptor<W6Box>();
+    const rql::TypeDescriptor* sub_t = reg.descriptor<W6Sub>();
+    auto subs = std::make_shared<std::vector<std::unique_ptr<W6Sub>>>();
+    auto alive = [](const rql::TypeDescriptor* t, const char* name) {
+        rql::TypeAdapter a;
+        a.name = name;
+        a.target = t;
+        a.is_alive = [](const rql::Value&) -> std::optional<bool> { return true; };
+        return a;
+    };
+    W6Node node;
+    node.Name = "Player";
+    auto engine = [&](bool kinds) {
+        auto e = std::make_unique<rql::Engine>(reg);
+        e->add_adapter(alive(node_t, "W6NodeAdapter"));
+        rql::TypeAdapter asset = alive(asset_t, "W6AssetAdapter");
+        rql::TypeAdapter sub = alive(sub_t, "W6SubAdapter");
+        if (kinds) {
+            asset.literal_kind = [](const rql::TypeDescriptor&) -> std::optional<rql::LiteralKind> { return rql::LiteralKind::Value; };
+            sub.literal_kind = [](const rql::TypeDescriptor&) -> std::optional<rql::LiteralKind> { return rql::LiteralKind::Instanced; };
+            sub.create_for_literal = [r, subs](const rql::TypeDescriptor&, const rql::Value& outer) -> std::optional<rql::Value> {
+                ++w6_subs_built;
+                subs->push_back(std::make_unique<W6Sub>());
+                W6Sub* s = subs->back().get();
+                s->Outer = rql::value_as<W6Node>(*r, outer);
+                s->Parent = rql::value_as<W6Sub>(*r, outer);
+                return r->wrap(s);
+            };
+        }
+        e->add_adapter(std::move(asset));
+        e->add_adapter(std::move(sub));
+        rql::TypeAdapter methods;
+        methods.name = "W6NodeMethods";
+        methods.target = node_t;
+        methods.configure_members = [r, node_t, sub_t](rql::MemberTable& t) {
+            t.method<W6Node>("AddTrigger", {rql::ParamDescriptor{"trigger", sub_t, false, false, rql::Value()}}, rql::builtin::string_type(),
+                             [r](W6Node& n, const std::vector<rql::Value>& a) {
+                                 W6Sub* s = rql::value_as<W6Sub>(*r, a[0]);
+                                 n.added.push_back(rql::format_number_text(s->Threshold));
+                                 return rql::Value::string(s->Outer ? s->Outer->Name : "-");
+                             })
+                .method<W6Node>("Attach", {rql::ParamDescriptor{"node", node_t, false, false, rql::Value()}}, rql::builtin::string_type(),
+                                [r](W6Node&, const std::vector<rql::Value>& a) { return rql::Value::string(rql::value_as<W6Node>(*r, a[0])->Name); });
+        };
+        e->add_adapter(std::move(methods));
+        e->add_object_source("player", &node);
+        e->mutations().enabled = true;
+        return e;
+    };
+    rql::QueryOptions mutate;
+    mutate.allow_mutation = true;
+    rql::QueryOptions dry = mutate;
+    dry.dry_run = true;
+    auto set_plan = [](const std::string& member, const std::string& value) {
+        return R"J({"rql":"0.1","source":{"path":["player"]},"stages":[{"op":"set","assign":[{"target":{"path":[")J" + member +
+               R"J("]},"value":)J" + value + "}]}]}";
+    };
+    auto call_plan = [](const std::string& method, const std::string& arg) {
+        return R"J({"rql":"0.1","source":{"path":["player"]},"stages":[{"op":"call","method":")J" + method + R"J(","args":[)J" + arg + "]}]}";
+    };
+    auto obj = [](std::initializer_list<std::pair<std::string, std::string>> kv) {
+        std::string s = R"J({"object":[)J";
+        bool first = true;
+        for (auto& p : kv) {
+            s += (first ? "" : ",") + std::string(R"J({"key":")J") + p.first + R"J(","value":)J" + p.second + "}";
+            first = false;
+        }
+        return s + "]}";
+    };
+    auto lit = [](const std::string& json) { return R"J({"lit":)J" + json + "}"; };
+    const std::string box = obj({{"$type", lit("\"W6Box\"")}, {"Size", lit("2")}});
+
+    // #1 value-like engine types.
+    {
+        auto e = engine(true);
+        auto res = e->execute_json(set_plan("Mesh", box), {}, mutate);
+        check(res.ok && node.Mesh && static_cast<W6Box*>(node.Mesh)->Size == 2, "literal kinds: a value kind builds an identified type from a literal");
+        node.Mesh = nullptr;
+        auto plain = engine(false);
+        res = plain->execute_json(set_plan("Mesh", box), {}, mutate);
+        check(first_code(res) == "coercion-failed" && has(res.diagnostics[0].message, "W6Box is an engine object") && !node.Mesh,
+              "literal kinds: without a kind an identified type is an engine object");
+        plain->mutations().literal_kind_of = [asset_t](const rql::TypeDescriptor& t) -> std::optional<rql::LiteralKind> {
+            if (t.derives_from(asset_t)) return rql::LiteralKind::Value;
+            return std::nullopt;
+        };
+        check(plain->execute_json(set_plan("Mesh", box), {}, mutate).ok, "literal kinds: the host's literal-kind hook decides");
+        node.Mesh = nullptr;
+        e->mutations().can_construct_from_literal = [box_t](const rql::TypeDescriptor& t) -> std::optional<bool> {
+            if (&t == box_t) return false;
+            return std::nullopt;
+        };
+        check(has(e->execute_json(set_plan("Mesh", box), {}, mutate).diagnostics[0].message, "engine object"),
+              "literal kinds: can_construct_from_literal false makes a value kind an engine object");
+        auto allow = engine(false);
+        allow->mutations().can_construct_from_literal = [box_t](const rql::TypeDescriptor& t) -> std::optional<bool> {
+            if (&t == box_t) return true;
+            return std::nullopt;
+        };
+        check(allow->execute_json(set_plan("Mesh", box), {}, mutate).ok, "literal kinds: can_construct_from_literal true makes an engine type a value");
+        node.Mesh = nullptr;
+        // A host factory gets the outer (the owner of the written member).
+        auto fe = engine(true);
+        auto made = std::make_shared<W6Box>();
+        const W6Node* seen = nullptr;
+        fe->mutations().create_for_literal = [r, made, &seen](const rql::TypeDescriptor&, const rql::Value& outer) -> std::optional<rql::Value> {
+            seen = rql::value_as<W6Node>(*r, outer);
+            made->Size = 7;
+            return r->wrap(made.get());
+        };
+        res = fe->execute_json(set_plan("Mesh", obj({{"$type", lit("\"W6Box\"")}})), {}, mutate);
+        check(res.ok && node.Mesh == made.get() && made->Size == 7 && seen == &node, "literal kinds: the host factory builds values for their outer");
+        node.Mesh = nullptr;
+    }
+
+    // #21 instanced subobjects.
+    {
+        auto e = engine(true);
+        auto res = e->execute_json(set_plan("Trigger", obj({{"Threshold", lit("0.5")}})), {}, mutate);
+        check(res.ok && node.Trigger && node.Trigger->Outer == &node && node.Trigger->Threshold == 0.5,
+              "instanced: built for the owner of the written member");
+        res = e->execute_json(set_plan("Trigger", obj({{"Threshold", lit("1")}, {"Inner", obj({{"Threshold", lit("2")}})}})), {}, mutate);
+        check(res.ok && node.Trigger->Inner && node.Trigger->Inner->Parent == node.Trigger && !node.Trigger->Inner->Outer,
+              "instanced: a nested literal is owned by the object the enclosing literal builds");
+        res = e->execute_json(set_plan("Where", obj({{"X", lit("1")}, {"Trigger", obj({{"Threshold", lit("3")}})}})), {}, mutate);
+        check(res.ok && node.Where.Trigger && node.Where.Trigger->Outer == &node, "instanced: a struct literal passes its own outer on");
+        res = e->execute_json(call_plan("AddTrigger", obj({{"Threshold", lit("0.5")}})), {}, mutate);
+        check(res.ok && (*res.rows)[0][2].as_string() == "Player", "instanced: a call argument is built for the target");
+        res = e->execute_json(R"J({"rql":"0.1","source":{"call":"range","args":[{"lit":0},{"lit":2}]},"stages":[{"op":"call","method":"AddTrigger","on":{"path":["player"]},"args":[)J" +
+                                  obj({{"Threshold", R"J({"path":[]})J"}}) + "]}]}",
+                              {}, mutate);
+        check(res.ok && (*res.rows)[1][2].as_string() == "Player", "instanced: a source-qualified call builds for the receiver");
+        node.added.clear();
+        w6_nodes_built = 0;
+        res = e->execute_json(call_plan("Attach", obj({{"Name", lit("\"x\"")}})), {}, mutate);
+        check(first_code(res) == "coercion-failed" && has(res.diagnostics[0].message, "W6Node is an engine object") && w6_nodes_built == 0,
+              "instanced: the probe never builds an engine object");
+        w6_subs_built = 0;
+        res = e->execute_json(call_plan("AddTrigger", obj({{"Threshold", lit("2")}})), {}, dry);
+        check(res.ok && w6_subs_built == 1 && node.added.empty(), "instanced: a dry run builds the planned value (planning) and writes nothing");
+        // The host replaces the refusal advice.
+        e->mutations().literal_refusal_hint = [](const rql::TypeDescriptor&) { return std::string("use scene.find(\xE2\x80\xA6) or an asset path"); };
+        res = e->execute_json(call_plan("Attach", obj({{"Name", lit("\"x\"")}})), {}, mutate);
+        check(has(res.diagnostics[0].message, "cannot be built from an object literal; use scene.find(\xE2\x80\xA6) or an asset path"),
+              "literal kinds: the host replaces the refusal advice");
+    }
+    // The engine-object refusal comes before "cannot construct": W6Asset is not constructible.
+    {
+        auto plain = engine(false);
+        auto res = plain->execute_json(set_plan("Mesh", obj({{"Name", lit("\"x\"")}})), {}, mutate);
+        check(has(res.diagnostics[0].message, "W6Asset is an engine object and cannot be built from an object literal; pass an existing one"),
+              "literal kinds: an engine object that cannot be constructed gets the engine-object refusal");
+        auto e = engine(true);
+        res = e->execute_json(set_plan("Mesh", obj({{"Name", lit("\"x\"")}})), {}, mutate);
+        check(has(res.diagnostics[0].message, "cannot construct W6Asset"), "literal kinds: a value kind without a constructor says so");
+    }
+
+    // #15 known names never evaluate a source the query does not name.
+    {
+        int walks = 0, own = 0;
+        W6Thing a;
+        a.Name = "a";
+        rql::Engine e(reg);
+        e.add_source("items", [r, &a, &own]() {
+            ++own;
+            return rql::Value::list_of({r->wrap(&a)});
+        });
+        e.add_source("groups", [&walks]() {
+            ++walks;
+            return rql::Value::list_of({});
+        });
+        e.mutations().enabled = true;
+        const std::string src = R"J({"rql":"0.1","source":{"path":["items"]},"stages":[)J";
+        e.execute_json(src + R"J({"op":"where","pred":{"op":"==","args":[{"path":["Labl"]},{"lit":"x"}]}}]})J");
+        e.execute_json(src + R"J({"op":"where","pred":{"op":"is","args":[{"path":[]},{"lit":"W6Node"}]}},{"op":"count"}]})J");
+        e.execute_json(src + R"J({"op":"where","pred":{"op":"==","args":[{"path":["Labl"]},{"lit":"x"}]}},{"op":"set","assign":[{"target":{"path":["Name"]},"value":{"lit":"y"}}]}]})J",
+                       {}, mutate);
+        check(walks == 0, "known names: warnings never evaluate a source the query does not name");
+        // A typed source (its type tells the members) read only by the known-names pass.
+        rql::Engine e2(reg);
+        own = 0;
+        W6Bag bag;
+        bag.Items.push_back(std::make_shared<W6Thing>());
+        e2.add_source("bag", [r, &bag, &own]() {
+            ++own;
+            return r->wrap(&bag);
+        });
+        auto res = e2.execute_json(R"J({"rql":"0.1","source":{"path":["bag","Items"]},"stages":[{"op":"sort","keys":[{"expr":{"path":["Name"]}}]},{"op":"first","n":0},{"op":"count"}]})J");
+        bool warned = std::any_of(res.diagnostics.begin(), res.diagnostics.end(), [](const rql::Diagnostic& d) { return d.code == "unknown-member"; });
+        check(res.ok && !warned && own == 1, "known names: the query's own source is read once when its stream never pulled it");
+    }
+    // Known names: the own untyped source is read once per query; a declared type is known without its getter.
+    {
+        int own = 0, later = 0;
+        W6Thing a;
+        rql::Engine e(reg);
+        e.add_source("items", [r, &a, &own]() {
+            ++own;
+            return rql::Value::list_of({r->wrap(&a)});
+        });
+        W6Bag bag;
+        e.add_source("later", [r, &bag, &later]() {
+            ++later;
+            return r->wrap(&bag);
+        }, "", reg.descriptor<W6Bag>());
+        e.execute_json(R"J({"rql":"0.1","source":{"path":["items"]},"stages":[{"op":"where","pred":{"op":"==","args":[{"path":["Labl"]},{"lit":"x"}]}}]})J");
+        check(own == 1, "known names: the query's own untyped source is read at most once per query");
+        auto res = e.execute_json(
+            R"J({"rql":"0.1","source":{"path":["items"]},"stages":[{"op":"where","pred":{"op":"and","args":[{"lit":false},{"op":">","args":[{"path":["Mass"]},{"lit":1}]}]}},{"op":"count"}]})J");
+        bool warned = std::any_of(res.diagnostics.begin(), res.diagnostics.end(), [](const rql::Diagnostic& d) { return d.code == "unknown-member"; });
+        check(res.ok && !warned && later == 0, "known names: a declared source type is known without calling its getter");
+    }
+    // Factories: a throwing factory fails the build; a null answer falls back to create().
+    {
+        auto e = engine(true);
+        e->mutations().create_for_literal = [](const rql::TypeDescriptor&, const rql::Value&) -> std::optional<rql::Value> {
+            throw std::runtime_error("no meshes today");
+        };
+        auto res = e->execute_json(set_plan("Mesh", box), {}, mutate);
+        check(first_code(res) == "coercion-failed" && has(res.diagnostics[0].message, "building W6Box failed: no meshes today") && !node.Mesh,
+              "factories: a throwing factory fails the build");
+        e->mutations().create_for_literal = [](const rql::TypeDescriptor&, const rql::Value&) -> std::optional<rql::Value> { return rql::Value::null(); };
+        res = e->execute_json(set_plan("Mesh", box), {}, mutate);
+        check(res.ok && node.Mesh && static_cast<W6Box*>(node.Mesh)->Size == 2, "factories: a null answer falls back to create()");
+        node.Mesh = nullptr;
+    }
+
+    // #13 sort keys that fail, #12 sparse keys.
+    {
+        std::vector<std::unique_ptr<W6Thing>> things;
+        for (int i = 0; i < 2; ++i) {
+            things.push_back(std::make_unique<W6Thing>());
+            things.back()->Name = i == 0 ? "a" : "b";
+            things.back()->Mass = i + 1;
+            things.back()->Volume = i;
+        }
+        rql::Engine e(reg);
+        e.add_source("things", [r, &things]() {
+            std::vector<rql::Value> v;
+            for (auto& t : things) v.push_back(r->wrap(t.get()));
+            return rql::Value::list_of(std::move(v));
+        });
+        auto res = e.execute_json(
+            R"J({"rql":"0.1","source":{"path":["things"]},"stages":[{"op":"sort","keys":[{"expr":{"op":"/","args":[{"path":["Mass"]},{"path":["Volume"]}]},"desc":true}]},{"op":"select","fields":[{"name":"Name","expr":{"path":["Name"]}}]}]})J");
+        check(res.ok && res.diagnostics.size() == 1 && res.diagnostics[0].code == "div-by-zero" &&
+                  has(res.diagnostics[0].message, "sort key 1 failed for 1 of 2 item(s)") && has(res.diagnostics[0].message, "they sort last") &&
+                  (*res.rows)[0][0].as_string() == "b",
+              "sort: a failing key warns with the error's code");
+        res = e.execute_json(R"J({"rql":"0.1","source":{"path":["things"]},"stages":[{"op":"sort","keys":[{"expr":{"path":["Mass"]}}]}]})J");
+        check(res.ok && res.diagnostics.empty(), "sort: a key that never fails is quiet");
+
+        std::vector<std::unique_ptr<W6Thing>> many;
+        for (int i = 0; i < 9; ++i) many.push_back(std::make_unique<W6Thing>());
+        W6Lamp lamp;
+        rql::Engine g(reg);
+        g.add_source("items", [r, &many, &lamp]() {
+            std::vector<rql::Value> v;
+            for (auto& t : many) v.push_back(r->wrap(t.get()));
+            v.push_back(r->wrap(&lamp));
+            return rql::Value::list_of(std::move(v));
+        });
+        res = g.execute_json(R"J({"rql":"0.1","source":{"path":["items"]},"stages":[{"op":"group-by","expr":{"path":["type"]}}]})J");
+        check(res.ok && res.diagnostics.size() == 1 && res.diagnostics[0].code == "unknown-member" &&
+                  res.diagnostics[0].message == "member 'type' exists on 1 of 10 item(s); the other 9 group as null" &&
+                  res.diagnostics[0].hint == "did you mean $type (the meta member)?",
+              "group-by: a sparse member warns and offers the meta member");
+        res = g.execute_json(R"J({"rql":"0.1","source":{"path":["items"]},"stages":[{"op":"distinct","expr":{"path":["type"]}},{"op":"count"}]})J");
+        check(res.ok && res.diagnostics.size() == 1 && res.diagnostics[0].message == "member 'type' exists on 1 of 10 item(s); the other 9 are kept as one",
+              "distinct: a sparse member warns");
+        res = g.execute_json(R"J({"rql":"0.1","source":{"path":["items"]},"stages":[{"op":"group-by","expr":{"path":["Volume"]}}]})J");
+        check(res.ok && res.diagnostics.empty(), "group-by: a member on most items is quiet");
+    }
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) repo_root = argv[1];
     try {
@@ -2129,6 +2469,7 @@ int main(int argc, char** argv) {
         bulk_tests();
         wave5_tests();
         overload_tests();
+        wave6_tests();
     } catch (const std::exception& ex) {
         std::cout << "FATAL " << ex.what() << "\n";
         return 2;

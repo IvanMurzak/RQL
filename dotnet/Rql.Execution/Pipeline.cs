@@ -126,6 +126,7 @@ namespace Rql.Execution
                 var close = Suggest.ClosestMembers(site.Name, candidates, nested, 3);
                 var declaring = _x.Engine.TypesDeclaring(site.Name, types);
                 string hint = Suggest.MemberHint(site.Name, candidates, declaring, nested);
+                if (Suggest.MetaHint(site.Name) is string meta) hint = meta + (hint.Length > 0 ? "; " + hint : "");
                 if (close.Count == 0 && declaring.Count == 0 && char.IsUpper(site.Name[0]))
                     hint += (hint.Length > 0 ? "; " : "") + $"if '{site.Name}' is a value, quote it: \"{site.Name}\"";
                 var diag = new Diagnostic(DiagnosticSeverity.Warning, "unknown-member", $"no member '{site.Name}' on {typeNames}", site.Span, hint);
@@ -185,6 +186,12 @@ namespace Rql.Execution
 
         private HashSet<string> KnownNames()
         {
+            // The query's own source counts even when the stream never pulled it (`first 0`): read once; no other source is evaluated.
+            if (_planSource != null && !_planSourceRead)
+            {
+                _planSourceRead = true;
+                _x.Engine.EnsureSourceType(_planSource);
+            }
             var names = new HashSet<string>(_x.Engine.KnownMemberNames(), StringComparer.OrdinalIgnoreCase);
             // Group rows have their items (spec §5); elsewhere `items` is an ordinary member name.
             if (_x.Plan.Stages.Any(st => st is GroupByStage || (st is ExprStage e && e.Op == "group-by"))) names.Add(GroupItems);
@@ -202,13 +209,8 @@ namespace Rql.Execution
         /// <summary>Where objects of a type live: "Type.Member" paths and sources, from static reachability.</summary>
         private List<string> Holders(string typeName)
         {
-            var roots = new List<(string source, Type type)>();
-            foreach (var s in _x.Engine.Sources.Values)
-            {
-                object? v;
-                try { v = s.Getter(); } catch { continue; }
-                if (v != null) roots.Add((s.Name, v.GetType()));
-            }
+            // The types the sources have produced or declare: a hint never evaluates a source (spec §8 known names).
+            var roots = _x.Engine.SourceTypes();
             var types = Describe.Reachable(_x.Types, roots.Select(r => r.type));
             var targets = types.Where(t => _x.Types.Info(t).IsA(typeName)).ToList();
             if (targets.Count == 0) return new List<string>();
@@ -265,7 +267,7 @@ namespace Rql.Execution
                 if (st.IsTerminal) return (stream, st);
                 if (st is SortStage ss && i + 1 < plan.Stages.Count && plan.Stages[i + 1] is LimitStage ls && ls.Op == "first" && ls.N <= 1000 && !_x.Engine.DisableTopN)
                 {
-                    stream = TopN(stream, ss.Keys.Select(k => (eval: _c.Compile(k.Expr), desc: k.Desc)).ToArray(), ls.N);
+                    stream = TopN(stream, ss.Keys.Select(k => (eval: _c.Compile(k.Expr), desc: k.Desc)).ToArray(), ls.N, new SortKeyErrors(ss));
                     i++;
                     continue;
                 }
@@ -292,7 +294,7 @@ namespace Rql.Execution
                 // Peephole: `sort … | first n` keeps only the n best items (bounded insertion, same stable order).
                 if (st is SortStage ss && i + 1 < plan.Stages.Count && plan.Stages[i + 1] is LimitStage ls && ls.Op == "first" && ls.N <= 1000 && !_x.Engine.DisableTopN)
                 {
-                    stream = TopN(stream, ss.Keys.Select(k => (eval: _c.Compile(k.Expr), desc: k.Desc)).ToArray(), ls.N);
+                    stream = TopN(stream, ss.Keys.Select(k => (eval: _c.Compile(k.Expr), desc: k.Desc)).ToArray(), ls.N, new SortKeyErrors(ss));
                     i++;
                     continue;
                 }
@@ -373,6 +375,7 @@ namespace Rql.Execution
                     var name = string.Join(".", p.Segments.Take(len).Select(s => s.Name));
                     var reg = FindSource(name);
                     if (reg == null) continue;
+                    _planSource ??= reg;
                     var rest = new PathExpr(p.Segments.Skip(len).ToList()) { Span = p.Span };
                     var nav = rest.Segments.Count > 0 ? _c.Compile(rest) : null;
                     var restText = string.Concat(rest.Segments.Select(s => s.Kind == SegmentKind.Member ? "." + s.Name : s.ToString()));
@@ -402,6 +405,10 @@ namespace Rql.Execution
                 + (_x.Engine.Functions.Count > 0 ? "; functions: " + string.Join(" ", _x.Engine.Functions.Keys) : ""));
         }
 
+        /// <summary>The registered source the query starts from (or calls), if any: known names may read it (spec §8).</summary>
+        private SourceRegistration? _planSource;
+        private bool _planSourceRead;
+
         private SourceRegistration? FindSource(string name)
         {
             if (_x.Engine.Sources.TryGetValue(name, out var reg)) return reg;
@@ -411,6 +418,7 @@ namespace Rql.Execution
 
         private object? SourceValue(SourceRegistration reg, Eval? nav)
         {
+            if (reg == _planSource) _planSourceRead = true;
             var root = _x.Types.Live(reg.Getter());
             _x.Engine.NoteSourceType(reg.Name, root);
             if (nav == null) return root;
@@ -567,9 +575,9 @@ namespace Rql.Execution
                 case LimitStage l when l.Op == "first": return First(input, l.N);
                 case LimitStage l: return input.Skip(l.N);
                 case ExprStage e when e.Op == "get": return Get(input, e.Expr!);
-                case ExprStage e when e.Op == "distinct": return Distinct(input, e.Expr == null ? null : _c.Compile(e.Expr));
-                case ExprStage e when e.Op == "group-by": return GroupBy(input, new[] { _c.Compile(e.Expr!) }, KeyColumns, e);
-                case GroupByStage g: return GroupBy(input, g.Keys.Select(k => _c.Compile(k.Expr)).ToArray(), g.Keys.Select(k => k.Name).ToArray(), g);
+                case ExprStage e when e.Op == "distinct": return Distinct(input, e.Expr == null ? null : _c.Compile(e.Expr), e.Expr == null ? null : KeyTally.For(e.Expr));
+                case ExprStage e when e.Op == "group-by": return GroupBy(input, new[] { _c.Compile(e.Expr!) }, KeyColumns, e, new[] { KeyTally.For(e.Expr!) });
+                case GroupByStage g: return GroupBy(input, g.Keys.Select(k => _c.Compile(k.Expr)).ToArray(), g.Keys.Select(k => k.Name).ToArray(), g, g.Keys.Select(k => KeyTally.For(k.Expr)).ToArray());
                 case RecurseStage r: return Recurse(input, r);
                 case GenericStage g: return Generic(input, g);
                 default: throw new RqlException("unsupported", $"stage '{st.Op}' is not supported here", st.Span);
@@ -619,9 +627,48 @@ namespace Rql.Execution
         }
 
         private IEnumerable<Item> Sort(IEnumerable<Item> input, SortStage s) =>
-            SortIter(input, s.Keys.Select(k => (eval: _c.Compile(k.Expr), desc: k.Desc)).ToArray());
+            SortIter(input, s.Keys.Select(k => (eval: _c.Compile(k.Expr), desc: k.Desc)).ToArray(), new SortKeyErrors(s));
 
-        private IEnumerable<Item> SortIter(IEnumerable<Item> input, (Eval eval, bool desc)[] keys)
+        /// <summary>
+        /// Sort keys that evaluated to an error (spec §5): they sort last like null, and each failing key gets one warning with
+        /// the first error's code, so a key that fails on every item is not mistaken for a sort that kept the order.
+        /// </summary>
+        private sealed class SortKeyErrors
+        {
+            private readonly SortStage _stage;
+            private readonly long[] _failed;
+            private readonly RqlError?[] _first;
+            private long _items;
+
+            public SortKeyErrors(SortStage stage)
+            {
+                _stage = stage;
+                _failed = new long[stage.Keys.Count];
+                _first = new RqlError?[stage.Keys.Count];
+            }
+
+            public void Note(object?[] keys)
+            {
+                _items++;
+                for (int k = 0; k < keys.Length; k++)
+                    if (keys[k] is RqlError e) { _failed[k]++; _first[k] ??= e; }
+            }
+
+            public void Report(Exec x)
+            {
+                for (int k = 0; k < _failed.Length; k++)
+                {
+                    if (_failed[k] == 0) continue;
+                    var e = _first[k]!;
+                    var expr = _stage.Keys[k].Expr;
+                    var label = Compiler.PathText(expr) is string text ? $"sort key '{text}'" : $"sort key {k + 1}";
+                    x.Diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, e.Code,
+                        $"{label} failed for {_failed[k]} of {_items} item(s) ({e.Code}{(e.Detail != null ? ": " + e.Detail : "")}); they sort last", expr.Span));
+                }
+            }
+        }
+
+        private IEnumerable<Item> SortIter(IEnumerable<Item> input, (Eval eval, bool desc)[] keys, SortKeyErrors errors)
         {
             var rows = new List<(Item item, object?[] keys)>();
             long i = 0;
@@ -633,15 +680,17 @@ namespace Rql.Execution
                 _x.Index = i++;
                 var kv = new object?[keys.Length];
                 for (int k = 0; k < keys.Length; k++) kv[k] = keys[k].eval(_x);
+                errors.Note(kv);
                 rows.Add((it, kv));
             }
+            errors.Report(_x);
             _x.CheckTime();
             var cmp = new SortComparer(keys.Select(k => k.desc).ToArray(), _x.Types);
             // OrderBy is a stable sort.
             foreach (var r in rows.OrderBy(r => r.keys, cmp)) yield return r.item;
         }
 
-        private IEnumerable<Item> TopN(IEnumerable<Item> input, (Eval eval, bool desc)[] keys, int n)
+        private IEnumerable<Item> TopN(IEnumerable<Item> input, (Eval eval, bool desc)[] keys, int n, SortKeyErrors errors)
         {
             if (n <= 0) yield break;
             var cmp = new SortComparer(keys.Select(k => k.desc).ToArray(), _x.Types);
@@ -655,6 +704,7 @@ namespace Rql.Execution
                 _x.CurrentDepth = it.Depth;
                 _x.Index = i++;
                 for (int k = 0; k < keys.Length; k++) scratch[k] = keys[k].eval(_x);
+                errors.Note(scratch);
                 // Strictly-better-than-last test keeps stability: earlier items win ties.
                 if (best.Count == n && cmp.Compare(scratch, best[n - 1].keys) >= 0) continue;
                 int lo = 0, hi = best.Count;
@@ -666,6 +716,7 @@ namespace Rql.Execution
                 best.Insert(lo, (it, (object?[])scratch.Clone()));
                 if (best.Count > n) best.RemoveAt(n);
             }
+            errors.Report(_x);
             _x.CheckTime();
             foreach (var b in best) yield return b.item;
         }
@@ -718,7 +769,7 @@ namespace Rql.Execution
             return string.Concat(p.Segments.Select(s => s.Kind == SegmentKind.Member ? "." + s.Name : s.ToString()));
         }
 
-        private IEnumerable<Item> Distinct(IEnumerable<Item> input, Eval? key)
+        private IEnumerable<Item> Distinct(IEnumerable<Item> input, Eval? key, KeyTally? tally)
         {
             var seen = new HashSet<object?>(new DistinctComparer(_x.Types));
             long i = 0;
@@ -729,12 +780,46 @@ namespace Rql.Execution
                 {
                     _x.Current = it.Value;
                     _x.CurrentPath = it.Path;
-                _x.CurrentDepth = it.Depth;
+                    _x.CurrentDepth = it.Depth;
                     _x.Index = i;
                     k = key(_x);
+                    tally?.Count(k);
                 }
                 i++;
                 if (seen.Add(k)) yield return it;
+            }
+            tally?.Report(_x, "are kept as one");
+        }
+
+        /// <summary>
+        /// Counts how often a group-by / distinct key that is a member path is missing (spec §5 sparse key members): a member that
+        /// most items lack (a polymorphic `group-by type`) is reported instead of silently forming the null group.
+        /// </summary>
+        internal sealed class KeyTally
+        {
+            private readonly string _text;
+            private readonly TextSpan? _at;
+            private long _present, _missing;
+
+            private KeyTally(string text, TextSpan? at) { _text = text; _at = at; }
+
+            /// <summary>A tally for a plain member path (no meta member); null for any other key.</summary>
+            public static KeyTally? For(Expr e) =>
+                PathSuffix(e) != null && Compiler.PathText(e) is string text ? new KeyTally(text, e.Span) : null;
+
+            public void Count(object? v)
+            {
+                if (v is Missing) _missing++;
+                else _present++;
+            }
+
+            public void Report(Exec x, string fate)
+            {
+                if (_present == 0 || _missing <= _present) return;
+                var meta = Suggest.MetaHint(_text);
+                x.Diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, "unknown-member",
+                    $"member '{_text}' exists on {_present} of {_present + _missing} item(s); the other {_missing} {fate}", _at,
+                    meta ?? $"filter to the items that have it first: where has({_text})"));
             }
         }
 
@@ -896,7 +981,7 @@ namespace Rql.Execution
         /// group-by: one row per distinct key tuple, in order of first appearance: the key columns, then count
         /// (null/missing key values group as null).
         /// </summary>
-        private IEnumerable<Item> GroupBy(IEnumerable<Item> input, Eval[] keys, string[] keyColumns, Stage stage)
+        private IEnumerable<Item> GroupBy(IEnumerable<Item> input, Eval[] keys, string[] keyColumns, Stage stage, KeyTally?[] tallies)
         {
             // The key tuple is a row of the key columns: rows hash and compare by their values, like distinct.
             var groups = new List<(object?[] tuple, long count, List<object?>? items)>();
@@ -910,6 +995,7 @@ namespace Rql.Execution
                 for (int k = 0; k < keys.Length; k++)
                 {
                     var v = keys[k](_x);
+                    tallies[k]?.Count(v);
                     tuple[k] = v is Missing || v is Unknown ? null : v;
                 }
                 var row = new RowValue(keyColumns, tuple);
@@ -917,6 +1003,7 @@ namespace Rql.Execution
                 else { index[row] = groups.Count; groups.Add((tuple, 1, keepItems ? new List<object?>() : null)); g = groups.Count - 1; }
                 groups[g].items?.Add(it.Value);
             }
+            foreach (var t in tallies) t?.Report(_x, "group as null");
             var cols = keyColumns.Append("count").ToArray();
             foreach (var (tuple, count, items) in groups)
                 yield return new Item(new RowValue(cols, tuple.Append((object?)(double)count).ToArray()) { Group = true, Items = items }, null);
@@ -1156,6 +1243,15 @@ namespace Rql.Execution
     /// <summary>"Did you mean" suggestions and capped member listings (spec §10).</summary>
     internal static class Suggest
     {
+        private static readonly string[] MetaNames = { "type", "ref", "path", "index", "depth" };
+
+        /// <summary>"did you mean $type (the meta member)?" for a bare name that is a meta member's name (any case), or null (spec §5, §10).</summary>
+        internal static string? MetaHint(string name)
+        {
+            foreach (var m in MetaNames) if (string.Equals(m, name, StringComparison.OrdinalIgnoreCase)) return $"did you mean ${m} (the meta member)?";
+            return null;
+        }
+
         /// <summary>Members listed by a hint when no suggestion qualifies.</summary>
         public const int MaxListed = 12;
 

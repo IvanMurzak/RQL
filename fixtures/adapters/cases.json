@@ -15,11 +15,12 @@
     "Node": {
       "members": "virtual member `childCount` (int, read-only) = Children count; virtual writable member `title` (string): get = Name upper-cased (ASCII), set = Name := value lower-cased (ASCII); validation rejects an empty string with reason \"title must not be empty\" (before any write); the setter itself THROWS \"node 3 is locked\" when the node's Id is 3 (exercises rollback); member `Note` is HIDDEN; member `Children` is EXPLICIT-ONLY (generic recurse does not follow it); virtual map `stats` (map<string, number>): keys = Props keys in order, get = Props[key], set = Props[key] := value, validation rejects a key not in Props with reason \"unknown stat '<key>'\" and a negative value with \"stats must be non-negative\"; read-only virtual map `labels` (map<string, string>): keys \"name\", \"kind\" -> Name, Kind (enum name); virtual member `tagsCopy` (list<string>): get = a NEW copy of Tags, set = Tags := value, marked COPY-ON-READ; mixed-type virtual map `fields`: keys \"Name\", \"Value\", \"Enabled\" with entry types string / double / bool, get/set the corresponding member",
       "describe": "Node: a conformance graph node",
-      "methods": "callable `bump(number by = 1)`: Value += by, returns the new Value; its VALIDATOR rejects by < 0 with reason \"by must be non-negative\" and the node with Id 5 with \"node 5 is frozen\"; callable `greet(string who)`: returns \"hi <who>, I am <Name>\", no state change; callable `fail(string why)`: always THROWS with message <why> (call-threw); callable `spawn(string name)`: appends a new Node to this node's Children and returns it — Id = this Id * 100 + Children count + 1 (counted before adding), Name = name, Kind Alpha, Value 0, Enabled true, Note null, Pos (0, 0), Tags [], Props {}, Children [], Parent = this node, Peer null; its VALIDATOR rejects an empty name with reason \"name must not be empty\"; overloads `probe(Node peer)` (returns peer.Id) and `probe(Vec2 at, number scale = 1)` (returns (at.x + at.y) * scale); callable `pin(Node peer)`: returns peer.Id (an object literal never builds a Node here: Node has a liveness adapter, so it is an engine object, spec §4.5); callable `place(string name, string side = \"left\", number weight = 1)`: returns \"<name>/<side>\", no state change; its VALIDATOR rejects weight < 0 with reason \"weight must be non-negative\"; overloads `scale(Vec2 by)` (returns by.x * by.y) and `scale(number x, number y)` (returns x + y).",
+      "methods": "callable `bump(number by = 1)`: Value += by, returns the new Value; its VALIDATOR rejects by < 0 with reason \"by must be non-negative\" and the node with Id 5 with \"node 5 is frozen\"; callable `greet(string who)`: returns \"hi <who>, I am <Name>\", no state change; callable `fail(string why)`: always THROWS with message <why> (call-threw); callable `spawn(string name)`: appends a new Node to this node's Children and returns it — Id = this Id * 100 + Children count + 1 (counted before adding), Name = name, Kind Alpha, Value 0, Enabled true, Note null, Pos (0, 0), Tags [], Props {}, Children [], Parent = this node, Peer null; its VALIDATOR rejects an empty name with reason \"name must not be empty\"; overloads `probe(Node peer)` (returns peer.Id) and `probe(Vec2 at, number scale = 1)` (returns (at.x + at.y) * scale); callable `pin(Node peer)`: returns peer.Id (an object literal never builds a Node here: Node has a liveness adapter, so it is an engine object, spec §4.5); callable `place(string name, string side = \"left\", number weight = 1)`: returns \"<name>/<side>\", no state change; its VALIDATOR rejects weight < 0 with reason \"weight must be non-negative\"; overloads `scale(Vec2 by)` (returns by.x * by.y) and `scale(number x, number y)` (returns x + y). callable `adopt(Node child)`: returns the Name of child.Parent (null when it has none), no state change.",
       "liveness": "IsAlive = Tags does not contain \"destroyed\" (destroyed nodes read as null)"
     },
     "Special": {
-      "members": "virtual read-only member `powerLevel` (number) = Power / 1000 (applies IN ADDITION to the Node adapter: composition); display member is `title` (summaries show it as name)"
+      "members": "virtual read-only member `powerLevel` (number) = Power / 1000 (applies IN ADDITION to the Node adapter: composition); display member is `title` (summaries show it as name)",
+      "literal construction": "literal kind INSTANCED (spec §4.5; overrides the engine-object default that Node's liveness adapter gives); factory: a new Special with Parent = the outer when it is a Node (else null), Id 0, Name \"\", Kind Alpha, Value 0, Enabled true, Power 0, Align HAlign_Fill, Note null, Pos (0, 0), Tags [], Props {}, Children [], Peer null"
     },
     "engine": {
       "validateBatch": "batch validator on every set / call stage (dry runs too): refuses a batch in which two `set` changes of member `Name` write the same string, reason \"duplicate Name '<v>'\"; refuses a batch whose `bump` calls' `by` arguments sum to more than 100, reason \"bump total <sum> exceeds 100\"; otherwise accepts"
@@ -1875,6 +1876,7 @@
               }
             ],
             "methods": [
+              "adopt(Node child) — the Name of the child's Parent (no state change)",
               "bump(double by) — Value += by; returns the new Value",
               "fail(string why) — always throws (call-threw)",
               "greet(string who) — a greeting (no state change)",
@@ -8979,6 +8981,712 @@
             "code": "coercion-failed"
           }
         ]
+      }
+    },
+    {
+      "name": "adapt-literal-instanced-set",
+      "rql": "ref(\"Node#8\") | set Peer = {$type: \"Special\", Name: \"made\", Power: 5}",
+      "options": {
+        "allowMutation": true
+      },
+      "then": "ref(\"Node#8\") | select Peer.Name, Peer.Power, Peer.Parent.Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Peer"
+                  ]
+                },
+                "value": {
+                  "object": [
+                    {
+                      "key": "$type",
+                      "value": {
+                        "lit": "Special"
+                      }
+                    },
+                    {
+                      "key": "Name",
+                      "value": {
+                        "lit": "made"
+                      }
+                    },
+                    {
+                      "key": "Power",
+                      "value": {
+                        "lit": 5
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "Peer",
+            null,
+            {
+              "$ref": "Special#0",
+              "name": "MADE"
+            }
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Peer.Name",
+                "expr": {
+                  "path": [
+                    "Peer",
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Peer.Power",
+                "expr": {
+                  "path": [
+                    "Peer",
+                    "Power"
+                  ]
+                }
+              },
+              {
+                "name": "Peer.Parent.Name",
+                "expr": {
+                  "path": [
+                    "Peer",
+                    "Parent",
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Peer.Name",
+          "Peer.Power",
+          "Peer.Parent.Name"
+        ],
+        "rows": [
+          [
+            "made",
+            5,
+            "lonely"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-literal-instanced-nested",
+      "rql": "ref(\"Node#8\") | set Peer = {$type: \"Special\", Name: \"outer\", Peer: {$type: \"Special\", Name: \"inner\"}}",
+      "options": {
+        "allowMutation": true
+      },
+      "then": "ref(\"Node#8\") | select Peer.Peer.Name, Peer.Peer.Parent.Name, Peer.Parent.Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Peer"
+                  ]
+                },
+                "value": {
+                  "object": [
+                    {
+                      "key": "$type",
+                      "value": {
+                        "lit": "Special"
+                      }
+                    },
+                    {
+                      "key": "Name",
+                      "value": {
+                        "lit": "outer"
+                      }
+                    },
+                    {
+                      "key": "Peer",
+                      "value": {
+                        "object": [
+                          {
+                            "key": "$type",
+                            "value": {
+                              "lit": "Special"
+                            }
+                          },
+                          {
+                            "key": "Name",
+                            "value": {
+                              "lit": "inner"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "Peer",
+            null,
+            {
+              "$ref": "Special#0",
+              "name": "OUTER"
+            }
+          ]
+        ],
+        "total": 1
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Peer.Peer.Name",
+                "expr": {
+                  "path": [
+                    "Peer",
+                    "Peer",
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Peer.Peer.Parent.Name",
+                "expr": {
+                  "path": [
+                    "Peer",
+                    "Peer",
+                    "Parent",
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Peer.Parent.Name",
+                "expr": {
+                  "path": [
+                    "Peer",
+                    "Parent",
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Peer.Peer.Name",
+          "Peer.Peer.Parent.Name",
+          "Peer.Parent.Name"
+        ],
+        "rows": [
+          [
+            "inner",
+            "outer",
+            "lonely"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-literal-instanced-dry-run",
+      "rql": "ref(\"Node#8\") | set Peer = {$type: \"Special\", Name: \"made\"}",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "then": "ref(\"Node#8\") | select Peer",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Peer"
+                  ]
+                },
+                "value": {
+                  "object": [
+                    {
+                      "key": "$type",
+                      "value": {
+                        "lit": "Special"
+                      }
+                    },
+                    {
+                      "key": "Name",
+                      "value": {
+                        "lit": "made"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "Peer",
+            null,
+            {
+              "$ref": "Special#0",
+              "name": "MADE"
+            }
+          ]
+        ],
+        "total": 1,
+        "dryRun": true
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Peer",
+                "expr": {
+                  "path": [
+                    "Peer"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Peer"
+        ],
+        "rows": [
+          [
+            null
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-literal-instanced-call",
+      "rql": "ref(\"Node#8\") | call adopt({$type: \"Special\", Name: \"kid\"})",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "adopt",
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "$type",
+                    "value": {
+                      "lit": "Special"
+                    }
+                  },
+                  {
+                    "key": "Name",
+                    "value": {
+                      "lit": "kid"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "adopt(Node child)",
+            "lonely"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-literal-instanced-qualified",
+      "rql": "range(0, 2) | call ref(\"Node#5\").adopt({$type: \"Special\", Name: \"k\" + $})",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "adopt",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#5"
+                }
+              ]
+            },
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "$type",
+                    "value": {
+                      "lit": "Special"
+                    }
+                  },
+                  {
+                    "key": "Name",
+                    "value": {
+                      "op": "+",
+                      "args": [
+                        {
+                          "lit": "k"
+                        },
+                        {
+                          "path": []
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#5",
+            "adopt(Node child)",
+            "root-b"
+          ],
+          [
+            "Node#5",
+            "adopt(Node child)",
+            "root-b"
+          ]
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "adapt-literal-instanced-overload",
+      "rql": "ref(\"Node#8\") | call probe({$type: \"Special\", Name: \"p\"})",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "probe",
+            "args": [
+              {
+                "object": [
+                  {
+                    "key": "$type",
+                    "value": {
+                      "lit": "Special"
+                    }
+                  },
+                  {
+                    "key": "Name",
+                    "value": {
+                      "lit": "p"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#8",
+            "probe(Node peer)",
+            0
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-literal-instanced-unknown-member",
+      "rql": "ref(\"Node#8\") | set Peer = {$type: \"Special\", Nmae: \"x\"}",
+      "options": {
+        "allowMutation": true
+      },
+      "then": "ref(\"Node#8\") | select Peer",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Peer"
+                  ]
+                },
+                "value": {
+                  "object": [
+                    {
+                      "key": "$type",
+                      "value": {
+                        "lit": "Special"
+                      }
+                    },
+                    {
+                      "key": "Nmae",
+                      "value": {
+                        "lit": "x"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "coercion-failed"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Peer",
+                "expr": {
+                  "path": [
+                    "Peer"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Peer"
+        ],
+        "rows": [
+          [
+            null
+          ]
+        ],
+        "total": 1
       }
     }
   ]

@@ -120,7 +120,7 @@ namespace Rql.Conformance
         public RqlEngine NewEngine(Graph g)
         {
             var e = new RqlEngine(Accessors);
-            e.AddSource("g", () => g);
+            e.AddSource("g", () => g, null, typeof(Graph)); // declared: known names never evaluate a source (spec §8)
             e.Mutations.Enabled = true;
             return e;
         }

@@ -41,6 +41,7 @@ export {
   type CoerceOutcome,
   type EncodeContext,
   type InterfaceAdapter,
+  type LiteralKind,
   type MemberTable,
   type TypeAdapter,
   type VirtualMemberSpec,

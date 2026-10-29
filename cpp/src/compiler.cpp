@@ -120,6 +120,12 @@ size_t collection_size(const Value& v) {
     return 0;
 }
 
+std::string meta_hint(const std::string& name) {
+    for (const char* m : {"type", "ref", "path", "index", "depth"})
+        if (iequals(name, m)) return std::string("did you mean $") + m + " (the meta member)?";
+    return {};
+}
+
 std::string path_text(const Expr& e) {
     if (e.kind != ExprKind::Path || e.on || e.segments.empty()) return {};
     std::string s;

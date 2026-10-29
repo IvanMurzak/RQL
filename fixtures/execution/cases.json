@@ -24316,6 +24316,405 @@
         "total": 1,
         "dryRun": true
       }
+    },
+    {
+      "name": "sort-key-error-warns",
+      "rql": "g.Nodes | sort (Value / 0) | select Name",
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "root-a"
+          ],
+          [
+            "root-b"
+          ],
+          [
+            "lonely"
+          ]
+        ],
+        "total": 3,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "div-by-zero"
+          }
+        ]
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "sort",
+            "keys": [
+              {
+                "expr": {
+                  "op": "/",
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    },
+                    {
+                      "lit": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "sort-key-error-topn-warns",
+      "rql": "g.Nodes | sort (Value / 0) desc | first 1 | select Name",
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "root-a"
+          ]
+        ],
+        "total": 1,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "div-by-zero"
+          }
+        ]
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "sort",
+            "keys": [
+              {
+                "expr": {
+                  "op": "/",
+                  "args": [
+                    {
+                      "path": [
+                        "Value"
+                      ]
+                    },
+                    {
+                      "lit": 0
+                    }
+                  ]
+                },
+                "desc": true
+              }
+            ]
+          },
+          {
+            "op": "first",
+            "n": 1
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "group-by-sparse-member-warns",
+      "rql": "g.Nodes | recurse Children | group-by Power",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "group-by",
+            "expr": {
+              "path": [
+                "Power"
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "key",
+          "count"
+        ],
+        "rows": [
+          [
+            null,
+            6
+          ],
+          [
+            9000,
+            1
+          ],
+          [
+            1,
+            1
+          ]
+        ],
+        "total": 3,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "group-by-sparse-named-key-warns",
+      "rql": "g.Nodes | recurse Children | group-by Kind, p=Power",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "group-by",
+            "fields": [
+              {
+                "name": "Kind",
+                "expr": {
+                  "path": [
+                    "Kind"
+                  ]
+                }
+              },
+              {
+                "name": "p",
+                "expr": {
+                  "path": [
+                    "Power"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Kind",
+          "p",
+          "count"
+        ],
+        "rows": [
+          [
+            "Alpha",
+            null,
+            2
+          ],
+          [
+            "Beta",
+            null,
+            2
+          ],
+          [
+            "Gamma",
+            9000,
+            1
+          ],
+          [
+            "Alpha",
+            1,
+            1
+          ],
+          [
+            "Gamma",
+            null,
+            2
+          ]
+        ],
+        "total": 5,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "distinct-sparse-member-warns",
+      "rql": "g.Nodes | recurse Children | distinct Power | count",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "distinct",
+            "expr": {
+              "path": [
+                "Power"
+              ]
+            }
+          },
+          {
+            "op": "count"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "scalar",
+        "value": 3,
+        "diagnostics": [
+          {
+            "severity": "warning",
+            "code": "unknown-member"
+          }
+        ]
+      }
+    },
+    {
+      "name": "group-by-member-on-every-item-quiet",
+      "rql": "g.Nodes | recurse Children | group-by Kind",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "recurse",
+            "via": [
+              {
+                "path": [
+                  "Children"
+                ]
+              }
+            ]
+          },
+          {
+            "op": "group-by",
+            "expr": {
+              "path": [
+                "Kind"
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "key",
+          "count"
+        ],
+        "rows": [
+          [
+            "Alpha",
+            3
+          ],
+          [
+            "Beta",
+            2
+          ],
+          [
+            "Gamma",
+            3
+          ]
+        ],
+        "total": 3
+      }
     }
   ]
 }
