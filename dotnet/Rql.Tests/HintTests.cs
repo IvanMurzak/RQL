@@ -186,6 +186,38 @@ namespace Rql.Tests
             Assert.Equal("typed things", e.Sources["d.things"].Description);
         }
 
+        public sealed class TypedSources : IRqlModule
+        {
+            public int Order => 0;
+            public void Configure(RqlModuleContext c) => c.AddSource("t.things", () => new List<Thing>(), "typed things").AddGuide("t", "guide T");
+        }
+
+        [Fact]
+        public void TypedGettersDeclareTheirReturnType()
+        {
+            var e = new RqlEngine();
+            Assert.Equal(new[] { "t.things" }, e.AddModules(new[] { typeof(TypedSources) }).Single().Sources);
+            Assert.Equal(typeof(List<Thing>), e.Sources["t.things"].DeclaredType);
+            Assert.Equal("typed things", e.Sources["t.things"].Description);
+
+            int reads = 0;
+            Thing[] Things() { reads++; return new[] { new Thing() }; }
+            e.AddSource("arr", Things).AddSource("one", () => new Thing())
+                .AddSource("objects", () => new List<object>()).AddSource("anything", () => (object)new Thing())
+                .AddSource("untyped", (Func<object?>)(() => new Thing()));
+            Assert.Equal(typeof(Thing[]), e.Sources["arr"].DeclaredType);
+            Assert.Equal(typeof(Thing), e.Sources["one"].DeclaredType);
+            // object, a list of object, or a Func<object?> declare nothing: the type comes from the values.
+            Assert.Null(e.Sources["objects"].DeclaredType);
+            Assert.Null(e.Sources["anything"].DeclaredType);
+            Assert.Null(e.Sources["untyped"].DeclaredType);
+            Assert.Equal(0, reads); // registering never calls the getter
+            var r = e.Execute("arr | count");
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal(1, reads);
+            Assert.Throws<ArgumentNullException>(() => e.AddSource<Thing>("none", null!));
+        }
+
         public sealed class Outer : IRqlModule
         {
             /// <summary>Only the nested-configuration test runs it (assembly scans in other tests find it too).</summary>

@@ -341,6 +341,22 @@ namespace Rql.Execution
             return this;
         }
 
+        /// <summary>
+        /// Register a source whose declared type (see <see cref="AddSource(string, Func{object}, string, Type)"/>) is the getter's
+        /// return type <typeparamref name="T"/>, so the two cannot drift apart. A getter typed <c>object</c> or as a list of
+        /// <c>object</c> declares nothing: its type is learnt from its values, as without a declared type.
+        /// </summary>
+        public RqlEngine AddSource<T>(string name, Func<T> getter, string? description = null)
+        {
+            if (getter == null) throw new ArgumentNullException(nameof(getter));
+            var type = typeof(T);
+            var element = type.IsArray ? type.GetElementType()
+                : type.GetInterfaces().Append(type).FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                    ?.GetGenericArguments()[0];
+            bool untyped = type == typeof(object) || element == typeof(object);
+            return AddSource(name, () => getter(), description, untyped ? null : type);
+        }
+
         private HashSet<string>? _knownMembers;
 
         // Every type each source has produced so far (by source name). Known names come from these types, not from the

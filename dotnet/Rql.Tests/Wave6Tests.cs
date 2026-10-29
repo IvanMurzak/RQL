@@ -337,7 +337,8 @@ namespace Rql.Tests
             Assert.Equal(0, walks);
             // The query's own source counts even when the stream never pulled it.
             int own = 0;
-            var e2 = new RqlEngine().AddSource("items", () => { own++; return new List<Group> { new Group() }; });
+            // (Func<object?>: a typed getter would declare its type, and a declared type is never read for it.)
+            var e2 = new RqlEngine().AddSource("items", (Func<object?>)(() => { own++; return new List<Group> { new Group() }; }));
             var r = e2.Execute("items | sort Label | first 0 | count");
             Assert.True(r.Ok);
             Assert.DoesNotContain(r.Diagnostics, d => d.Code == "unknown-member");
