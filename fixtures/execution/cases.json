@@ -24715,6 +24715,1294 @@
         ],
         "total": 3
       }
+    },
+    {
+      "name": "list-arith-scale",
+      "rql": "g | select a = ([1, 2, 0] * 3), b = (2 * [1.5, -1]), c = ([3, 6] / 3), d = (0 - [1, -2])",
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "a",
+          "b",
+          "c",
+          "d"
+        ],
+        "rows": [
+          [
+            [
+              3,
+              6,
+              0
+            ],
+            [
+              3,
+              -2
+            ],
+            [
+              1,
+              2
+            ],
+            {
+              "$error": "type-mismatch"
+            }
+          ]
+        ],
+        "total": 1
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        },
+                        {
+                          "lit": 0
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 3
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "lit": 2
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 1.5
+                        },
+                        {
+                          "lit": -1
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "c",
+                "expr": {
+                  "op": "/",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 3
+                        },
+                        {
+                          "lit": 6
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 3
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "d",
+                "expr": {
+                  "op": "-",
+                  "args": [
+                    {
+                      "lit": 0
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": -2
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "list-arith-add",
+      "rql": "g | select a = ([1, 2] + [3, 4]), b = ([5, 5, 5] - [1, 2, 3]), e = ([] + [])",
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "a",
+          "b",
+          "e"
+        ],
+        "rows": [
+          [
+            [
+              4,
+              6
+            ],
+            [
+              4,
+              3,
+              2
+            ],
+            []
+          ]
+        ],
+        "total": 1
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        }
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 3
+                        },
+                        {
+                          "lit": 4
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "op": "-",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 5
+                        },
+                        {
+                          "lit": 5
+                        },
+                        {
+                          "lit": 5
+                        }
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        },
+                        {
+                          "lit": 3
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "e",
+                "expr": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "list": []
+                    },
+                    {
+                      "list": []
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "list-arith-mismatch",
+      "rql": "g | select a = ([1, 2] + 1), b = ([1, 2] * [3, 4]), c = ([1, 2] + [1, 2, 3]), d = ([1, \"x\"] * 2), e = ([1, 2] % 2), f = (1 / [1, 2])",
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e",
+          "f"
+        ],
+        "rows": [
+          [
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            }
+          ]
+        ],
+        "total": 1
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        }
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 3
+                        },
+                        {
+                          "lit": 4
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "c",
+                "expr": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        }
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        },
+                        {
+                          "lit": 3
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "d",
+                "expr": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": "x"
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "e",
+                "expr": {
+                  "op": "%",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "f",
+                "expr": {
+                  "op": "/",
+                  "args": [
+                    {
+                      "lit": 1
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "list-arith-div-zero",
+      "rql": "g | select a = ([1, 2] / 0)",
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "a"
+        ],
+        "rows": [
+          [
+            {
+              "$error": "div-by-zero"
+            }
+          ]
+        ],
+        "total": 1
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "op": "/",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 0
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "list-arith-from-members",
+      "rql": "g.Nodes | select v = ([Value, Id] * 2), n = (-[Value, 1])",
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "v",
+          "n"
+        ],
+        "rows": [
+          [
+            [
+              20,
+              2
+            ],
+            [
+              -10,
+              -1
+            ]
+          ],
+          [
+            [
+              14,
+              10
+            ],
+            [
+              -7,
+              -1
+            ]
+          ],
+          [
+            [
+              6,
+              16
+            ],
+            [
+              -3,
+              -1
+            ]
+          ]
+        ],
+        "total": 3
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "v",
+                "expr": {
+                  "op": "*",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "path": [
+                            "Value"
+                          ]
+                        },
+                        {
+                          "path": [
+                            "Id"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 2
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "n",
+                "expr": {
+                  "op": "neg",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "path": [
+                            "Value"
+                          ]
+                        },
+                        {
+                          "lit": 1
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "vector-functions-lists",
+      "rql": "g | select l = length([3, 4]), m = magnitude([1, 2, 2]), n = normalize([3, 4]), z = normalize([0, 0]), d = distance([1, 1], [4, 5]), p = dot([1, 2, 3], [4, 5, 6]), i = lerp([0, 10], [10, 20], 0.25), s = lerp(2, 4, 0.5)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "l",
+                "expr": {
+                  "call": "length",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 3
+                        },
+                        {
+                          "lit": 4
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "m",
+                "expr": {
+                  "call": "magnitude",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        },
+                        {
+                          "lit": 2
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "n",
+                "expr": {
+                  "call": "normalize",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 3
+                        },
+                        {
+                          "lit": 4
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "z",
+                "expr": {
+                  "call": "normalize",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 0
+                        },
+                        {
+                          "lit": 0
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "d",
+                "expr": {
+                  "call": "distance",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 1
+                        }
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 4
+                        },
+                        {
+                          "lit": 5
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "p",
+                "expr": {
+                  "call": "dot",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        },
+                        {
+                          "lit": 3
+                        }
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 4
+                        },
+                        {
+                          "lit": 5
+                        },
+                        {
+                          "lit": 6
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "i",
+                "expr": {
+                  "call": "lerp",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 0
+                        },
+                        {
+                          "lit": 10
+                        }
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 10
+                        },
+                        {
+                          "lit": 20
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 0.25
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "s",
+                "expr": {
+                  "call": "lerp",
+                  "args": [
+                    {
+                      "lit": 2
+                    },
+                    {
+                      "lit": 4
+                    },
+                    {
+                      "lit": 0.5
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "l",
+          "m",
+          "n",
+          "z",
+          "d",
+          "p",
+          "i",
+          "s"
+        ],
+        "rows": [
+          [
+            5,
+            3,
+            [
+              0.6,
+              0.8
+            ],
+            [
+              0,
+              0
+            ],
+            5,
+            32,
+            [
+              2.5,
+              12.5
+            ],
+            3
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "vector-methods-lists",
+      "rql": "g | select l = [3, 4].length(), n = [0, 5].normalize(), d = [0, 0].distance([6, 8]), p = [1, 1].dot([2, 3]), i = [0, 0].lerp([4, 8], 0.5)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "l",
+                "expr": {
+                  "call": "length",
+                  "on": {
+                    "list": [
+                      {
+                        "lit": 3
+                      },
+                      {
+                        "lit": 4
+                      }
+                    ]
+                  },
+                  "args": []
+                }
+              },
+              {
+                "name": "n",
+                "expr": {
+                  "call": "normalize",
+                  "on": {
+                    "list": [
+                      {
+                        "lit": 0
+                      },
+                      {
+                        "lit": 5
+                      }
+                    ]
+                  },
+                  "args": []
+                }
+              },
+              {
+                "name": "d",
+                "expr": {
+                  "call": "distance",
+                  "on": {
+                    "list": [
+                      {
+                        "lit": 0
+                      },
+                      {
+                        "lit": 0
+                      }
+                    ]
+                  },
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 6
+                        },
+                        {
+                          "lit": 8
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "p",
+                "expr": {
+                  "call": "dot",
+                  "on": {
+                    "list": [
+                      {
+                        "lit": 1
+                      },
+                      {
+                        "lit": 1
+                      }
+                    ]
+                  },
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 2
+                        },
+                        {
+                          "lit": 3
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "i",
+                "expr": {
+                  "call": "lerp",
+                  "on": {
+                    "list": [
+                      {
+                        "lit": 0
+                      },
+                      {
+                        "lit": 0
+                      }
+                    ]
+                  },
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 4
+                        },
+                        {
+                          "lit": 8
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 0.5
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "l",
+          "n",
+          "d",
+          "p",
+          "i"
+        ],
+        "rows": [
+          [
+            5,
+            [
+              0,
+              1
+            ],
+            10,
+            5,
+            [
+              2,
+              4
+            ]
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "vector-functions-mismatch",
+      "rql": "g | select a = length(\"x\"), b = dot([1, 2], [1, 2, 3]), c = lerp([1], [2], \"t\"), d = length(null), e = normalize(Nothing)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "call": "length",
+                  "args": [
+                    {
+                      "lit": "x"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "call": "dot",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        }
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        },
+                        {
+                          "lit": 3
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "c",
+                "expr": {
+                  "call": "lerp",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        }
+                      ]
+                    },
+                    {
+                      "list": [
+                        {
+                          "lit": 2
+                        }
+                      ]
+                    },
+                    {
+                      "lit": "t"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "d",
+                "expr": {
+                  "call": "length",
+                  "args": [
+                    {
+                      "lit": null
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "e",
+                "expr": {
+                  "call": "normalize",
+                  "args": [
+                    {
+                      "path": [
+                        "Nothing"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e"
+        ],
+        "rows": [
+          [
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            },
+            null,
+            null
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "vector-functions-arity",
+      "rql": "g | select a = distance([1, 2])",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "call": "distance",
+                  "args": [
+                    {
+                      "list": [
+                        {
+                          "lit": 1
+                        },
+                        {
+                          "lit": 2
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "arity"
+          }
+        ]
+      }
+    },
+    {
+      "name": "source-ref-navigation",
+      "rql": "ref(\"Node#1\").Children | select Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "Children"
+          ],
+          "on": {
+            "call": "ref",
+            "args": [
+              {
+                "lit": "Node#1"
+              }
+            ]
+          }
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name"
+        ],
+        "rows": [
+          [
+            "a-1"
+          ],
+          [
+            "a-2"
+          ]
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "source-ref-navigation-index",
+      "rql": "ref(\"Node#1\").Children[1].Name",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "Children",
+            {
+              "index": 1
+            },
+            "Name"
+          ],
+          "on": {
+            "call": "ref",
+            "args": [
+              {
+                "lit": "Node#1"
+              }
+            ]
+          }
+        },
+        "stages": []
+      },
+      "expect": {
+        "ok": true,
+        "kind": "items",
+        "items": [
+          "a-2"
+        ],
+        "total": 1
+      }
     }
   ]
 }

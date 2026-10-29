@@ -386,6 +386,22 @@ namespace Rql.Execution
                 throw new RqlException("unknown-source", $"unknown source '{head}'", p.Span,
                     (close.Count > 0 ? "did you mean " + string.Join(" / ", close) + "? " : "") + "sources: " + string.Join(" ", _x.Engine.Sources.Keys));
             }
+            // A function call or ref(…) followed by navigation (spec §2): unreal.asset("/Game/BP").EventGraph, ref("Node#1").Children[0].
+            if (src is PathExpr navigated && navigated.On is CallExpr && navigated.Segments.Count > 0)
+            {
+                var (baseValue, baseText, quiet) = BindSource(navigated.On);
+                var rest = new PathExpr(navigated.Segments) { Span = navigated.Span };
+                var step = _c.Compile(rest);
+                var restText = string.Concat(rest.Segments.Select(s => s.Kind == SegmentKind.Member ? "." + s.Name : s.ToString()));
+                return (() =>
+                {
+                    var v = baseValue();
+                    if (v == null || v is RqlError || V.IsAbsent(v)) return v;
+                    _x.Current = v;
+                    _x.CurrentPath = null;
+                    return _x.Types.Live(step(_x));
+                }, baseText + restText, quiet);
+            }
             if (src is CallExpr c && c.On == null && string.Equals(c.Name, "ref", StringComparison.OrdinalIgnoreCase))
                 return (RootValue(_c.Compile(src)), "ref(…)", true);
             // A host extension function may produce the input too, e.g. unity.assets("t:Material") (spec §2).
