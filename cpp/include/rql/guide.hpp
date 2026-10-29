@@ -30,7 +30,8 @@ inline const char* language_rules() noexcept {
 struct RuleExamples {
     /// The creation call, e.g. "editor.CreateGameObject" (empty: editor.CreateObject).
     std::string create_call;
-    /// Replaces the bulk-create call after `range(0, 300) | call ` (it builds a 15-wide grid from $).
+    /// Replaces the bulk-create example in full, range included (the default is `range(0, 300) | call …`, a 15-wide grid from
+    /// $), so a host can keep it within its target limit, e.g. `range(0, 150) | call …`.
     std::string grid;
     /// Replaces the list-literal example in full (`[…] | call ….($[0], $[1])`, one call per entry).
     std::string per_entry;
@@ -43,7 +44,7 @@ struct RuleExamples {
 inline std::string language_rules_with(const RuleExamples& examples) {
     static constexpr const char* placeholder = "editor.CreateObject";
     static constexpr const char* note = " (editor.CreateObject stands for the host's source and creation method)";
-    static constexpr const char* grid_example = "editor.CreateObject(\"Cube\", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})";
+    static constexpr const char* grid_example = "range(0, 300) | call editor.CreateObject(\"Cube\", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})";
     static constexpr const char* per_entry_example = "[[\"A\", 1], [\"B\", 2]] | call editor.CreateObject($[0], $[1])";
     static constexpr const char* named_example = "editor.CreateObject({name: \"Tile\" + $, position: [$ * 2, 0, 0]})";
     auto trim = [](const std::string& s) {

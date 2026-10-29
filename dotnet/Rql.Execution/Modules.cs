@@ -38,6 +38,9 @@ namespace Rql.Execution
         /// <summary>A source with a declared value type (see <see cref="RqlEngine.AddSource(string, Func{object}, string, Type)"/>).</summary>
         public RqlModuleContext AddSource(string name, Func<object?> getter, string? description, Type? declaredType) { Engine.AddSource(name, getter, description, declaredType); return this; }
 
+        /// <summary>A source declaring the getter's return type (see <see cref="RqlEngine.AddSource{T}(string, Func{T}, string)"/>).</summary>
+        public RqlModuleContext AddSource<T>(string name, Func<T> getter, string? description = null) { Engine.AddSource(name, getter, description); return this; }
+
         public RqlModuleContext AddFunction(string name, Func<object?[], object?> fn, string? description = null) { Engine.AddFunction(name, fn, description); return this; }
 
         /// <summary>Agent-facing guidance for what this module adds (rendered into the host's help / skill files).</summary>

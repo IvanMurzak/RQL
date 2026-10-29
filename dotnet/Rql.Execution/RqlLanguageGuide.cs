@@ -25,7 +25,7 @@ namespace Rql.Execution
 
         private const string ExampleCall = "editor.CreateObject";
         private const string ExampleNote = " (editor.CreateObject stands for the host's source and creation method)";
-        private const string GridExample = "editor.CreateObject(\"Cube\", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})";
+        private const string GridExample = "range(0, 300) | call editor.CreateObject(\"Cube\", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})";
         private const string PerEntryExample = "[[\"A\", 1], [\"B\", 2]] | call editor.CreateObject($[0], $[1])";
         private const string NamedExample = "editor.CreateObject({name: \"Tile\" + $, position: [$ * 2, 0, 0]})";
 
@@ -73,7 +73,10 @@ namespace Rql.Execution
     {
         /// <summary>The creation call, e.g. <c>editor.CreateGameObject</c> (null: <c>editor.CreateObject</c>).</summary>
         public string? CreateCall { get; set; }
-        /// <summary>Replaces the bulk-create call after <c>range(0, 300) | call </c> (it builds a 15-wide grid from <c>$</c>).</summary>
+        /// <summary>
+        /// Replaces the bulk-create example in full, range included (the default is <c>range(0, 300) | call …</c>, a 15-wide
+        /// grid from <c>$</c>), so a host can keep it within its target limit, e.g. <c>range(0, 150) | call …</c>.
+        /// </summary>
         public string? Grid { get; set; }
         /// <summary>Replaces the list-literal example in full (<c>[…] | call ….($[0], $[1])</c>, one call per entry).</summary>
         public string? PerEntry { get; set; }

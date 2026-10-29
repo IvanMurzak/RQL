@@ -62,11 +62,12 @@ namespace Rql.Tests
             var spawn = new RqlRuleExamples
             {
                 CreateCall = "editor.SpawnActor",
-                Grid = "editor.SpawnActor(\"StaticMeshActor\", \"Tile\" + $, [($ % 15) * 200, floor($ / 15) * 200, 0])",
+                Grid = "range(0, 150) | call editor.SpawnActor(\"StaticMeshActor\", \"Tile\" + $, [($ % 15) * 200, floor($ / 15) * 200, 0])",
                 PerEntry = "[[\"A\", [0, 0, 0]], [\"B\", [200, 0, 0]]] | call editor.SpawnActor(\"PointLight\", $[0], $[1])",
             };
             var text = RqlLanguageGuide.RulesWith(spawn);
-            Assert.Contains("range(0, 300) | call " + spawn.Grid + " builds a 15-wide grid", text);
+            Assert.Contains("one call creates many objects: " + spawn.Grid + " builds a 15-wide grid", text);
+            Assert.DoesNotContain("range(0, 300)", text); // the host sets the range (e.g. within its target limit)
             Assert.Contains(spawn.PerEntry + " one object per entry", text);
             Assert.Contains("call editor.SpawnActor({name: \"Tile\" + $", text); // left out: the default with the host call
             Assert.DoesNotContain("editor.CreateObject", text);
@@ -183,6 +184,47 @@ namespace Rql.Tests
             Assert.Equal(new[] { "d.things" }, report.Sources);
             Assert.Equal(typeof(List<Thing>), e.Sources["d.things"].DeclaredType);
             Assert.Equal("typed things", e.Sources["d.things"].Description);
+        }
+
+        public sealed class TypedSources : IRqlModule
+        {
+            public int Order => 0;
+            public void Configure(RqlModuleContext c) => c.AddSource("t.things", () => new List<Thing>(), "typed things").AddGuide("t", "guide T");
+        }
+
+        [Fact]
+        public void TypedGettersDeclareTheirReturnType()
+        {
+            var e = new RqlEngine();
+            Assert.Equal(new[] { "t.things" }, e.AddModules(new[] { typeof(TypedSources) }).Single().Sources);
+            Assert.Equal(typeof(List<Thing>), e.Sources["t.things"].DeclaredType);
+            Assert.Equal("typed things", e.Sources["t.things"].Description);
+
+            int reads = 0;
+            Thing[] Things() { reads++; return new[] { new Thing() }; }
+            e.AddSource("arr", Things).AddSource("one", () => new Thing())
+                .AddSource("objects", () => new List<object>()).AddSource("anything", () => (object)new Thing())
+                .AddSource("untyped", (Func<object?>)(() => new Thing()))
+                .AddSource("interface", () => (IDisposable)new System.IO.MemoryStream())
+                .AddSource("interfaces", () => new List<IDisposable>())
+                .AddSource("nongeneric", () => (System.Collections.IList)new System.Collections.ArrayList())
+                .AddSource("text", () => "s");
+            Assert.Equal(typeof(Thing[]), e.Sources["arr"].DeclaredType);
+            Assert.Equal(typeof(Thing), e.Sources["one"].DeclaredType);
+            // object, a list of object, or a Func<object?> declare nothing: the type comes from the values.
+            Assert.Null(e.Sources["objects"].DeclaredType);
+            Assert.Null(e.Sources["anything"].DeclaredType);
+            Assert.Null(e.Sources["untyped"].DeclaredType);
+            // Interfaces and untyped lists hide the runtime type: declaring them would hide its members until a read.
+            Assert.Null(e.Sources["interface"].DeclaredType);
+            Assert.Null(e.Sources["interfaces"].DeclaredType);
+            Assert.Null(e.Sources["nongeneric"].DeclaredType);
+            Assert.Equal(typeof(string), e.Sources["text"].DeclaredType);
+            Assert.Equal(0, reads); // registering never calls the getter
+            var r = e.Execute("arr | count");
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal(1, reads);
+            Assert.Throws<ArgumentNullException>(() => e.AddSource<Thing>("none", null!));
         }
 
         public sealed class Outer : IRqlModule

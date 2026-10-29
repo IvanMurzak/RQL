@@ -20,7 +20,7 @@ export const LANGUAGE_RULES =
 const EXAMPLE_CALL = 'editor.CreateObject';
 const EXAMPLE_NOTE = " (editor.CreateObject stands for the host's source and creation method)";
 
-const GRID_EXAMPLE = 'editor.CreateObject("Cube", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})';
+const GRID_EXAMPLE = 'range(0, 300) | call editor.CreateObject("Cube", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})';
 const PER_ENTRY_EXAMPLE = '[["A", 1], ["B", 2]] | call editor.CreateObject($[0], $[1])';
 const NAMED_EXAMPLE = 'editor.CreateObject({name: "Tile" + $, position: [$ * 2, 0, 0]})';
 
@@ -31,7 +31,10 @@ const NAMED_EXAMPLE = 'editor.CreateObject({name: "Tile" + $, position: [$ * 2, 
 export interface LanguageRuleExamples {
   /** The creation call, e.g. 'editor.CreateGameObject' (none: editor.CreateObject). */
   readonly createCall?: string;
-  /** Replaces the bulk-create call after `range(0, 300) | call ` (it builds a 15-wide grid from $). */
+  /**
+   * Replaces the bulk-create example in full, range included (the default is `range(0, 300) | call …`, a 15-wide grid from
+   * $), so a host can keep it within its target limit, e.g. `range(0, 150) | call …`.
+   */
   readonly grid?: string;
   /** Replaces the list-literal example in full (`[…] | call ….($[0], $[1])`, one call per entry). */
   readonly perEntry?: string;
