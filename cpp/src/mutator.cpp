@@ -962,7 +962,7 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
         }
         rows.push_back({Value::string(w.ref), Value::string(w.label), w.old_value, w.new_value});
     }
-    QueryResult r = enc.rows({"$ref", "member", "old", "new"}, rows);
+    QueryResult r = enc.rows({"$ref", "member", "old", "new"}, rows, "changes");
     r.dry_run = x.options.dry_run;
     r.unchanged = unchanged;
     return r;
@@ -1031,11 +1031,14 @@ struct Miss {
     long long matched;
     int depth;
     std::string why;
+    /// Bound by name except one key that is a parameter's name misspelt (spec §8): closer than any failure depth.
+    bool misspelt = false;
 };
 
 int compare_miss(const Miss& a, const Miss& b) {
     if (a.arity_fits != b.arity_fits) return a.arity_fits ? 1 : -1;
     if (a.matched != b.matched) return a.matched < b.matched ? -1 : 1;
+    if (a.misspelt != b.misspelt) return a.misspelt ? 1 : -1;
     return a.depth == b.depth ? 0 : a.depth < b.depth ? -1 : 1;
 }
 
@@ -1084,10 +1087,16 @@ bool bind_names(const MethodDescriptor& m, const Value& literal, std::vector<siz
         return false;
     }
     if (!unknown.empty()) {
-        std::vector<std::string> close = suggest_closest(unknown, names, 1);
+        // A key close to a parameter not named yet is that parameter misspelt, so "no parameter 'klass' (did you mean
+        // 'className'?)" beats an overload that cannot take the literal at all (spec §8).
+        std::vector<std::string> unnamed;
+        for (size_t j = 0; j < ps.size(); ++j)
+            if (!named[j]) unnamed.push_back(ps[j].name);
+        const std::string close = closest_parameter(unknown, unnamed);
         misses.push_back({&m, true, known, 0,
-                          "no parameter '" + unknown + "'" + (close.empty() ? std::string() : " (did you mean '" + close[0] + "'?)") +
-                              (ps.empty() ? std::string("; it takes no parameters") : "; parameters: " + join(names, ", "))});
+                          "no parameter '" + unknown + "'" + (close.empty() ? std::string() : " (did you mean '" + close + "'?)") +
+                              (ps.empty() ? std::string("; it takes no parameters") : "; parameters: " + join(names, ", ")),
+                          !close.empty()});
         return false;
     }
     for (size_t j = 0; j < ps.size(); ++j) {
@@ -1144,7 +1153,8 @@ const MethodDescriptor* resolve_overload(Exec& x, const TypeDescriptor& type, co
             }
         }
         if (!first.empty()) {
-            misses.push_back({&m, true, matched, depth, first});
+            // By name, every bound key names a parameter (spec §8): an exact name whose value fails ranks above a misspelt one.
+            misses.push_back({&m, true, kind == "parameter" ? static_cast<long long>(slots.size()) : matched, depth, first});
             return false;
         }
         std::vector<Value> cv;
@@ -1349,7 +1359,7 @@ QueryResult run_call(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const S
         rows.push_back({Value::string(x.ref_of(created ? result : p.item)), Value::string(p.item.type()->signature(*p.method)), result});
     }
     committed(x, records);
-    QueryResult r = enc.rows({"$ref", "method", "result"}, rows);
+    QueryResult r = enc.rows({"$ref", "method", "result"}, rows, "calls");
     r.dry_run = x.options.dry_run;
     return r;
 }

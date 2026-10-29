@@ -46,12 +46,47 @@ namespace Rql.Execution
     {
         internal RqlModuleReport(string module, int order, string? error) { Module = module; Order = order; Error = error; }
 
+        internal RqlModuleReport(string module, int order, string? error, Registrations registered) : this(module, order, error)
+        {
+            Sources = registered.Sources;
+            Functions = registered.Functions;
+            Stages = registered.Stages;
+            Guides = registered.Guides;
+            Adapters = registered.Adapters;
+        }
+
         public string Module { get; }
+
+        /// <summary>The sources this module registered (names), so a host can tell which module owns a source.</summary>
+        public IReadOnlyList<string> Sources { get; } = Array.Empty<string>();
+        /// <summary>The host functions this module registered (names).</summary>
+        public IReadOnlyList<string> Functions { get; } = Array.Empty<string>();
+        /// <summary>The extension stages this module registered (names).</summary>
+        public IReadOnlyList<string> Stages { get; } = Array.Empty<string>();
+        /// <summary>The guide topics this module added.</summary>
+        public IReadOnlyList<string> Guides { get; } = Array.Empty<string>();
+        /// <summary>The type adapters this module added.</summary>
+        public IReadOnlyList<RqlTypeAdapter> Adapters { get; } = Array.Empty<RqlTypeAdapter>();
         public int Order { get; }
         /// <summary>Null when the module configured successfully; otherwise why it was skipped.</summary>
         public string? Error { get; }
         public bool Ok => Error == null;
         public override string ToString() => Ok ? $"{Module} (order {Order})" : $"{Module}: FAILED — {Error}";
+    }
+
+    /// <summary>What one module registered on the engine, recorded by the engine while the module configures.</summary>
+    internal sealed class Registrations
+    {
+        public readonly List<string> Sources = new List<string>();
+        public readonly List<string> Functions = new List<string>();
+        public readonly List<string> Stages = new List<string>();
+        public readonly List<string> Guides = new List<string>();
+        public readonly List<RqlTypeAdapter> Adapters = new List<RqlTypeAdapter>();
+
+        public static void Note(List<string> list, string name)
+        {
+            if (!list.Contains(name)) list.Add(name);
+        }
     }
 
     internal static class ModuleDiscovery
@@ -91,12 +126,15 @@ namespace Rql.Execution
             }
             foreach (var (module, name, order) in modules.OrderBy(m => m.order).ThenBy(m => m.name, StringComparer.Ordinal))
             {
+                var outer = engine.Recording; // a module may configure modules of its own
+                var registered = engine.Recording = new Registrations();
                 try
                 {
                     module.Configure(new RqlModuleContext(engine));
-                    reports.Add(new RqlModuleReport(name, order, null));
+                    reports.Add(new RqlModuleReport(name, order, null, registered));
                 }
-                catch (Exception ex) { reports.Add(new RqlModuleReport(name, order, (ex.InnerException ?? ex).Message)); }
+                catch (Exception ex) { reports.Add(new RqlModuleReport(name, order, (ex.InnerException ?? ex).Message, registered)); }
+                finally { engine.Recording = outer; }
             }
             return reports;
         }

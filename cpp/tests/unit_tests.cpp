@@ -2562,6 +2562,161 @@ void wave6_tests() {
     }
 }
 
+// ADR-0013: misspelt parameter names rank first, the host's creation call in the rules, receipts never suggest paging.
+struct HnOptions {
+    std::string name;
+};
+struct HnGodot {
+    std::vector<std::string> made;
+};
+struct HnPainter {};
+struct HnThing {
+    int Id = 0;
+    std::string Name;
+};
+
+void hint_tests() {
+    auto has = [](const std::string& s, const std::string& part) { return s.find(part) != std::string::npos; };
+    {
+        rql::TypeRegistry reg;
+        reg.object<HnOptions>("NodeOptions").member("name", &HnOptions::name).no_identity().constructible();
+        reg.object<HnGodot>("Godot").no_identity();
+        rql::TypeRegistry* r = &reg;
+        const auto str = rql::builtin::string_type();
+        const rql::TypeDescriptor* opts = reg.descriptor<HnOptions>();
+        rql::Engine e(reg);
+        rql::TypeAdapter g;
+        g.name = "GodotAdapter";
+        g.target = reg.descriptor<HnGodot>();
+        g.configure_members = [=](rql::MemberTable& t) {
+            t.method<HnGodot>("CreateNode", {rql::ParamDescriptor{"options", opts, false, false, rql::Value()}}, str,
+                              [r](HnGodot& gd, const std::vector<rql::Value>& a) {
+                                  gd.made.push_back(rql::value_as<HnOptions>(*r, a[0])->name);
+                                  return rql::Value::string(gd.made.back());
+                              })
+                .method<HnGodot>("CreateNode",
+                                 {rql::ParamDescriptor{"className", str, false, false, rql::Value()},
+                                  rql::ParamDescriptor{"name", str, false, true, rql::Value::string("")},
+                                  rql::ParamDescriptor{"position", str, false, true, rql::Value::string("")}},
+                                 str, [](HnGodot& gd, const std::vector<rql::Value>& a) {
+                                     gd.made.push_back(a[0].as_string());
+                                     return rql::Value::string(gd.made.back());
+                                 });
+        };
+        e.add_adapter(std::move(g));
+        e.mutations().enabled = true;
+        HnGodot godot;
+        e.add_source("godot", [r, &godot]() { return r->wrap(&godot); });
+        rql::QueryOptions o;
+        o.allow_mutation = true;
+        auto call = [&](const std::string& key) {
+            return e.execute_json(R"J({"rql":"0.1","source":{"list":[{"lit":1}]},"stages":[{"op":"call","method":"CreateNode","on":{"path":["godot"]},"args":[{"object":[{"key":")J" +
+                                      key + R"J(","value":{"lit":"MeshInstance3D"}}]}]}]})J",
+                                  {}, o);
+        };
+        rql::QueryResult res = call("klass");
+        check(!res.ok && res.diagnostics[0].code == "coercion-failed" && has(res.diagnostics[0].message, "no parameter 'klass' (did you mean 'className'?)"),
+              "hints: a misspelt parameter name beats the options overload: " + (res.diagnostics.empty() ? std::string() : res.diagnostics[0].message));
+        res = call("zzzzzz");
+        check(!res.ok && !has(res.diagnostics[0].message, "did you mean"), "hints: a key no parameter resembles gets no suggestion");
+        check(godot.made.empty(), "hints: nothing created by failing calls");
+    }
+    {
+        const std::string text = rql::language_rules_for("editor.CreateGameObject");
+        check(!has(text, "editor.CreateObject") && !has(text, "stands for") && has(text, "call editor.CreateGameObject(\"Cube\"") &&
+                  has(text, "call editor.CreateGameObject($[0], $[1])"),
+              "hints: the rules take the host creation call");
+        check(rql::language_rules_for("") == std::string(rql::language_rules()), "hints: no call keeps the shared rules");
+        check(rql::language_rules_for("  ") == std::string(rql::language_rules()), "hints: a blank call keeps the shared rules");
+        check(has(rql::language_rules_for(" editor.CreateGameObject "), "call editor.CreateGameObject(\"Cube\""), "hints: the call is trimmed");
+    }
+    {
+        rql::TypeRegistry reg;
+        reg.object<HnPainter>("Painter").no_identity();
+        const auto str = rql::builtin::string_type();
+        const auto num = rql::builtin::double_type();
+        rql::Engine e(reg);
+        rql::TypeAdapter a;
+        a.name = "PainterAdapter";
+        a.target = reg.descriptor<HnPainter>();
+        auto ret = [](HnPainter&, const std::vector<rql::Value>& v) { return v.empty() ? rql::Value::string("") : v[0]; };
+        auto param = [](const char* n, const rql::TypeDescriptor* t) { return rql::ParamDescriptor{n, t, false, false, rql::Value()}; };
+        a.configure_members = [=](rql::MemberTable& t) {
+            t.method<HnPainter>("Set", {param("color", num)}, str, ret)
+                // Adapter methods are keyed by name and arity: the second Set takes an optional parameter.
+                .method<HnPainter>("Set", {param("colour", str), rql::ParamDescriptor{"mix", num, false, true, rql::Value::number(1)}}, str, ret)
+                .method<HnPainter>("Make", {param("className", str)}, str, ret)
+                .method<HnPainter>("Make", {param("className", str), param("klass", num)}, str, ret)
+                .method<HnPainter>("Open", {param("URLPath", str)}, str, ret);
+        };
+        e.add_adapter(std::move(a));
+        e.mutations().enabled = true;
+        HnPainter painter;
+        rql::TypeRegistry* r = &reg;
+        e.add_source("p", [r, &painter]() { return r->wrap(&painter); });
+        rql::QueryOptions o;
+        o.allow_mutation = true;
+        auto call = [&](const std::string& method, const std::string& fields) {
+            return e.execute_json(R"J({"rql":"0.1","source":{"list":[{"lit":1}]},"stages":[{"op":"call","method":")J" + method +
+                                      R"J(","on":{"path":["p"]},"args":[{"object":[)J" + fields + "]}]}]}",
+                                  {}, o);
+        };
+        rql::QueryResult res = call("Set", R"J({"key":"color","value":{"lit":"red"}})J");
+        check(!res.ok && has(res.diagnostics[0].message, "parameter 'color'") && !has(res.diagnostics[0].message, "did you mean 'colour'"),
+              "hints: an exact parameter name outranks a misspelt one: " + (res.diagnostics.empty() ? std::string() : res.diagnostics[0].message));
+        res = call("Make", R"J({"key":"className","value":{"lit":"X"}},{"key":"klass","value":{"lit":"Y"}})J");
+        check(!res.ok && !has(res.diagnostics[0].message, "did you mean 'className'") && has(res.diagnostics[0].message, "parameter 'klass'"),
+              "hints: a parameter already named is never suggested: " + (res.diagnostics.empty() ? std::string() : res.diagnostics[0].message));
+        res = call("Open", R"J({"key":"pth","value":{"lit":"/x"}})J");
+        check(!res.ok && has(res.diagnostics[0].message, "did you mean 'URLPath'"),
+              "hints: acronyms split into words: " + (res.diagnostics.empty() ? std::string() : res.diagnostics[0].message));
+    }
+    {
+        rql::TypeRegistry reg;
+        reg.object<HnThing>("Thing").member("Id", &HnThing::Id).member("Name", &HnThing::Name);
+        rql::TypeRegistry* r = &reg;
+        std::vector<std::unique_ptr<HnThing>> things;
+        for (int i = 1; i <= 200; ++i) {
+            things.push_back(std::make_unique<HnThing>());
+            things.back()->Id = i;
+            things.back()->Name = "t" + std::to_string(i);
+        }
+        rql::Engine e(reg);
+        e.mutations().enabled = true;
+        e.mutations().max_targets = 500;
+        e.add_source("things", [r, &things]() {
+            std::vector<rql::Value> l;
+            for (auto& t : things) l.push_back(r->wrap(t.get()));
+            return rql::Value::list_of(std::move(l));
+        });
+        rql::Budgets b;
+        b.max_output_bytes = 2000;
+        auto set = [&](const std::string& suffix, bool dry) {
+            rql::QueryOptions o;
+            o.allow_mutation = true;
+            o.dry_run = dry;
+            return e.execute_json(R"J({"rql":"0.1","source":{"path":["things"]},"stages":[{"op":"set","assign":[{"target":{"path":["Name"]},"value":{"op":"+","args":[{"path":["Name"]},{"lit":")J" +
+                                      suffix + R"J("}]}}]}]})J",
+                                  b, o);
+        };
+        rql::QueryResult res = set("-a-fairly-long-suffix-to-fill-the-receipt", false);
+        const rql::Diagnostic* w = nullptr;
+        for (auto& d : res.diagnostics)
+            if (d.code == "output-truncated") w = &d;
+        check(res.ok && res.truncated && w && has(w->hint, "the receipt is shortened, not the change: all 200 changes were made") && !has(w->hint, "page"),
+              "hints: a shortened receipt says every change was made");
+        size_t changed = 0;
+        for (auto& t : things)
+            if (has(t->Name, "suffix-to-fill-the-receipt")) ++changed;
+        check(changed == 200, "hints: every target changed although the receipt is shortened");
+        res = set("-b-fairly-long-suffix-to-fill-the-receipt", true);
+        w = nullptr;
+        for (auto& d : res.diagnostics)
+            if (d.code == "output-truncated") w = &d;
+        check(w && has(w->hint, "planned changes were checked (dry run)"), "hints: a shortened dry-run receipt says the changes were checked");
+    }
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) repo_root = argv[1];
     try {
@@ -2579,6 +2734,7 @@ int main(int argc, char** argv) {
         overload_tests();
         wave6_tests();
         vector_tests();
+        hint_tests();
     } catch (const std::exception& ex) {
         std::cout << "FATAL " << ex.what() << "\n";
         return 2;

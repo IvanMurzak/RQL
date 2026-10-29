@@ -7,6 +7,7 @@ using Xunit;
 namespace Rql.Tests
 {
     // ReflectorNet / Unity-MCP parity: the gaps found by the converter audit (docs/type-adapters.md).
+    [Collection("module scans")] // HintTests configures modules found by these scans: never in parallel
     public class ParityTests
     {
         public sealed class Mat { public int Id { get; set; } = 1; public string color { get; set; } = "white"; }

@@ -7,7 +7,8 @@ import { errorMessage, type Exec } from './exec.js';
 import type { MutationRecord, TextCoercion } from './engine.js';
 import type { Item } from './pipeline.js';
 import { adapterName, firstAnswer, type LiteralKind } from './adapters.js';
-import { closest, memberHint, nestedMembers } from './suggest.js';
+import { closestParameter, memberHint, nestedMembers } from './suggest.js';
+
 import {
   EnumType,
   EnumValue,
@@ -481,7 +482,7 @@ export class Mutator {
     // (spec §8 receipt); a write the host refused or clamped back to the old value stays listed.
     const changed = writes.filter((w) => !(equal(x, w.old, w.planned) === true && equal(x, w.old, w.new) === true));
     const rows = changed.map((w) => [w.ref, w.label, w.old, w.new]);
-    const r = this.enc.rows(['$ref', 'member', 'old', 'new'], rows);
+    const r = this.enc.rows(['$ref', 'member', 'old', 'new'], rows, 'changes');
     if (x.options.dryRun) r.dryRun = true;
     if (changed.length < writes.length) r.unchanged = writes.length - changed.length;
     return r;
@@ -708,7 +709,7 @@ export class Mutator {
       rows.push([x.engine.refOf(refOf), p.method.signature(x.types), result]);
     }
     this.runHook('committed', callRecords);
-    const r = this.enc.rows(['$ref', 'method', 'result'], rows);
+    const r = this.enc.rows(['$ref', 'method', 'result'], rows, 'calls');
     if (x.options.dryRun) r.dryRun = true;
     return r;
   }
@@ -727,10 +728,22 @@ interface Miss {
   matched: number;
   depth: number;
   why: string;
+  /** Bound by name except one key that is a parameter's name misspelt (spec §8): closer than any failure depth. */
+  misspelt?: boolean;
 }
 
 const compareMiss = (a: Miss, b: Miss): number =>
-  a.arityFits !== b.arityFits ? (a.arityFits ? 1 : -1) : a.matched !== b.matched ? a.matched - b.matched : a.depth - b.depth;
+  a.arityFits !== b.arityFits
+    ? a.arityFits
+      ? 1
+      : -1
+    : a.matched !== b.matched
+      ? a.matched - b.matched
+      : (a.misspelt === true) !== (b.misspelt === true)
+        ? a.misspelt === true
+          ? 1
+          : -1
+        : a.depth - b.depth;
 
 const hasDefault = (p: ParamSpec): boolean => p.optional === true || 'default' in p;
 
@@ -769,7 +782,8 @@ export function resolveOverload(
       }
     }
     if (first !== undefined) {
-      misses.push({ method: m, arityFits: true, matched, depth, why: first });
+      // By name, every bound key names a parameter (spec §8): an exact name whose value fails ranks above a misspelt one.
+      misses.push({ method: m, arityFits: true, matched: kind === 'parameter' ? slots.length : matched, depth, why: first });
       return undefined;
     }
     const cv: unknown[] = m.params.map((p) => p.default);
@@ -858,17 +872,19 @@ function bindNames(m: MethodAccessor, literal: ObjectValue, misses: Miss[]): num
   }
   const all = ps.map((p) => p.name).join(', ');
   if (unknown !== undefined) {
-    const close = closest(
+    // A key close to a parameter not named yet is that parameter misspelt, so "no parameter 'klass' (did you mean
+    // 'className'?)" beats an overload that cannot take the literal at all (spec §8).
+    const close = closestParameter(
       unknown,
-      ps.map((p) => p.name),
-      1,
+      ps.filter((_, j) => !named[j]).map((p) => p.name),
     );
     misses.push({
       method: m,
       arityFits: true,
       matched: known,
+      misspelt: close !== undefined,
       depth: 0,
-      why: `no parameter '${unknown}'` + (close.length > 0 ? ` (did you mean '${close[0]}'?)` : '') + (ps.length > 0 ? `; parameters: ${all}` : '; it takes no parameters'),
+      why: `no parameter '${unknown}'` + (close !== undefined ? ` (did you mean '${close}'?)` : '') + (ps.length > 0 ? `; parameters: ${all}` : '; it takes no parameters'),
     });
     return undefined;
   }

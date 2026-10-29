@@ -1280,6 +1280,59 @@ namespace Rql.Execution
         public static List<string> Closest(string name, IReadOnlyCollection<string> candidates, int max) => ClosestMembers(name, candidates, null, max);
 
         /// <summary>
+        /// The parameter a misspelt argument name stands for (spec §8): the closest name by the suggestion rules, else the name one
+        /// of whose camelCase / snake_case words is close (<c>klass</c> → <c>className</c>); null when none qualifies.
+        /// </summary>
+        public static string? ClosestParameter(string key, IReadOnlyList<string> names)
+        {
+            var close = Closest(key, names, 1);
+            if (close.Count > 0) return close[0];
+            if (key.Length < 3) return null; // a two-letter key is near every short word
+            var lower = key.ToLowerInvariant();
+            int limit = Math.Max(1, key.Length / 3);
+            string? best = null;
+            int bestD = int.MaxValue;
+            foreach (var n in names)
+                foreach (var w in Words(n))
+                {
+                    if (w.Length < 3) continue;
+                    int d = Distance(lower, w);
+                    if (d <= limit && d < bestD) { best = n; bestD = d; }
+                }
+            return best;
+        }
+
+        private static string AsciiLower(string s)
+        {
+            var c = s.ToCharArray();
+            for (int i = 0; i < c.Length; i++) if (c[i] >= 'A' && c[i] <= 'Z') c[i] = (char)(c[i] + 32);
+            return new string(c);
+        }
+
+        /// <summary>
+        /// The lower-case words of a camelCase / PascalCase / snake_case name, ASCII rules only so every runtime splits alike:
+        /// "className" → class, name; "URLPath" → url, path; "max_hp" → max, hp.
+        /// </summary>
+        private static IEnumerable<string> Words(string name)
+        {
+            static bool Up(char c) => c >= 'A' && c <= 'Z';
+            static bool Low(char c) => c >= 'a' && c <= 'z';
+            int start = 0;
+            for (int i = 1; i <= name.Length; i++)
+            {
+                bool boundary = i == name.Length || name[i] == '_'
+                    || (Up(name[i]) && !Up(name[i - 1]))
+                    || (Up(name[i]) && Up(name[i - 1]) && i + 1 < name.Length && Low(name[i + 1]));
+                if (boundary)
+                {
+                    var w = name.Substring(start, i - start).Trim('_');
+                    if (w.Length > 0) yield return AsciiLower(w);
+                    start = i;
+                }
+            }
+        }
+
+        /// <summary>
         /// Containment that signals a typo or a partial name: the candidate contains the name (at least 3 characters), or the
         /// name contains a candidate at least half its length (so "NoSuchType" does not suggest "Type").
         /// </summary>

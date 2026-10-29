@@ -29,9 +29,12 @@ namespace Rql.Execution
             _summary = o => Summary(o, _x.Types.Info(o.GetType()));
         }
 
-        public QueryResult Rows(string[] columns, List<object?[]> rows)
+        /// <param name="receipt">For a set / call receipt (spec §8), what its rows are ("changes" / "calls"): when the byte budget
+        /// shortens it, the hint says that every one was made (or, on a dry run, checked) instead of suggesting paging, which would
+        /// repeat the mutation. Null for query rows.</param>
+        public QueryResult Rows(string[] columns, List<object?[]> rows, string? receipt = null)
         {
-            var r = new QueryResult { Ok = true, Kind = ResultKind.Rows, Columns = columns.ToList(), Rows = new List<JsonNode?[]>() };
+            var r = new QueryResult { Ok = true, Kind = ResultKind.Rows, Columns = columns.ToList(), Rows = new List<JsonNode?[]>(), Receipt = receipt != null };
             long bytes = 0;
             foreach (var row in rows)
             {
@@ -40,7 +43,10 @@ namespace Rql.Execution
                 if (bytes > _x.MaxOutputBytes && r.Rows.Count > 0)
                 {
                     r.Truncated = true;
-                    r.Diagnostics.Add(Diagnostic.Warning("output-truncated", $"output limited to {_x.MaxOutputBytes} bytes; {r.Rows.Count} of {rows.Count} rows returned", "select fewer/smaller columns or page with skip/first"));
+                    r.Diagnostics.Add(Diagnostic.Warning("output-truncated", $"output limited to {_x.MaxOutputBytes} bytes; {r.Rows.Count} of {rows.Count} rows returned",
+                        receipt != null
+                            ? $"the receipt is shortened, not the change: all {rows.Count} {(_x.Options.DryRun ? $"planned {receipt} were checked (dry run)" : receipt + " were made")}; do not repeat it"
+                            : "select fewer/smaller columns or page with skip/first"));
                     break;
                 }
                 r.Rows.Add(enc);

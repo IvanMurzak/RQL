@@ -284,9 +284,8 @@ namespace Rql.Execution
             // (spec §8 receipt); a write the host refused or clamped back to the old value stays listed.
             var changed = writes.Where(w => !(Compiler.Equal(_x.Types, w.Old, w.Planned) == true && Compiler.Equal(_x.Types, w.Old, w.New) == true)).ToList();
             var rows = changed.Select(w => new object?[] { w.Ref, w.Label, w.Old, w.New }).ToList();
-            var r = _enc.Rows(new[] { "$ref", "member", "old", "new" }, rows);
+            var r = _enc.Rows(new[] { "$ref", "member", "old", "new" }, rows, receipt: "changes");
             r.DryRun = _x.Options.DryRun;
-            r.Receipt = true;
             if (changed.Count < writes.Count) r.Unchanged = writes.Count - changed.Count;
             return r;
         }
@@ -614,9 +613,8 @@ namespace Rql.Execution
                 rows.Add(new object?[] { _x.Engine.RefOf(refOf), method.Signature, result });
             }
             RunHook(_x.Engine.Mutations.Committed, callRecords, veto: false);
-            var r = _enc.Rows(new[] { "$ref", "method", "result" }, rows);
+            var r = _enc.Rows(new[] { "$ref", "method", "result" }, rows, receipt: "calls");
             r.DryRun = _x.Options.DryRun;
-            r.Receipt = true;
             return r;
 
             // The callable overloads of the method on a target; none: unknown-function (or permission-denied for a public method
@@ -657,15 +655,20 @@ namespace Rql.Execution
         /// <summary>Why one candidate does not fit, ranked by how close it came.</summary>
         private readonly struct Miss
         {
-            public Miss(CallableMethod method, bool arityFits, int matched, int depth, string why)
-            { Method = method; ArityFits = arityFits; Matched = matched; Depth = depth; Why = why; }
+            public Miss(CallableMethod method, bool arityFits, int matched, int depth, string why, bool misspelt = false)
+            { Method = method; ArityFits = arityFits; Matched = matched; Depth = depth; Why = why; Misspelt = misspelt; }
             public CallableMethod Method { get; }
             public bool ArityFits { get; }
             public int Matched { get; }
             public int Depth { get; }
             public string Why { get; }
+            /// <summary>Bound by name except one key that is a parameter's name misspelt (spec §8): closer than any failure depth.</summary>
+            public bool Misspelt { get; }
             public int CompareTo(Miss o) =>
-                ArityFits != o.ArityFits ? (ArityFits ? 1 : -1) : Matched != o.Matched ? Matched.CompareTo(o.Matched) : Depth.CompareTo(o.Depth);
+                ArityFits != o.ArityFits ? (ArityFits ? 1 : -1)
+                : Matched != o.Matched ? Matched.CompareTo(o.Matched)
+                : Misspelt != o.Misspelt ? (Misspelt ? 1 : -1)
+                : Depth.CompareTo(o.Depth);
         }
 
         /// <summary>
@@ -730,7 +733,8 @@ namespace Rql.Execution
             }
             if (first != null)
             {
-                misses.Add(new Miss(m, true, matched, depth, first));
+                // By name, every bound key names a parameter (spec §8): an exact name whose value fails ranks above a misspelt one.
+                misses.Add(new Miss(m, true, kind == "parameter" ? slots.Length : matched, depth, first));
                 return null;
             }
             var cv = ps.Select(p => p.Default).ToArray();
@@ -800,9 +804,11 @@ namespace Rql.Execution
             string all = string.Join(", ", ps.Select(p => p.Name));
             if (unknown != null)
             {
-                var close = Suggest.Closest(unknown, ps.Select(p => p.Name).ToList(), 1);
-                misses.Add(new Miss(m, true, known, 0, $"no parameter '{unknown}'" + (close.Count > 0 ? $" (did you mean '{close[0]}'?)" : "")
-                    + (ps.Count > 0 ? $"; parameters: {all}" : "; it takes no parameters")));
+                // A key close to a parameter not named yet is that parameter misspelt, so "no parameter 'klass' (did you mean
+                // 'className'?)" beats an overload that cannot take the literal at all (spec §8).
+                var close = Suggest.ClosestParameter(unknown, ps.Where((p, j) => !named[j]).Select(p => p.Name).ToList());
+                misses.Add(new Miss(m, true, known, 0, $"no parameter '{unknown}'" + (close != null ? $" (did you mean '{close}'?)" : "")
+                    + (ps.Count > 0 ? $"; parameters: {all}" : "; it takes no parameters"), misspelt: close != null));
                 return null;
             }
             for (int j = 0; j < ps.Count; j++)

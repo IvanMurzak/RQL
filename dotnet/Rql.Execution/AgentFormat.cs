@@ -32,7 +32,14 @@ namespace Rql.Execution
         /// out, and only the first <paramref name="maxReceiptRows"/> rows are listed, followed by how many are not (0 or less
         /// lists all). The json format always carries every row.
         /// </summary>
-        public static string Render(QueryResult r, OutputFormat format, int maxReceiptRows)
+        public static string Render(QueryResult r, OutputFormat format, int maxReceiptRows) => Render(r, format, maxReceiptRows, null);
+
+        /// <summary>
+        /// As <see cref="Render(QueryResult, OutputFormat, int)"/>; <paramref name="moreRowsNote"/> replaces the note after the count
+        /// of receipt rows not shown ("(the json format lists every row)"): hosts whose tools offer no json format pass their own
+        /// pointer, or "" to leave the note out.
+        /// </summary>
+        public static string Render(QueryResult r, OutputFormat format, int maxReceiptRows, string? moreRowsNote)
         {
             if (format == OutputFormat.Json) return r.ToJson(indented: false, includeStats: false);
             var sb = new StringBuilder();
@@ -61,7 +68,13 @@ namespace Rql.Execution
                     }
                     sb.Append(string.Join("|", columns.Select(c => r.Columns[c]))).Append('\n');
                     for (int i = 0; i < shown; i++) sb.Append(string.Join("|", columns.Select(c => Cell(r.Rows[i][c])))).Append('\n');
-                    if (shown < r.Rows.Count) sb.Append("… ").Append(r.Rows.Count - shown).Append(" more row(s) not shown (the json format lists every row)\n");
+                    if (shown < r.Rows.Count)
+                    {
+                        // A receipt the byte budget already cut is not complete in json either: no pointer to it then.
+                        var note = moreRowsNote ?? (r.Truncated ? "" : "(the json format lists every row)");
+                        long more = (r.Truncated ? r.Total ?? r.Rows.Count : r.Rows.Count) - shown;
+                        sb.Append("… ").Append(more).Append(" more row(s) not shown").Append(note.Length > 0 ? " " + note : "").Append('\n');
+                    }
                     foreach (var e in r.CellErrors) sb.Append("note: error cell ").Append(e).Append('\n');
                     break;
                 }
@@ -104,7 +117,9 @@ namespace Rql.Execution
         {
             long total = r.Total ?? shown;
             sb.Append(prefix);
-            if (r.Truncated) sb.Append(shown).Append(" of ").Append(total).Append(" (truncated; page with skip N | first M, or count)");
+            // A receipt is shortened, never the change: paging a mutation would repeat it (spec §8 receipt).
+            if (r.Truncated && r.Receipt) sb.Append(shown).Append(" of ").Append(total).Append(" receipt rows");
+            else if (r.Truncated) sb.Append(shown).Append(" of ").Append(total).Append(" (truncated; page with skip N | first M, or count)");
             else sb.Append(total).Append(total == 1 ? " result" : " results");
             sb.Append(suffix).Append('\n');
         }
