@@ -74,41 +74,18 @@ namespace Rql.Execution
         public override string ToString() => Ok ? $"{Module} (order {Order})" : $"{Module}: FAILED — {Error}";
     }
 
-    /// <summary>What one module registered on the engine (a diff of the engine's registrations around its Configure).</summary>
+    /// <summary>What one module registered on the engine, recorded by the engine while the module configures.</summary>
     internal sealed class Registrations
     {
-        public IReadOnlyList<string> Sources = Array.Empty<string>();
-        public IReadOnlyList<string> Functions = Array.Empty<string>();
-        public IReadOnlyList<string> Stages = Array.Empty<string>();
-        public IReadOnlyList<string> Guides = Array.Empty<string>();
-        public IReadOnlyList<RqlTypeAdapter> Adapters = Array.Empty<RqlTypeAdapter>();
+        public readonly List<string> Sources = new List<string>();
+        public readonly List<string> Functions = new List<string>();
+        public readonly List<string> Stages = new List<string>();
+        public readonly List<string> Guides = new List<string>();
+        public readonly List<RqlTypeAdapter> Adapters = new List<RqlTypeAdapter>();
 
-        /// <summary>Registrations made since <paramref name="before"/>: new names and names registered again (replaced).</summary>
-        public static Registrations Since(RqlEngine engine, Snapshot before) => new Registrations
+        public static void Note(List<string> list, string name)
         {
-            Sources = engine.Sources.Where(kv => !before.Sources.TryGetValue(kv.Key, out var old) || !ReferenceEquals(old, kv.Value)).Select(kv => kv.Key).ToList(),
-            Functions = engine.Functions.Where(kv => !before.Functions.TryGetValue(kv.Key, out var old) || !ReferenceEquals(old, kv.Value)).Select(kv => kv.Key).ToList(),
-            Stages = engine.Stages.Where(kv => !before.Stages.TryGetValue(kv.Key, out var old) || !ReferenceEquals(old, kv.Value)).Select(kv => kv.Key).ToList(),
-            Guides = engine.Guides.Where(g => !before.Guides.Any(o => o.Key == g.Key && ReferenceEquals(o.Value, g.Value))).Select(g => g.Key).ToList(),
-            Adapters = engine.Adapters.Skip(before.AdapterCount).ToList(),
-        };
-
-        public sealed class Snapshot
-        {
-            public Dictionary<string, SourceRegistration> Sources = null!;
-            public Dictionary<string, Func<object?[], object?>> Functions = null!;
-            public Dictionary<string, StageHandler> Stages = null!;
-            public List<KeyValuePair<string, string>> Guides = null!;
-            public int AdapterCount;
-
-            public static Snapshot Of(RqlEngine e) => new Snapshot
-            {
-                Sources = e.Sources.ToDictionary(kv => kv.Key, kv => kv.Value),
-                Functions = e.Functions.ToDictionary(kv => kv.Key, kv => kv.Value),
-                Stages = e.Stages.ToDictionary(kv => kv.Key, kv => kv.Value),
-                Guides = e.Guides.ToList(),
-                AdapterCount = e.Adapters.Count,
-            };
+            if (!list.Contains(name)) list.Add(name);
         }
     }
 
@@ -149,13 +126,14 @@ namespace Rql.Execution
             }
             foreach (var (module, name, order) in modules.OrderBy(m => m.order).ThenBy(m => m.name, StringComparer.Ordinal))
             {
-                var before = Registrations.Snapshot.Of(engine);
+                var registered = engine.Recording = new Registrations();
                 try
                 {
                     module.Configure(new RqlModuleContext(engine));
-                    reports.Add(new RqlModuleReport(name, order, null, Registrations.Since(engine, before)));
+                    reports.Add(new RqlModuleReport(name, order, null, registered));
                 }
-                catch (Exception ex) { reports.Add(new RqlModuleReport(name, order, (ex.InnerException ?? ex).Message, Registrations.Since(engine, before))); }
+                catch (Exception ex) { reports.Add(new RqlModuleReport(name, order, (ex.InnerException ?? ex).Message, registered)); }
+                finally { engine.Recording = null; }
             }
             return reports;
         }

@@ -21,18 +21,18 @@ and 27 (finding 5, the engine-object refusal advice, is ADR-0011).
 ## Decisions
 
 1. **A key close to a parameter name is that parameter, misspelt.** In by-name binding an unknown key with a suggestion
-   (the §10 rules) counts as a bound key and its miss ranks deeper than a missing member inside a literal. A key with no
-   close parameter keeps ranking as before.
+   (the §10 rules, or close to one word of a camelCase / snake_case parameter name) counts as a bound key, so that
+   overload outranks one that cannot take the literal. A key with no close parameter keeps ranking as before.
 2. **Host example in the rules.** `RulesFor(createCall)` (TS `languageRules`, C++ `language_rules_for`) substitutes the
    host's creation call for the placeholder and drops the "stands for" note; the constant stays the shared default. The
    rules also gain the ADR-0011 / ADR-0012 lines: `$type` for grouping by type, list vectors and vector functions,
    typed literals for value-like assets and owned subobjects.
 3. **Receipt note override.** `AgentFormat.Render(result, format, maxReceiptRows, moreRowsNote)`; `""` omits the note.
 4. **Module reports record registrations.** `RqlModuleReport.Sources`, `Functions`, `Stages`, `Guides`, `Adapters`,
-   computed as the difference of the engine's registrations around each module's `Configure` (direct `Engine` calls
-   included; a name registered again by a later module belongs to that module).
+   recorded by the engine while each module's `Configure` runs (direct `Engine` calls included; a name registered again
+   by a later module is listed by that module too).
 5. **Receipts are never paged.** The byte-budget hint for a receipt says every change was made (dry run: checked); the
-   table header says "N of M receipt rows (the receipt is shortened, not the change)".
+   table header says "N of M receipt rows" (no paging advice).
 
 ## Consequences
 

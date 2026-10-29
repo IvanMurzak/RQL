@@ -116,7 +116,7 @@ namespace Rql.Execution
             long total = r.Total ?? shown;
             sb.Append(prefix);
             // A receipt is shortened, never the change: paging a mutation would repeat it (spec §8 receipt).
-            if (r.Truncated && r.Receipt) sb.Append(shown).Append(" of ").Append(total).Append(" receipt rows (the receipt is shortened, not the change)");
+            if (r.Truncated && r.Receipt) sb.Append(shown).Append(" of ").Append(total).Append(" receipt rows");
             else if (r.Truncated) sb.Append(shown).Append(" of ").Append(total).Append(" (truncated; page with skip N | first M, or count)");
             else sb.Append(total).Append(total == 1 ? " result" : " results");
             sb.Append(suffix).Append('\n');

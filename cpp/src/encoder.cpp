@@ -164,7 +164,7 @@ Json Encoder::encode(const Value& v, int depth) {
     return Json();
 }
 
-QueryResult Encoder::rows(const std::vector<std::string>& columns, const std::vector<std::vector<Value>>& rows, bool receipt) {
+QueryResult Encoder::rows(const std::vector<std::string>& columns, const std::vector<std::vector<Value>>& rows, const char* receipt) {
     QueryResult r;
     r.ok = true;
     r.kind = ResultKind::Rows;
@@ -186,7 +186,8 @@ QueryResult Encoder::rows(const std::vector<std::string>& columns, const std::ve
                 "output limited to " + std::to_string(x_.max_output_bytes) + " bytes; " + std::to_string(r.rows->size()) + " of " +
                     std::to_string(rows.size()) + " rows returned",
                 receipt ? "the receipt is shortened, not the change: all " + std::to_string(rows.size()) +
-                              (x_.options.dry_run ? " planned changes were checked (dry run)" : " changes were made") + "; do not repeat it"
+                              (x_.options.dry_run ? std::string(" planned ") + receipt + " were checked (dry run)" : std::string(" ") + receipt + " were made") +
+                              "; do not repeat it"
                         : std::string("select fewer/smaller columns or page with skip/first")));
             break;
         }

@@ -84,7 +84,7 @@ namespace Rql.Tests
             Assert.Contains("the receipt is shortened, not the change: all 200 changes were made", w.Hint);
             Assert.DoesNotContain("page", w.Hint);
             var table = AgentFormat.Render(r, OutputFormat.Table, 0);
-            Assert.Contains("receipt rows (the receipt is shortened, not the change)", table);
+            Assert.Contains("receipt rows", table);
             Assert.DoesNotContain("page with", table);
             Assert.Equal(200, things.Count(t => t.Name.EndsWith("suffix-to-fill-the-receipt")));
             var dry = e.Execute("things | set Name = Name + \"-b-fairly-long-suffix-to-fill-the-receipt\"", new Rql.Budgets { MaxOutputBytes = 2000 },

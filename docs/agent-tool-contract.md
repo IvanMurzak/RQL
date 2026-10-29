@@ -25,8 +25,8 @@ recommended for MCP integrations.
   prints the signature once and 50 short result cells instead of 300 rows of `$ref|signature|result`. Hosts that need
   every row pass a larger limit (`AgentFormat.Render(result, format, maxReceiptRows)`, 0 = all) or use json. Hosts
   whose tools offer no json format replace the note after the count (`AgentFormat.Render(result, format,
-  maxReceiptRows, moreRowsNote)`; `""` leaves it out). A receipt the byte budget shortens says so ("N of M receipt rows
-  (the receipt is shortened, not the change)") and never suggests paging.
+  maxReceiptRows, moreRowsNote)`; `""` leaves it out). A receipt the byte budget shortens says "N of M receipt rows" and its
+  hint says every change was made; it never suggests paging.
   **Shared language rules**: hosts append `RqlLanguageGuide.Rules` (TS `LANGUAGE_RULES`, C++ `rql::language_rules()`)
   to their guide; `RqlLanguageGuide.RulesFor("editor.CreateGameObject")` (TS `languageRules(createCall)`, C++
   `rql::language_rules_for(create_call)`) puts the host's own creation call into the examples instead of the

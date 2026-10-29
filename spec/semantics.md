@@ -531,8 +531,8 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   parameter, a key whose name is close to a parameter's counted as naming it: close by the §10 suggestion rules, or
   close to one word of a camelCase / snake_case parameter name, `klass` → `className`), then the one whose
   failure is deepest inside a value (a misspelt member inside an object literal is closer than a literal the parameter
-  type cannot take at all, and a misspelt parameter name closer still, so `call godot.CreateNode({klass: "Mesh"})`
-  reports "no parameter 'klass' (did you mean 'className'?)" rather than an options overload's "no member 'klass'");
+  type cannot take at all), so `call godot.CreateNode({klass: "Mesh"})` reports "no parameter 'klass' (did you mean
+  'className'?)" rather than an options overload's "no member 'klass'";
   an overload that passed the check and failed only in
   the real coercion is the closest. When several overloads come equally close, each one's reason is listed after its
   signature (`no overload fits: Sig1: …; Sig2: …`). Binding by name reports `no parameter 'k'` (with the closest name

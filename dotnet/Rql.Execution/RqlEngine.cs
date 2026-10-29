@@ -237,6 +237,9 @@ namespace Rql.Execution
 
         private readonly List<RqlModuleReport> _modules = new List<RqlModuleReport>();
 
+        /// <summary>What the module being configured registers (null outside module configuration): its report lists it.</summary>
+        internal Registrations? Recording { get; set; }
+
         /// <summary>Every module configured on this engine so far, with failures.</summary>
         public IReadOnlyList<RqlModuleReport> Modules => _modules;
 
@@ -249,6 +252,7 @@ namespace Rql.Execution
             if (adapter == null) throw new ArgumentNullException(nameof(adapter));
             if (ReferenceEquals(Types, TypeModel.Shared)) Types = new TypeModel(Types.Mode);
             Types.AddAdapter(adapter);
+            Recording?.Adapters.Add(adapter);
             InvalidateKnownMembers();
             return this;
         }
@@ -331,6 +335,7 @@ namespace Rql.Execution
         {
             ValidateName(name, allowDots: true);
             _sources[name] = new SourceRegistration(name, getter, description, declaredType);
+            if (Recording != null) Registrations.Note(Recording.Sources, name);
             lock (_sourceTypes) _sourceTypes.Remove(name);
             InvalidateKnownMembers();
             return this;
@@ -444,6 +449,7 @@ namespace Rql.Execution
             ValidateName(name, allowDots: true);
             if (name.IndexOf('.') < 0) throw new ArgumentException("extension functions must be namespaced (ns.name)", nameof(name));
             _functions[name] = fn;
+            if (Recording != null) Registrations.Note(Recording.Functions, name);
             if (description != null) _functionDescriptions[name] = description;
             else _functionDescriptions.Remove(name);
             return this;
@@ -463,6 +469,7 @@ namespace Rql.Execution
             if (string.IsNullOrWhiteSpace(topic)) throw new ArgumentException("topic required", nameof(topic));
             _guides.RemoveAll(g => string.Equals(g.Key, topic, StringComparison.Ordinal));
             _guides.Add(new KeyValuePair<string, string>(topic, markdown ?? ""));
+            if (Recording != null) Registrations.Note(Recording.Guides, topic);
             return this;
         }
 
@@ -474,6 +481,7 @@ namespace Rql.Execution
             ValidateName(name, allowDots: true);
             if (name.IndexOf('.') < 0) throw new ArgumentException("extension stages must be namespaced (ns.name)", nameof(name));
             _stages[name] = handler;
+            if (Recording != null) Registrations.Note(Recording.Stages, name);
             return this;
         }
 

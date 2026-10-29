@@ -96,9 +96,7 @@ std::vector<std::string> name_words(const std::string& name) {
                 std::string w = name.substr(start, i - start);
                 size_t b = w.find_first_not_of('_'), e = w.find_last_not_of('_');
                 w = b == std::string::npos ? std::string() : w.substr(b, e - b + 1);
-                for (auto& c : w)
-                    if (ascii_upper_char(c)) c = static_cast<char>(c + 32);
-                words.push_back(w);
+                words.push_back(ascii_lower(w));
             }
             start = i;
         }
@@ -110,9 +108,7 @@ std::vector<std::string> name_words(const std::string& name) {
 std::string closest_parameter(const std::string& key, const std::vector<std::string>& names) {
     std::vector<std::string> close = suggest_closest(key, names, 1);
     if (!close.empty()) return close[0];
-    std::string lower = key;
-    for (auto& c : lower)
-        if (ascii_upper_char(c)) c = static_cast<char>(c + 32);
+    const std::string lower = ascii_lower(key);
     const size_t limit = std::max<size_t>(1, key.size() / 3);
     std::string best;
     size_t best_d = static_cast<size_t>(-1);

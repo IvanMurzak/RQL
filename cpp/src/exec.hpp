@@ -355,7 +355,7 @@ public:
     Json summary(const Value& obj);
     /// `receipt`: a set / call receipt (spec §8): when the byte budget shortens it, the hint says that every change was made
     /// (or, on a dry run, checked) instead of suggesting paging, which would repeat the mutation.
-    QueryResult rows(const std::vector<std::string>& columns, const std::vector<std::vector<Value>>& rows, bool receipt = false);
+    QueryResult rows(const std::vector<std::string>& columns, const std::vector<std::vector<Value>>& rows, const char* receipt = nullptr);
     QueryResult items(const std::vector<Value>& items);
     static Json number(double d, bool single);
 

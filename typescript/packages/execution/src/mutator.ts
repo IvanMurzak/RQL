@@ -7,10 +7,8 @@ import { errorMessage, type Exec } from './exec.js';
 import type { MutationRecord, TextCoercion } from './engine.js';
 import type { Item } from './pipeline.js';
 import { adapterName, firstAnswer, type LiteralKind } from './adapters.js';
-import { closest, closestParameter, memberHint, nestedMembers } from './suggest.js';
+import { closestParameter, memberHint, nestedMembers } from './suggest.js';
 
-/** Failure depth of a misspelt parameter name: deeper than a member missing inside a literal (depth 1). */
-const NAMED_TYPO_DEPTH = 2;
 import {
   EnumType,
   EnumValue,
@@ -484,7 +482,7 @@ export class Mutator {
     // (spec §8 receipt); a write the host refused or clamped back to the old value stays listed.
     const changed = writes.filter((w) => !(equal(x, w.old, w.planned) === true && equal(x, w.old, w.new) === true));
     const rows = changed.map((w) => [w.ref, w.label, w.old, w.new]);
-    const r = this.enc.rows(['$ref', 'member', 'old', 'new'], rows, true);
+    const r = this.enc.rows(['$ref', 'member', 'old', 'new'], rows, 'changes');
     if (x.options.dryRun) r.dryRun = true;
     if (changed.length < writes.length) r.unchanged = writes.length - changed.length;
     return r;
@@ -711,7 +709,7 @@ export class Mutator {
       rows.push([x.engine.refOf(refOf), p.method.signature(x.types), result]);
     }
     this.runHook('committed', callRecords);
-    const r = this.enc.rows(['$ref', 'method', 'result'], rows, true);
+    const r = this.enc.rows(['$ref', 'method', 'result'], rows, 'calls');
     if (x.options.dryRun) r.dryRun = true;
     return r;
   }
@@ -871,7 +869,7 @@ function bindNames(m: MethodAccessor, literal: ObjectValue, misses: Miss[]): num
       method: m,
       arityFits: true,
       matched: known + (close !== undefined ? 1 : 0),
-      depth: close !== undefined ? NAMED_TYPO_DEPTH : 0,
+      depth: 0,
       why: `no parameter '${unknown}'` + (close !== undefined ? ` (did you mean '${close}'?)` : '') + (ps.length > 0 ? `; parameters: ${all}` : '; it takes no parameters'),
     });
     return undefined;
