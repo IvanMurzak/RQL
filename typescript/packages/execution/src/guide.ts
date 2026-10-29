@@ -20,12 +20,45 @@ export const LANGUAGE_RULES =
 const EXAMPLE_CALL = 'editor.CreateObject';
 const EXAMPLE_NOTE = " (editor.CreateObject stands for the host's source and creation method)";
 
+const GRID_EXAMPLE = 'editor.CreateObject("Cube", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})';
+const PER_ENTRY_EXAMPLE = '[["A", 1], ["B", 2]] | call editor.CreateObject($[0], $[1])';
+const NAMED_EXAMPLE = 'editor.CreateObject({name: "Tile" + $, position: [$ * 2, 0, 0]})';
+
 /**
- * LANGUAGE_RULES with the host's own creation call in the examples (e.g. 'editor.CreateGameObject', 'godot.CreateNode')
- * instead of the placeholder editor.CreateObject, whose "stands for" note is then left out. No call (or a blank one): LANGUAGE_RULES.
+ * The host's examples for languageRules, for hosts whose creation call does not take (name, {properties}): each one left
+ * out (or blank) keeps the default example, with createCall in place of the placeholder editor.CreateObject.
  */
-export function languageRules(createCall?: string): string {
-  const call = createCall?.trim() ?? '';
-  if (call === '') return LANGUAGE_RULES;
-  return LANGUAGE_RULES.replaceAll(EXAMPLE_NOTE, '').replaceAll(EXAMPLE_CALL, call);
+export interface LanguageRuleExamples {
+  /** The creation call, e.g. 'editor.CreateGameObject' (none: editor.CreateObject). */
+  readonly createCall?: string;
+  /** Replaces the bulk-create call after `range(0, 300) | call ` (it builds a 15-wide grid from $). */
+  readonly grid?: string;
+  /** Replaces the list-literal example in full (`[…] | call ….($[0], $[1])`, one call per entry). */
+  readonly perEntry?: string;
+  /** Replaces the arguments-by-name call after `range(0, 10) | call `. */
+  readonly named?: string;
+}
+
+/**
+ * LANGUAGE_RULES with the host's own creation call (e.g. 'editor.CreateGameObject', 'godot.CreateNode') or examples
+ * (LanguageRuleExamples) instead of the placeholder editor.CreateObject, whose "stands for" note is left out once no example
+ * keeps the placeholder.
+ * Nothing given (or only blanks): LANGUAGE_RULES. Every text is trimmed.
+ */
+export function languageRules(createCall?: string | LanguageRuleExamples): string {
+  const examples: LanguageRuleExamples = typeof createCall === 'object' && createCall !== null ? createCall : { createCall: createCall ?? undefined };
+  const given = (s?: string): string | undefined => s?.trim() || undefined;
+  const call = given(examples.createCall);
+  const grid = given(examples.grid);
+  const perEntry = given(examples.perEntry);
+  const named = given(examples.named);
+  if (call === undefined && grid === undefined && perEntry === undefined && named === undefined) return LANGUAGE_RULES;
+  // An example the host leaves out keeps the default, with its creation call.
+  const example = (g: string | undefined, fallback: string): string => g ?? (call === undefined ? fallback : fallback.replaceAll(EXAMPLE_CALL, () => call));
+  // The note explains the placeholder: it goes once no example keeps it.
+  const placeholderLeft = call === undefined && (grid === undefined || perEntry === undefined || named === undefined);
+  return (placeholderLeft ? LANGUAGE_RULES : LANGUAGE_RULES.replace(EXAMPLE_NOTE, ''))
+    .replace(GRID_EXAMPLE, () => example(grid, GRID_EXAMPLE))
+    .replace(PER_ENTRY_EXAMPLE, () => example(perEntry, PER_ENTRY_EXAMPLE))
+    .replace(NAMED_EXAMPLE, () => example(named, NAMED_EXAMPLE));
 }

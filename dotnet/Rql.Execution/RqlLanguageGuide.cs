@@ -1,3 +1,5 @@
+using System;
+
 namespace Rql.Execution
 {
     /// <summary>
@@ -23,13 +25,59 @@ namespace Rql.Execution
 
         private const string ExampleCall = "editor.CreateObject";
         private const string ExampleNote = " (editor.CreateObject stands for the host's source and creation method)";
+        private const string GridExample = "editor.CreateObject(\"Cube\", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})";
+        private const string PerEntryExample = "[[\"A\", 1], [\"B\", 2]] | call editor.CreateObject($[0], $[1])";
+        private const string NamedExample = "editor.CreateObject({name: \"Tile\" + $, position: [$ * 2, 0, 0]})";
 
         /// <summary>
         /// <see cref="Rules"/> with the host's own creation call in the examples (e.g. <c>"editor.CreateGameObject"</c>,
         /// <c>"godot.CreateNode"</c>) instead of the placeholder <c>editor.CreateObject</c>, whose "stands for" note is then left
         /// out. Null, empty or blank returns <see cref="Rules"/> unchanged.
         /// </summary>
-        public static string RulesFor(string? createCall) =>
-            string.IsNullOrWhiteSpace(createCall) ? Rules : Rules.Replace(ExampleNote, "").Replace(ExampleCall, createCall!.Trim());
+        public static string RulesFor(string? createCall) => RulesWith(new RqlRuleExamples { CreateCall = createCall });
+
+        /// <summary>
+        /// <see cref="Rules"/> with the host's examples (<see cref="RqlRuleExamples"/>), for hosts whose creation call does not
+        /// take <c>(name, {properties})</c>; the "stands for" note is left out once no example keeps the placeholder. Nothing given (null,
+        /// empty or blank): <see cref="Rules"/> unchanged. Every text is trimmed.
+        /// </summary>
+        public static string RulesWith(RqlRuleExamples? examples)
+        {
+            string? Given(string? s) => string.IsNullOrWhiteSpace(s) ? null : s!.Trim();
+            var call = Given(examples?.CreateCall);
+            var grid = Given(examples?.Grid);
+            var perEntry = Given(examples?.PerEntry);
+            var named = Given(examples?.Named);
+            if (call == null && grid == null && perEntry == null && named == null) return Rules;
+            // An example the host leaves out keeps the default, with its creation call.
+            // The note explains the placeholder: it goes once no example keeps it.
+            bool placeholderLeft = call == null && (grid == null || perEntry == null || named == null);
+            var text = placeholderLeft ? Rules : ReplaceOnce(Rules, ExampleNote, "");
+            foreach (var (fallback, given) in new[] { (GridExample, grid), (PerEntryExample, perEntry), (NamedExample, named) })
+                text = ReplaceOnce(text, fallback, given ?? (call == null ? fallback : fallback.Replace(ExampleCall, call)));
+            return text;
+        }
+
+        private static string ReplaceOnce(string text, string from, string to)
+        {
+            int at = text.IndexOf(from, StringComparison.Ordinal);
+            return at < 0 ? text : text.Substring(0, at) + to + text.Substring(at + from.Length);
+        }
+    }
+
+    /// <summary>
+    /// The host's examples for <see cref="RqlLanguageGuide.RulesWith"/>: each null or blank one keeps the default example,
+    /// with <see cref="CreateCall"/> in place of the placeholder <c>editor.CreateObject</c>.
+    /// </summary>
+    public sealed class RqlRuleExamples
+    {
+        /// <summary>The creation call, e.g. <c>editor.CreateGameObject</c> (null: <c>editor.CreateObject</c>).</summary>
+        public string? CreateCall { get; set; }
+        /// <summary>Replaces the bulk-create call after <c>range(0, 300) | call </c> (it builds a 15-wide grid from <c>$</c>).</summary>
+        public string? Grid { get; set; }
+        /// <summary>Replaces the list-literal example in full (<c>[…] | call ….($[0], $[1])</c>, one call per entry).</summary>
+        public string? PerEntry { get; set; }
+        /// <summary>Replaces the arguments-by-name call after <c>range(0, 10) | call </c>.</summary>
+        public string? Named { get; set; }
     }
 }

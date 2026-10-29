@@ -24,7 +24,10 @@ and 27 (finding 5, the engine-object refusal advice, is ADR-0011).
    (the §10 rules, or close to one word of a camelCase / snake_case parameter name) counts as a bound key, so that
    overload outranks one that cannot take the literal. A key with no close parameter keeps ranking as before.
 2. **Host example in the rules.** `RulesFor(createCall)` (TS `languageRules`, C++ `language_rules_for`) substitutes the
-   host's creation call for the placeholder and drops the "stands for" note; the constant stays the shared default. The
+   host's creation call for the placeholder and drops the "stands for" note; the constant stays the shared default.
+   Hosts whose creation call is not `(name, {properties})` (Unreal `editor.SpawnActor(ClassName, Label, Location, …)`)
+   give the examples themselves: `RulesWith(RqlRuleExamples)` (TS `languageRules({createCall, grid, perEntry, named})`,
+   C++ `language_rules_with(RuleExamples)`); an example left out keeps the default with the host's call. The
    rules also gain the ADR-0011 / ADR-0012 lines: `$type` for grouping by type, list vectors and vector functions,
    typed literals for value-like assets and owned subobjects.
 3. **Receipt note override.** `AgentFormat.Render(result, format, maxReceiptRows, moreRowsNote)`; `""` omits the note.

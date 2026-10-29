@@ -30,7 +30,10 @@ recommended for MCP integrations.
   **Shared language rules**: hosts append `RqlLanguageGuide.Rules` (TS `LANGUAGE_RULES`, C++ `rql::language_rules()`)
   to their guide; `RqlLanguageGuide.RulesFor("editor.CreateGameObject")` (TS `languageRules(createCall)`, C++
   `rql::language_rules_for(create_call)`) puts the host's own creation call into the examples instead of the
-  placeholder `editor.CreateObject`.
+  placeholder `editor.CreateObject`. Hosts whose creation call does not take `(name, {properties})` (Unreal's
+  `editor.SpawnActor(ClassName, Label, Location, …)`) supply the examples themselves: `RqlLanguageGuide.RulesWith(new
+  RqlRuleExamples { CreateCall, Grid, PerEntry, Named })` (TS `languageRules({createCall, grid, perEntry, named})`, C++
+  `rql::language_rules_with(rql::RuleExamples{…})`); each example left out keeps the default with the host's call.
 * **json**: the conformance `QueryResult` without stats.
 
 Experiment E5 compared both (see `RESULTS.md`).
