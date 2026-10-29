@@ -26067,6 +26067,707 @@
         ],
         "total": 2
       }
+    },
+    {
+      "name": "trig-functions",
+      "rql": "g | select s = sin(pi() / 2), c = cos(pi()), z = sin(pi()), w = cos(3 * pi() / 2), t = tan(pi() / 4), a = asin(1), b = acos(0.5), n = atan(1), q = atan2(-1, -1), p = pi(), d = deg(pi() / 3), r = rad(45), k = sin(1), m = cos(2.5)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "s",
+                "expr": {
+                  "call": "sin",
+                  "args": [
+                    {
+                      "op": "/",
+                      "args": [
+                        {
+                          "call": "pi",
+                          "args": []
+                        },
+                        {
+                          "lit": 2
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "c",
+                "expr": {
+                  "call": "cos",
+                  "args": [
+                    {
+                      "call": "pi",
+                      "args": []
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "z",
+                "expr": {
+                  "call": "sin",
+                  "args": [
+                    {
+                      "call": "pi",
+                      "args": []
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "w",
+                "expr": {
+                  "call": "cos",
+                  "args": [
+                    {
+                      "op": "/",
+                      "args": [
+                        {
+                          "op": "*",
+                          "args": [
+                            {
+                              "lit": 3
+                            },
+                            {
+                              "call": "pi",
+                              "args": []
+                            }
+                          ]
+                        },
+                        {
+                          "lit": 2
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "t",
+                "expr": {
+                  "call": "tan",
+                  "args": [
+                    {
+                      "op": "/",
+                      "args": [
+                        {
+                          "call": "pi",
+                          "args": []
+                        },
+                        {
+                          "lit": 4
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "a",
+                "expr": {
+                  "call": "asin",
+                  "args": [
+                    {
+                      "lit": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "call": "acos",
+                  "args": [
+                    {
+                      "lit": 0.5
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "n",
+                "expr": {
+                  "call": "atan",
+                  "args": [
+                    {
+                      "lit": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "q",
+                "expr": {
+                  "call": "atan2",
+                  "args": [
+                    {
+                      "lit": -1
+                    },
+                    {
+                      "lit": -1
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "p",
+                "expr": {
+                  "call": "pi",
+                  "args": []
+                }
+              },
+              {
+                "name": "d",
+                "expr": {
+                  "call": "deg",
+                  "args": [
+                    {
+                      "op": "/",
+                      "args": [
+                        {
+                          "call": "pi",
+                          "args": []
+                        },
+                        {
+                          "lit": 3
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "r",
+                "expr": {
+                  "call": "rad",
+                  "args": [
+                    {
+                      "lit": 45
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "k",
+                "expr": {
+                  "call": "sin",
+                  "args": [
+                    {
+                      "lit": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "m",
+                "expr": {
+                  "call": "cos",
+                  "args": [
+                    {
+                      "lit": 2.5
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "s",
+          "c",
+          "z",
+          "w",
+          "t",
+          "a",
+          "b",
+          "n",
+          "q",
+          "p",
+          "d",
+          "r",
+          "k",
+          "m"
+        ],
+        "rows": [
+          [
+            1,
+            -1,
+            0,
+            0,
+            1,
+            1.570796326795,
+            1.047197551197,
+            0.785398163397,
+            -2.356194490192,
+            3.141592653589793,
+            60,
+            0.7853981633974483,
+            0.841470984808,
+            -0.801143615547
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "trig-null-and-type-mismatch",
+      "rql": "g | select a = sin(null), b = atan2(1, Nothing), c = rad(null), d = cos(\"x\"), e = atan2(\"y\", 1)",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "a",
+                "expr": {
+                  "call": "sin",
+                  "args": [
+                    {
+                      "lit": null
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "b",
+                "expr": {
+                  "call": "atan2",
+                  "args": [
+                    {
+                      "lit": 1
+                    },
+                    {
+                      "path": [
+                        "Nothing"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "c",
+                "expr": {
+                  "call": "rad",
+                  "args": [
+                    {
+                      "lit": null
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "d",
+                "expr": {
+                  "call": "cos",
+                  "args": [
+                    {
+                      "lit": "x"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "e",
+                "expr": {
+                  "call": "atan2",
+                  "args": [
+                    {
+                      "lit": "y"
+                    },
+                    {
+                      "lit": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e"
+        ],
+        "rows": [
+          [
+            null,
+            null,
+            null,
+            {
+              "$error": "type-mismatch"
+            },
+            {
+              "$error": "type-mismatch"
+            }
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "mut-set-count",
+      "rql": "g.Nodes | where Name != \"root-a\" | set Value = $count * 10 + $index",
+      "options": {
+        "allowMutation": true
+      },
+      "then": "g.Nodes | select Name Value",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "where",
+            "pred": {
+              "op": "!=",
+              "args": [
+                {
+                  "path": [
+                    "Name"
+                  ]
+                },
+                {
+                  "lit": "root-a"
+                }
+              ]
+            }
+          },
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "op": "+",
+                  "args": [
+                    {
+                      "op": "*",
+                      "args": [
+                        {
+                          "path": [
+                            {
+                              "meta": "count"
+                            }
+                          ]
+                        },
+                        {
+                          "lit": 10
+                        }
+                      ]
+                    },
+                    {
+                      "path": [
+                        {
+                          "meta": "index"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#5",
+            "Value",
+            7,
+            20
+          ],
+          [
+            "Node#8",
+            "Value",
+            3,
+            21
+          ]
+        ],
+        "total": 2
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Name",
+                "expr": {
+                  "path": [
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Name",
+          "Value"
+        ],
+        "rows": [
+          [
+            "root-a",
+            10
+          ],
+          [
+            "root-b",
+            20
+          ],
+          [
+            "lonely",
+            21
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "mut-set-count-circle",
+      "rql": "g.Nodes | set Value = round(4 * cos(2 * pi() * $index / $count), 6)",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "set",
+            "assign": [
+              {
+                "target": {
+                  "path": [
+                    "Value"
+                  ]
+                },
+                "value": {
+                  "call": "round",
+                  "args": [
+                    {
+                      "op": "*",
+                      "args": [
+                        {
+                          "lit": 4
+                        },
+                        {
+                          "call": "cos",
+                          "args": [
+                            {
+                              "op": "/",
+                              "args": [
+                                {
+                                  "op": "*",
+                                  "args": [
+                                    {
+                                      "op": "*",
+                                      "args": [
+                                        {
+                                          "lit": 2
+                                        },
+                                        {
+                                          "call": "pi",
+                                          "args": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "path": [
+                                        {
+                                          "meta": "index"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "path": [
+                                    {
+                                      "meta": "count"
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "lit": 6
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "member",
+          "old",
+          "new"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "Value",
+            10,
+            4
+          ],
+          [
+            "Node#5",
+            "Value",
+            7,
+            -2
+          ],
+          [
+            "Node#8",
+            "Value",
+            3,
+            -2
+          ]
+        ],
+        "total": 3,
+        "dryRun": true
+      }
+    },
+    {
+      "name": "count-outside-set-is-missing",
+      "rql": "g.Nodes | select c = $count, i = $index | first 2",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "c",
+                "expr": {
+                  "path": [
+                    {
+                      "meta": "count"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "i",
+                "expr": {
+                  "path": [
+                    {
+                      "meta": "index"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "first",
+            "n": 2
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "c",
+          "i"
+        ],
+        "rows": [
+          [
+            null,
+            0
+          ],
+          [
+            null,
+            1
+          ]
+        ],
+        "total": 2
+      }
     }
   ]
 }

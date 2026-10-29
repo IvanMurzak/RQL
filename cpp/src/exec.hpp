@@ -180,6 +180,8 @@ public:
     PathPtr current_path;
     int current_depth = -1;
     int64_t index = 0;
+    /// `$count` in a set value / call argument: the number of items entering the stage; -1 elsewhere (spec §3, §8).
+    int64_t count = -1;
     /// Inside has(): an absent map key reads as missing instead of null (spec §3, §4.3).
     int key_probe = 0;
     /// Struct nesting while building a distinct / group-by key (spec §5).

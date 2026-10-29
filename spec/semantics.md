@@ -123,7 +123,9 @@ If the source value is a `list` its elements become the item stream; a `map` yie
   `$ref` — stable reference string (§7); `$path` — the navigation path by which the item was
   reached (§3.1); `$index` — zero-based position of the item in the stream entering the current
   stage (in a `set` value or `call` argument: the target's position in the stream entering the `set` / `call` stage,
-  §8); `$depth` — inside/after a `recurse` stage, the item's depth relative to the item the
+  §8); `$count` — in a `set` value or `call` argument only, the number of items in the stream entering the `set` /
+  `call` stage (skipped null and destroyed items included, so `$index` runs from 0 to `$count - 1`), otherwise
+  `missing`; `$depth` — inside/after a `recurse` stage, the item's depth relative to the item the
   recursion started from (0 = start item), otherwise `missing`. Unknown meta → `missing` +
   warning `unknown-meta`. On projected rows a column literally named `$name` (from
   `select $path`) shadows the meta member, so `select $path Name | where $path contains "x"` works.
@@ -224,6 +226,9 @@ through the struct rules, `set Position = [x, 0, z] * k` through the member type
 | `lower(s)`, `upper(s)` | invariant case conversion. |
 | `abs(n)`, `round(n[, digits])`, `floor(n)`, `ceil(n)` | numeric. |
 | `sqrt(n)`, `pow(base, exponent)` | numeric (IEEE: `sqrt` of a negative number is NaN). |
+| `sin(x)`, `cos(x)`, `tan(x)`, `asin(x)`, `acos(x)`, `atan(x)`, `atan2(y, x)` | trigonometry in **radians**. The result is rounded to 12 decimal places, half away from zero (`round(r, 12)`), and a zero result is `0`, never `-0`, so every runtime returns the same digits whatever its math library, and `sin(pi())` is `0` (IEEE: `asin(2)` is NaN). `atan2(y, x)` is the angle of the point `(x, y)`, from -π to π. |
+| `pi()` | π as a double (3.141592653589793), not rounded. |
+| `deg(x)`, `rad(x)` | radians to degrees (`x × 180 / π`, rounded like the trigonometric functions: `deg(pi() / 3)` is `60`) and degrees to radians (`x × π / 180`, multiplied first, not rounded: `rad(180)` is `pi()`). |
 | `min(a, b, ...)`, `max(a, b, ...)` | the smallest / largest of two or more numbers (the `min` / `max` *stages* and *methods* aggregate a stream or a collection instead; with one argument the call is an `arity` error). |
 | `if(cond, then, else)` | `then` when `cond` is `true` as a predicate (§1.2), otherwise (`false`, `null`, unknown, an error value) `else`; any other `cond` value fails the query (§1.2). **Lazy**: only the taken branch is evaluated, so it can guard an error (`if(Count > 0, Total / Count, 0)`). The text form `cond ? then : else` (lowest precedence, right-associative, §11) is the same function. |
 | `ref(s, ...)` | root scope only: resolve object references. |
@@ -541,7 +546,9 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
 * **Scope of values and arguments**: a `set` value and a `call` argument are evaluated per target with `$` = the
   target, and `$index`, `$path` and `$depth` are the target's as it entered the stage: `$index` is its position in the
   stream entering `set` / `call` (null and destroyed items, which are skipped, keep their positions), so
-  `nodes | where class == "RigidBody3D" | set Position.X = $index * 2` spreads the matches 0, 2, 4, ….
+  `nodes | where class == "RigidBody3D" | set Position.X = $index * 2` spreads the matches 0, 2, 4, …. `$count` is the
+  number of items in that stream, so `selection | set position = [r * cos(2 * pi() * $index / $count), y, r *
+  sin(2 * pi() * $index / $count)]` lays the selection out on a circle (§3).
 * **Source-qualified call** `call q.m(args)`: `q` is a source expression (§2: a registered source, `ref(…)` or a host
   function, each with optional navigation, such as `editor`, `world.Scenes[0]` or
   `unreal.asset("/Game/BP").EventGraph`), evaluated **once**, after the mutation

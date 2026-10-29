@@ -73,6 +73,7 @@ namespace Rql.Execution
                 list.Add(new Target(it, index));
                 if (list.Count > _x.MaxMutationTargets) throw LimitExceeded(rest, list.Count, op);
             }
+            _x.Count = index + 1; // $count: the stage's input, skipped items included, so $index runs 0 … $count - 1
             return list;
         }
 

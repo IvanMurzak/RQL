@@ -15,6 +15,7 @@ type Truth = boolean | undefined;
 
 export const CORE_FUNCTIONS = [
   'has', 'is-null', 'len', 'lower', 'upper', 'abs', 'round', 'floor', 'ceil', 'sqrt', 'pow', 'min', 'max', 'coalesce', 'if', 'ref',
+  'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'pi', 'deg', 'rad',
   'append', 'insert', 'remove-at', 'without', 'range',
   'replace', 'replace-regex', 'substring', 'split', 'trim', 'pad',
   'contains', 'starts-with', 'ends-with', 'matches',
@@ -176,11 +177,14 @@ export class Compiler {
       case 'index':
         if (!ofCurrentItem) return () => MISSING;
         return (x) => x.index;
+      case 'count':
+        if (!ofCurrentItem) return () => MISSING;
+        return (x) => (x.count >= 0 ? x.count : MISSING);
       case 'depth':
         if (!ofCurrentItem) return () => MISSING;
         return (x) => (x.currentDepth >= 0 ? x.currentDepth : MISSING);
       default:
-        this.x.warn('unknown-meta', `unknown meta member '$${name}'`, 'meta members: $type $ref $path $index $depth');
+        this.x.warn('unknown-meta', `unknown meta member '$${name}'`, 'meta members: $type $ref $path $index $count $depth');
         return () => MISSING;
     }
   }
@@ -383,6 +387,44 @@ export class Compiler {
       case 'dot':
       case 'lerp':
         return this.compileVectorFunction(c, name, c.args, 0);
+      case 'sin':
+      case 'cos':
+      case 'tan':
+      case 'asin':
+      case 'acos':
+      case 'atan': {
+        this.arity(c, 1, 1);
+        const a = this.compile(c.args[0]!);
+        const f = { sin: Math.sin, cos: Math.cos, tan: Math.tan, asin: Math.asin, acos: Math.acos, atan: Math.atan }[name];
+        return (x) => num(a(x), (v) => trig(f(v)));
+      }
+      case 'atan2': {
+        this.arity(c, 2, 2);
+        const y = this.compile(c.args[0]!);
+        const xx = this.compile(c.args[1]!);
+        return (x) => {
+          const vy = y(x);
+          if (vy === null || isAbsent(vy)) return vy;
+          const vx = xx(x);
+          if (vx === null || isAbsent(vx)) return vx;
+          const dy = toNumber(vy);
+          const dx = toNumber(vx);
+          if (dy === undefined || dx === undefined) return new ErrorValue('type-mismatch', `atan2() expects numbers, got ${describeValue(dy === undefined ? vy : vx)}`);
+          return trig(Math.atan2(dy, dx));
+        };
+      }
+      case 'pi':
+        this.arity(c, 0, 0);
+        return () => Math.PI;
+      case 'deg':
+      case 'rad': {
+        this.arity(c, 1, 1);
+        const a = this.compile(c.args[0]!);
+        // A fixed order (multiply, then divide), so every runtime returns the same digits; degrees are rounded like trig
+        // results (60, not 59.99999999999999), radians are not (rad(180) is pi()).
+        const f = name === 'deg' ? (v: number) => trig((v * 180) / Math.PI) : (v: number) => (v * Math.PI) / 180;
+        return (x) => num(a(x), f);
+      }
       case 'abs':
       case 'floor':
       case 'ceil':
@@ -1542,6 +1584,12 @@ function expandReplacement(m: RegExpMatchArray, repl: string): string {
     out += ch;
   }
   return out;
+}
+
+/** Trigonometric results are rounded to 12 decimal places (spec §4.3), so runtimes whose math libraries differ in the last
+ * bit return the same digits (and sin(pi()) is 0, never -0). */
+function trig(d: number): number {
+  return roundAwayFromZero(d, 12) || 0; // -0 → 0
 }
 
 function num(v: unknown, f: (d: number) => number): unknown {

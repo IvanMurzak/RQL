@@ -133,6 +133,7 @@ std::vector<Target> targets(Exec& x, Stream& stream, const std::string& op, cons
         list.push_back({it, index});
         if (static_cast<int64_t>(list.size()) > x.max_mutation_targets) limit_exceeded(x, stream, static_cast<int64_t>(list.size()), op);
     }
+    x.count = index + 1;  // $count: the stage's input, skipped items included, so $index runs 0 ... $count - 1
     return list;
 }
 

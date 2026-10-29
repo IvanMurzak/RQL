@@ -23,6 +23,7 @@ namespace Rql.Execution
         public static readonly string[] CoreFunctions =
         {
             "has", "is-null", "len", "lower", "upper", "abs", "round", "floor", "ceil", "sqrt", "pow", "min", "max", "coalesce", "if", "ref",
+            "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "pi", "deg", "rad",
             "append", "insert", "remove-at", "without", "range",
             "replace", "replace-regex", "substring", "split", "trim", "pad",
             "contains", "starts-with", "ends-with", "matches",
@@ -215,11 +216,14 @@ namespace Rql.Execution
                 case "index":
                     if (!ofCurrentItem) return _ => Missing.Value;
                     return x => (double)x.Index;
+                case "count":
+                    if (!ofCurrentItem) return _ => Missing.Value;
+                    return x => x.Count >= 0 ? (double)x.Count : (object)Missing.Value;
                 case "depth":
                     if (!ofCurrentItem) return _ => Missing.Value;
                     return x => x.CurrentDepth >= 0 ? (double)x.CurrentDepth : (object)Missing.Value;
                 default:
-                    _x.Diagnostics.Add(Diagnostic.Warning("unknown-meta", $"unknown meta member '${name}'", "meta members: $type $ref $path $index $depth"));
+                    _x.Diagnostics.Add(Diagnostic.Warning("unknown-meta", $"unknown meta member '${name}'", "meta members: $type $ref $path $index $count $depth"));
                     return _ => Missing.Value;
             }
         }
@@ -1177,6 +1181,55 @@ namespace Rql.Execution
                 case "dot":
                 case "lerp":
                     return CompileVectorFunction(c, name, c.Args, 0);
+                case "sin":
+                case "cos":
+                case "tan":
+                case "asin":
+                case "acos":
+                case "atan":
+                {
+                    Arity(c, 1, 1);
+                    var a = Compile(c.Args[0]);
+                    Func<double, double> f = name switch
+                    {
+                        "sin" => Math.Sin,
+                        "cos" => Math.Cos,
+                        "tan" => Math.Tan,
+                        "asin" => Math.Asin,
+                        "acos" => Math.Acos,
+                        _ => Math.Atan,
+                    };
+                    return x => Num(a(x), v => Trig(f(v)));
+                }
+                case "atan2":
+                {
+                    Arity(c, 2, 2);
+                    var y = Compile(c.Args[0]);
+                    var xx = Compile(c.Args[1]);
+                    return x =>
+                    {
+                        var vy = y(x);
+                        if (vy == null || V.IsAbsent(vy)) return vy;
+                        var vx = xx(x);
+                        if (vx == null || V.IsAbsent(vx)) return vx;
+                        if (!V.TryNumber(vy, out var dy) || !V.TryNumber(vx, out var dx))
+                            return new RqlError("type-mismatch", $"atan2() expects numbers, got {V.Describe(V.TryNumber(vy, out _) ? vx : vy)}");
+                        return Trig(Math.Atan2(dy, dx));
+                    };
+                }
+                case "pi":
+                    Arity(c, 0, 0);
+                    return _ => Math.PI;
+                case "deg":
+                case "rad":
+                {
+                    Arity(c, 1, 1);
+                    var a = Compile(c.Args[0]);
+                    // A fixed order (multiply, then divide), so every runtime returns the same digits; degrees are rounded like
+                    // trig results (60, not 59.99999999999999), radians are not (rad(180) is pi()).
+                    Func<double, double> f = name == "deg" ? v => Trig(v * 180 / Math.PI) : v => v * Math.PI / 180;
+                    return x => Num(a(x), f);
+                }
                 case "abs":
                 case "floor":
                 case "ceil":
@@ -1530,6 +1583,10 @@ namespace Rql.Execution
             var s = V.AsString(v);
             return upper ? s.ToUpperInvariant() : s.ToLowerInvariant();
         }
+
+        /// <summary>Trigonometric results are rounded to 12 decimal places (spec §4.3), so runtimes whose math libraries
+        /// differ in the last bit return the same digits (and sin(pi()) is 0, never -0).</summary>
+        internal static double Trig(double d) => Math.Round(d, 12, MidpointRounding.AwayFromZero) + 0d; // -0 + 0 is +0
 
         private static object? Num(object? v, Func<double, double> f)
         {

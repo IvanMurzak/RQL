@@ -285,6 +285,7 @@ export class Mutator {
       list.push({ item: it, index });
       if (list.length > this.x.maxMutationTargets) throw this.limitExceeded(rest, list.length, op);
     }
+    this.x.count = index + 1; // $count: the stage's input, skipped items included, so $index runs 0 … $count - 1
     return list;
   }
 
