@@ -31,11 +31,11 @@ const NAMED_EXAMPLE = 'editor.CreateObject({name: "Tile" + $, position: [$ * 2, 
 export interface LanguageRuleExamples {
   /** The creation call, e.g. 'editor.CreateGameObject' (none: editor.CreateObject). */
   readonly createCall?: string;
-  /** The call of the bulk-create example after `range(0, 300) | call `, building a 15-wide grid from $. */
+  /** Replaces the bulk-create call after `range(0, 300) | call ` (it builds a 15-wide grid from $). */
   readonly grid?: string;
-  /** The list-literal example in full, one call per entry: `[["A", [0, 0, 0]], …] | call editor.SpawnActor(…, $[0], $[1])`. */
+  /** Replaces the list-literal example in full (`[…] | call ….($[0], $[1])`, one call per entry). */
   readonly perEntry?: string;
-  /** The arguments-by-name call after `range(0, 10) | call `, e.g. `editor.SpawnActor({Label: "Tile" + $, …})`. */
+  /** Replaces the arguments-by-name call after `range(0, 10) | call `. */
   readonly named?: string;
 }
 
@@ -46,9 +46,11 @@ export interface LanguageRuleExamples {
  */
 export function languageRules(createCall?: string | LanguageRuleExamples): string {
   const examples: LanguageRuleExamples = typeof createCall === 'object' ? createCall : { createCall };
-  const given = (s: string | undefined): string | undefined => (s === undefined || s.trim() === '' ? undefined : s.trim());
+  const given = (s?: string): string | undefined => s?.trim() || undefined;
   const call = given(examples.createCall);
-  const [grid, perEntry, named] = [given(examples.grid), given(examples.perEntry), given(examples.named)];
+  const grid = given(examples.grid);
+  const perEntry = given(examples.perEntry);
+  const named = given(examples.named);
   if (call === undefined && grid === undefined && perEntry === undefined && named === undefined) return LANGUAGE_RULES;
   // An example the host leaves out keeps the default, with its creation call.
   const example = (g: string | undefined, fallback: string): string => g ?? (call === undefined ? fallback : fallback.replaceAll(EXAMPLE_CALL, call));

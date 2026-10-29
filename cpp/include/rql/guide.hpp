@@ -30,20 +30,22 @@ inline const char* language_rules() noexcept {
 struct RuleExamples {
     /// The creation call, e.g. "editor.CreateGameObject" (empty: editor.CreateObject).
     std::string create_call;
-    /// The call of the bulk-create example after `range(0, 300) | call `, building a 15-wide grid from $, e.g.
-    /// editor.SpawnActor("StaticMeshActor", "Tile" + $, [($ % 15) * 200, floor($ / 15) * 200, 0]).
+    /// Replaces the bulk-create call after `range(0, 300) | call ` (it builds a 15-wide grid from $).
     std::string grid;
-    /// The list-literal example in full: a list streamed into one call per entry, e.g.
-    /// [["A", [0, 0, 0]], ["B", [200, 0, 0]]] | call editor.SpawnActor("PointLight", $[0], $[1]).
+    /// Replaces the list-literal example in full (`[…] | call ….($[0], $[1])`, one call per entry).
     std::string per_entry;
-    /// The arguments-by-name call after `range(0, 10) | call `, e.g.
-    /// editor.SpawnActor({ClassName: "StaticMeshActor", Label: "Tile" + $, Location: [$ * 200, 0, 0]}).
+    /// Replaces the arguments-by-name call after `range(0, 10) | call `.
     std::string named;
 };
 
 /// language_rules() with the host's examples (RuleExamples); the "stands for" note on the placeholder is left out once
 /// anything is given. All fields empty or blank: language_rules() unchanged. Every text is trimmed.
 inline std::string language_rules_for(const RuleExamples& examples) {
+    static constexpr const char* placeholder = "editor.CreateObject";
+    static constexpr const char* note = " (editor.CreateObject stands for the host's source and creation method)";
+    static constexpr const char* grid_example = "editor.CreateObject(\"Cube\", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})";
+    static constexpr const char* per_entry_example = "[[\"A\", 1], [\"B\", 2]] | call editor.CreateObject($[0], $[1])";
+    static constexpr const char* named_example = "editor.CreateObject({name: \"Tile\" + $, position: [$ * 2, 0, 0]})";
     auto trim = [](const std::string& s) {
         const char* blank = " \t\r\n\v\f";
         const size_t first = s.find_first_not_of(blank);
@@ -53,26 +55,20 @@ inline std::string language_rules_for(const RuleExamples& examples) {
                       named = trim(examples.named);
     std::string text = language_rules();
     if (call.empty() && grid.empty() && per_entry.empty() && named.empty()) return text;
-    auto replace_once = [&text](const std::string& from, const std::string& to) {
-        const size_t at = text.find(from);
-        if (at != std::string::npos) text.replace(at, from.size(), to);
+    auto replace = [](std::string& in, const std::string& from, const std::string& to, bool all) {
+        for (size_t at = in.find(from); at != std::string::npos; at = all ? in.find(from, at + to.size()) : std::string::npos)
+            in.replace(at, from.size(), to);
     };
-    const std::string placeholder = "editor.CreateObject";
     // An example the host leaves out keeps the default, with its creation call.
-    auto example = [&](const std::string& given, std::string fallback) {
-        if (!given.empty()) return given;
-        if (!call.empty())
-            for (size_t at = fallback.find(placeholder); at != std::string::npos; at = fallback.find(placeholder, at + call.size()))
-                fallback.replace(at, placeholder.size(), call);
-        return fallback;
+    auto put = [&](const char* fallback, const std::string& given) {
+        std::string example = given.empty() ? fallback : given;
+        if (given.empty() && !call.empty()) replace(example, placeholder, call, true);
+        replace(text, fallback, example, false);
     };
-    replace_once(" (editor.CreateObject stands for the host's source and creation method)", "");
-    replace_once("editor.CreateObject(\"Cube\", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})",
-                 example(grid, "editor.CreateObject(\"Cube\", {position: [($ % 15) * 2, 0, floor($ / 15) * 2]})"));
-    replace_once("[[\"A\", 1], [\"B\", 2]] | call editor.CreateObject($[0], $[1])",
-                 example(per_entry, "[[\"A\", 1], [\"B\", 2]] | call editor.CreateObject($[0], $[1])"));
-    replace_once("editor.CreateObject({name: \"Tile\" + $, position: [$ * 2, 0, 0]})",
-                 example(named, "editor.CreateObject({name: \"Tile\" + $, position: [$ * 2, 0, 0]})"));
+    replace(text, note, "", false);
+    put(grid_example, grid);
+    put(per_entry_example, per_entry);
+    put(named_example, named);
     return text;
 }
 

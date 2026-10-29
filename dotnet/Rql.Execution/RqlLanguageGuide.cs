@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 
 namespace Rql.Execution
 {
@@ -46,14 +45,15 @@ namespace Rql.Execution
         {
             string? Given(string? s) => string.IsNullOrWhiteSpace(s) ? null : s!.Trim();
             var call = Given(examples?.CreateCall);
-            string?[] given = { Given(examples?.Grid), Given(examples?.PerEntry), Given(examples?.Named) };
-            if (call == null && given.All(g => g == null)) return Rules;
+            var grid = Given(examples?.Grid);
+            var perEntry = Given(examples?.PerEntry);
+            var named = Given(examples?.Named);
+            if (call == null && grid == null && perEntry == null && named == null) return Rules;
             // An example the host leaves out keeps the default, with its creation call.
-            string Example(string? g, string fallback) => g ?? (call == null ? fallback : fallback.Replace(ExampleCall, call));
-            return ReplaceOnce(ReplaceOnce(ReplaceOnce(ReplaceOnce(Rules, ExampleNote, ""),
-                GridExample, Example(given[0], GridExample)),
-                PerEntryExample, Example(given[1], PerEntryExample)),
-                NamedExample, Example(given[2], NamedExample));
+            var text = ReplaceOnce(Rules, ExampleNote, "");
+            foreach (var (fallback, given) in new[] { (GridExample, grid), (PerEntryExample, perEntry), (NamedExample, named) })
+                text = ReplaceOnce(text, fallback, given ?? (call == null ? fallback : fallback.Replace(ExampleCall, call)));
+            return text;
         }
 
         private static string ReplaceOnce(string text, string from, string to)
@@ -71,14 +71,11 @@ namespace Rql.Execution
     {
         /// <summary>The creation call, e.g. <c>editor.CreateGameObject</c> (null: <c>editor.CreateObject</c>).</summary>
         public string? CreateCall { get; set; }
-        /// <summary>The call of the bulk-create example after <c>range(0, 300) | call </c>, building a 15-wide grid from <c>$</c>,
-        /// e.g. <c>editor.SpawnActor("StaticMeshActor", "Tile" + $, [($ % 15) * 200, floor($ / 15) * 200, 0])</c>.</summary>
+        /// <summary>Replaces the bulk-create call after <c>range(0, 300) | call </c> (it builds a 15-wide grid from <c>$</c>).</summary>
         public string? Grid { get; set; }
-        /// <summary>The list-literal example in full, one call per entry, e.g.
-        /// <c>[["A", [0, 0, 0]], ["B", [200, 0, 0]]] | call editor.SpawnActor("PointLight", $[0], $[1])</c>.</summary>
+        /// <summary>Replaces the list-literal example in full (<c>[…] | call ….($[0], $[1])</c>, one call per entry).</summary>
         public string? PerEntry { get; set; }
-        /// <summary>The arguments-by-name call after <c>range(0, 10) | call </c>, e.g.
-        /// <c>editor.SpawnActor({ClassName: "StaticMeshActor", Label: "Tile" + $, Location: [$ * 200, 0, 0]})</c>.</summary>
+        /// <summary>Replaces the arguments-by-name call after <c>range(0, 10) | call </c>.</summary>
         public string? Named { get; set; }
     }
 }
