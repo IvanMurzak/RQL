@@ -6,9 +6,9 @@ using Rql.Sample;
 namespace Rql.Eval.Tasks
 {
     /// <summary>
-    /// Catalog "wave6b" (ADR-0011 / ADR-0012): owned subobjects built from typed literals (instanced literal kind), counting by
-    /// the meta member $type where a lookalike member (`type`) exists on a few items only (the sparse-key warning), and
-    /// vector arithmetic on plain lists and vector functions. A separate split, so the earlier numbers stay comparable.
+    /// Catalog "wave6b" (ADR-0011): owned subobjects built from typed literals (instanced literal kind), and counting by the meta
+    /// member $type where a lookalike member (`type`) exists on a few items only (the sparse-key warning). A separate split, so
+    /// the earlier numbers stay comparable.
     /// </summary>
     public static partial class Catalog
     {

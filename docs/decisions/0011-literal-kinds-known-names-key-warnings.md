@@ -72,10 +72,10 @@ undeclared objects and a few collection elements when a query reads the source),
 ### 4. Keys that fail or are sparse warn
 
 - A sort key that evaluates to an error sorts last like `null` (unchanged) and adds one warning per key with the first
-  error's code: `sort key 'Mass / Volume' failed for 3 of 40 item(s) (div-by-zero: …); they sort last`.
+  error's code: `sort key 1 failed for 3 of 40 item(s) (div-by-zero: …); they sort last` (a path key is named by its path).
 - A `group-by` / `distinct` key that is a member path missing on more items than it is present on (present on at least
   one) adds an `unknown-member` warning: `member 'type' exists on 1 of 200 item(s); the other 199 group as null`, hint
-  "did you mean $type?" for a meta member's name, otherwise `where has(type)`. The all-missing `unknown-member` hint
+  "did you mean $type (the meta member)?" for a meta member's name, otherwise `where has(type)`. The all-missing `unknown-member` hint
   offers the meta member too.
 
 - **Why a warning, not an error:** grouping a polymorphic stream by a member some items lack is legitimate; the warning

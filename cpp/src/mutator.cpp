@@ -463,6 +463,9 @@ std::optional<Value> coerce_impl(Exec& x, const Value& v, const TypeDescriptor* 
 /// Engine for a type with a stable_id or is_alive adapter and Value for any other; then the host's
 /// can_construct_from_literal (false -> Engine, true -> an Engine type becomes Value).
 LiteralKind literal_kind(Exec& x, const TypeDescriptor* type) {
+    // The hooks answer per type and cannot change within one execution: ask them once.
+    auto cached = x.literal_kinds.find(type);
+    if (cached != x.literal_kinds.end()) return cached->second;
     const MutationPolicy& m = x.engine.mutations();
     std::optional<LiteralKind> kind;
     if (m.literal_kind_of) kind = m.literal_kind_of(*type);
@@ -476,6 +479,7 @@ LiteralKind literal_kind(Exec& x, const TypeDescriptor* type) {
         if (std::optional<bool> decided = m.can_construct_from_literal(*type))
             k = !*decided ? LiteralKind::Engine : k == LiteralKind::Engine ? LiteralKind::Value : k;
     }
+    x.literal_kinds.emplace(type, k);
     return k;
 }
 
@@ -486,13 +490,21 @@ bool has_factory(Exec& x, const TypeDescriptor* type) {
 
 /// The value a factory builds for a literal of `type` (host first, then adapters); nullopt: none answered.
 std::optional<Value> create_for_literal(Exec& x, const TypeDescriptor* type, const Value& outer) {
+    // A null / missing answer defers to the next factory, like no answer.
+    auto answered = [](std::optional<Value>& m) {
+        if (m && (m->is_null() || m->is_missing())) m.reset();
+        return m.has_value();
+    };
     std::optional<Value> made;
-    if (const auto& host = x.engine.mutations().create_for_literal) made = host(*type, outer);
-    if (!made)
-        for (const TypeAdapter* ad : x.adapters_for(type, Capability::Factory))
-            if ((made = ad->create_for_literal(*type, outer))) break;
-    if (made && (made->is_null() || made->is_missing())) made.reset();
-    return made;
+    if (const auto& host = x.engine.mutations().create_for_literal) {
+        made = host(*type, outer);
+        if (answered(made)) return made;
+    }
+    for (const TypeAdapter* ad : x.adapters_for(type, Capability::Factory)) {
+        made = ad->create_for_literal(*type, outer);
+        if (answered(made)) return made;
+    }
+    return std::nullopt;
 }
 
 /// The advice ending the engine-object refusal (spec §4.5): the host's for the type, else "pass an existing one".
@@ -572,6 +584,8 @@ std::optional<Value> construct(Exec& x, const Value& literal, const TypeDescript
     // Values nested in an object literal belong to the object it builds; a struct passes its own outer on.
     const Value& inner = concrete->kind == TypeKind::Object ? (probe ? probe_outer() : instance) : outer;
     const TypeView view = x.view(concrete);
+    // Members are looked up on `concrete`: a factory that built a subtype hands them the concrete base's pointer.
+    void* self = probe ? nullptr : instance.type() == concrete || !instance.type() ? instance.ptr() : instance.type()->upcast(instance.ptr(), concrete);
     bool ok = true;
     literal.map().for_each([&](const Value& k, const Value& v) {
         if (k.is_string() && k.as_string() == "$type") return true;
@@ -595,12 +609,12 @@ std::optional<Value> construct(Exec& x, const Value& literal, const TypeDescript
             } else if (probe) {
                 return true;
             } else {
-                std::string rejected = m->validate ? m->validate(instance.ptr(), *mv) : std::string();
+                std::string rejected = m->validate ? m->validate(self, *mv) : std::string();
                 if (!rejected.empty()) {
                     why = "'" + m->name + "': " + rejected;
                 } else {
                     try {
-                        m->setter(instance.ptr(), *mv);
+                        m->setter(self, *mv);
                         return true;
                     } catch (const std::exception& ex) {
                         why = "'" + m->name + "': " + ex.what();
@@ -881,7 +895,8 @@ QueryResult run_set(Exec& x, Compiler& c, Encoder& enc, Stream& stream, const St
             if (holder_owns && owner.is_map()) owner = origin->holder;
             check_writable(x, slot, label, root, "");
             std::string why;
-            auto coerced = coerce(x, nv, slot.type, slot.nullable, why, owner);
+            // The outer of an instanced literal is the owning object, never a map, list or struct (spec §4.5).
+            auto coerced = coerce(x, nv, slot.type, slot.nullable, why, owner.is_object() ? owner : Value::null());
             if (!coerced)
                 throw RqlException("coercion-failed", "cannot assign " + describe_value(nv) + " to '" + label + "' (" +
                                                           (slot.type ? slot.type->friendly_name() : std::string("object")) + "): " + why);

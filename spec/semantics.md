@@ -289,7 +289,8 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
   * **instanced** — built as a subobject owned by the object it is written into, its **outer**, e.g. Unreal's instanced
     (`EditInlineNew`) objects such as an input action's triggers and modifiers:
     `set Triggers = [{$type: "InputTriggerHold", HoldTimeThreshold: 0.5}]`. The outer is the object that will own the
-    value: for a `set`, the owner of the written member (the nearest enclosing object on the target path, §13); for a
+    value: for a `set`, the owner of the written member (the nearest enclosing object on the target path, §13; none when the
+    path has no object, e.g. a map entry streamed from a map source); for a
     `call` argument, the call's target (the receiver of a source-qualified call); for a value nested in a literal, the
     object that literal builds (a struct or map literal passes its own outer on). The type's factory (§13) receives the
     outer; a literal of an instanced type where there is no outer is `coercion-failed`.
@@ -316,7 +317,7 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
 |---|---|
 | `where e` | keep items whose `e` is `true`. |
 | `select [n=]e ...` | project each item to a row with the listed columns. Column name = alias, or the item's source text. |
-| `sort k [asc\|desc], ...` | stable sort. `null`/`missing` last regardless of direction; mixed kinds ordered number < string < bool < other. A key that evaluates to an **error** (a getter that throws, a division by zero, a type mismatch) sorts last like `null`, and the query gets one warning per failing key, with the first error's code, naming the key and how many items failed (`sort key 'Mass / Volume' failed for 3 of 40 item(s) (div-by-zero: …); they sort last`), so a key that fails on every item is not mistaken for a sort that kept the order. |
+| `sort k [asc\|desc], ...` | stable sort. `null`/`missing` last regardless of direction; mixed kinds ordered number < string < bool < other. A key that evaluates to an **error** (a getter that throws, a division by zero, a type mismatch) sorts last like `null`, and the query gets one warning per failing key, with the first error's code, naming the key (its path, or its position for a computed key) and how many items failed (`sort key 1 failed for 3 of 40 item(s) (div-by-zero: …); they sort last` for `sort (Mass / Volume)`), so a key that fails on every item is not mistaken for a sort that kept the order. |
 | `first [n]` | first n items (default 1). MUST stop pulling upstream items afterwards (lazy). |
 | `skip n` | drop first n. |
 | `count` | terminal: number of items. |
@@ -334,10 +335,11 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
 **Sparse key members** (`group-by`, `distinct`). When a key is a member path (no meta member) that is `missing` on more
 of the items than it is present on, but present on at least one, the query gets an `unknown-member` **warning** naming
 the counts: "member 'type' exists on 1 of 200 item(s); the other 199 group as null" (`distinct`: "are kept as one"). Its
-hint asks "did you mean $type?" when the name is a meta member's name without the `$` (`type`, `ref`, `path`, `index`,
+hint asks "did you mean $type (the meta member)?" when the name is a meta member's name without the `$` (`type`, `ref`, `path`, `index`,
 `depth`, any case), and otherwise suggests filtering to the items that have it (`where has(type)`). A polymorphic stream
 grouped by a member that only a few item types have thus says so instead of silently putting nearly everything in the
-`null` group. A key missing on every item keeps the ordinary `unknown-member` warning (§10), whose hint also offers the
+`null` group. The counts cover the items the stage read, and the warning is given once its input is exhausted (a later
+`first n` that stops `distinct` early leaves it out). A key missing on every item keeps the ordinary `unknown-member` warning (§10), whose hint also offers the
 meta member for such a name.
 
 **Struct keys** (`distinct`, `group-by`). A struct is keyed by its type and the values of its members (the members its

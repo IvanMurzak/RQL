@@ -2371,6 +2371,41 @@ void wave6_tests() {
         bool warned = std::any_of(res.diagnostics.begin(), res.diagnostics.end(), [](const rql::Diagnostic& d) { return d.code == "unknown-member"; });
         check(res.ok && !warned && own == 1, "known names: the query's own source is read once when its stream never pulled it");
     }
+    // Known names: the own untyped source is read once per query; a declared type is known without its getter.
+    {
+        int own = 0, later = 0;
+        W6Thing a;
+        rql::Engine e(reg);
+        e.add_source("items", [r, &a, &own]() {
+            ++own;
+            return rql::Value::list_of({r->wrap(&a)});
+        });
+        W6Bag bag;
+        e.add_source("later", [r, &bag, &later]() {
+            ++later;
+            return r->wrap(&bag);
+        }, "", reg.descriptor<W6Bag>());
+        e.execute_json(R"J({"rql":"0.1","source":{"path":["items"]},"stages":[{"op":"where","pred":{"op":"==","args":[{"path":["Labl"]},{"lit":"x"}]}}]})J");
+        check(own == 1, "known names: the query's own untyped source is read at most once per query");
+        auto res = e.execute_json(
+            R"J({"rql":"0.1","source":{"path":["items"]},"stages":[{"op":"where","pred":{"op":"and","args":[{"lit":false},{"op":">","args":[{"path":["Mass"]},{"lit":1}]}]}},{"op":"count"}]})J");
+        bool warned = std::any_of(res.diagnostics.begin(), res.diagnostics.end(), [](const rql::Diagnostic& d) { return d.code == "unknown-member"; });
+        check(res.ok && !warned && later == 0, "known names: a declared source type is known without calling its getter");
+    }
+    // Factories: a throwing factory fails the build; a null answer falls back to create().
+    {
+        auto e = engine(true);
+        e->mutations().create_for_literal = [](const rql::TypeDescriptor&, const rql::Value&) -> std::optional<rql::Value> {
+            throw std::runtime_error("no meshes today");
+        };
+        auto res = e->execute_json(set_plan("Mesh", box), {}, mutate);
+        check(first_code(res) == "coercion-failed" && has(res.diagnostics[0].message, "building W6Box failed: no meshes today") && !node.Mesh,
+              "factories: a throwing factory fails the build");
+        e->mutations().create_for_literal = [](const rql::TypeDescriptor&, const rql::Value&) -> std::optional<rql::Value> { return rql::Value::null(); };
+        res = e->execute_json(set_plan("Mesh", box), {}, mutate);
+        check(res.ok && node.Mesh && static_cast<W6Box*>(node.Mesh)->Size == 2, "factories: a null answer falls back to create()");
+        node.Mesh = nullptr;
+    }
 
     // #13 sort keys that fail, #12 sparse keys.
     {

@@ -121,6 +121,8 @@ Engine& Engine::add_adapter(TypeAdapter adapter) noexcept {
         const bool caps[] = {bool(adapter.encode),  bool(adapter.coerce),    bool(adapter.equals),   bool(adapter.compare),
                              bool(adapter.stable_id), bool(adapter.is_alive), bool(adapter.components),
                              bool(adapter.literal_kind), bool(adapter.create_for_literal)};
+        static_assert(sizeof(caps) / sizeof(caps[0]) == std::tuple_size<decltype(caps_)>::value, "one flag per adapter capability");
+        static_assert(std::tuple_size<decltype(caps_)>::value == detail::kCapabilities, "caps_ covers every capability");
         for (size_t i = 0; i < caps_.size(); ++i) caps_[i] = caps_[i] || caps[i];
         adapters_.push_back(std::make_unique<TypeAdapter>(std::move(adapter)));
         // Registering adapters while queries run is not supported, so cached adaptations can just go.

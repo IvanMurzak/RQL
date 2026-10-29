@@ -427,7 +427,9 @@ export class Mutator {
         const { slot, container } = resolved;
         const owner = holder !== undefined && resolved.owner === root ? holder : resolved.owner;
         if (!slot.writable(x)) throw new RqlError(slot.denyCode, `'${lbl}' on ${itemRef} is not writable${slot.denyReason}`);
-        const co = coerce(x.types, nv, slot.type, { ...rules, outer: owner });
+        // The outer of an instanced literal is the owning object, never a map, list or struct (spec §4.5).
+        const outer = typeof owner === 'object' && owner !== null && x.types.infoOf(owner).kind === 'object' ? owner : undefined;
+        const co = coerce(x.types, nv, slot.type, { ...rules, outer });
         if (!co.ok) throw new RqlError(co.code ?? 'coercion-failed', `cannot assign ${describeValue(nv)} to '${lbl}' (${friendlyName(slot.type, x.types)}): ${co.why}`);
         // Validation runs while the mutation is planned, before any write (spec §13).
         const rejected = slot.validate(container, co.value);
@@ -1003,6 +1005,8 @@ export interface CoerceRules {
   /** The object that will own the value (spec §4.5): instanced literals are built for it. */
   outer?: object | undefined;
   probe?: boolean;
+  /** Literal kinds already resolved for this stage: the hooks answer per class and cannot change within it. */
+  kinds?: Map<Ctor, LiteralKind>;
 }
 
 /** The rules of an execution's host. */
@@ -1015,6 +1019,7 @@ export function hostRules(x: Exec): CoerceRules {
     literalKind: m.literalKindOf,
     create: m.createForLiteral,
     refusalHint: m.literalRefusalHint,
+    kinds: new Map(),
   };
 }
 
@@ -1162,6 +1167,8 @@ function fromLiteral(model: TypeModel, literal: ObjectValue, t: TypeRef, target:
  * (false → engine, true → an engine class becomes value).
  */
 function literalKindOf(model: TypeModel, ctor: Ctor, rules: CoerceRules): LiteralKind {
+  const cached = rules.kinds?.get(ctor);
+  if (cached !== undefined) return cached;
   const set = model.adapterSetFor(ctor);
   let kind = rules.literalKind?.(ctor) ?? undefined;
   if (kind === undefined) kind = firstAnswer(set.literalKind, (a) => a.literalKind!(ctor));
@@ -1169,6 +1176,7 @@ function literalKindOf(model: TypeModel, ctor: Ctor, rules: CoerceRules): Litera
   const decided = rules.canConstruct?.(ctor);
   if (decided === false) k = 'engine';
   else if (decided === true && k === 'engine') k = 'value';
+  rules.kinds?.set(ctor, k);
   return k;
 }
 

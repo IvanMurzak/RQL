@@ -186,8 +186,12 @@ namespace Rql.Execution
 
         private HashSet<string> KnownNames()
         {
-            // The query's own source counts even when the stream never pulled it (`first 0`); no other source is evaluated.
-            if (_planSource != null) _x.Engine.EnsureSourceType(_planSource);
+            // The query's own source counts even when the stream never pulled it (`first 0`): read once; no other source is evaluated.
+            if (_planSource != null && !_planSourceRead)
+            {
+                _planSourceRead = true;
+                _x.Engine.EnsureSourceType(_planSource);
+            }
             var names = new HashSet<string>(_x.Engine.KnownMemberNames(), StringComparer.OrdinalIgnoreCase);
             // Group rows have their items (spec §5); elsewhere `items` is an ordinary member name.
             if (_x.Plan.Stages.Any(st => st is GroupByStage || (st is ExprStage e && e.Op == "group-by"))) names.Add(GroupItems);
@@ -403,6 +407,7 @@ namespace Rql.Execution
 
         /// <summary>The registered source the query starts from (or calls), if any: known names may read it (spec §8).</summary>
         private SourceRegistration? _planSource;
+        private bool _planSourceRead;
 
         private SourceRegistration? FindSource(string name)
         {
@@ -413,6 +418,7 @@ namespace Rql.Execution
 
         private object? SourceValue(SourceRegistration reg, Eval? nav)
         {
+            if (reg == _planSource) _planSourceRead = true;
             var root = _x.Types.Live(reg.Getter());
             _x.Engine.NoteSourceType(reg.Name, root);
             if (nav == null) return root;

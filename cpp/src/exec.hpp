@@ -162,6 +162,10 @@ public:
     std::vector<std::pair<std::string, const TypeDescriptor*>> source_type_history();
     /// The registered source the query starts from (or calls), if any: known names may read it once (spec §8).
     const SourceRegistration* plan_source = nullptr;
+    /// Whether this query has read (or tried to read) plan_source: known names then never read it again.
+    bool plan_source_read = false;
+    /// Literal kinds already resolved in this execution (the host hooks answer per type).
+    std::unordered_map<const TypeDescriptor*, LiteralKind> literal_kinds;
     /// Reads plan_source once for its type when it has neither produced a value yet nor declares a type (a lazy stream such
     /// as `first 0` never pulled it); known names never evaluate any other source (spec §8).
     void ensure_plan_source_type();

@@ -207,6 +207,8 @@ export class Pipeline {
 
   /** The registered source the query starts from, if any: known names may read it (spec §8). */
   private planSource: string | undefined;
+  /** Whether this query has read (or tried to read) its own source: known names then never read it again. */
+  private planSourceRead = false;
 
   /**
    * A mutation that reached no target because a misspelt member emptied its stream is an error, not "0 changes" (spec §8):
@@ -230,7 +232,10 @@ export class Pipeline {
   /** Known member names (keyed upper-cased) plus the plan's select field names. */
   private knownNames(): ReadonlyMap<string, string> {
     // The query's own source counts even when the stream never pulled it (`first 0`); no other source is evaluated.
-    if (this.planSource !== undefined) this.x.engine.ensureSourceType(this.planSource);
+    if (this.planSource !== undefined && !this.planSourceRead) {
+      this.planSourceRead = true;
+      this.x.engine.ensureSourceType(this.planSource);
+    }
     const names = new Map(this.x.engine.knownMemberNames());
     // Group rows have their items (spec §5); elsewhere `items` is an ordinary member name.
     if (this.x.plan.stages.some((st) => st.kind === 'group-by' || (st.kind === 'expr' && st.op === 'group-by'))) names.set('ITEMS', 'items');
@@ -387,6 +392,7 @@ export class Pipeline {
 
   private sourceValue(reg: SourceRegistration, nav: Eval | undefined): unknown {
     const x = this.x;
+    if (reg.name === this.planSource) this.planSourceRead = true;
     const root = normalize(reg.getter());
     x.engine.noteSourceType(reg.name, root);
     if (nav === undefined) return root;

@@ -83,6 +83,9 @@ namespace Rql.Execution
         /// </summary>
         [ThreadStatic] internal static object? AmbientOuter;
 
+        /// <summary>Whether the coercion an adapter is running is an overload probe: its nested coercions then construct nothing (spec §8).</summary>
+        [ThreadStatic] internal static bool AmbientProbe;
+
         /// <summary>The engine's type model (member tables, kinds, adapters).</summary>
         public TypeModel Types { get; }
 
@@ -108,7 +111,7 @@ namespace Rql.Execution
             _depth++;
             try
             {
-                var ok = Coerce.TryTo(this, value, target, out result, out var why, AmbientOuter);
+                var ok = Coerce.Nested(this, value, target, out result, out var why, AmbientOuter, AmbientProbe);
                 reason = ok ? null : Prefix(path, why);
                 return ok;
             }

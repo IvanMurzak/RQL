@@ -221,6 +221,79 @@ namespace Rql.Tests
             Assert.Empty(node.Triggers);
         }
 
+        /// <summary>A composite value whose elements an adapter coerces through the kernel (Unity's Gradient-style adapters).</summary>
+        public sealed class TriggerSet { public List<SubObject> Items { get; } = new List<SubObject>(); }
+
+        public sealed class TriggerSetAdapter : RqlTypeAdapter<TriggerSet>
+        {
+            public override AdapterOutcome TryCoerce(object? value, Type target, RqlKernel kernel, out object? result, out string? reason)
+            {
+                result = null;
+                reason = null;
+                if (!(value is List<object?> list)) return AdapterOutcome.NotHandled;
+                var set = new TriggerSet();
+                foreach (var el in list)
+                {
+                    if (!kernel.TryCoerce(el, typeof(SubObject), out var t, out reason)) return AdapterOutcome.Failed;
+                    if (t is SubObject so) set.Items.Add(so);
+                }
+                result = set;
+                return AdapterOutcome.Ok;
+            }
+        }
+
+        public sealed class Rig
+        {
+            public string Owner = "rig";
+            [RqlCallable("Uses a trigger set.")] public int Use(TriggerSet set, int k) => set.Items.Count;
+            [RqlCallable("Uses a trigger set.")] public int Use(TriggerSet set, string k = "x") => set.Items.Count + 100;
+            public Dictionary<string, SubObject> Slots { get; set; } = new Dictionary<string, SubObject> { ["a"] = new SubObject() };
+        }
+
+        [Fact]
+        public void AdapterCoercionsInsideAProbeBuildNothing()
+        {
+            var rig = new Rig();
+            var e = new RqlEngine().AddSource("rig", () => new List<Rig> { rig }).AddSource("one", () => rig);
+            e.AddAdapter(new EngineAdapter()).AddAdapter(new SubObjectAdapter()).AddAdapter(new TriggerSetAdapter());
+            e.Mutations.Enabled = true;
+            SubObject.Built = 0;
+            // Two overloads take the set: each is probed (nothing built), then only the chosen one is coerced for real.
+            var r = e.Execute("rig | call Use([{Threshold: 1}, {Threshold: 2}], \"y\")", options: Mutate);
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal(2, SubObject.Built);
+        }
+
+        [Fact]
+        public void AMapIsNeverTheOuterOfAnInstancedLiteral()
+        {
+            var rig = new Rig();
+            var e = new RqlEngine().AddSource("slots", () => rig.Slots);
+            e.AddAdapter(new EngineAdapter()).AddAdapter(new SubObjectAdapter());
+            e.Mutations.Enabled = true;
+            var r = e.Execute("slots | set Value = {Threshold: 1}", options: Mutate);
+            Assert.Contains("SubObject is an instanced subobject", Error(r));
+        }
+
+        [Fact]
+        public void AFactoryPolicyDenialStaysAPermissionDenial()
+        {
+            var (e, _) = Scene();
+            e.Mutations.CreateForLiteral = (t, outer) => throw new RqlException("permission-denied", "no new meshes");
+            Assert.Equal("permission-denied", e.Execute("scene | set Mesh = {$type: \"BoxMesh\"}", options: Mutate).Diagnostics[0].Code);
+            e.Mutations.CreateForLiteral = (t, outer) => throw new InvalidOperationException("busy");
+            Assert.Contains("building BoxMesh failed: busy", Error(e.Execute("scene | set Mesh = {$type: \"BoxMesh\"}", options: Mutate)));
+        }
+
+        [Fact]
+        public void TheOwnSourceIsReadAtMostOncePerQuery()
+        {
+            int reads = 0;
+            var e = new RqlEngine().AddSource("sel", () => { reads++; return null; });
+            e.Execute("sel | where Nmae == 1 | count");
+            Assert.Equal(1, reads);
+        }
+
         // ------------------------------------------------------------ #5 abstract engine objects, refusal advice
 
         public sealed class Holder

@@ -277,3 +277,72 @@ test('a sparse group-by member warns and offers the meta member', () => {
   assert.equal(distinct[0]!.message, "member 'type' exists on 1 of 10 item(s); the other 9 are kept as one");
   assert.equal(e.execute('items | group-by Volume').diagnostics.length, 0);
 });
+
+// ------------------------------------------------------------ review fixes: source learning, factories
+
+class Gadget {
+  Power = 1;
+}
+
+test('a source that starts empty learns its element types on a later read', () => {
+  const items: object[] = [];
+  const types = new TypeModel().register(Gadget, { members: [{ name: 'Power', type: t.number }] });
+  const e = new RqlEngine({ types }).addSource('sel', () => items);
+  assert.equal(e.execute('sel | count').ok, true);
+  items.push(new Gadget());
+  const r = e.execute('sel | where false and Power > 1 | count');
+  assert.equal(r.ok, true);
+  assert.equal(r.diagnostics.filter((d) => d.code === 'unknown-member').length, 0, JSON.stringify(r.diagnostics));
+});
+
+test('known names never consume a generator source', () => {
+  const types = new TypeModel().register(Gadget, { members: [{ name: 'Power', type: t.number }] });
+  let reads = 0;
+  const e = new RqlEngine({ types })
+    .addSource('items', () => [new Gadget()])
+    .addSource('gen', function* () {
+      reads++;
+      yield new Gadget();
+    });
+  e.execute('items | where Pwr > 1');
+  assert.equal(reads, 0);
+  const r = e.execute('gen | where Power > 0 | count');
+  assert.equal(r.ok, true);
+  assert.equal(r.value, 1);
+});
+
+test('a declared source type makes its members known before any read', () => {
+  const types = new TypeModel().register(Gadget, { members: [{ name: 'Power', type: t.number }] });
+  let reads = 0;
+  const e = new RqlEngine({ types }).addSource('items', () => [new Gadget()]).addSource('later', () => {
+    reads++;
+    return [];
+  }, undefined, Gadget);
+  const r = e.execute('items | where false and Power > 1 | count');
+  assert.equal(r.diagnostics.filter((d) => d.code === 'unknown-member').length, 0);
+  assert.equal(reads, 0);
+});
+
+test('the query\'s own source is read at most once per query', () => {
+  const types = new TypeModel().register(Gadget, { members: [{ name: 'Power', type: t.number }] });
+  let reads = 0;
+  const e = new RqlEngine({ types }).addSource('nothing', () => {
+    reads++;
+    return null;
+  });
+  e.execute('nothing | where Nmae == 1 | count');
+  assert.equal(reads, 1);
+});
+
+test('a throwing factory fails the build, an absent answer falls back to the constructor', () => {
+  const { e, node } = scene();
+  e.mutations.createForLiteral = (ctor) => {
+    if (ctor === BoxMesh) throw new Error('no meshes today');
+    return undefined;
+  };
+  like(error(e.execute('scene | set Mesh = {$type: "BoxMesh"}', {}, M)), /building BoxMesh failed: no meshes today/);
+  e.mutations.createForLiteral = () => undefined;
+  const r = e.execute('scene | set Mesh = {$type: "BoxMesh", Size: 4}', {}, M);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal((node.Mesh as BoxMesh).Size, 4);
+});

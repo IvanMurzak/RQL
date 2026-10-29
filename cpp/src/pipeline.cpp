@@ -86,7 +86,8 @@ std::vector<std::pair<std::string, const TypeDescriptor*>> Exec::source_type_his
 }
 
 void Exec::ensure_plan_source_type() {
-    if (!plan_source || plan_source->declared_type) return;
+    if (!plan_source || plan_source_read || plan_source->declared_type) return;
+    plan_source_read = true;
     {
         std::lock_guard<std::mutex> lock(engine.source_types_mutex_);
         if (engine.source_types_.count(plan_source->name)) return;
@@ -298,6 +299,7 @@ struct SourceBinding {
 
 Value source_value(Exec& x, const SourceBinding& b) {
     if (b.kind == SourceBinding::Kind::Registered) {
+        if (b.reg == x.plan_source) x.plan_source_read = true;
         Value root = b.reg->getter();
         x.note_source_type(b.reg->name, root);
         if (!b.nav) return root;
@@ -1209,7 +1211,6 @@ QueryResult collect(Exec& x, Stream& stream, Encoder& enc) {
 /// Never evaluates a source the query does not name (spec §8): the roots are the types sources produced so far (a source
 /// that is null right now keeps them) and the types they declare; the query's own source is read once when it has none.
 std::vector<const TypeDescriptor*> reachable_types(Exec& x, std::vector<std::pair<std::string, const TypeDescriptor*>>* roots_out) {
-    x.ensure_plan_source_type();
     auto roots = x.source_type_history();
     std::vector<const TypeDescriptor*> types;
     std::vector<const TypeDescriptor*> queue;
@@ -1251,7 +1252,10 @@ std::string group_row_hint(const std::string& name, const std::vector<std::strin
 
 /// reachable_types without roots, computed once per query.
 const std::vector<const TypeDescriptor*>& known_types(Exec& x) {
-    if (!x.reachable_cache) x.reachable_cache = reachable_types(x, nullptr);
+    if (!x.reachable_cache) {
+        x.ensure_plan_source_type();  // the query's own source counts even when its stream never pulled it
+        x.reachable_cache = reachable_types(x, nullptr);
+    }
     return *x.reachable_cache;
 }
 

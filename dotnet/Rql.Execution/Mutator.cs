@@ -234,7 +234,7 @@ namespace Rql.Execution
                     }
                     if (!slot.Writable(_x))
                         throw new RqlException(slot.DenyCode, $"'{label}' on {itemRef} is not writable{slot.DenyReason}");
-                    if (!Coerce.TryTo(_x.Kernel, nv, slot.Type, out var coerced, out var why, owner))
+                    if (!Coerce.TryTo(_x.Kernel, nv, slot.Type, out var coerced, out var why, _x.Types.Info(owner.GetType()).IsObject ? owner : null))
                         throw new RqlException("coercion-failed", $"cannot assign {V.Describe(nv)} to '{label}' ({_x.Types.FriendlyNameOf(slot.Type)}): {why}");
                     if (slot.Validate(container, coerced) is string rejected)
                         throw new RqlException("invalid-value", $"invalid value {ValueText(nv)} for '{label}' on {itemRef}: {rejected}");
@@ -948,8 +948,8 @@ namespace Rql.Execution
             }
             else
             {
-                try { instance = kernel.Create(concrete, ReferenceEquals(outer, ProbeOuter) ? null : outer); }
-                catch (Exception ex) when (!(ex is OutOfMemoryException))
+                try { instance = kernel.Create(concrete, outer); }
+                catch (Exception ex) when (!(ex is OutOfMemoryException) && !(ex is RqlException))
                 {
                     why = $"building {model.Info(concrete).ShortName} failed: {ex.Message}";
                     return false;
@@ -1018,6 +1018,10 @@ namespace Rql.Execution
         internal static bool CanConvert(RqlKernel kernel, object? v, Type target, out string why, out int depth, object? outer = null) =>
             Convert(kernel, v, target, probe: true, outer, out _, out why, out depth);
 
+        /// <summary>A coercion asked for by an adapter through the kernel: a probe when the adapter runs inside one.</summary>
+        internal static bool Nested(RqlKernel kernel, object? v, Type target, out object? result, out string why, object? outer, bool probe) =>
+            Convert(kernel, v, target, probe, outer, out result, out why, out _);
+
         /// <summary>Stands for the object a probed literal would build (nothing is constructed), so its nested values have an outer.</summary>
         private static readonly object ProbeOuter = new object();
 
@@ -1047,10 +1051,11 @@ namespace Rql.Execution
                     AdapterOutcome outcome;
                     object? adapted;
                     string? reason;
-                    var ambient = RqlKernel.AmbientOuter;
-                    RqlKernel.AmbientOuter = outer; // the adapter's nested kernel coercions build for the same owner
+                    var (ambient, ambientProbe) = (RqlKernel.AmbientOuter, RqlKernel.AmbientProbe);
+                    // The adapter's nested kernel coercions build for the same owner, and inside a probe they only check (spec §8).
+                    (RqlKernel.AmbientOuter, RqlKernel.AmbientProbe) = (outer, probe);
                     try { outcome = ad.TryCoerce(v, target, kernel, out adapted, out reason); }
-                    finally { RqlKernel.Exit(); RqlKernel.AmbientOuter = ambient; }
+                    finally { RqlKernel.Exit(); (RqlKernel.AmbientOuter, RqlKernel.AmbientProbe) = (ambient, ambientProbe); }
                     switch (outcome)
                     {
                         case AdapterOutcome.Ok:

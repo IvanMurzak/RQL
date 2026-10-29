@@ -161,6 +161,9 @@ export interface EngineOptions {
   types?: TypeModel;
 }
 
+/** Most member names learned per source from undeclared (dynamic) objects (spec §8 known names). */
+const MAX_LEARNED_NAMES = 200;
+
 export class RqlEngine {
   /** Reflection model (descriptors + adapters). Replaced by a private fork on the first `addAdapter` if shared. */
   get types(): TypeModel {
@@ -458,10 +461,10 @@ export class RqlEngine {
     let seen = this.sourceTypes.get(source);
     if (seen === undefined) this.sourceTypes.set(source, (seen = new Set()));
     const info = this.types.infoOf(value);
-    const first = this.learnSourceType(source, seen, value, info);
-    // Elements are sampled the first time the source shows its type; only re-iterable collections, since a one-shot
-    // iterator (a generator) belongs to the query reading it.
-    if (first && (info.isList || info.isMap) && (Array.isArray(value) || value instanceof Set || isMapLike(value))) {
+    this.learnSourceType(source, seen, value, info);
+    // A few elements are sampled on every read (a source that starts empty learns its elements later); only re-iterable
+    // collections, since a one-shot iterator (a generator) belongs to the query reading it.
+    if ((info.isList || info.isMap) && (Array.isArray(value) || value instanceof Set || isMapLike(value))) {
       let n = 0;
       for (const e of elements(value, info)) {
         const ev = e instanceof MapEntry ? e.Value : e;
@@ -471,22 +474,21 @@ export class RqlEngine {
     }
   }
 
-  /** Records one value's type for a source (and the members of an undeclared object); true when the type is new. */
-  private learnSourceType(source: string, seen: Set<TypeInfo>, v: object, info: TypeInfo): boolean {
-    const first = !seen.has(info);
-    if (first) {
+  /** Records one value's type for a source (and the members of an undeclared object, at most MAX_LEARNED_NAMES per source). */
+  private learnSourceType(source: string, seen: Set<TypeInfo>, v: object, info: TypeInfo): void {
+    if (!seen.has(info)) {
       seen.add(info);
       this.knownMembers = undefined;
     }
-    if (info.dynamic === undefined) return first;
+    if (info.dynamic === undefined) return;
     let names = this.sourceNames.get(source);
     if (names === undefined) this.sourceNames.set(source, (names = new Set()));
     for (const m of info.membersOf(v)) {
+      if (names.size >= MAX_LEARNED_NAMES) return; // keyed-by-id objects must not grow the names without bound
       if (names.has(m.name)) continue;
       names.add(m.name);
       this.knownMembers = undefined;
     }
-    return first;
   }
 
   private readonly sourceTypes = new Map<string, Set<TypeInfo>>();
@@ -499,7 +501,7 @@ export class RqlEngine {
    */
   ensureSourceType(name: string): void {
     const s = this.sourceMap.get(name);
-    if (s === undefined || s.type !== undefined || this.sourceTypes.has(name)) return;
+    if (s === undefined || this.sourceTypes.has(name) || (s.type !== undefined && this.types.infoForCtor(s.type) !== undefined)) return;
     try {
       this.noteSourceType(name, s.getter());
     } catch {
