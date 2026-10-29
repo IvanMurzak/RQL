@@ -22,9 +22,10 @@ const EXAMPLE_NOTE = " (editor.CreateObject stands for the host's source and cre
 
 /**
  * LANGUAGE_RULES with the host's own creation call in the examples (e.g. 'editor.CreateGameObject', 'godot.CreateNode')
- * instead of the placeholder editor.CreateObject, whose "stands for" note is then left out. No call: LANGUAGE_RULES.
+ * instead of the placeholder editor.CreateObject, whose "stands for" note is then left out. No call (or a blank one): LANGUAGE_RULES.
  */
 export function languageRules(createCall?: string): string {
-  if (createCall === undefined || createCall === '') return LANGUAGE_RULES;
-  return LANGUAGE_RULES.replaceAll(EXAMPLE_NOTE, '').replaceAll(EXAMPLE_CALL, createCall);
+  const call = createCall?.trim() ?? '';
+  if (call === '') return LANGUAGE_RULES;
+  return LANGUAGE_RULES.replaceAll(EXAMPLE_NOTE, '').replaceAll(EXAMPLE_CALL, call);
 }

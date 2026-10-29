@@ -26,10 +26,13 @@ inline const char* language_rules() noexcept {
 
 /// language_rules() with the host's own creation call in the examples (e.g. "editor.CreateGameObject",
 /// "godot.CreateNode") instead of the placeholder editor.CreateObject, whose "stands for" note is then left out.
-/// An empty call returns language_rules() unchanged.
-inline std::string language_rules_for(const std::string& create_call) {
+/// An empty or blank call returns language_rules() unchanged; the call is trimmed.
+inline std::string language_rules_for(const std::string& create_call_text) {
     std::string text = language_rules();
-    if (create_call.empty()) return text;
+    const char* blank = " \t\r\n\v\f";
+    const size_t first = create_call_text.find_first_not_of(blank);
+    if (first == std::string::npos) return text;  // empty or blank: the default rules
+    const std::string create_call = create_call_text.substr(first, create_call_text.find_last_not_of(blank) - first + 1);
     auto replace_all = [&text](const std::string& from, const std::string& to) {
         for (size_t at = text.find(from); at != std::string::npos; at = text.find(from, at + to.size())) text.replace(at, from.size(), to);
     };

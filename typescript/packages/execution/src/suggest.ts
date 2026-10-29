@@ -104,7 +104,8 @@ export function memberHint(name: string, members: readonly string[], declaring: 
 export function closestParameter(key: string, names: readonly string[]): string | undefined {
   const close = closest(key, names, 1);
   if (close.length > 0) return close[0];
-  const lower = key.toLowerCase();
+  if (key.length < 3) return undefined; // a two-letter key is near every short word
+  const lower = asciiLowerText(key);
   const limit = Math.max(1, Math.floor(key.length / 3));
   let best: string | undefined;
   let bestD = Number.MAX_SAFE_INTEGER;
@@ -121,15 +122,26 @@ export function closestParameter(key: string, names: readonly string[]): string 
   return best;
 }
 
-const isUpper = (c: string): boolean => c >= 'A' && c <= 'Z';
+const isUpper = (c: string | undefined): boolean => c !== undefined && c >= 'A' && c <= 'Z';
+const isLower = (c: string | undefined): boolean => c !== undefined && c >= 'a' && c <= 'z';
+const asciiLowerText = (s: string): string => s.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
 
-/** The lower-case words of a camelCase / PascalCase / snake_case name ('className' → class, name). */
+/**
+ * The lower-case words of a camelCase / PascalCase / snake_case name, ASCII rules only so every runtime splits alike:
+ * 'className' → class, name; 'URLPath' → url, path; 'max_hp' → max, hp.
+ */
 function nameWords(name: string): string[] {
   const words: string[] = [];
   let start = 0;
   for (let i = 1; i <= name.length; i++) {
-    if (i === name.length || name[i] === '_' || (isUpper(name[i]!) && !isUpper(name[i - 1]!))) {
-      if (i > start) words.push(name.substring(start, i).replace(/^_+|_+$/g, '').toLowerCase());
+    const boundary =
+      i === name.length ||
+      name[i] === '_' ||
+      (isUpper(name[i]) && !isUpper(name[i - 1])) ||
+      (isUpper(name[i]) && isUpper(name[i - 1]) && isLower(name[i + 1]));
+    if (boundary) {
+      const w = name.substring(start, i).replace(/^_+|_+$/g, '');
+      if (w.length > 0) words.push(asciiLowerText(w));
       start = i;
     }
   }

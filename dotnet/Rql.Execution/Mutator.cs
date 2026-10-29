@@ -655,15 +655,20 @@ namespace Rql.Execution
         /// <summary>Why one candidate does not fit, ranked by how close it came.</summary>
         private readonly struct Miss
         {
-            public Miss(CallableMethod method, bool arityFits, int matched, int depth, string why)
-            { Method = method; ArityFits = arityFits; Matched = matched; Depth = depth; Why = why; }
+            public Miss(CallableMethod method, bool arityFits, int matched, int depth, string why, bool misspelt = false)
+            { Method = method; ArityFits = arityFits; Matched = matched; Depth = depth; Why = why; Misspelt = misspelt; }
             public CallableMethod Method { get; }
             public bool ArityFits { get; }
             public int Matched { get; }
             public int Depth { get; }
             public string Why { get; }
+            /// <summary>Bound by name except one key that is a parameter's name misspelt (spec §8): closer than any failure depth.</summary>
+            public bool Misspelt { get; }
             public int CompareTo(Miss o) =>
-                ArityFits != o.ArityFits ? (ArityFits ? 1 : -1) : Matched != o.Matched ? Matched.CompareTo(o.Matched) : Depth.CompareTo(o.Depth);
+                ArityFits != o.ArityFits ? (ArityFits ? 1 : -1)
+                : Matched != o.Matched ? Matched.CompareTo(o.Matched)
+                : Misspelt != o.Misspelt ? (Misspelt ? 1 : -1)
+                : Depth.CompareTo(o.Depth);
         }
 
         /// <summary>
@@ -728,7 +733,8 @@ namespace Rql.Execution
             }
             if (first != null)
             {
-                misses.Add(new Miss(m, true, matched, depth, first));
+                // By name, every bound key names a parameter (spec §8): an exact name whose value fails ranks above a misspelt one.
+                misses.Add(new Miss(m, true, kind == "parameter" ? slots.Length : matched, depth, first));
                 return null;
             }
             var cv = ps.Select(p => p.Default).ToArray();
@@ -798,11 +804,11 @@ namespace Rql.Execution
             string all = string.Join(", ", ps.Select(p => p.Name));
             if (unknown != null)
             {
-                var close = Suggest.ClosestParameter(unknown, ps.Select(p => p.Name).ToList());
-                // A key close to a parameter's name is that parameter misspelt: it counts as bound, so "no parameter 'klass' (did
-                // you mean 'className'?)" beats an overload that cannot take the literal at all (spec §8).
-                misses.Add(new Miss(m, true, known + (close != null ? 1 : 0), 0, $"no parameter '{unknown}'" + (close != null ? $" (did you mean '{close}'?)" : "")
-                    + (ps.Count > 0 ? $"; parameters: {all}" : "; it takes no parameters")));
+                // A key close to a parameter not named yet is that parameter misspelt, so "no parameter 'klass' (did you mean
+                // 'className'?)" beats an overload that cannot take the literal at all (spec §8).
+                var close = Suggest.ClosestParameter(unknown, ps.Where((p, j) => !named[j]).Select(p => p.Name).ToList());
+                misses.Add(new Miss(m, true, known, 0, $"no parameter '{unknown}'" + (close != null ? $" (did you mean '{close}'?)" : "")
+                    + (ps.Count > 0 ? $"; parameters: {all}" : "; it takes no parameters"), misspelt: close != null));
                 return null;
             }
             for (int j = 0; j < ps.Count; j++)

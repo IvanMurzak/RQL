@@ -1287,6 +1287,7 @@ namespace Rql.Execution
         {
             var close = Closest(key, names, 1);
             if (close.Count > 0) return close[0];
+            if (key.Length < 3) return null; // a two-letter key is near every short word
             var lower = key.ToLowerInvariant();
             int limit = Math.Max(1, key.Length / 3);
             string? best = null;
@@ -1301,15 +1302,31 @@ namespace Rql.Execution
             return best;
         }
 
-        /// <summary>The lower-case words of a camelCase / PascalCase / snake_case name ("className" → class, name).</summary>
+        private static string AsciiLower(string s)
+        {
+            var c = s.ToCharArray();
+            for (int i = 0; i < c.Length; i++) if (c[i] >= 'A' && c[i] <= 'Z') c[i] = (char)(c[i] + 32);
+            return new string(c);
+        }
+
+        /// <summary>
+        /// The lower-case words of a camelCase / PascalCase / snake_case name, ASCII rules only so every runtime splits alike:
+        /// "className" → class, name; "URLPath" → url, path; "max_hp" → max, hp.
+        /// </summary>
         private static IEnumerable<string> Words(string name)
         {
+            static bool Up(char c) => c >= 'A' && c <= 'Z';
+            static bool Low(char c) => c >= 'a' && c <= 'z';
             int start = 0;
             for (int i = 1; i <= name.Length; i++)
             {
-                if (i == name.Length || name[i] == '_' || (char.IsUpper(name[i]) && !char.IsUpper(name[i - 1])))
+                bool boundary = i == name.Length || name[i] == '_'
+                    || (Up(name[i]) && !Up(name[i - 1]))
+                    || (Up(name[i]) && Up(name[i - 1]) && i + 1 < name.Length && Low(name[i + 1]));
+                if (boundary)
                 {
-                    if (i > start) yield return name.Substring(start, i - start).Trim('_').ToLowerInvariant();
+                    var w = name.Substring(start, i - start).Trim('_');
+                    if (w.Length > 0) yield return AsciiLower(w);
                     start = i;
                 }
             }

@@ -70,8 +70,10 @@ namespace Rql.Execution
                     for (int i = 0; i < shown; i++) sb.Append(string.Join("|", columns.Select(c => Cell(r.Rows[i][c])))).Append('\n');
                     if (shown < r.Rows.Count)
                     {
-                        var note = moreRowsNote ?? "(the json format lists every row)";
-                        sb.Append("… ").Append(r.Rows.Count - shown).Append(" more row(s) not shown").Append(note.Length > 0 ? " " + note : "").Append('\n');
+                        // A receipt the byte budget already cut is not complete in json either: no pointer to it then.
+                        var note = moreRowsNote ?? (r.Truncated ? "" : "(the json format lists every row)");
+                        long more = (r.Truncated ? r.Total ?? r.Rows.Count : r.Rows.Count) - shown;
+                        sb.Append("… ").Append(more).Append(" more row(s) not shown").Append(note.Length > 0 ? " " + note : "").Append('\n');
                     }
                     foreach (var e in r.CellErrors) sb.Append("note: error cell ").Append(e).Append('\n');
                     break;

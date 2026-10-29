@@ -2569,6 +2569,7 @@ struct HnOptions {
 struct HnGodot {
     std::vector<std::string> made;
 };
+struct HnPainter {};
 struct HnThing {
     int Id = 0;
     std::string Name;
@@ -2626,6 +2627,49 @@ void hint_tests() {
                   has(text, "call editor.CreateGameObject($[0], $[1])"),
               "hints: the rules take the host creation call");
         check(rql::language_rules_for("") == std::string(rql::language_rules()), "hints: no call keeps the shared rules");
+        check(rql::language_rules_for("  ") == std::string(rql::language_rules()), "hints: a blank call keeps the shared rules");
+        check(has(rql::language_rules_for(" editor.CreateGameObject "), "call editor.CreateGameObject(\"Cube\""), "hints: the call is trimmed");
+    }
+    {
+        rql::TypeRegistry reg;
+        reg.object<HnPainter>("Painter").no_identity();
+        const auto str = rql::builtin::string_type();
+        const auto num = rql::builtin::double_type();
+        rql::Engine e(reg);
+        rql::TypeAdapter a;
+        a.name = "PainterAdapter";
+        a.target = reg.descriptor<HnPainter>();
+        auto ret = [](HnPainter&, const std::vector<rql::Value>& v) { return v.empty() ? rql::Value::string("") : v[0]; };
+        auto param = [](const char* n, const rql::TypeDescriptor* t) { return rql::ParamDescriptor{n, t, false, false, rql::Value()}; };
+        a.configure_members = [=](rql::MemberTable& t) {
+            t.method<HnPainter>("Set", {param("color", num)}, str, ret)
+                // Adapter methods are keyed by name and arity: the second Set takes an optional parameter.
+                .method<HnPainter>("Set", {param("colour", str), rql::ParamDescriptor{"mix", num, false, true, rql::Value::number(1)}}, str, ret)
+                .method<HnPainter>("Make", {param("className", str)}, str, ret)
+                .method<HnPainter>("Make", {param("className", str), param("klass", num)}, str, ret)
+                .method<HnPainter>("Open", {param("URLPath", str)}, str, ret);
+        };
+        e.add_adapter(std::move(a));
+        e.mutations().enabled = true;
+        HnPainter painter;
+        rql::TypeRegistry* r = &reg;
+        e.add_source("p", [r, &painter]() { return r->wrap(&painter); });
+        rql::QueryOptions o;
+        o.allow_mutation = true;
+        auto call = [&](const std::string& method, const std::string& fields) {
+            return e.execute_json(R"J({"rql":"0.1","source":{"list":[{"lit":1}]},"stages":[{"op":"call","method":")J" + method +
+                                      R"J(","on":{"path":["p"]},"args":[{"object":[)J" + fields + "]}]}]}",
+                                  {}, o);
+        };
+        rql::QueryResult res = call("Set", R"J({"key":"color","value":{"lit":"red"}})J");
+        check(!res.ok && has(res.diagnostics[0].message, "parameter 'color'") && !has(res.diagnostics[0].message, "did you mean 'colour'"),
+              "hints: an exact parameter name outranks a misspelt one: " + (res.diagnostics.empty() ? std::string() : res.diagnostics[0].message));
+        res = call("Make", R"J({"key":"className","value":{"lit":"X"}},{"key":"klass","value":{"lit":"Y"}})J");
+        check(!res.ok && !has(res.diagnostics[0].message, "did you mean 'className'") && has(res.diagnostics[0].message, "parameter 'klass'"),
+              "hints: a parameter already named is never suggested: " + (res.diagnostics.empty() ? std::string() : res.diagnostics[0].message));
+        res = call("Open", R"J({"key":"pth","value":{"lit":"/x"}})J");
+        check(!res.ok && has(res.diagnostics[0].message, "did you mean 'URLPath'"),
+              "hints: acronyms split into words: " + (res.diagnostics.empty() ? std::string() : res.diagnostics[0].message));
     }
     {
         rql::TypeRegistry reg;

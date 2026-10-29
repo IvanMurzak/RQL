@@ -27,9 +27,9 @@ namespace Rql.Execution
         /// <summary>
         /// <see cref="Rules"/> with the host's own creation call in the examples (e.g. <c>"editor.CreateGameObject"</c>,
         /// <c>"godot.CreateNode"</c>) instead of the placeholder <c>editor.CreateObject</c>, whose "stands for" note is then left
-        /// out. Null or empty returns <see cref="Rules"/> unchanged.
+        /// out. Null, empty or blank returns <see cref="Rules"/> unchanged.
         /// </summary>
         public static string RulesFor(string? createCall) =>
-            string.IsNullOrEmpty(createCall) ? Rules : Rules.Replace(ExampleNote, "").Replace(ExampleCall, createCall);
+            string.IsNullOrWhiteSpace(createCall) ? Rules : Rules.Replace(ExampleNote, "").Replace(ExampleCall, createCall!.Trim());
     }
 }

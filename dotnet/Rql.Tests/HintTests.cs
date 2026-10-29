@@ -7,6 +7,7 @@ using Xunit;
 namespace Rql.Tests
 {
     /// <summary>ADR-0013: named-argument typos, host rule examples, receipt notes, module registrations, receipts never paged.</summary>
+    [Collection("module scans")]
     public class HintTests
     {
         private static readonly QueryOptions Mutate = new QueryOptions { AllowMutation = true };
@@ -52,6 +53,34 @@ namespace Rql.Tests
             Assert.Contains("call editor.CreateGameObject(\"Cube\"", text);
             Assert.Contains("call editor.CreateGameObject($[0], $[1])", text);
             Assert.Equal(RqlLanguageGuide.Rules, RqlLanguageGuide.RulesFor(null));
+            Assert.Equal(RqlLanguageGuide.Rules, RqlLanguageGuide.RulesFor("  "));
+        }
+
+        public sealed class Painter
+        {
+            [RqlCallable("By number.")] public string Set(int color) => "int";
+            [RqlCallable("By name.")] public string Set(string colour) => "string";
+            [RqlCallable("One parameter.")] public string Make(string className) => className;
+            [RqlCallable("Two parameters.")] public string Make(string className, int klass) => className + klass;
+            [RqlCallable("Acronym.")] public string Open(string URLPath) => URLPath;
+        }
+
+        [Fact]
+        public void ExactNamesOutrankMisspeltOnesAndBoundParametersAreNotSuggested()
+        {
+            var p = new Painter();
+            var e = new RqlEngine().AddSource("p", () => p);
+            e.Mutations.Enabled = true;
+            // An overload that has the key's exact name (its value fails) is closer than one whose name it misspells.
+            var r = e.Execute("[1] | call p.Set({color: \"red\"})", options: Mutate);
+            Assert.Contains("parameter 'color'", r.Diagnostics[0].Message);
+            Assert.DoesNotContain("did you mean 'colour'", r.Diagnostics[0].Message);
+            // A parameter already named is never the suggestion for another key.
+            var m = e.Execute("[1] | call p.Make({className: \"X\", klass: \"Y\"})", options: Mutate);
+            Assert.DoesNotContain("did you mean 'className'", m.Diagnostics[0].Message);
+            Assert.Contains("parameter 'klass'", m.Diagnostics[0].Message);
+            // Acronyms split into words: pth → URLPath.
+            Assert.Contains("did you mean 'URLPath'", e.Execute("[1] | call p.Open({pth: \"/x\"})", options: Mutate).Diagnostics[0].Message);
         }
 
         public sealed class Thing { public int Id { get; set; } public string Name { get; set; } = ""; }
@@ -90,6 +119,10 @@ namespace Rql.Tests
             var dry = e.Execute("things | set Name = Name + \"-b-fairly-long-suffix-to-fill-the-receipt\"", new Rql.Budgets { MaxOutputBytes = 2000 },
                 new QueryOptions { AllowMutation = true, DryRun = true });
             Assert.Contains("planned changes were checked (dry run)", dry.Diagnostics.Single(d => d.Code == "output-truncated").Hint);
+            // A receipt the byte budget cut gives no pointer to json (which is cut too); the count is of every row.
+            var capped = AgentFormat.Render(r, OutputFormat.Table, 5);
+            Assert.Contains("195 more row(s) not shown", capped);
+            Assert.DoesNotContain("json format", capped);
         }
 
         public sealed class ModuleA : IRqlModule
@@ -111,6 +144,32 @@ namespace Rql.Tests
         }
 
         public sealed class BAdapter : RqlTypeAdapter<Thing> { }
+
+        public sealed class Outer : IRqlModule
+        {
+            /// <summary>Only the nested-configuration test runs it (assembly scans in other tests find it too).</summary>
+            public static bool Active;
+            public int Order => 0;
+            public void Configure(RqlModuleContext c)
+            {
+                if (!Active) return;
+                c.AddSource("o.first", () => null);
+                c.Engine.AddModules(new[] { typeof(ModuleA) });
+                c.AddSource("o.after", () => null);
+            }
+        }
+
+        [Fact]
+        public void NestedModuleConfigurationKeepsTheOuterRecording()
+        {
+            var e = new RqlEngine();
+            Outer.Active = true;
+            RqlModuleReport outer;
+            try { outer = e.AddModules(new[] { typeof(Outer) }).Single(r => r.Module.EndsWith("Outer")); }
+            finally { Outer.Active = false; }
+            Assert.Equal(new[] { "o.first", "o.after" }, outer.Sources);
+            Assert.Contains(e.Modules, r => r.Module.EndsWith("ModuleA") && r.Sources.Contains("a.things"));
+        }
 
         [Fact]
         public void ModuleReportsRecordRegistrations()

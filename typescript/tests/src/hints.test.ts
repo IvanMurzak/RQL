@@ -75,6 +75,52 @@ test('the rules take the host creation call', () => {
   assert.ok(text.includes('call editor.CreateGameObject($[0], $[1])'));
   assert.equal(languageRules(), LANGUAGE_RULES);
   assert.equal(languageRules(''), LANGUAGE_RULES);
+  assert.equal(languageRules('  '), LANGUAGE_RULES);
+  assert.ok(languageRules('  editor.CreateGameObject ').includes('call editor.CreateGameObject("Cube"'));
+});
+
+class Painter {}
+
+test('exact names outrank misspelt ones and bound parameters are not suggested', () => {
+  const ret = (v: unknown): unknown => v;
+  const model = new TypeModel().register(Painter, {
+    members: [],
+    methods: [
+      { name: 'Set', params: [{ name: 'color', type: t.number }], returns: t.string, invoke: () => 'int' },
+      // Methods are keyed by name and arity: the second Set takes an optional parameter.
+      {
+        name: 'Set',
+        params: [
+          { name: 'colour', type: t.string },
+          { name: 'mix', type: t.number, default: 1 },
+        ],
+        returns: t.string,
+        invoke: () => 'string',
+      },
+      { name: 'Make', params: [{ name: 'className', type: t.string }], returns: t.string, invoke: (_p, a) => ret(a[0]) },
+      {
+        name: 'Make',
+        params: [
+          { name: 'className', type: t.string },
+          { name: 'klass', type: t.number },
+        ],
+        returns: t.string,
+        invoke: (_p, a) => ret(a[0]),
+      },
+      { name: 'Open', params: [{ name: 'URLPath', type: t.string }], returns: t.string, invoke: (_p, a) => ret(a[0]) },
+    ],
+  });
+  const p = new Painter();
+  const e = new RqlEngine({ types: model }).addSource('p', () => p);
+  e.mutations.enabled = true;
+  const r = e.execute('[1] | call p.Set({color: "red"})', {}, M);
+  assert.ok(r.diagnostics[0]!.message.includes("parameter 'color'"), r.diagnostics[0]!.message);
+  assert.ok(!r.diagnostics[0]!.message.includes("did you mean 'colour'"), r.diagnostics[0]!.message);
+  const m = e.execute('[1] | call p.Make({className: "X", klass: "Y"})', {}, M);
+  assert.ok(!m.diagnostics[0]!.message.includes("did you mean 'className'"), m.diagnostics[0]!.message);
+  assert.ok(m.diagnostics[0]!.message.includes("parameter 'klass'"), m.diagnostics[0]!.message);
+  const o = e.execute('[1] | call p.Open({pth: "/x"})', {}, M);
+  assert.ok(o.diagnostics[0]!.message.includes("did you mean 'URLPath'"), o.diagnostics[0]!.message);
 });
 
 test('shortened receipts never suggest paging', () => {

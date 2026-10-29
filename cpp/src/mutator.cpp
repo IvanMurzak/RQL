@@ -1031,11 +1031,14 @@ struct Miss {
     long long matched;
     int depth;
     std::string why;
+    /// Bound by name except one key that is a parameter's name misspelt (spec §8): closer than any failure depth.
+    bool misspelt = false;
 };
 
 int compare_miss(const Miss& a, const Miss& b) {
     if (a.arity_fits != b.arity_fits) return a.arity_fits ? 1 : -1;
     if (a.matched != b.matched) return a.matched < b.matched ? -1 : 1;
+    if (a.misspelt != b.misspelt) return a.misspelt ? 1 : -1;
     return a.depth == b.depth ? 0 : a.depth < b.depth ? -1 : 1;
 }
 
@@ -1084,12 +1087,16 @@ bool bind_names(const MethodDescriptor& m, const Value& literal, std::vector<siz
         return false;
     }
     if (!unknown.empty()) {
-        // A key close to a parameter's name is that parameter misspelt: it counts as bound and the miss as deep, so
-        // "no parameter 'klass' (did you mean 'className'?)" beats an overload that cannot take the literal (spec §8).
-        const std::string close = closest_parameter(unknown, names);
-        misses.push_back({&m, true, known + (close.empty() ? 0 : 1), 0,
+        // A key close to a parameter not named yet is that parameter misspelt, so "no parameter 'klass' (did you mean
+        // 'className'?)" beats an overload that cannot take the literal at all (spec §8).
+        std::vector<std::string> unnamed;
+        for (size_t j = 0; j < ps.size(); ++j)
+            if (!named[j]) unnamed.push_back(ps[j].name);
+        const std::string close = closest_parameter(unknown, unnamed);
+        misses.push_back({&m, true, known, 0,
                           "no parameter '" + unknown + "'" + (close.empty() ? std::string() : " (did you mean '" + close + "'?)") +
-                              (ps.empty() ? std::string("; it takes no parameters") : "; parameters: " + join(names, ", "))});
+                              (ps.empty() ? std::string("; it takes no parameters") : "; parameters: " + join(names, ", ")),
+                          !close.empty()});
         return false;
     }
     for (size_t j = 0; j < ps.size(); ++j) {
@@ -1146,7 +1153,8 @@ const MethodDescriptor* resolve_overload(Exec& x, const TypeDescriptor& type, co
             }
         }
         if (!first.empty()) {
-            misses.push_back({&m, true, matched, depth, first});
+            // By name, every bound key names a parameter (spec §8): an exact name whose value fails ranks above a misspelt one.
+            misses.push_back({&m, true, kind == "parameter" ? static_cast<long long>(slots.size()) : matched, depth, first});
             return false;
         }
         std::vector<Value> cv;

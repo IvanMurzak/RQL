@@ -126,6 +126,7 @@ namespace Rql.Execution
             }
             foreach (var (module, name, order) in modules.OrderBy(m => m.order).ThenBy(m => m.name, StringComparer.Ordinal))
             {
+                var outer = engine.Recording; // a module may configure modules of its own
                 var registered = engine.Recording = new Registrations();
                 try
                 {
@@ -133,7 +134,7 @@ namespace Rql.Execution
                     reports.Add(new RqlModuleReport(name, order, null, registered));
                 }
                 catch (Exception ex) { reports.Add(new RqlModuleReport(name, order, (ex.InnerException ?? ex).Message, registered)); }
-                finally { engine.Recording = null; }
+                finally { engine.Recording = outer; }
             }
             return reports;
         }

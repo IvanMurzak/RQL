@@ -728,10 +728,22 @@ interface Miss {
   matched: number;
   depth: number;
   why: string;
+  /** Bound by name except one key that is a parameter's name misspelt (spec §8): closer than any failure depth. */
+  misspelt?: boolean;
 }
 
 const compareMiss = (a: Miss, b: Miss): number =>
-  a.arityFits !== b.arityFits ? (a.arityFits ? 1 : -1) : a.matched !== b.matched ? a.matched - b.matched : a.depth - b.depth;
+  a.arityFits !== b.arityFits
+    ? a.arityFits
+      ? 1
+      : -1
+    : a.matched !== b.matched
+      ? a.matched - b.matched
+      : (a.misspelt === true) !== (b.misspelt === true)
+        ? a.misspelt === true
+          ? 1
+          : -1
+        : a.depth - b.depth;
 
 const hasDefault = (p: ParamSpec): boolean => p.optional === true || 'default' in p;
 
@@ -770,7 +782,8 @@ export function resolveOverload(
       }
     }
     if (first !== undefined) {
-      misses.push({ method: m, arityFits: true, matched, depth, why: first });
+      // By name, every bound key names a parameter (spec §8): an exact name whose value fails ranks above a misspelt one.
+      misses.push({ method: m, arityFits: true, matched: kind === 'parameter' ? slots.length : matched, depth, why: first });
       return undefined;
     }
     const cv: unknown[] = m.params.map((p) => p.default);
@@ -859,16 +872,17 @@ function bindNames(m: MethodAccessor, literal: ObjectValue, misses: Miss[]): num
   }
   const all = ps.map((p) => p.name).join(', ');
   if (unknown !== undefined) {
+    // A key close to a parameter not named yet is that parameter misspelt, so "no parameter 'klass' (did you mean
+    // 'className'?)" beats an overload that cannot take the literal at all (spec §8).
     const close = closestParameter(
       unknown,
-      ps.map((p) => p.name),
+      ps.filter((_, j) => !named[j]).map((p) => p.name),
     );
-    // A key close to a parameter's name is that parameter misspelt: it counts as bound and the miss as deep, so
-    // "no parameter 'klass' (did you mean 'className'?)" beats an overload that cannot take the literal (spec §8).
     misses.push({
       method: m,
       arityFits: true,
-      matched: known + (close !== undefined ? 1 : 0),
+      matched: known,
+      misspelt: close !== undefined,
       depth: 0,
       why: `no parameter '${unknown}'` + (close !== undefined ? ` (did you mean '${close}'?)` : '') + (ps.length > 0 ? `; parameters: ${all}` : '; it takes no parameters'),
     });
