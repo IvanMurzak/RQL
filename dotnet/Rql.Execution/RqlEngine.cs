@@ -351,8 +351,7 @@ namespace Rql.Execution
             if (getter == null) throw new ArgumentNullException(nameof(getter));
             var type = typeof(T);
             var element = type.IsArray ? type.GetElementType()
-                : type.GetInterfaces().Append(type).FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>))
-                    ?.GetGenericArguments()[0];
+                : TypeModel.FindGeneric(type, typeof(IEnumerable<>))?.GetGenericArguments()[0];
             bool untyped = type == typeof(object) || element == typeof(object);
             return AddSource(name, () => getter(), description, untyped ? null : type);
         }
