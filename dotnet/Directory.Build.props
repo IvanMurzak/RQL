@@ -7,7 +7,7 @@
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <Deterministic>true</Deterministic>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <Version>0.2.0</Version>
+    <Version>0.3.0</Version>
     <Authors>Ivan Murzak</Authors>
     <!-- Only Rql.Package is packed (com.IvanMurzak.Rql, see scripts/pack.sh); no other project opts in. -->
     <IsPackable>false</IsPackable>
