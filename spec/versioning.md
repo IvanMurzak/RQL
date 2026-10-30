@@ -12,6 +12,9 @@
 
 ## Changelog (0.1, pre-release)
 
+Package releases (`com.IvanMurzak.Rql`): 0.2.0 = the entries up to the live-battery fixes; **0.3.0** = every
+entry from Wave-2 to the end of the list. The protocol stays `0.1` throughout.
+
 * Initial grammar, semantics, schemas, golden vectors.
 * `group-by` is a streaming stage producing `{key, count}` rows (was terminal) — evidence: tasks needing
   "largest group".
@@ -41,7 +44,7 @@
   match on codes**: those cases no longer report `getter-threw` / `coercion-failed`; `call` validators checked for every target before the first call (§8);
   aggregates warn about ignored values (§4.3); `distinct` compares projected rows by value (§5); display numbers and
   non-finite encoding (§6); numeric tuple display, input and object-literal equality (§13).
-* Wave-2 fixes (Unreal / Unity / Godot; unreleased, protocol stays `0.1`; additive or clarifying, no new error code):
+* Wave-2 fixes (Unreal / Unity / Godot; package 0.3.0, protocol stays `0.1`; additive or clarifying, no new error code):
   `$index` / `$path` / `$depth` in `set` values and `call` arguments are the target's, `$index` its position in the
   stream entering the stage (§3, §8) — **behaviour change**: these read a stale value (`$index`) or `missing`
   (`$path`, and `$depth` in .NET / C++) before; string functions and methods `replace`, `replace-regex`, `substring`,
@@ -53,7 +56,7 @@
   hints for an out-of-range list index in a `set` target, a computed `sort` key, a parenthesised tuple and a `ref()`
   given a name (§7); unquoted `$`-name object keys (`{$type: "T"}`, §4.5);
   `$path` is the query path, `distinct e` keeps items (§3.1, §5).
-* Wave-3 fixes (Unreal / Unity / Godot; unreleased, protocol stays `0.1`; additive or clarifying, no new error code):
+* Wave-3 fixes (Unreal / Unity / Godot; package 0.3.0, protocol stays `0.1`; additive or clarifying, no new error code):
   **enum name resolution** (§8) wherever a string meets an enum (writes, map keys, comparisons): exact name or host
   alias first, then the part after a `Type::` / `Type.` qualifier, then ignoring case, then without the entry prefix
   (`"Fill"` → `HAlign_Fill`); several candidates are ambiguous (`coercion-failed` listing them, not equal in
@@ -64,7 +67,7 @@
   items matched (counting up to the host ceiling), its hint advises raising the host's **limit argument** to the count
   first and is independent of whether callers can pass the other budgets (a budget error while counting is reported
   instead); capability manifest `mutations.hardMaxTargets`.
-* Wave-3b fixes (Unity / Unreal / Godot; unreleased, protocol stays `0.1`; additive or clarifying, no new error code,
+* Wave-3b fixes (Unity / Unreal / Godot; package 0.3.0, protocol stays `0.1`; additive or clarifying, no new error code,
   no new plan node shape — but a plan using `if` needs a runtime with this change): the core function **`if(cond, then, else)`** with the text form `cond ? then : else` (lowest
   precedence, right-associative, lazy; §4.3, §11, grammar `conditional`); a `set` / `call` that no item reaches because
   of a member read that missed on every tested item and that **no known type declares** fails with an `unknown-member`
@@ -73,7 +76,7 @@
   what the host has: the `unknown-source` example is a registered source, the projected-rows hint names no sample
   path, the schema tool is the host's (`SchemaHint`, default "the schema tool"; was `rql_schema / describe`), and an
   unknown `call` method names a source that has it (§2, §10).
-* Wave-4 fixes (Unity / Unreal / Godot; unreleased, protocol stays `0.1`; no new error code, no new plan node shape):
+* Wave-4 fixes (Unity / Unreal / Godot; package 0.3.0, protocol stays `0.1`; no new error code, no new plan node shape):
   **no implicit truthiness** (§1.2): a number, string, enum, object, struct, list or map in a predicate position
   (`where`, `and` / `or` / `not`, `if` / `?:`, method predicates) fails the query with `type-mismatch` and a hint showing a
   boolean test — **behaviour change**: such conditions were silently `unknown` (`where sharedMaterial` kept nothing);
@@ -85,12 +88,12 @@
   accepted). Hints: the host's mutation tool in `permission-denied` (no `options.allowMutation`), mixed-stream
   `unknown-member` hints and member lists ranked by similarity (§10), type display names (§13), and the parser hints
   "comparisons do not chain" and "one query per call" (§11).
-* Wave-4 features (unreleased; protocol stays `0.1`, no new error code): **group items** — group-by rows have the member
+* Wave-4 features (package 0.3.0; protocol stays `0.1`, no new error code): **group items** — group-by rows have the member
   `items` (the group's items), so `group-by Kind | select key, avg = items.avg(Weight)` aggregates per group (§5);
   **no-op assignments** — a `set` receipt omits assignments whose value stayed the same and counts them in the new
   optional result field `unchanged` (§6, §8; **behaviour change**: such rows were listed); engines list their adapters
   (§13).
-* Bulk create, ADR-0008 (unreleased; protocol stays `0.1`, no new error code): the core source function
+* Bulk create, ADR-0008 (package 0.3.0; protocol stays `0.1`, no new error code): the core source function
   **`range(start, end[, step])`** (lazy, bounded by `maxVisited`; also a list function in expressions) and **list literals
   as sources** (§2; **behaviour change**: both were `unknown-source`); the **source-qualified call** `call q.m(args)`,
   which runs the one object's method once per stream item with the item's `$` / `$index` / `$path` / `$depth` in the
@@ -102,7 +105,7 @@
   nested in itself encodes the repetition as `"…"` (§6; .NET recursed without end). Known names include the members of
   type adapters' target types (§8, §13). The host-independent language rules ship as text with every runtime
   (`fixtures/guide/language-rules.txt`). The group-row hint names the rows' own key columns (§5; it showed `select key` and `items.avg(key)` after a named key).
-* Wave-5, ADR-0009 (unreleased; protocol stays `0.1`, no new error code, no plan change): **component-wise struct
+* Wave-5, ADR-0009 (package 0.3.0; protocol stays `0.1`, no new error code, no plan change): **component-wise struct
   arithmetic** for types whose adapter declares components (the new adapter capability *Arithmetic*, §4.2, §13:
   `Scale * 1.5`, `Position + [0, 1, 0]`, `-v`); other struct operands stay `type-mismatch`, now with a reason. **Behaviour
   change**: an absent map key reads as `null`, not `missing` (§3), so `== null` / `is null` are `true` and `!= v` keeps
@@ -112,8 +115,28 @@
   Two more shared language rules (vectors, missing map entries). **Behaviour change**: `==` compares two structs of one type member by member, recursively
   (§4.1; it was `unknown` without an equality adapter), so a `set` that writes a struct's current value, nested structs
   included, is counted as unchanged.
-* Trigonometry and `$count` (unreleased; protocol stays `0.1`, no new error code, no plan change): functions `sin`, `cos`,
+* Trigonometry and `$count` (package 0.3.0; protocol stays `0.1`, no new error code, no plan change): functions `sin`, `cos`,
   `tan` (rounded to 12 decimal places), `asin`, `acos`, `atan`, `atan2(y, x)` (rounded to 14), `pi()`, `deg(x)` (rounded to
   12) and `rad(x)` (§4.3), so runtimes agree on the digits; the meta member `$count`, the number of items entering a `set` /
   `call` stage, in set values and call arguments (missing, with an `unknown-meta` warning, elsewhere; §3, §8); a shared
   language rule with the circle layout `[5 * cos(2 * pi() * $index / $count), 0, 5 * sin(…)]`.
+* Overloads and named arguments, ADR-0010 (package 0.3.0; protocol stays `0.1`, no new error code, no plan change):
+  overloads are checked without side effects, only the chosen overload's arguments are coerced (§8); engine objects
+  (identity or liveness adapter) are never built from object literals, with a host literal-construction hook (§4.5,
+  §13); a failed call reports the best-matching overload, equally close ones listed; one object literal that no
+  overload takes binds parameters by name, defaults fill the rest (§8); compact receipts in the agent format.
+* Literal kinds and key warnings, ADR-0011 (package 0.3.0; protocol stays `0.1`): every type has a literal kind
+  (`value` built fresh, `instanced` built as a subobject of its outer, `engine` never built; adapter capability and host
+  hooks, §4.5, §13); the engine-object refusal comes before the abstract-type hint, with host advice; known member
+  names never evaluate a source the query does not name (declared source types, §8); warnings for a sort key that
+  evaluates to an error and for a `group-by` / `distinct` key member missing on most items (§5).
+* Vectors, ADR-0012 (package 0.3.0; protocol stays `0.1`): arithmetic on numeric lists (`L * n`, `n * L`, `L / n`,
+  `L ± M` of one length, `-L`; other mixes `type-mismatch` with a reason, §4.2); vector functions and methods `length` /
+  `magnitude`, `normalize`, `distance`, `dot`, `lerp` on numeric lists and component structs (§4.3); a host function
+  call or `ref(…)` followed by navigation is a source and a qualified `call` target (§2, §8).
+* Hints and host texts, ADR-0013 (package 0.3.0; protocol stays `0.1`): a by-name key close to a parameter name counts
+  as that parameter, misspelt, when ranking overloads (§8); the shared language rules take the host's own examples;
+  receipts are never paged (§10); host subtype lookup for `"$type"` (C++ `resolve_subtype`, §4.5, §13).
+* `$type` suggestions and list coercion (package 0.3.0; protocol stays `0.1`): a misspelt object-literal `$type` ends
+  with "(did you mean 'BoxMesh'?)" from the names the subtype lookup accepts (§4.5, §10); any list value (host array
+  or collection, another member's list) converts element by element to a typed list / array member or parameter (§8).

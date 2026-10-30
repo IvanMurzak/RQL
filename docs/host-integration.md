@@ -7,8 +7,8 @@ and, for .NET, the XML docs of `RqlEngine` / `MutationPolicy`. Type adapters hav
 [§10](../spec/semantics.md#10-budgets-and-errors) and
 [§13](../spec/semantics.md#13-type-adapters-host-extension-normative-behaviour).
 
-Several hooks below are not in a published package yet; [`feature-matrix.md`](feature-matrix.md) marks them
-*unreleased* and lists each one's status per runtime.
+[`feature-matrix.md`](feature-matrix.md) lists each hook's status per runtime and marks the ones not in a
+published package yet *unreleased*.
 
 ## Contents
 
