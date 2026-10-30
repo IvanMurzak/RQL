@@ -120,21 +120,27 @@
 * Overloads and named arguments, ADR-0010 (package 0.3.0; protocol stays `0.1`, no new error code, no plan change):
   overloads are checked without side effects, only the chosen overload's arguments are coerced (§8); engine objects
   (identity or liveness adapter) are never built from object literals, with a host literal-construction hook (§4.5,
-  §13); a failed call reports the best-matching overload, equally close ones listed; one object literal that no
-  overload takes binds parameters by name, defaults fill the rest (§8); compact receipts in the agent format.
-* Literal kinds and key warnings, ADR-0011 (package 0.3.0; protocol stays `0.1`): every type has a literal kind
-  (`value` built fresh, `instanced` built as a subobject of its outer, `engine` never built; adapter capability and host
-  hooks, §4.5, §13); the engine-object refusal comes before the abstract-type hint, with host advice; known member
-  names never evaluate a source the query does not name (declared source types, §8); warnings for a sort key that
-  evaluates to an error and for a `group-by` / `distinct` key member missing on most items (§5).
+  §13) — **behaviour change**: such a literal is `coercion-failed` (it constructed the object before); a failed call
+  reports the best-matching overload, equally close ones listed; one object literal that no overload takes binds
+  parameters by name, defaults fill the rest (§8) — **behaviour change**: it failed before; compact receipts in the
+  agent format.
+* Literal kinds and key warnings, ADR-0011 (package 0.3.0; protocol stays `0.1`, no new error code, no plan change):
+  every type has a literal kind (`value` built fresh, `instanced` built as a subobject of its outer, `engine` never
+  built; adapter capability and host hooks, §4.5, §13) — **behaviour change**: value / instanced types are built from
+  literals; the engine-object refusal comes before the abstract-type hint, with host advice; known member names never
+  evaluate a source the query does not name (declared source types, §8; a never-read source without a declared type
+  adds no known names); warnings for a sort key that evaluates to an error and for a `group-by` / `distinct` key member
+  missing on most items (§5).
 * Vectors, ADR-0012 (package 0.3.0; protocol stays `0.1`): arithmetic on numeric lists (`L * n`, `n * L`, `L / n`,
   `L ± M` of one length, `-L`; other mixes `type-mismatch` with a reason, §4.2); vector functions and methods `length` /
   `magnitude`, `normalize`, `distance`, `dot`, `lerp` on numeric lists and component structs (§4.3); a host function
   call or `ref(…)` followed by navigation is a source and a qualified `call` target (§2, §8).
 * Hints and host texts, ADR-0013 (package 0.3.0; protocol stays `0.1`): a by-name key close to a parameter name counts
   as that parameter, misspelt, when ranking overloads (§8); the shared language rules take the host's own examples;
-  receipts are never paged (§10).
+  a receipt cut by the output byte budget says every change was made instead of suggesting `skip` / `first` paging
+  (§8, §10).
 * `$type` suggestions and list coercion (package 0.3.0; protocol stays `0.1`): a misspelt object-literal `$type` ends
-  with "(did you mean 'BoxMesh'?)" from the names the subtype lookup accepts, which C++ hosts extend with
-  `resolve_subtype` (§4.5, §10, §13); any list value (host array
-  or collection, another member's list) converts element by element to a typed list / array member or parameter (§8).
+  with "(did you mean 'BoxMesh'?)" (§4.5, §10; C++ suggests registered descriptors, not answers of its new
+  `resolve_subtype` host lookup, §13); excluded types are never built from `$type` (TypeScript and C++ built them
+  before); any list value (host array or collection, another member's list) converts element by element to a typed
+  list / array member or parameter (§8).
