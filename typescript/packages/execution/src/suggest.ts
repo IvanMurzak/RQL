@@ -8,6 +8,12 @@ export function closest(name: string, candidates: Iterable<string>, max: number)
   return closestMembers(name, candidates, undefined, max);
 }
 
+/** " (did you mean 'BoxMesh'?)" after an unknown type name, with up to three of the closest known names; '' when none qualifies. */
+export function typeNameHint(name: string, known: Iterable<string>): string {
+  const close = closest(name, known, 3);
+  return close.length > 0 ? ` (did you mean ${close.map((c) => `'${c}'`).join(' / ')}?)` : '';
+}
+
 /** Nested paths offered per type (spec §10): bounds the static walk over struct-typed members. */
 export const MAX_NESTED = 200;
 

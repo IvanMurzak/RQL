@@ -2882,6 +2882,21 @@ void dynamic_subtype_tests() {
     };
     r = e->execute_json(set_triggers("InputTriggerTap", "TapReleaseTimeThreshold"), {}, mutate);
     check(r.ok && asked == 0, "dynamic subtypes: registered types match before the lookup hook is asked");
+    r = e->execute_json(set_triggers("InputTriggerTp", "TapReleaseTimeThreshold"), {}, mutate);
+    check(first_code(r) == "coercion-failed" && asked == 1 &&
+              has(why(r), "no concrete type named 'InputTriggerTp' derives from InputTrigger (did you mean 'InputTriggerTap'?)"),
+          "dynamic subtypes: a misspelt $type suggests the closest registered subtype");
+    r = e->execute_json(set_triggers("Zebra", "TapReleaseTimeThreshold"), {}, mutate);
+    check(first_code(r) == "coercion-failed" && !has(why(r), "did you mean"), "dynamic subtypes: a name close to no subtype gets no suggestion");
+    {
+        auto hidden = engine();
+        const rql::TypeDescriptor* tap_t = describe(&tap_cls);
+        hidden->exclude_types([tap_t](const rql::TypeDescriptor& t) { return &t == tap_t; });
+        r = hidden->execute_json(set_triggers("InputTriggerTap", "TapReleaseTimeThreshold"), {}, mutate);
+        check(first_code(r) == "coercion-failed", "dynamic subtypes: an excluded type is never built from $type");
+        r = hidden->execute_json(set_triggers("InputTriggerTp", "TapReleaseTimeThreshold"), {}, mutate);
+        check(first_code(r) == "coercion-failed" && !has(why(r), "did you mean"), "dynamic subtypes: an excluded type is never suggested");
+    }
     check(throws([&] { reg.register_descriptor(nullptr); }), "dynamic subtypes: register_descriptor(nullptr) throws");
     check(throws([&] { reg.register_descriptor(const_cast<rql::TypeDescriptor*>(reg.list_type(trigger_t, false))); }),
           "dynamic subtypes: register_descriptor refuses a list type");

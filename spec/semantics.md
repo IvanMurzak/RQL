@@ -319,7 +319,9 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
 * a **map** type is built entry by entry (keys coerced to the key type, values to the value type);
 * an **object or struct** type is constructed and its members assigned: the concrete type is the target type, or the
   type named by the key `"$type"` (short or full name) among concrete types assignable to the target, which includes
-  types the host resolves on demand (§13 "Subtype lookup") (no match or an ambiguous name → `coercion-failed`); the type must be constructible (a default/parameterless constructor, a factory
+  types the host resolves on demand (§13 "Subtype lookup") (no match or an ambiguous name → `coercion-failed`; a name
+  that matches nothing ends with the closest names the lookup accepts by the §10 suggestion rules, e.g. "no concrete
+  type named 'BoxMsh' derives from Mesh (did you mean 'BoxMesh'?)"); the type must be constructible (a default/parameterless constructor, a factory
   (below) or an adapter that coerces object literals); every other key must name a writable member of that type (unknown or read-only →
   `coercion-failed`), the host's per-member write policy applies to it exactly as to `set` (`permission-denied`), and
   its value is coerced recursively to the member type and validated like a `set`. Excluded types (§13) are never
@@ -494,7 +496,9 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   the limit argument (§10) and the range — never clamped, so a caller never believes it raised the limit when it did not.
 * `set p = e`: for each item, evaluate `e` against the item, coerce to the member type of `p`
   (number→integral only if integral and in range; string→enum by enum name resolution, below; null only for nullable /
-  reference types; list literal → list/array type; object literal → map / constructed object, §4.5), then write. Writing through value types
+  reference types; a list → list/array type, element by element with the element coercion and validation of a list
+  literal: list literals, computed lists and any other list value (a host array or collection, another member's list;
+  never a string, a map or a type the host treats as an object, §13); object literal → map / constructed object, §4.5), then write. Writing through value types
   (`Transform.Position.x = 1`) MUST write back the modified copy to every enclosing value-type
   member up to the first reference object. Target member must be writable and allowed by
   policy (`readonly-member`, `permission-denied`). An indexed target (`set Tags[1] = "x"`) replaces an existing

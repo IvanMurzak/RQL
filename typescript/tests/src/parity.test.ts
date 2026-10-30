@@ -263,6 +263,48 @@ test('object literals: maps, construction with defaults, "$type" ambiguity, adap
     assert.equal(e.execute(`hs | set shape = ${bad}`, {}, mut).diagnostics[0]?.code, 'coercion-failed', bad);
   }
   assert.equal(e.execute('hs | set weights = {a: "x"}', {}, mut).diagnostics[0]?.code, 'coercion-failed');
+  // A misspelt "$type" is answered with the closest registered subtype names (spec §4.5, §10).
+  const typo = e.execute('hs | set shape = {"$type": "Sqare"}', {}, mut).diagnostics[0];
+  assert.equal(typo?.code, 'coercion-failed');
+  assert.ok((typo?.message ?? '').includes("no registered type named 'Sqare' derives from Shape (did you mean 'Square'?)"), typo?.message);
+  assert.ok(!(e.execute('hs | set shape = {"$type": "Zebra"}', {}, mut).diagnostics[0]?.message ?? '').includes('did you mean'));
+  // An excluded class is never built from "$type" nor offered (spec §4.5, §13).
+  types.excludeTypes((r) => typeof r === 'object' && 'kind' in r && r.kind === 'class' && r.ctor === Square);
+  const hidden = e.execute('hs | set shape = {"$type": "Square"}', {}, mut).diagnostics[0];
+  assert.equal(hidden?.code, 'coercion-failed');
+  assert.ok(!(e.execute('hs | set shape = {"$type": "Sqare"}', {}, mut).diagnostics[0]?.message ?? '').includes('did you mean'));
+});
+
+test('host lists, sets and typed arrays convert element by element to a typed list', () => {
+  class Lists {
+    Id = 1;
+    ints = [1, 2, 3];
+    set = new Set([4, 5]);
+    floats = new Float64Array([0.5, 1.5]);
+    names: string[] = ['a'];
+    map = new Map([['k', 1]]);
+  }
+  const l = new Lists();
+  const types = new TypeModel().register(Lists, {
+    members: [
+      { name: 'Id', type: t.int },
+      { name: 'ints', type: t.list(t.int) },
+      { name: 'set', type: t.list(t.int) },
+      { name: 'floats', type: t.list(t.number) },
+      { name: 'names', type: t.list(t.string) },
+      { name: 'map', type: t.map(t.string, t.int) },
+    ],
+  });
+  const e = new RqlEngine({ types }).addSource('ls', () => [l]);
+  e.mutations.enabled = true;
+  const r = e.execute('ls | set ints = set', {}, mut);
+  assert.equal(r.ok, true, JSON.stringify(r.diagnostics));
+  assert.deepEqual(l.ints, [4, 5]);
+  assert.equal(e.execute('ls | set ints = floats', {}, mut).diagnostics[0]?.code, 'coercion-failed'); // 0.5 is not an int
+  assert.equal(e.execute('ls | set names = ints', {}, mut).diagnostics[0]?.code, 'coercion-failed');
+  assert.equal(e.execute('ls | set ints = map', {}, mut).diagnostics[0]?.code, 'coercion-failed');
+  assert.deepEqual(l.ints, [4, 5]);
+  assert.deepEqual(l.names, ['a']);
 });
 
 test('list functions are pure and validate their arguments', () => {

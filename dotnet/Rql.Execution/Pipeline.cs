@@ -1340,6 +1340,13 @@ namespace Rql.Execution
             (name.Length >= 3 && candidate.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0)
             || (candidate.Length * 2 >= name.Length && name.IndexOf(candidate, StringComparison.OrdinalIgnoreCase) >= 0);
 
+        /// <summary>" (did you mean 'BoxMesh'?)" after an unknown type name, with up to three of the closest known names; "" when none qualifies.</summary>
+        public static string TypeNameHint(string name, IReadOnlyCollection<string> known)
+        {
+            var close = Closest(name, known, 3);
+            return close.Count > 0 ? " (did you mean " + string.Join(" / ", close.Select(c => "'" + c + "'")) + "?)" : "";
+        }
+
         /// <summary>"members: a b c … (N more)" with at most <see cref="MaxListed"/> names.</summary>
         public static string MemberList(IReadOnlyCollection<string> names) =>
             "members: " + string.Join(" ", names.Take(MaxListed)) + (names.Count > MaxListed ? $" … ({names.Count - MaxListed} more)" : "");
