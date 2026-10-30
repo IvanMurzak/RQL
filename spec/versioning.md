@@ -12,9 +12,6 @@
 
 ## Changelog (0.1, pre-release)
 
-Package releases (`com.IvanMurzak.Rql`): 0.2.0 = the entries up to the live-battery fixes; **0.3.0** = every
-entry from Wave-2 to the end of the list. The protocol stays `0.1` throughout.
-
 * Initial grammar, semantics, schemas, golden vectors.
 * `group-by` is a streaming stage producing `{key, count}` rows (was terminal) — evidence: tasks needing
   "largest group".
@@ -136,7 +133,8 @@ entry from Wave-2 to the end of the list. The protocol stays `0.1` throughout.
   call or `ref(…)` followed by navigation is a source and a qualified `call` target (§2, §8).
 * Hints and host texts, ADR-0013 (package 0.3.0; protocol stays `0.1`): a by-name key close to a parameter name counts
   as that parameter, misspelt, when ranking overloads (§8); the shared language rules take the host's own examples;
-  receipts are never paged (§10); host subtype lookup for `"$type"` (C++ `resolve_subtype`, §4.5, §13).
+  receipts are never paged (§10).
 * `$type` suggestions and list coercion (package 0.3.0; protocol stays `0.1`): a misspelt object-literal `$type` ends
-  with "(did you mean 'BoxMesh'?)" from the names the subtype lookup accepts (§4.5, §10); any list value (host array
+  with "(did you mean 'BoxMesh'?)" from the names the subtype lookup accepts, which C++ hosts extend with
+  `resolve_subtype` (§4.5, §10, §13); any list value (host array
   or collection, another member's list) converts element by element to a typed list / array member or parameter (§8).
