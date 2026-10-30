@@ -2882,6 +2882,12 @@ void dynamic_subtype_tests() {
     };
     r = e->execute_json(set_triggers("InputTriggerTap", "TapReleaseTimeThreshold"), {}, mutate);
     check(r.ok && asked == 0, "dynamic subtypes: registered types match before the lookup hook is asked");
+    r = e->execute_json(set_triggers("InputTriggerTp", "TapReleaseTimeThreshold"), {}, mutate);
+    check(first_code(r) == "coercion-failed" && asked == 1 &&
+              has(why(r), "no concrete type named 'InputTriggerTp' derives from InputTrigger (did you mean 'InputTriggerTap'?)"),
+          "dynamic subtypes: a misspelt $type suggests the closest registered subtype");
+    r = e->execute_json(set_triggers("Zebra", "TapReleaseTimeThreshold"), {}, mutate);
+    check(first_code(r) == "coercion-failed" && !has(why(r), "did you mean"), "dynamic subtypes: a name close to no subtype gets no suggestion");
     check(throws([&] { reg.register_descriptor(nullptr); }), "dynamic subtypes: register_descriptor(nullptr) throws");
     check(throws([&] { reg.register_descriptor(const_cast<rql::TypeDescriptor*>(reg.list_type(trigger_t, false))); }),
           "dynamic subtypes: register_descriptor refuses a list type");

@@ -200,8 +200,7 @@ bool Engine::adapts() const {
     return exclusion_hits_.load(std::memory_order_acquire);
 }
 
-std::vector<const TypeDescriptor*> Engine::subtypes_named(const TypeDescriptor* target, const std::string& name) const {
-    std::lock_guard<std::mutex> lock(subtypes_mutex_);
+const std::unordered_map<std::string, std::vector<const TypeDescriptor*>>& Engine::subtype_index_locked(const TypeDescriptor* target) const {
     if (types_->registered_count() != subtypes_registered_) {  // types were registered since: rebuild lazily
         subtypes_.clear();
         subtypes_registered_ = types_->registered_count();
@@ -214,8 +213,21 @@ std::vector<const TypeDescriptor*> Engine::subtypes_named(const TypeDescriptor* 
             if (t->kind == target->kind && t->derives_from(target)) by_name[t->name].push_back(t);
         it = subtypes_.emplace(target, std::move(by_name)).first;
     }
-    auto hit = it->second.find(name);
-    return hit == it->second.end() ? std::vector<const TypeDescriptor*>{} : hit->second;
+    return it->second;
+}
+
+std::vector<const TypeDescriptor*> Engine::subtypes_named(const TypeDescriptor* target, const std::string& name) const {
+    std::lock_guard<std::mutex> lock(subtypes_mutex_);
+    const auto& index = subtype_index_locked(target);
+    auto hit = index.find(name);
+    return hit == index.end() ? std::vector<const TypeDescriptor*>{} : hit->second;
+}
+
+std::vector<std::string> Engine::subtype_names(const TypeDescriptor* target) const {
+    std::lock_guard<std::mutex> lock(subtypes_mutex_);
+    std::vector<std::string> names;
+    for (const auto& entry : subtype_index_locked(target)) names.push_back(entry.first);
+    return names;
 }
 
 size_t Engine::retained_literal_objects() noexcept {
@@ -293,6 +305,7 @@ Value Exec::resolve_ref(const std::string& reference, std::string& error) { retu
 std::vector<const TypeDescriptor*> Exec::subtypes_named(const TypeDescriptor* target, const std::string& name) {
     return engine.subtypes_named(target, name);
 }
+std::vector<std::string> Exec::subtype_names(const TypeDescriptor* target) { return engine.subtype_names(target); }
 Exec::~Exec() {
     // Literal-built objects of a non-dry-run query may now be linked from the graph or host state
     // (also after a failed rollback): the engine retains them (spec §4.5 ownership).

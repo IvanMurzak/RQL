@@ -246,6 +246,61 @@ namespace Rql.Tests
             Assert.True(e.Execute("h | set Thing = {\"$type\": \"PlainThing\"}", options: Mutate).Ok);
         }
 
+        [Fact]
+        public void MisspeltSubtypeNamesGetASuggestion()
+        {
+            var e = Engine(new Scene());
+            e.ExcludeTypes(t => t == typeof(SecretThing));
+            e.AddSource("h", () => new Holder());
+            var r = e.Execute("h | set Thing = {\"$type\": \"PlainThng\"}", options: Mutate);
+            Assert.Equal("coercion-failed", r.Diagnostics[0].Code);
+            Assert.Contains("no concrete type named 'PlainThng' derives from BaseThing (did you mean 'PlainThing'?)", r.Diagnostics[0].Message);
+            // An excluded type is never offered.
+            var hidden = e.Execute("h | set Thing = {\"$type\": \"SecretThng\"}", options: Mutate);
+            Assert.DoesNotContain("did you mean", hidden.Diagnostics[0].Message);
+            var far = e.Execute("h | set Thing = {\"$type\": \"Zebra\"}", options: Mutate);
+            Assert.DoesNotContain("did you mean", far.Diagnostics[0].Message);
+        }
+
+        public sealed class Lists
+        {
+            public int Id { get; set; } = 1;
+            public int[] Ints { get; set; } = { 1, 2, 3 };
+            public List<long> Longs { get; set; } = new List<long> { 7, 8 };
+            public IReadOnlyList<double> Doubles { get; set; } = new List<double> { 0.5 };
+            public List<string> Names { get; set; } = new List<string> { "a" };
+            public Dictionary<string, int> Map { get; set; } = new Dictionary<string, int> { ["k"] = 1 };
+            public List<long> Huge { get; set; } = new List<long> { long.MaxValue };
+            public string Text { get; set; } = "abc";
+        }
+
+        [Fact]
+        public void HostListsConvertElementByElement()
+        {
+            var e = Engine(new Scene());
+            var l = new Lists();
+            e.AddSource("l", () => l);
+            var r = e.Execute("l | set Longs = Ints, Doubles = Ints", options: Mutate);
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal(new long[] { 1, 2, 3 }, l.Longs);
+            Assert.Equal(new double[] { 1, 2, 3 }, l.Doubles);
+            Assert.NotSame(l.Ints, l.Doubles);
+            r = e.Execute("l | set Ints = Longs", options: Mutate);
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            Assert.Equal(new[] { 1, 2, 3 }, l.Ints);
+            // Elements are coerced and checked like list literals; maps and strings are not lists.
+            r = e.Execute("l | set Names = Ints", options: Mutate);
+            Assert.Equal("coercion-failed", r.Diagnostics[0].Code);
+            Assert.Contains("[0]: expected a string", r.Diagnostics[0].Message);
+            r = e.Execute("l | set Ints = Huge", options: Mutate);
+            Assert.Equal("coercion-failed", r.Diagnostics[0].Code);
+            Assert.Contains("out of range", r.Diagnostics[0].Message);
+            Assert.Equal("coercion-failed", e.Execute("l | set Ints = Map", options: Mutate).Diagnostics[0].Code);
+            Assert.Equal("coercion-failed", e.Execute("l | set Names = Text", options: Mutate).Diagnostics[0].Code);
+            Assert.Equal(new[] { 1, 2, 3 }, l.Ints);
+            Assert.Equal(new[] { "a" }, l.Names);
+        }
+
         public class BaseThing { }
         public sealed class SecretThing : BaseThing { }
         public sealed class PlainThing : BaseThing { }

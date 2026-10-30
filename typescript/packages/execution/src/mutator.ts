@@ -7,7 +7,7 @@ import { errorMessage, type Exec } from './exec.js';
 import type { MutationRecord, TextCoercion } from './engine.js';
 import type { Item } from './pipeline.js';
 import { adapterName, firstAnswer, type LiteralKind } from './adapters.js';
-import { closestParameter, memberHint, nestedMembers } from './suggest.js';
+import { closestParameter, memberHint, nestedMembers, typeNameHint } from './suggest.js';
 
 import {
   EnumType,
@@ -1226,7 +1226,7 @@ function construct(model: TypeModel, literal: ObjectValue, ctor: Ctor, ti: TypeI
     const tn = literal.get('$type');
     if (typeof tn !== 'string') return { ok: false, why: '"$type" must be a type name string' };
     const hits = model.subtypesNamed(ctor, tn);
-    if (hits.length === 0) return { ok: false, why: `no registered type named '${tn}' derives from ${ti?.shortName ?? ctor.name}` };
+    if (hits.length === 0) return { ok: false, why: `no registered type named '${tn}' derives from ${ti?.shortName ?? ctor.name}${typeNameHint(tn, model.subtypeNames(ctor))}` };
     if (hits.length > 1) return { ok: false, why: `'${tn}' is ambiguous: ${hits.map((c) => c.name).join(', ')}` };
     concrete = hits[0]!;
   }

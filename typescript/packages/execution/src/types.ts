@@ -1112,6 +1112,15 @@ export class TypeModel {
 
   /** Concrete registered classes assignable to `ctor` whose short or constructor name is `name` (cached). */
   subtypesNamed(ctor: Ctor, name: string): readonly Ctor[] {
+    return this.subtypeIndex(ctor).get(name) ?? [];
+  }
+
+  /** The names {@link subtypesNamed} accepts for `ctor`: what a misspelt "$type" is compared with (spec §4.5, §10). */
+  subtypeNames(ctor: Ctor): readonly string[] {
+    return [...this.subtypeIndex(ctor).keys()];
+  }
+
+  private subtypeIndex(ctor: Ctor): Map<string, readonly Ctor[]> {
     this.sync();
     let byName = this.subtypeCache.get(ctor);
     if (byName === undefined) {
@@ -1122,7 +1131,7 @@ export class TypeModel {
       }
       this.subtypeCache.set(ctor, byName);
     }
-    return byName.get(name) ?? [];
+    return byName;
   }
 
   private makeMember(ctor: Ctor, spec: MemberSpec, order: number): MemberAccessor {

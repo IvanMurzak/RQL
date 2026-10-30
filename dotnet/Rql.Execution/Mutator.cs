@@ -934,7 +934,11 @@ namespace Rql.Execution
                 // The host's display name of a type (spec §13) names it too.
                 if (found.Length == 0 && model.TypeDisplayName != null)
                     found = entry.index.Values.SelectMany(v => v).Distinct().Where(t => !model.IsExcludedType(t) && model.Info(t).ShortName == tn).ToArray();
-                if (found.Length == 0) { why = $"no concrete type named '{tn}' derives from {TypeModel.FriendlyName(target)}"; return false; }
+                if (found.Length == 0)
+                {
+                    why = $"no concrete type named '{tn}' derives from {TypeModel.FriendlyName(target)}" + Suggest.TypeNameHint(tn, SubtypeNames(model, entry.index, tn));
+                    return false;
+                }
                 if (found.Length > 1) { why = $"'{tn}' is ambiguous: " + string.Join(", ", found.Select(t => t.FullName)); return false; }
                 concrete = found[0];
             }
@@ -995,6 +999,24 @@ namespace Rql.Execution
             depth = 0;
             result = instance;
             return true;
+        }
+
+        /// <summary>
+        /// The names a misspelt "$type" is compared with (spec §4.5, §10): the short and display names of the indexed subtypes
+        /// that are not excluded, and their full names when the name is qualified.
+        /// </summary>
+        private static List<string> SubtypeNames(TypeModel model, Dictionary<string, Type[]> index, string name)
+        {
+            bool qualified = name.IndexOf('.') >= 0;
+            var names = new List<string>();
+            foreach (var t in index.Values.SelectMany(v => v).Distinct())
+            {
+                if (model.IsExcludedType(t)) continue;
+                names.Add(TypeModel.ShortName(t));
+                names.Add(model.Info(t).ShortName);
+                if (qualified && t.FullName != null) names.Add(t.FullName);
+            }
+            return names;
         }
 
         private static Dictionary<string, Type[]> BuildSubtypeIndex(Type target)
@@ -1149,7 +1171,9 @@ namespace Rql.Execution
             if (target == typeof(char) && v is string cs && cs.Length == 1) { result = cs[0]; return true; }
             if (target == typeof(bool)) { why = "expected true or false"; return false; }
 
-            if (v is IList src && !(v is string) && v.GetType() == typeof(List<object?>))
+            // A list literal or computed list, or any other value RQL reads as a list (a host array, another member's list),
+            // converts element by element to a list or array target (spec §8).
+            if (v is IEnumerable src && (v.GetType() == typeof(List<object?>) || (model.Info(target).IsList && model.Info(v.GetType()).IsList)))
             {
                 var info = TypeModel.Get(target);
                 var elem = info.ElementType ?? typeof(object);

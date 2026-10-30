@@ -211,7 +211,8 @@ per-group aggregates.
 
 An object literal behaves as a map when read; on a write it builds a value
 ([§4.5](../spec/semantics.md#45-object-literals)): a map entry by entry, or an object / struct whose named members are
-assigned (members left out keep the type's defaults; `$type` picks a concrete subtype). Each type has a **literal
+assigned (members left out keep the type's defaults; `$type` picks a concrete subtype, and a misspelt one is answered
+with the closest names: "no concrete type named 'BoxMsh' derives from Mesh (did you mean 'BoxMesh'?)"). Each type has a **literal
 kind**:
 
 - **value**: built from the literal (plain data, and value-like assets the host marks, such as Godot resources);
@@ -263,8 +264,9 @@ app.Tables | get Rows | where Value.IsElite | set Value.Health = Value.Health * 
   key is reported as the closest parameter (`klass` → `className`).
 - **Coercion.** Integers need an integral value in range; a string meets an enum by **enum name resolution**: exact
   name or host alias, then the part after `Type::` / `Type.`, then case-insensitive, then without the entry prefix
-  (`"Fill"` → `HAlign_Fill`); several candidates are refused as ambiguous. Lists from list literals, maps and objects
-  from object literals, references from `ref(…)`.
+  (`"Fill"` → `HAlign_Fill`); several candidates are refused as ambiguous. Lists from any list (a list literal, a
+  computed list, another member's list or a host array: `set Weights = Ids` turns an `int[]` into a `List<double>`),
+  element by element; maps and objects from object literals, references from `ref(…)`.
 - **A typo that empties a mutation is an error.** When no item reaches `set` / `call` because a member read missed on
   every item and no known type declares that name, the query fails with `unknown-member` instead of reporting zero
   changes. A real member that the matched items lack stays a warning.
@@ -323,7 +325,7 @@ treat an unknown code as a generic error): `syntax-error`, `invalid-plan`, `vers
 `output-truncated`, `unsupported`, `internal-error`, `no-match`.
 
 Hints are the agent's self-correction channel: "did you mean …?" for members (struct members two levels down
-included), sources, stages, functions, types and parameter names; the types that have a member in a mixed stream
+included), sources, stages, functions, types (an object literal's `$type` too) and parameter names; the types that have a member in a mixed stream
 (`where $ is OmniLight3D`); the sources whose object has a called method (`editor | call CreateObject(…)` or
 `… | call editor.CreateObject(… $ …)`). Hints only name tools and sources the host has (see the host's
 [schema and mutation tool names](host-integration.md#hints-and-host-texts)).
