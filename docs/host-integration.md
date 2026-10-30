@@ -117,8 +117,10 @@ engine.Defaults.BudgetsAdjustable = false;                     // tools without 
   Dry runs stop after the batch validator.
 - **Lists**: a list or array member (or parameter) takes any list value, not only list literals: a host array or
   collection and another member's list convert element by element with the usual element coercion (`set Weights = Ids`
-  writes an `int[]` into a `List<double>`). A value of the member's own type is assigned as is; strings and maps are
-  never lists, and neither is a type the host treats as an object (Unity's `Transform`).
+  writes an `int[]` into a `List<double>`). A value the member type already accepts (the same type, a subtype, a
+  covariant interface) is assigned as is and shared, not copied; strings and maps are never lists, and neither is a type
+  the host treats as an object (Unity's `Transform`). Overloads are still tried in declaration order, so a host array
+  passed to a method also fits an earlier overload that takes a list of a convertible element type.
 - **Target limit**: a request's limit outside 1 … `HardMaxTargets` is `invalid-value`. `mutation-limit` counts the
   matches (up to the ceiling) and advises the limit argument; `LimitHint` replaces that hint entirely.
 
@@ -137,7 +139,7 @@ builds). The kind is the first answer of the host hook, then the adapters, then 
 | `Mutations.CreateForLiteral(type, outer)` | build the empty value with its outer (Unreal `NewObject(Outer, Class)`, Unity `ScriptableObject.CreateInstance`) |
 | `Mutations.CanConstructFromLiteral(type)` | older override, applied last: false → engine, true → an engine kind becomes value (instanced stays instanced) |
 | `Mutations.LiteralRefusalHint(type)` | the advice after an engine-object refusal (e.g. "use unity.find(…) or an asset path") |
-| C++ `MutationPolicy::resolve_subtype(target, name)` | lazy lookup of a literal's `$type` for runtime-built types (Unreal `UClass`es); answers are not cached and must not construct anything. .NET sees every loaded type and TypeScript registration is public, so they need no hook. A misspelt `$type` is answered with "did you mean …?" from the known subtypes (.NET: loaded concrete types, display names included, excluded types left out; TS: registered classes; C++: registered descriptors). The hook cannot list names, so C++ suggests a runtime-built type only after it was registered with `TypeRegistry::register_descriptor` |
+| C++ `MutationPolicy::resolve_subtype(target, name)` | lazy lookup of a literal's `$type` for runtime-built types (Unreal `UClass`es); answers are not cached and must not construct anything. .NET sees every loaded type and TypeScript registration is public, so they need no hook. A misspelt `$type` is answered with "did you mean …?" from the known subtypes (.NET: loaded concrete types, display names included; TS: registered classes; C++: registered descriptors; excluded types are never offered or built). The hook cannot list names, so C++ suggests a runtime-built type only after it was registered with `TypeRegistry::register_descriptor` |
 
 Overload resolution checks every candidate without constructing anything (ADR-0010), so factories and constructors run
 only for an overload that passes the check (normally the chosen one; a value that only a member validator rejects is

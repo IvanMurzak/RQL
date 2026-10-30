@@ -1126,7 +1126,7 @@ export class TypeModel {
     if (byName === undefined) {
       byName = new Map();
       for (const c of this.registeredTypes) {
-        if (c !== ctor && !(c.prototype instanceof ctor)) continue;
+        if ((c !== ctor && !(c.prototype instanceof ctor)) || this.isExcludedType({ kind: 'class', ctor: c })) continue; // excluded: never built (spec §4.5)
         for (const n of new Set([c.name, this.infoForCtor(c)?.shortName ?? c.name])) byName.set(n, [...(byName.get(n) ?? []), c]);
       }
       this.subtypeCache.set(ctor, byName);

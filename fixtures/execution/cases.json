@@ -10409,7 +10409,7 @@
       }
     },
     {
-      "name": "list-from-host-list",
+      "name": "list-from-another-member",
       "rql": "ref(\"Node#6\") | set Tags = Parent.Tags",
       "options": {
         "allowMutation": true

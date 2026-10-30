@@ -933,7 +933,7 @@ namespace Rql.Execution
                     : Array.Empty<Type>();
                 // The host's display name of a type (spec §13) names it too.
                 if (found.Length == 0 && model.TypeDisplayName != null)
-                    found = entry.index.Values.SelectMany(v => v).Distinct().Where(t => !model.IsExcludedType(t) && model.Info(t).ShortName == tn).ToArray();
+                    found = entry.index.Values.SelectMany(v => v).Distinct().Where(t => !model.IsExcludedType(t) && model.NameOf(t) == tn).ToArray();
                 if (found.Length == 0)
                 {
                     why = $"no concrete type named '{tn}' derives from {TypeModel.FriendlyName(target)}" + Suggest.TypeNameHint(tn, SubtypeNames(model, entry.index, tn));
@@ -1013,7 +1013,7 @@ namespace Rql.Execution
             {
                 if (model.IsExcludedType(t)) continue;
                 names.Add(TypeModel.ShortName(t));
-                names.Add(model.Info(t).ShortName);
+                if (model.TypeDisplayName != null) names.Add(model.NameOf(t));
                 if (qualified && t.FullName != null) names.Add(t.FullName);
             }
             return names;

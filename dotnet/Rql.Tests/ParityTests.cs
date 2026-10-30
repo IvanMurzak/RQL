@@ -271,6 +271,8 @@ namespace Rql.Tests
             public List<string> Names { get; set; } = new List<string> { "a" };
             public Dictionary<string, int> Map { get; set; } = new Dictionary<string, int> { ["k"] = 1 };
             public List<long> Huge { get; set; } = new List<long> { long.MaxValue };
+            public List<int> IntList { get; set; } = new List<int>();
+            public List<string?> Holes { get; set; } = new List<string?> { null };
             public string Text { get; set; } = "abc";
         }
 
@@ -284,7 +286,11 @@ namespace Rql.Tests
             Assert.True(r.Ok, r.ToJson(includeStats: false));
             Assert.Equal(new long[] { 1, 2, 3 }, l.Longs);
             Assert.Equal(new double[] { 1, 2, 3 }, l.Doubles);
-            Assert.NotSame(l.Ints, l.Doubles);
+            r = e.Execute("l | set IntList = Ints", options: Mutate);
+            Assert.True(r.Ok, r.ToJson(includeStats: false));
+            l.Ints[0] = 9;
+            Assert.Equal(new[] { 1, 2, 3 }, l.IntList); // a converted list is a copy
+            l.Ints[0] = 1;
             r = e.Execute("l | set Ints = Longs", options: Mutate);
             Assert.True(r.Ok, r.ToJson(includeStats: false));
             Assert.Equal(new[] { 1, 2, 3 }, l.Ints);
@@ -295,6 +301,8 @@ namespace Rql.Tests
             r = e.Execute("l | set Ints = Huge", options: Mutate);
             Assert.Equal("coercion-failed", r.Diagnostics[0].Code);
             Assert.Contains("out of range", r.Diagnostics[0].Message);
+            r = e.Execute("l | set Ints = Holes", options: Mutate);
+            Assert.Contains("[0]: null is not allowed", r.Diagnostics[0].Message);
             Assert.Equal("coercion-failed", e.Execute("l | set Ints = Map", options: Mutate).Diagnostics[0].Code);
             Assert.Equal("coercion-failed", e.Execute("l | set Names = Text", options: Mutate).Diagnostics[0].Code);
             Assert.Equal(new[] { 1, 2, 3 }, l.Ints);

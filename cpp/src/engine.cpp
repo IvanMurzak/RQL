@@ -176,6 +176,10 @@ Engine& Engine::exclude_types(TypeExclusion excluded) noexcept {
             std::lock_guard<std::mutex> lock(exclusion_mutex_);
             exclusion_scanned_.store(static_cast<size_t>(-1), std::memory_order_release);  // force a rescan
         }
+        {
+            std::lock_guard<std::mutex> lock(subtypes_mutex_);
+            subtypes_.clear();
+        }
         std::lock_guard<std::mutex> lock(adapted_mutex_);
         adapted_.clear();
     } catch (...) {
@@ -210,7 +214,8 @@ const std::unordered_map<std::string, std::vector<const TypeDescriptor*>>& Engin
         std::unordered_map<std::string, std::vector<const TypeDescriptor*>> by_name;
         const std::vector<const TypeDescriptor*> registered = types_->registered();
         for (const TypeDescriptor* t : registered)
-            if (t->kind == target->kind && t->derives_from(target)) by_name[t->name].push_back(t);
+            if (t->kind == target->kind && t->derives_from(target) && !(excluded_ && excluded_(*t)))  // excluded: never built (spec §4.5)
+                by_name[t->name].push_back(t);
         it = subtypes_.emplace(target, std::move(by_name)).first;
     }
     return it->second;

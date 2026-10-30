@@ -268,6 +268,11 @@ test('object literals: maps, construction with defaults, "$type" ambiguity, adap
   assert.equal(typo?.code, 'coercion-failed');
   assert.ok((typo?.message ?? '').includes("no registered type named 'Sqare' derives from Shape (did you mean 'Square'?)"), typo?.message);
   assert.ok(!(e.execute('hs | set shape = {"$type": "Zebra"}', {}, mut).diagnostics[0]?.message ?? '').includes('did you mean'));
+  // An excluded class is never built from "$type" nor offered (spec §4.5, §13).
+  types.excludeTypes((r) => typeof r === 'object' && 'kind' in r && r.kind === 'class' && r.ctor === Square);
+  const hidden = e.execute('hs | set shape = {"$type": "Square"}', {}, mut).diagnostics[0];
+  assert.equal(hidden?.code, 'coercion-failed');
+  assert.ok(!(e.execute('hs | set shape = {"$type": "Sqare"}', {}, mut).diagnostics[0]?.message ?? '').includes('did you mean'));
 });
 
 test('host lists, sets and typed arrays convert element by element to a typed list', () => {

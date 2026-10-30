@@ -498,7 +498,7 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   (number→integral only if integral and in range; string→enum by enum name resolution, below; null only for nullable /
   reference types; a list → list/array type, element by element with the element coercion and validation of a list
   literal: list literals, computed lists and any other list value (a host array or collection, another member's list;
-  never a string or a map); object literal → map / constructed object, §4.5), then write. Writing through value types
+  never a string, a map or a type the host treats as an object, §13); object literal → map / constructed object, §4.5), then write. Writing through value types
   (`Transform.Position.x = 1`) MUST write back the modified copy to every enclosing value-type
   member up to the first reference object. Target member must be writable and allowed by
   policy (`readonly-member`, `permission-denied`). An indexed target (`set Tags[1] = "x"`) replaces an existing
