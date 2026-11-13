@@ -144,3 +144,9 @@
   `resolve_subtype` host lookup, §13); excluded types are never built from `$type` (TypeScript and C++ built them
   before); any list value (host array or collection, another member's list) converts element by element to a typed
   list / array member or parameter (§8).
+* Several statements in one request, ADR-0014 (protocol stays `0.1`; additive, no plan change, no new error code):
+  statements separated by `;` outside strings, quoted identifiers and brackets run in order, each its own request with
+  its own budgets; reads run every statement, a mutation runs only when every statement is valid, each statement is
+  its own all-or-nothing change and the first failure stops the rest (§14); the result gains `statements` (text plus
+  `result` or `skipped`). The "one query per call" hint now points at `;` (§11) — **behaviour change** for text that
+  used `;` (a `syntax-error` before).

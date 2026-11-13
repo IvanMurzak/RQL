@@ -300,11 +300,11 @@ namespace Rql.Tests
         // ------------------------------------------------------------ #13 / #17 parser hints
 
         [Fact]
-        public void SecondQueryOnANewLineHintsOneQueryPerCall()
+        public void SecondQueryOnANewLineHintsTheSeparator()
         {
             var ex = Assert.Throws<RqlException>(() => RqlParser.Parse("items | where Name == \"a\" | set Name = \"b\"\nitems | where Name == \"c\" | count"));
             Assert.Equal("syntax-error", ex.Code);
-            Assert.Contains("one query per call: line 2", ex.Hint);
+            Assert.Contains("another query starts on line 2: end the query before it with ';'", ex.Hint);
             // A query continued on the next line is not a second query.
             foreach (var q in new[]
                      {
@@ -313,7 +313,7 @@ namespace Rql.Tests
                      })
             {
                 var other = Assert.Throws<RqlException>(() => RqlParser.Parse(q));
-                Assert.DoesNotContain("one query per call", other.Hint ?? "");
+                Assert.DoesNotContain("another query starts", other.Hint ?? "");
             }
         }
 

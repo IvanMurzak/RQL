@@ -9,7 +9,7 @@ namespace Rql
     /// Syntax-only RQL parser: text → canonical <see cref="QueryPlan"/>. Knows no domain types,
     /// sources or extension names (spec/grammar.ebnf).
     /// </summary>
-    public sealed class RqlParser
+    public sealed partial class RqlParser
     {
         private static readonly HashSet<string> Reserved = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -41,7 +41,7 @@ namespace Rql
             catch (RqlException ex) when (ex.Code == "syntax-error" && SecondQueryLine(text, ex.At?.Start ?? 0) is int line)
             {
                 // Two queries pasted into one call: say so instead of only reporting the token where the second one began.
-                var hint = $"one query per call: line {line} starts another query; run each query in its own call";
+                var hint = $"another query starts on line {line}: end the query before it with ';' to run both in this call (each runs on its own), or run each in its own call";
                 throw new RqlException(ex.Code, ex.Message, ex.At, ex.Hint == null ? hint : hint + "; " + ex.Hint);
             }
             PlanCodec.ValidateStructure(plan);

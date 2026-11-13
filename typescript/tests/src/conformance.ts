@@ -8,12 +8,12 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RqlError, deserializePlan, parseBudgets, planToJson, resultToJson, type Budgets, type JsonValue, type QueryOptions, type QueryResult } from '@rql/contracts';
 import { RqlEngine } from '@rql/execution';
-import { parse } from '@rql/parser';
+import { parse, splitStatements } from '@rql/parser';
 import { Graph, conformanceModel, loadGraph } from './graph.js';
 import { registerTestAdapters } from './test-adapters.js';
 
 export interface Vector {
-  readonly suite: 'syntax' | 'codec' | 'negative-syntax' | 'negative-plan' | 'execution' | 'adapters';
+  readonly suite: 'syntax' | 'codec' | 'negative-syntax' | 'negative-plan' | 'statements' | 'execution' | 'adapters';
   readonly name: string;
   readonly ok: boolean;
   readonly detail?: string;
@@ -100,6 +100,15 @@ export function negativeVectors(): Vector[] {
   return out;
 }
 
+/** fixtures/statements: request text → statement texts (spec §14). */
+export function statementVectors(): Vector[] {
+  return cases(fixture('statements/cases.json')).map((c) => {
+    const got = splitStatements(c.rql as string).map((s) => s.text);
+    const want = c.statements as string[];
+    return { suite: 'statements', name: c.name as string, ok: jsonEq(got, want), detail: `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}` };
+  });
+}
+
 export function executionVectors(): Vector[] {
   return caseVectors('execution', 'execution/cases.json', (e) => e);
 }
@@ -150,7 +159,7 @@ function step(suite: Vector['suite'], engine: RqlEngine, name: string, rql: stri
 }
 
 export function allVectors(): Vector[] {
-  return [...syntaxVectors(), ...negativeVectors(), ...executionVectors(), ...adapterVectors()];
+  return [...syntaxVectors(), ...negativeVectors(), ...statementVectors(), ...executionVectors(), ...adapterVectors()];
 }
 
 export function summary(vs: readonly Vector[]): string {

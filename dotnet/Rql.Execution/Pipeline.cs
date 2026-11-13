@@ -276,13 +276,18 @@ namespace Rql.Execution
             return (stream, null);
         }
 
+        /// <summary>A mutation request whose plan does not end with a set or call stage (spec §8): the error, else null.</summary>
+        internal static RqlException? MutationWithoutWrite(QueryPlan plan, QueryOptions options) =>
+            options.AllowMutation && (plan.Stages.Count == 0 || !plan.Stages[plan.Stages.Count - 1].IsMutation)
+                ? new RqlException("invalid-plan", "a mutation request must end with a set or call stage; nothing was changed", null,
+                    "add '| set Member = value' or '| call Method(...)', or use the query tool to read")
+                : null;
+
         private QueryResult RunCore()
         {
             var plan = _x.Plan;
             _x.CheckTargetLimit();
-            if (_x.Options.AllowMutation && (plan.Stages.Count == 0 || !plan.Stages[plan.Stages.Count - 1].IsMutation))
-                throw new RqlException("invalid-plan", "a mutation request must end with a set or call stage; nothing was changed", null,
-                    "add '| set Member = value' or '| call Method(...)', or use the query tool to read");
+            if (MutationWithoutWrite(plan, _x.Options) is RqlException noWrite) throw noWrite;
             // Pre-compile all stages (binding errors surface before any traversal).
             var source = CompileSource(plan.Source);
             IEnumerable<Item> stream = source;

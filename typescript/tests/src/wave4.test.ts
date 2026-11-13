@@ -143,10 +143,10 @@ test('group rows aggregate their items; the engine lists its adapters', () => {
   assert.equal(e.adapters[0], a);
 });
 
-test('a second query on a new line hints one query per call', () => {
+test('a second query on a new line hints the separator', () => {
   assert.throws(
     () => parse('items | where Name == "a" | set Name = "b"\nitems | where Name == "c" | count'),
-    (e: unknown) => e instanceof RqlError && e.code === 'syntax-error' && (e.hint ?? '').includes('one query per call: line 2'),
+    (e: unknown) => e instanceof RqlError && e.code === 'syntax-error' && (e.hint ?? '').includes("another query starts on line 2: end the query before it with ';'"),
   );
   for (const q of [
     'items\n| where Name == "a" foo',
@@ -156,7 +156,7 @@ test('a second query on a new line hints one query per call', () => {
     'items | select Name,\n  Tags | sort Name +',
     'items | where Name == "a" or\n  Name | first 2 )',
   ]) {
-    assert.throws(() => parse(q), (e: unknown) => e instanceof RqlError && !(e.hint ?? '').includes('one query per call'));
+    assert.throws(() => parse(q), (e: unknown) => e instanceof RqlError && !(e.hint ?? '').includes('another query starts'));
   }
 });
 

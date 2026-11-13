@@ -18,6 +18,19 @@
     "truncated": { "type": "boolean" },
     "dryRun": { "type": "boolean" },
     "unchanged": { "type": "integer", "minimum": 1, "description": "set receipts: assignments whose value stayed the same (old == new), not listed in rows" },
+    "statements": {
+      "type": "array",
+      "description": "A request of several statements (§14): one entry per statement, in order. The outer result then has no rows, items or value.",
+      "items": {
+        "type": "object", "required": ["text"], "additionalProperties": false,
+        "properties": {
+          "text": { "type": "string", "description": "the statement, trimmed" },
+          "result": { "$ref": "#", "description": "the statement's own result" },
+          "skipped": { "type": "string", "description": "why the statement did not run (instead of result)" }
+        },
+        "oneOf": [{ "required": ["result"] }, { "required": ["skipped"] }]
+      }
+    },
     "diagnostics": { "type": "array", "items": { "$ref": "#/$defs/diagnostic" } },
     "stats": {
       "type": "object",

@@ -49,6 +49,18 @@ namespace Rql.Execution
                 if (d.Hint != null) sb.Append(" — hint: ").Append(d.Hint);
                 sb.Append('\n');
             }
+            if (r.Statements != null)
+            {
+                // Several statements (spec §14): one block per statement, headed "[i/n] statement".
+                for (int i = 0; i < r.Statements.Count; i++)
+                {
+                    var st = r.Statements[i];
+                    if (i > 0) sb.Append('\n');
+                    sb.Append('[').Append(i + 1).Append('/').Append(r.Statements.Count).Append("] ").Append(StatementLine(st.Text)).Append('\n');
+                    sb.Append(st.Result != null ? Render(st.Result, format, maxReceiptRows, moreRowsNote) : "not run: " + st.Skipped).Append('\n');
+                }
+                return sb.ToString().TrimEnd();
+            }
             if (!r.Ok) return sb.ToString().TrimEnd();
             switch (r.Kind)
             {
@@ -87,6 +99,16 @@ namespace Rql.Execution
                     break;
             }
             return sb.ToString().TrimEnd();
+        }
+
+        /// <summary>Most characters of a statement echoed in its block header; a longer one is cut with "…".</summary>
+        internal const int StatementEcho = 120;
+
+        // A statement on one line (runs of whitespace, newlines included, become one space), cut to StatementEcho.
+        private static string StatementLine(string text)
+        {
+            var line = string.Join(" ", text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+            return line.Length <= StatementEcho ? line : line.Substring(0, StatementEcho) + "…";
         }
 
         /// <summary>

@@ -194,6 +194,16 @@ AgentFormat.Render(result, OutputFormat.Table, maxReceiptRows: 0);    // every r
 AgentFormat.Render(result, OutputFormat.Table, 50, moreRowsNote: "query the rest by name");   // "" drops the note
 ```
 
+**Several statements** (spec §14, ADR-0014): `Execute(text)` (TS `execute(text)`) runs text with `;`-separated statements
+in order and returns one result with `Statements` (TS `statements`), which `AgentFormat` renders as one `[i/n]` block
+per statement; one statement returns the single result exactly as before. Nothing changes for tools that pass the
+agent's text to `Execute` and render the result. The mutation hooks (`ValidateBatch`, `BeforeWrite`, `Committed`) run
+once per statement, so a host with undo gets one step per statement, and a host that saves after `Execute` returns
+saves once for the whole request. Diagnostics a host adds after `Execute` go on the outer result and print before the
+blocks. A host that executes plans elsewhere (Unreal: plans over IPC to the C++ runtime) splits and runs with the same
+rules: `RqlScript.Run(RqlParser.SplitStatements(text), options, plan => ExecuteRemotely(plan))` (TS
+`runStatements(splitStatements(text), options, execute)`).
+
 A compact receipt prints a method shared by every row once and leaves out a `$ref` that repeats the result's. The
 default footer after the count says the json format lists every row; hosts whose tools offer no json format replace it
 with `moreRowsNote`. TypeScript and C++ return JSON only (Unreal-MCP renders through a .NET sidecar).
@@ -214,3 +224,4 @@ with `moreRowsNote`. TypeScript and C++ return JSON only (Unreal-MCP renders thr
 | Budget advice | `Defaults.BudgetsAdjustable` | `defaults.budgetsAdjustable` | `defaults().budgets_adjustable` |
 | Language rules | `RqlLanguageGuide.Rules` / `RulesFor` / `RulesWith` | `LANGUAGE_RULES` / `languageRules` | `language_rules` / `_for` / `_with` |
 | Modules | `IRqlModule`, `AddModulesFrom`, `RqlModuleReport` | — | — |
+| Several statements | `RqlParser.SplitStatements`, `RqlScript.Run`, `QueryResult.Statements` | `splitStatements`, `runStatements`, `statements` | — (no text parser) |

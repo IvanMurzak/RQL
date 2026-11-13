@@ -16,6 +16,8 @@ import {
   type Expr,
   type GenericStage,
   type PathExpr,
+  type QueryOptions,
+  type QueryPlan,
   type QueryResult,
   type RecurseStage,
   type SelectStage,
@@ -91,6 +93,18 @@ class KeyTally {
       ),
     );
   }
+}
+
+/** A mutation request whose plan does not end with a set or call stage (spec §8): the error, else undefined. */
+export function mutationWithoutWrite(plan: QueryPlan, options: QueryOptions): RqlError | undefined {
+  const last = plan.stages[plan.stages.length - 1];
+  if (!options.allowMutation || last?.kind === 'set' || last?.kind === 'call') return undefined;
+  return new RqlError(
+    'invalid-plan',
+    'a mutation request must end with a set or call stage; nothing was changed',
+    undefined,
+    "add '| set Member = value' or '| call Method(...)', or use the query tool to read",
+  );
 }
 
 export class Pipeline {
@@ -279,15 +293,8 @@ export class Pipeline {
     const x = this.x;
     const plan = x.plan;
     x.checkTargetLimit();
-    const last = plan.stages[plan.stages.length - 1];
-    if (x.options.allowMutation && last?.kind !== 'set' && last?.kind !== 'call') {
-      throw new RqlError(
-        'invalid-plan',
-        'a mutation request must end with a set or call stage; nothing was changed',
-        undefined,
-        "add '| set Member = value' or '| call Method(...)', or use the query tool to read",
-      );
-    }
+    const noWrite = mutationWithoutWrite(plan, x.options);
+    if (noWrite !== undefined) throw noWrite;
     let stream: Iterable<Item> = this.compileSource(plan.source);
     let terminal: Stage | undefined;
     for (const st of plan.stages) {

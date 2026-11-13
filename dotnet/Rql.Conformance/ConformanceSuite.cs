@@ -52,6 +52,7 @@ namespace Rql.Conformance
             Syntax(regen);
             NegativeSyntax(regen);
             NegativePlans();
+            Statements();
             Execution(regen);
             Adapters(regen);
         }
@@ -99,6 +100,17 @@ namespace Rql.Conformance
                 Check(code != null && code == want, $"negative syntax: '{rql}' → {code ?? "parsed OK"}, want {want}");
             }
             if (regen) Save(path, doc);
+        }
+
+        /// <summary>fixtures/statements: request text → statement texts (spec §14). Hand-written, never regenerated.</summary>
+        public void Statements()
+        {
+            foreach (var c in Load(F("statements/cases.json"))["cases"]!.AsArray().Select(n => n!.AsObject()))
+            {
+                var got = RqlParser.SplitStatements(c["rql"]!.GetValue<string>()).Select(s => s.Text).ToArray();
+                var want = c["statements"]!.AsArray().Select(n => n!.GetValue<string>()).ToArray();
+                Check(got.SequenceEqual(want), $"statements: {c["name"]} → [{string.Join(" ¦ ", got)}], want [{string.Join(" ¦ ", want)}]");
+            }
         }
 
         public void NegativePlans()
