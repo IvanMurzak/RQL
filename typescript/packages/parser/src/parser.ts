@@ -45,7 +45,7 @@ export function parse(text: string): QueryPlan {
     if (line === undefined) throw e;
     // Two queries pasted into one call: say so instead of only reporting the token where the second one began.
     const err = e as RqlError;
-    const hint = `one query per call: line ${line} starts another query; run each query in its own call`;
+    const hint = `another query starts on line ${line}: end the query before it with ';' to run both in this call (each runs on its own), or run each in its own call`;
     throw new RqlError(err.code, err.message, err.at, err.hint === undefined ? hint : `${hint}; ${err.hint}`);
   }
   validateStructure(plan);

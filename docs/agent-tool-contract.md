@@ -5,8 +5,8 @@ recommended for MCP integrations.
 
 | Tool | Arguments | Behaviour |
 |---|---|---|
-| `rql_query` | `query: string` | Read-only execution. A plan containing `set`/`call` fails with `permission-denied`. |
-| `rql_mutate` | `query: string`, `dry_run?: bool` | Only offered when the task/host allows changes. Last stage must be `set` or `call`. All-or-nothing; returns a receipt. |
+| `rql_query` | `query: string` | Read-only execution. A plan containing `set`/`call` fails with `permission-denied`. Several statements separated by `;` all run (spec §14). |
+| `rql_mutate` | `query: string`, `dry_run?: bool` | Only offered when the task/host allows changes. Last stage must be `set` or `call`. All-or-nothing; returns a receipt. Several statements separated by `;`: each must end with `set` / `call` and is its own all-or-nothing change; nothing runs unless all are valid, the first failure stops the rest (spec §14). |
 | `rql_schema` | `type?: string` | Sources plus every reachable type with members (`name type`, `ro` when read-only under mutation, descriptions), methods, enum values. Derived types list only their added members. |
 
 ## Result rendering
@@ -36,7 +36,12 @@ recommended for MCP integrations.
   `rql::language_rules_with(rql::RuleExamples{…})`); each example left out keeps the default with the host's call.
   `Grid`, like `PerEntry`, is the whole example, range included (`range(0, 150) | call …`), so a host whose target limit
   is below the default's 300 shows a range that runs.
-* **json**: the conformance `QueryResult` without stats.
+* **Several statements** (spec §14): request diagnostics, then one block per statement, headed `[i/n] <statement>` (one
+  line, cut after 120 characters) and followed by that statement's own rendering as above, or `not run: <reason>`;
+  a blank line between blocks. The tool call is an error when any statement failed or did not run; the blocks of the
+  others are still in the text.
+* **json**: the conformance `QueryResult` without stats (several statements: `statements`, each `text` plus `result`
+  or `skipped`).
 
 Experiment E5 compared both (see `RESULTS.md`).
 

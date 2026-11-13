@@ -775,9 +775,9 @@ To reduce agent errors the parser accepts, and canonicalizes away:
 
 Comparisons do not chain: a comparison (`==`, `<`, …, `contains`, `starts-with`, `ends-with`, `matches`, `in`, `is`)
 followed by another comparison operator (`path contains "addons" == false`) is a `syntax-error` that says so and shows
-the fix (`not (path contains "addons")`). One query per call: when a syntax error falls on or after a line that starts a
-new query (a name, optionally a call, then `|`) after a non-blank line that does not end in `|`, the hint says "one query
-per call" and names the line.
+the fix (`not (path contains "addons")`). A second query without a separator: when a syntax error falls on or after a
+line that starts a new query (a name, optionally a call, then `|`) after a non-blank line that does not end in `|`, the
+hint names the line and says to end the query before it with `;` (§14) or to run it in its own call.
 
 These never appear in canonical plans; plans only contain the core operators.
 
@@ -923,3 +923,35 @@ members, §5) and do not consult adapter equality in 0.1.
 
 **Conformance.** `fixtures/adapters/cases.json` specifies a test adapter set over the conformance graph that every runtime
 implements in its test harness (see the file's `adapters` section); its cases must pass in every runtime.
+
+## 14. Several statements in one request
+
+A request text may hold several **statements**, each a query, separated by `;`. A `;` separates only outside string
+literals (either quote, backslash escapes honoured), quoted identifiers and brackets (`()`, `[]`, `{}`); anywhere else it
+is part of a statement (and inside brackets a `syntax-error`). Statements are trimmed; blank ones (a trailing `;`, `;;`)
+are dropped. RQL has no comments, so nothing else hides a separator. The split is shared by every runtime with a text
+parser (`fixtures/statements/cases.json`). QueryPlan is unchanged: a plan is one statement, and C++ (no text parser,
+ADR-0003) executes the plans a host splits and parses.
+
+* **One statement** (no separator, or one statement left after dropping blanks) is the single-query request of §1–§13,
+  unchanged: its result has no `statements`, and diagnostic positions are in the request text.
+* **At most 10 statements** per request; more fail as a whole with `syntax-error` (hint: split them over several
+  calls) and nothing runs.
+* **Order and isolation.** Statements run in order. Each is a request of its own: own budgets (§10; `maxRows`,
+  `timeoutMs`, `maxOutputBytes` and the target limit apply per statement), own diagnostics, positions relative to the
+  statement's text. A statement sees the effects of the statements before it.
+* **Read request.** Every statement runs; one that fails (a parse error, `permission-denied` for a `set` / `call`, any
+  runtime error) does not stop the others.
+* **Mutation request.** Every statement must parse and end with `set` or `call` (§8) before any runs; otherwise nothing
+  runs and the statements that were valid report that they did not run. Each statement is its **own all-or-nothing
+  change** (§8: validated, then written, host hooks — before-write, committed — called once per statement). The first
+  statement that fails stops the request: the changes of the statements before it stay (they are not rolled back), the
+  statements after it do not run. In a dry run no statement changes anything, so a statement does not see the changes
+  the earlier ones would make.
+* **Result.** One `QueryResult` whose `statements` lists, per statement in order, its `text` and either its `result` (a
+  complete QueryResult) or `skipped` (why it did not run). The outer result carries no rows, items or value; `ok` is
+  true only when every statement ran and succeeded; `dryRun` is true when any statement was a dry run; its own
+  `diagnostics` are the host's (e.g. save warnings), none from RQL.
+* **Agent table format.** Request diagnostics first, then one block per statement headed `[i/n] <statement>` (the
+  statement on one line, cut after 120 characters with `…`), followed by the statement's own rendering or
+  `not run: <reason>`; blocks are separated by a blank line.

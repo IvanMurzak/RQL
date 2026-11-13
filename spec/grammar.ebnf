@@ -7,6 +7,9 @@
    which stages/functions exist. Unknown stage and function names are accepted
    structurally; the binder/executor decides whether they exist and are allowed. *)
 
+request         = query , { ";" , query } ;       (* §14: several statements; blank statements are dropped, so a
+                                                     trailing ";" is allowed. ";" separates only outside strings,
+                                                     quoted identifiers and brackets. A plan is one query. *)
 query           = source , { "|" , stage } ;
 source          = postfix ;                       (* e.g. world.scenes[0].objects, ref("GameObject#12"),
                                                      range(0, 10), [1, 2, 3] *)

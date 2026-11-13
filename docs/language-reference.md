@@ -34,7 +34,14 @@ source | stage | stage …
 
 A query is a **source** followed by `|`-separated **stages**. Each stage consumes a stream of items and produces a
 stream (or one terminal value). Items are live objects: only the rows that survive are encoded. Inside a stage, bare
-names are members of the current item and `$` is the item itself. One query per call.
+names are members of the current item and `$` is the item itself.
+
+Several queries go in one call separated by `;` (spec [§14](../spec/semantics.md#14-several-statements-in-one-request)):
+`scenes | select name path isDirty; objects | where name == "Beacon" | select $ref name`. They run in order, at most 10
+per call, and each returns its own block headed `[i/n] <statement>`. A read runs every statement; in a change every
+statement must end with `set` / `call`, each is its own all-or-nothing change that sees the earlier ones, nothing runs
+unless every statement is valid, and the first failure stops the rest (earlier changes stay). A `;` inside a string,
+a quoted identifier or brackets does not separate.
 
 ## Sources
 

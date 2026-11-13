@@ -514,8 +514,17 @@ namespace Rql.Execution
 
         // ------------------------------------------------------------ execution
 
+        /// <summary>
+        /// Runs RQL text: one statement, or several separated by <c>;</c> (spec §14), which run in order, each with its own
+        /// budgets and, in a mutation request, as its own all-or-nothing change; their results come back in
+        /// <see cref="QueryResult.Statements"/>. Never throws for query errors (they become diagnostics).
+        /// </summary>
         public QueryResult Execute(string text, Budgets? budgets = null, QueryOptions? options = null)
         {
+            var statements = RqlParser.SplitStatements(text);
+            if (statements.Count > 1) return RqlScript.Run(statements, options, plan => Execute(plan, budgets, options));
+            var span = statements[0].Span;
+            if (span.End - span.Start < text.Length) text = text.Substring(span.Start, span.End - span.Start); // "query;"
             var sw = Stopwatch.StartNew();
             QueryPlan plan;
             try { plan = RqlParser.Parse(text); }

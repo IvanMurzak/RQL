@@ -48,3 +48,4 @@ export {
 } from './adapters.js';
 export { LANGUAGE_RULES, languageRules } from './guide.js';
 export type { LanguageRuleExamples } from './guide.js';
+export { runStatements } from './script.js';

@@ -84,6 +84,21 @@ namespace Rql
         public double ElapsedMs { get; set; }
     }
 
+    /// <summary>One statement of a request of several (spec §14): its text and either its result or why it did not run.</summary>
+    public sealed class StatementResult
+    {
+        public StatementResult(string text) { Text = text; }
+
+        /// <summary>The statement as written (trimmed).</summary>
+        public string Text { get; }
+
+        /// <summary>The statement's own result; null when it did not run (<see cref="Skipped"/>).</summary>
+        public QueryResult? Result { get; set; }
+
+        /// <summary>Why the statement did not run (null when it ran).</summary>
+        public string? Skipped { get; set; }
+    }
+
     /// <summary>Execution result. Values are already encoded (spec/semantics.md §6).</summary>
     public sealed class QueryResult
     {
@@ -105,6 +120,12 @@ namespace Rql
         /// format compacts long receipts.
         /// </summary>
         public bool Receipt { get; set; }
+        /// <summary>
+        /// A request of several statements (spec §14): one entry per statement, in order. The result's own rows, items and
+        /// value stay empty; <see cref="Ok"/> is true only when every statement ran and succeeded, and <see cref="Diagnostics"/>
+        /// holds the request's own (e.g. a host's save warnings). Null for a single statement.
+        /// </summary>
+        public List<StatementResult>? Statements { get; set; }
         public List<Diagnostic> Diagnostics { get; } = new List<Diagnostic>();
         public Stats Stats { get; } = new Stats();
 
@@ -170,6 +191,23 @@ namespace Rql
             if (Truncated) w.WriteBoolean("truncated", true);
             if (DryRun) w.WriteBoolean("dryRun", true);
             if (Unchanged > 0) w.WriteNumber("unchanged", Unchanged.Value);
+            if (Statements != null)
+            {
+                w.WriteStartArray("statements");
+                foreach (var s in Statements)
+                {
+                    w.WriteStartObject();
+                    w.WriteString("text", s.Text);
+                    if (s.Result != null)
+                    {
+                        w.WritePropertyName("result");
+                        s.Result.WriteTo(w, includeStats);
+                    }
+                    else w.WriteString("skipped", s.Skipped ?? "");
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+            }
             if (Diagnostics.Count > 0)
             {
                 w.WriteStartArray("diagnostics");

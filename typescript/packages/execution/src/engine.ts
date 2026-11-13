@@ -3,11 +3,12 @@
  * sources, extension functions/stages, mutation policy, budgets, stable references.
  */
 import { diagnostic, failResult, formatNumber, type Budgets, type JsonObject, type QueryOptions, type QueryPlan, type QueryResult } from '@rql/contracts';
-import { isIdentStart, tryParse } from '@rql/parser';
+import { isIdentStart, splitStatements, tryParse } from '@rql/parser';
 import { reachableTypes, typeDescriptor } from './describe.js';
 import { firstAnswer, type ClassAdapter, type InterfaceAdapter, type LiteralKind, type TypeAdapter } from './adapters.js';
 import { Exec, now } from './exec.js';
 import { Pipeline } from './pipeline.js';
+import { runStatements } from './script.js';
 import { EnumValue, TypeModel, type Ctor, type MemberAccessor, type MethodAccessor, type TypeInfo, type TypeRef } from './types.js';
 import { MapEntry } from './values.js';
 import { elements, isMapLike } from './collections.js';
@@ -387,8 +388,18 @@ export class RqlEngine {
 
   // ---------------------------------------------------------------- execution
 
-  /** Executes RQL text or a QueryPlan. Never throws for query errors (they become diagnostics). */
+  /**
+   * Executes RQL text or a QueryPlan. Text may hold several statements separated by ';' (spec §14): they run in order,
+   * each with its own budgets and, in a mutation request, as its own all-or-nothing change; their results come back in
+   * `statements`. Never throws for query errors (they become diagnostics).
+   */
   execute(query: string | QueryPlan, budgets: Budgets = {}, options: QueryOptions = {}): QueryResult {
+    if (typeof query === 'string') {
+      const statements = splitStatements(query);
+      if (statements.length > 1) return runStatements(statements, options, (plan) => this.execute(plan, budgets, options));
+      const { start, end } = statements[0]!.span;
+      if (end - start < query.length) query = query.slice(start, end); // "query;"
+    }
     const started = now();
     let plan: QueryPlan;
     if (typeof query === 'string') {

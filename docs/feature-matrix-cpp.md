@@ -7,6 +7,7 @@ runtime has no text parser by design — the .NET/TS sidecar parses, C++ execute
 | Feature | Status | Notes |
 |---|---|---|
 | RQL text parser | none (by design) | `execute_request({"text":…})` → `unsupported`; text-only fixtures counted as skipped |
+| Several statements in one request (§14, ADR-0014) | n/a (no text parser) | the host's .NET / TS layer splits the text and runs each plan here (`RqlScript.Run` with its own executor); `fixtures/statements` is text-only; `rql::language_rules()` carries the shared rules line |
 | QueryPlan codec (canonical encode, validation, error codes, negative vectors) | full | own JSON parser; integral doubles (`1.0`) accepted for integers; non-finite numbers rejected; JSON nesting capped at 256 and expression nesting at 128 (→ `invalid-plan`); duplicate keys: last wins; lone `\u` surrogates rejected |
 | Stages: where select sort first skip count get recurse distinct sum/min/max/avg group-by (streaming) set call describe | full | pull-based, lazy (`first` stops upstream); `describe` is minimal (row columns typed `object`) |
 | Extension stages / functions (`ns.stage`, `ns.fn`) | partial | extension stages receive a materialized input vector (not lazy); a throwing stage handler or source getter → `internal-error`; a throwing extension function → `error(function-threw)` value + one `function-threw` warning per function (as the query source: the query fails with `function-threw`); host functions may be the query source; the detail names no exception type (no RTTI) |
