@@ -943,7 +943,8 @@ ADR-0003) executes the plans a host splits and parses.
 * **Read request.** Every statement runs; one that fails (a parse error, `permission-denied` for a `set` / `call`, any
   runtime error) does not stop the others.
 * **Mutation request.** Every statement must parse and end with `set` or `call` (§8) before any runs; otherwise nothing
-  runs and the statements that were valid report that they did not run. Each statement is its **own all-or-nothing
+  runs and the statements that were valid report that they did not run. Names are resolved when a statement runs, so a
+  misspelt member in a later statement is found only then. Each statement is its **own all-or-nothing
   change** (§8: validated, then written, host hooks — before-write, committed — called once per statement). The first
   statement that fails stops the request: the changes of the statements before it stay (they are not rolled back), the
   statements after it do not run. In a dry run no statement changes anything, so a statement does not see the changes

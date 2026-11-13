@@ -62,6 +62,12 @@ namespace Rql.Tests
             // Errors keep their positions in the request text.
             Assert.Equal(e.Execute("nodes | where").ToJson(includeStats: false), e.Execute("nodes | where;").ToJson(includeStats: false));
             Assert.Equal("syntax-error", Assert.Single(e.Execute(";").Diagnostics).Code);
+            // A leading separator does not shift them.
+            var lead = e.Execute("; nodes | wher x");
+            Assert.Equal(10, Assert.Single(lead.Diagnostics).At!.Value.Start);
+            Assert.Equal(e.Execute("  nodes | wher x").ToJson(includeStats: false), lead.ToJson(includeStats: false));
+            // A ';' inside the statement stays.
+            Assert.Equal("a;b", e.Execute(";; nodes | where Name == \"a\" | select n = (Name + \";b\");").Rows![0][0]!.GetValue<string>());
         }
 
         [Fact]

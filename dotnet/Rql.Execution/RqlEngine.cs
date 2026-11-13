@@ -523,8 +523,9 @@ namespace Rql.Execution
         {
             var statements = RqlParser.SplitStatements(text);
             if (statements.Count > 1) return RqlScript.Run(statements, options, plan => Execute(plan, budgets, options));
+            // ";query;": drop what follows the statement and blank the separators before it, so positions stay the request's.
             var span = statements[0].Span;
-            if (span.End - span.Start < text.Length) text = text.Substring(span.Start, span.End - span.Start); // "query;"
+            if (span.Start > 0 || span.End < text.Length) text = text.Substring(0, span.Start).Replace(';', ' ') + text.Substring(span.Start, span.End - span.Start);
             var sw = Stopwatch.StartNew();
             QueryPlan plan;
             try { plan = RqlParser.Parse(text); }

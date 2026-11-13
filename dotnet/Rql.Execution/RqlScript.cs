@@ -51,7 +51,7 @@ namespace Rql.Execution
             {
                 if (entries[i].Result != null) continue; // did not parse
                 if (options.AllowMutation && invalid >= 0)
-                    entries[i].Skipped = $"statement {invalid + 1} is invalid: a change runs only when every statement is valid, so nothing was changed";
+                    entries[i].Skipped = $"statement {invalid + 1} is invalid: a change runs only when every statement parses and ends with set or call, so nothing was changed";
                 else if (failed >= 0)
                     entries[i].Skipped = $"statement {failed + 1} failed: the statements after a failed change do not run";
                 else

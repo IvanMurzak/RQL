@@ -40,7 +40,8 @@ Several queries go in one call separated by `;` (spec [§14](../spec/semantics.m
 `scenes | select name path isDirty; objects | where name == "Beacon" | select $ref name`. They run in order, at most 10
 per call, and each returns its own block headed `[i/n] <statement>`. A read runs every statement; in a change every
 statement must end with `set` / `call`, each is its own all-or-nothing change that sees the earlier ones, nothing runs
-unless every statement is valid, and the first failure stops the rest (earlier changes stay). A `;` inside a string,
+unless every statement parses and ends with `set` / `call`, and the first failure (a misspelt member is found only when
+its statement runs) stops the rest (earlier changes stay). A `;` inside a string,
 a quoted identifier or brackets does not separate.
 
 ## Sources

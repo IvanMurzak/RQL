@@ -397,8 +397,9 @@ export class RqlEngine {
     if (typeof query === 'string') {
       const statements = splitStatements(query);
       if (statements.length > 1) return runStatements(statements, options, (plan) => this.execute(plan, budgets, options));
+      // ";query;": drop what follows the statement and blank the separators before it, so positions stay the request's.
       const { start, end } = statements[0]!.span;
-      if (end - start < query.length) query = query.slice(start, end); // "query;"
+      if (start > 0 || end < query.length) query = query.slice(0, start).replaceAll(';', ' ') + query.slice(start, end);
     }
     const started = now();
     let plan: QueryPlan;

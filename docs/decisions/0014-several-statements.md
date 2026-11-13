@@ -21,9 +21,12 @@ errors were agents joining two reads with `;` (`scenes | select name path isDirt
 6. **Mutations: per-statement transactions, validate all first, stop at the first failure.** All-or-nothing across
    statements was rejected: a `call` cannot be undone by the library (§8 already leaves earlier calls in place), and
    rolling back earlier `set` statements after a later one fails would need cross-statement undo that only some hosts
-   have. So every statement must parse and end with `set` / `call` before any runs (a typo in statement 3 changes
-   nothing), each statement is validated and written all-or-nothing as today, and the first one that fails stops the
-   rest; the earlier changes stay and are listed in the result. Host hooks run per statement (a host with undo gets one
+   have. So every statement must parse and end with `set` / `call` before any runs (a syntax error in statement 3
+   changes nothing), each statement is validated and written all-or-nothing as today, and the first one that fails
+   stops the rest; the earlier changes stay and are listed in the result. Member and method names are resolved on live
+   items when a statement runs, so a misspelt member in a later statement is found only then (after the earlier
+   statements changed things); checking names up front would need a binding pass without traversal that the runtimes do
+   not have. Host hooks run per statement (a host with undo gets one
    step per statement; a host that saves after the request saves once).
 7. **At most 10 statements per request** (a `syntax-error` beyond): per-statement budgets would otherwise multiply the
    time a host's main thread is held and the output size.

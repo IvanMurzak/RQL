@@ -6,7 +6,7 @@ recommended for MCP integrations.
 | Tool | Arguments | Behaviour |
 |---|---|---|
 | `rql_query` | `query: string` | Read-only execution. A plan containing `set`/`call` fails with `permission-denied`. Several statements separated by `;` all run (spec §14). |
-| `rql_mutate` | `query: string`, `dry_run?: bool` | Only offered when the task/host allows changes. Last stage must be `set` or `call`. All-or-nothing; returns a receipt. Several statements separated by `;`: each must end with `set` / `call` and is its own all-or-nothing change; nothing runs unless all are valid, the first failure stops the rest (spec §14). |
+| `rql_mutate` | `query: string`, `dry_run?: bool` | Only offered when the task/host allows changes. Last stage must be `set` or `call`. All-or-nothing; returns a receipt. Several statements separated by `;`: each must end with `set` / `call` and is its own all-or-nothing change; nothing runs unless all parse and end with `set` / `call`, the first failure stops the rest (spec §14). |
 | `rql_schema` | `type?: string` | Sources plus every reachable type with members (`name type`, `ro` when read-only under mutation, descriptions), methods, enum values. Derived types list only their added members. |
 
 ## Result rendering

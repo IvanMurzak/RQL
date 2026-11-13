@@ -31,6 +31,10 @@ test('one statement keeps the single result', () => {
   assert.equal(json(trailing), json(e.execute('nodes | select Name')));
   assert.equal(json(e.execute('nodes | where;')), json(e.execute('nodes | where')));
   assert.equal(e.execute(';').diagnostics[0]!.code, 'syntax-error');
+  const lead = e.execute('; nodes | wher x');
+  assert.equal(lead.diagnostics[0]!.at!.start, 10);
+  assert.equal(json(lead), json(e.execute('  nodes | wher x')));
+  assert.deepEqual(e.execute(';; nodes | where Name == "a" | select n = (Name + ";b");').rows, [['a;b']]);
   const whole = splitStatements('  nodes | count \n');
   assert.deepEqual(whole.map((s) => s.span), [{ start: 0, end: 17 }]);
 });

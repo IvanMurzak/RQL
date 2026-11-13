@@ -38,7 +38,7 @@ export function runStatements(statements: readonly RqlStatement[], options: Quer
   entries.forEach((entry, i) => {
     if (entry.result !== undefined) return; // did not parse
     if (options.allowMutation && invalid >= 0) {
-      entry.skipped = `statement ${invalid + 1} is invalid: a change runs only when every statement is valid, so nothing was changed`;
+      entry.skipped = `statement ${invalid + 1} is invalid: a change runs only when every statement parses and ends with set or call, so nothing was changed`;
     } else if (failed >= 0) {
       entry.skipped = `statement ${failed + 1} failed: the statements after a failed change do not run`;
     } else {
