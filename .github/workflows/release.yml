@@ -64,6 +64,16 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      # cpp/ (scripts/test-all.py) needs CMake; self-hosted runners do not all ship it, so install it here. get-cmake
+      # also installs Ninja: the generator on Linux/macOS (no `make` assumption); Windows keeps the Visual Studio default.
+      # It downloads into the tool cache, no sudo. The compiler stays the runner's own (c++ / clang / MSVC).
+      - uses: lukka/get-cmake@v4.5.0
+        with:
+          useLocalCache: true
+      - name: Ninja generator (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
       # Pack and the version checks run first so a forgotten version bump fails in minutes, not after the full suite.
       - name: Pack + check the package
         id: pack
