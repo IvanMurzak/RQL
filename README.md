@@ -93,7 +93,7 @@ Unreal.
 dotnet add package com.IvanMurzak.Rql
 ```
 
-One package (`Rql.Contracts` + `Rql.Parser` + `Rql.Execution`), targets `netstandard2.1` and `net8.0`.
+One package (`Rql.Contracts` + `Rql.Parser` + `Rql.Execution`), targets `netstandard2.1`, `net8.0` and `net10.0`.
 
 ```csharp
 using System;

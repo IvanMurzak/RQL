@@ -34,7 +34,7 @@ on ReflectorNet, Unity, Unreal, MCP or any hosted service.
    No other publishing or deployments.
 
 ## Commands
-- .NET: `dotnet test dotnet/Rql.slnx` (needs .NET SDK 10; libraries target netstandard2.1 + net8.0).
+- .NET: `dotnet test dotnet/Rql.slnx` (needs .NET SDK 10; libraries target netstandard2.1 + net8.0 + net10.0).
 - Conformance (.NET): `dotnet run --project dotnet/Rql.Conformance -- check`.
 - TS: `cd typescript && npm install && npm test`.
 - C++: `cmake -S cpp -B cpp/build && cmake --build cpp/build && ctest --test-dir cpp/build`.
