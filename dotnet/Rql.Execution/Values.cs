@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Text;
 
 namespace Rql.Execution
 {
@@ -218,10 +219,45 @@ namespace Rql.Execution
             null => "null",
             Missing _ => "missing",
             Unknown _ => "unknown",
-            RqlError e => e.ToString(),
+            RqlError e => DescribeError(e),
             string s => "\"" + s + "\"",
             _ => TypeModel.Get(v.GetType()).ShortName,
         };
+
+        /// <summary>The longest error detail a message shows, in UTF-16 code units (spec §10); a longer one is cut and ends with "…".</summary>
+        const int ErrorDetailMaxUnits = 300;
+
+        /// <summary>An error value for messages (spec §10): its code and, when it has one, its detail, cut and escaped.</summary>
+        static string DescribeError(RqlError e)
+        {
+            if (string.IsNullOrEmpty(e.Detail)) return e.ToString();
+            var detail = e.Detail!;
+            var sb = new StringBuilder("error(").Append(e.Code).Append(": ");
+            int end = detail.Length;
+            if (end > ErrorDetailMaxUnits)
+            {
+                end = ErrorDetailMaxUnits;
+                if (char.IsHighSurrogate(detail[end - 1])) end--; // never cut inside a surrogate pair
+            }
+            for (int i = 0; i < end; i++)
+            {
+                char c = detail[i];
+                switch (c)
+                {
+                    case '\\': sb.Append("\\\\"); break;
+                    case '"': sb.Append("\\\""); break;
+                    case '\n': sb.Append("\\n"); break;
+                    case '\r': sb.Append("\\r"); break;
+                    case '\t': sb.Append("\\t"); break;
+                    default:
+                        if (c < ' ') sb.Append("\\u").Append(((int)c).ToString("X4", CultureInfo.InvariantCulture));
+                        else sb.Append(c);
+                        break;
+                }
+            }
+            if (end < detail.Length) sb.Append('\u2026');
+            return sb.Append(')').ToString();
+        }
 
         /// <summary>
         /// Shortest text that parses back to the same double. "R" is not shortest on every runtime (Mono, used by Unity,

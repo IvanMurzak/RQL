@@ -1409,11 +1409,28 @@ export function rangeOf(a: unknown, b: unknown, c: unknown): { start: number; st
   return { start, step, count };
 }
 
+/** The longest error detail a message shows, in UTF-16 code units (spec §10); a longer one is cut and ends with "…". */
+const ERROR_DETAIL_MAX_UNITS = 300;
+const DETAIL_ESCAPES: Record<string, string> = { '\\': '\\\\', '"': '\\"', '\n': '\\n', '\r': '\\r', '\t': '\\t' };
+
+/** An error value for messages (spec §10): its code and, when it has one, its detail, cut and escaped. */
+function describeError(e: ErrorValue): string {
+  if (!e.detail) return e.toString();
+  let detail = e.detail;
+  if (detail.length > ERROR_DETAIL_MAX_UNITS) {
+    let cut = ERROR_DETAIL_MAX_UNITS;
+    const last = detail.charCodeAt(cut - 1);
+    if (last >= 0xd800 && last <= 0xdbff) cut--; // never cut inside a surrogate pair
+    detail = detail.slice(0, cut) + '\u2026';
+  }
+  return `error(${e.code}: ${detail.replace(/[\\"\u0000-\u001f]/g, (c) => DETAIL_ESCAPES[c] ?? '\\u' + c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0'))})`;
+}
+
 export function describeValue(v: unknown): string {
   if (v === null || v === undefined) return 'null';
   if (v === MISSING) return 'missing';
   if (v === UNKNOWN) return 'unknown';
-  if (v instanceof ErrorValue) return v.toString();
+  if (v instanceof ErrorValue) return describeError(v);
   if (typeof v === 'string') return '"' + v + '"';
   if (typeof v === 'number') return 'Number';
   if (typeof v === 'boolean') return 'Boolean';

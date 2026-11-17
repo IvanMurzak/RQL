@@ -2090,6 +2090,22 @@ void overload_tests() {
     check(has(res.diagnostics[0].message, "no parameter 'sise' (did you mean 'size'?); parameters: name, primitive, size"), "named arguments: unknown name");
     res = run(*e, "Spawn", R"J({"object":[{"key":"size","value":{"lit":2}}]})J", true);
     check(has(res.diagnostics[0].message, "missing parameter 'name'; parameters: name, primitive, size"), "named arguments: missing required");
+    // An error value passed as an argument is described with its detail, escaped and cut (spec §10).
+    e->add_function("app.lookup", [](const std::vector<rql::Value>& a) { return rql::Value::error("stale-ref", a[0].as_string()); });
+    auto lookup = [&](const std::string& detail_json) {
+        return run(*e, "Link", R"J({"call":"lookup","on":{"path":["app"]},"args":[{"lit":")J" + detail_json + R"J("}]})J", true).diagnostics[0].message;
+    };
+    std::string said = lookup(R"J(no lamp \"Lmp\"\nin C:\\Maps\r\t\u0001)J");
+    check(has(said, R"J(argument 'other': value is error(stale-ref: no lamp \"Lmp\"\nin C:\\Maps\r\t\u0001))J"), "error detail: shown escaped in a message: " + said);
+    check(has(lookup(std::string(300, 'x')), "value is error(stale-ref: " + std::string(300, 'x') + ")") &&
+              has(lookup(std::string(301, 'x')), "value is error(stale-ref: " + std::string(300, 'x') + "\xE2\x80\xA6)"),
+          "error detail: 300 UTF-16 units are shown whole, one more is cut");
+    check(rql::describe_value(rql::Value::error("stale-ref", std::string(1000, '\xA0'))).size() == 17 + 300 + 3 + 1,
+          "error detail: a detail that is not UTF-8 is cut too");
+    said = lookup(std::string(299, 'x') + "\\uD83D\\uDE00" + std::string(50, 'y'));
+    check(has(said, "value is error(stale-ref: " + std::string(299, 'x') + "\xE2\x80\xA6)"), "error detail: cut at 300 UTF-16 units, never inside a character: " + said);
+    said = lookup("");
+    check(has(said, "value is error(stale-ref)"), "error detail: none, code only: " + said);
     // The host decides.
     auto plain = engine(false);
     plain->add_object_source("editor", &editor);
@@ -2534,7 +2550,7 @@ void wave6_tests() {
         auto res = e.execute_json(
             R"J({"rql":"0.1","source":{"path":["things"]},"stages":[{"op":"sort","keys":[{"expr":{"op":"/","args":[{"path":["Mass"]},{"path":["Volume"]}]},"desc":true}]},{"op":"select","fields":[{"name":"Name","expr":{"path":["Name"]}}]}]})J");
         check(res.ok && res.diagnostics.size() == 1 && res.diagnostics[0].code == "div-by-zero" &&
-                  has(res.diagnostics[0].message, "sort key 1 failed for 1 of 2 item(s)") && has(res.diagnostics[0].message, "they sort last") &&
+                  has(res.diagnostics[0].message, "sort key 1 failed for 1 of 2 item(s) (first: error(div-by-zero)); they sort last") &&
                   (*res.rows)[0][0].as_string() == "b",
               "sort: a failing key warns with the error's code");
         res = e.execute_json(R"J({"rql":"0.1","source":{"path":["things"]},"stages":[{"op":"sort","keys":[{"expr":{"path":["Mass"]}}]}]})J");

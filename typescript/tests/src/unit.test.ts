@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { RqlError, deserializePlan, formatNumber, serializePlan } from '@rql/contracts';
-import { EnumType, RqlEngine, TypeModel, t } from '@rql/execution';
+import { EnumType, ErrorValue, RqlEngine, TypeModel, t } from '@rql/execution';
 import { parse } from '@rql/parser';
 
 const rows = (r: { rows?: unknown[][] }): unknown[][] => r.rows ?? [];
@@ -571,6 +571,33 @@ test('a throwing extension function is an error value plus one function-threw wa
   const warnings = r.diagnostics.filter((d) => d.code === 'function-threw');
   assert.equal(warnings.length, 1);
   assert.equal(warnings[0]?.message, 'app.find() threw RangeError: no such object');
+});
+
+test('an error value in a message shows its detail, escaped and cut (spec §10)', () => {
+  class Lamp {
+    Target: Lamp | null = null;
+  }
+  const lamps = [new Lamp()];
+  const model = new TypeModel().register(Lamp, {
+    members: [{ name: 'Target', type: t.of(Lamp) }],
+    methods: [{ name: 'Attach', params: [{ name: 'target', type: t.of(Lamp) }], invoke: (l, args) => ((l as Lamp).Target = args[0] as Lamp) }],
+  });
+  const e = new RqlEngine({ types: model }).addSource('lamps', () => lamps);
+  e.mutations.enabled = true;
+  e.addFunction('app.lookup', (args) => new ErrorValue('stale-ref', args[0] as string));
+  const why = (detail: string): string => {
+    const r = e.execute(`lamps | call Attach(app.lookup(${JSON.stringify(detail)}))`, {}, { allowMutation: true });
+    assert.equal(r.ok, false);
+    return r.diagnostics.map((d) => d.message).join(' | ');
+  };
+  const said = why('no lamp "Lmp"\nin C:\\Maps\r\t\u0001');
+  assert.ok(said.includes('value is error(stale-ref: no lamp \\"Lmp\\"\\nin C:\\\\Maps\\r\\t\\u0001)'), said);
+  const long = why('x'.repeat(299) + '\u{1F600}' + 'y'.repeat(50));
+  assert.ok(long.includes('value is error(stale-ref: ' + 'x'.repeat(299) + '\u2026)'), long);
+  assert.ok(why('x'.repeat(300)).includes('value is error(stale-ref: ' + 'x'.repeat(300) + ')'));
+  assert.ok(why('x'.repeat(301)).includes('value is error(stale-ref: ' + 'x'.repeat(300) + '\u2026)'));
+  const bare = why('');
+  assert.ok(bare.includes('value is error(stale-ref)'), bare);
 });
 
 test('aggregates warn once about ignored values', () => {

@@ -361,7 +361,7 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
 |---|---|
 | `where e` | keep items whose `e` is `true`. |
 | `select [n=]e ...` | project each item to a row with the listed columns. Column name = alias, or the item's source text. |
-| `sort k [asc\|desc], ...` | stable sort. `null`/`missing` last regardless of direction; mixed kinds ordered number < string < bool < other. A key that evaluates to an **error** (a getter that throws, a division by zero, a type mismatch) sorts last like `null`, and the query gets one warning per failing key, with the first error's code, naming the key (its path, or its position for a computed key) and how many items failed (`sort key 1 failed for 3 of 40 item(s) (div-by-zero: …); they sort last` for `sort (Mass / Volume)`), so a key that fails on every item is not mistaken for a sort that kept the order. |
+| `sort k [asc\|desc], ...` | stable sort. `null`/`missing` last regardless of direction; mixed kinds ordered number < string < bool < other. A key that evaluates to an **error** (a getter that throws, a division by zero, a type mismatch) sorts last like `null`, and the query gets one warning per failing key, with the first error's code, naming the key (its path, or its position for a computed key) and how many items failed (`sort key 1 failed for 3 of 40 item(s) (first: error(div-by-zero)); they sort last` for `sort (Mass / Volume)`), so a key that fails on every item is not mistaken for a sort that kept the order. |
 | `first [n]` | first n items (default 1). MUST stop pulling upstream items afterwards (lazy). |
 | `skip n` | drop first n. |
 | `count` | terminal: number of items. |
@@ -714,6 +714,14 @@ threw, §13), `invalid-regex` (§4.1), `stale-ref`,
 `timeout`, `output-truncated`, `unsupported`, `internal-error` (a runtime bug surfaced as a diagnostic instead of
 a crash), `no-match` (warning: an `x is T` test was false
 for every tested item; the hint names where `T` objects are reachable).
+
+**Error values in messages.** A message that names an error value (`argument 'parent': value is …`, `cannot assign …`,
+`sum ignored … (first: …)`, `sort key … (first: …)`) shows its code and, when the error carries a detail (the reason the
+runtime, a getter, a host function or a core function gave), the detail too: `error(stale-ref: no actor 'Islnd' in the
+open level)`; without a detail it stays `error(code)`. In the detail `\` and `"` are escaped with a backslash, line
+breaks and tabs are written `\n`, `\r`, `\t` and other control characters below U+0020 `\u00XX`; a detail longer than
+300 UTF-16 code units is cut to its first 300 (one fewer when the cut would split a surrogate pair) followed by `…`.
+The value's own text form (`$error` in the output and its compact rendering, map-key text) stays the code alone.
 
 `unknown-member` SHOULD carry a `hint` with the closest member names of the observed types —
 this is the main self-correction channel for agents.

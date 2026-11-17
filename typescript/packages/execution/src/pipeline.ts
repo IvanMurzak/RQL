@@ -26,7 +26,7 @@ import {
   type Stage,
 } from '@rql/contracts';
 import { elements, mapEntries, sizeOf, type MapLike } from './collections.js';
-import { Compiler, MAX_COMPARE_DEPTH, compare, isOwnType, pathText, rangeOf, reduce, toText, type Eval } from './compiler.js';
+import { Compiler, MAX_COMPARE_DEPTH, compare, describeValue, isOwnType, pathText, rangeOf, reduce, toText, type Eval } from './compiler.js';
 import { describeRun, reachableTypes } from './describe.js';
 import { Encoder } from './encoder.js';
 import type { ArgEvaluator, SourceRegistration } from './engine.js';
@@ -655,7 +655,7 @@ export class Pipeline {
       const text = pathText(expr);
       const label = text !== undefined ? `sort key '${text}'` : `sort key ${k + 1}`;
       this.x.diagnostics.push(
-        diagnostic('warning', e.code, `${label} failed for ${n} of ${rows.length} item(s) (${e.code}${e.detail !== undefined ? ': ' + e.detail : ''}); they sort last`, undefined, expr.span),
+        diagnostic('warning', e.code, `${label} failed for ${n} of ${rows.length} item(s) (first: ${describeValue(e)}); they sort last`, undefined, expr.span),
       );
     });
     this.x.checkTime();
