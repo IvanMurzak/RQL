@@ -252,7 +252,7 @@ test('a failing sort key warns', () => {
   assert.equal(r.diagnostics.length, 1);
   assert.equal(r.diagnostics[0]!.code, 'div-by-zero');
   like(r.diagnostics[0]!.message, /sort key 1 failed for 1 of 2 item\(s\)/);
-  like(r.diagnostics[0]!.message, /they sort last/);
+  like(r.diagnostics[0]!.message, /\(first: error\(div-by-zero\)\); they sort last/);
   assert.equal(r.rows![0]![0], 'b');
   assert.equal(e.execute('things | sort Mass').diagnostics.length, 0);
 });

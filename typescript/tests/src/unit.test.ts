@@ -590,10 +590,12 @@ test('an error value in a message shows its detail, escaped and cut (spec §10)'
     assert.equal(r.ok, false);
     return r.diagnostics.map((d) => d.message).join(' | ');
   };
-  const said = why('no lamp "Lmp"\nin C:\\Maps');
-  assert.ok(said.includes('value is error(stale-ref: no lamp \\"Lmp\\"\\nin C:\\\\Maps)'), said);
+  const said = why('no lamp "Lmp"\nin C:\\Maps\r\t\u0001');
+  assert.ok(said.includes('value is error(stale-ref: no lamp \\"Lmp\\"\\nin C:\\\\Maps\\r\\t\\u0001)'), said);
   const long = why('x'.repeat(299) + '\u{1F600}' + 'y'.repeat(50));
   assert.ok(long.includes('value is error(stale-ref: ' + 'x'.repeat(299) + '\u2026)'), long);
+  assert.ok(why('x'.repeat(300)).includes('value is error(stale-ref: ' + 'x'.repeat(300) + ')'));
+  assert.ok(why('x'.repeat(301)).includes('value is error(stale-ref: ' + 'x'.repeat(300) + '\u2026)'));
   const bare = why('');
   assert.ok(bare.includes('value is error(stale-ref)'), bare);
 });

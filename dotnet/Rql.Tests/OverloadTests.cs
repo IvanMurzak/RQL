@@ -134,10 +134,12 @@ namespace Rql.Tests
             var (e, _) = Host();
             e.AddFunction("app.lookup", args => new RqlError("stale-ref", (string)args[0]!));
             string Why(string detail) => Error(e.Execute("[1] | call editor.Link(app.lookup(" + System.Text.Json.JsonSerializer.Serialize(detail) + "))", null, DryRun));
-            var said = Why("no lamp \"Lmp\"\nin C:\\Maps");
-            Assert.Contains("argument 'other': value is error(stale-ref: no lamp \\\"Lmp\\\"\\nin C:\\\\Maps)", said);
+            var said = Why("no lamp \"Lmp\"\nin C:\\Maps\r\t\u0001");
+            Assert.Contains("argument 'other': value is error(stale-ref: no lamp \\\"Lmp\\\"\\nin C:\\\\Maps\\r\\t\\u0001)", said);
             said = Why(new string('x', 299) + "\U0001F600" + new string('y', 50));
             Assert.Contains("value is error(stale-ref: " + new string('x', 299) + "\u2026)", said);
+            Assert.Contains("value is error(stale-ref: " + new string('x', 300) + ")", Why(new string('x', 300)));
+            Assert.Contains("value is error(stale-ref: " + new string('x', 300) + "\u2026)", Why(new string('x', 301)));
             Assert.Contains("value is error(stale-ref)", Why(""));
         }
 

@@ -370,7 +370,7 @@ namespace Rql.Tests
             var w = Assert.Single(r.Diagnostics);
             Assert.Equal("div-by-zero", w.Code);
             Assert.Contains("sort key 1 failed for 1 of 2 item(s)", w.Message);
-            Assert.Contains("they sort last", w.Message);
+            Assert.Contains("(first: error(div-by-zero)); they sort last", w.Message);
             Assert.Equal("b", r.Rows![0][0]!.GetValue<string>());
             // TopN (sort + first) warns the same way.
             Assert.Contains(e.Execute("things | sort (Mass / Volume) | first 1").Diagnostics, d => d.Code == "div-by-zero");

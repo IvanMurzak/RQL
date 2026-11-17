@@ -1423,7 +1423,7 @@ function describeError(e: ErrorValue): string {
     if (last >= 0xd800 && last <= 0xdbff) cut--; // never cut inside a surrogate pair
     detail = detail.slice(0, cut) + '\u2026';
   }
-  return `error(${e.code}: ${detail.replace(/[\\"\n\r\t]/g, (c) => DETAIL_ESCAPES[c])})`;
+  return `error(${e.code}: ${detail.replace(/[\\"\u0000-\u001f]/g, (c) => DETAIL_ESCAPES[c] ?? '\\u' + c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0'))})`;
 }
 
 export function describeValue(v: unknown): string {

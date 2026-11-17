@@ -258,9 +258,13 @@ std::string describe_error(const Value& v) {
     if (detail.empty()) return "error(" + v.error_code() + ")";
     std::string out = "error(" + v.error_code() + ": ";
     size_t units = 0;
+    int open = 0;  // continuation bytes the current UTF-8 sequence still expects
     for (size_t i = 0; i < detail.size(); ++i) {
         const unsigned char c = static_cast<unsigned char>(detail[i]);
-        if ((c & 0xC0) != 0x80) {  // a character starts: count it in UTF-16 code units, never cut inside one
+        if ((c & 0xC0) == 0x80 && open > 0) {
+            --open;
+        } else {  // a character starts (a stray byte counts as one): count it in UTF-16 code units, never cut inside one
+            open = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
             units += c >= 0xF0 ? 2 : 1;
             if (units > kErrorDetailMaxUnits) {
                 out += "\xE2\x80\xA6";  // …
@@ -273,7 +277,15 @@ std::string describe_error(const Value& v) {
             case '\n': out += "\\n"; break;
             case '\r': out += "\\r"; break;
             case '\t': out += "\\t"; break;
-            default: out += static_cast<char>(c);
+            default:
+                if (c < 0x20) {
+                    static const char hex[] = "0123456789ABCDEF";
+                    out += "\\u00";
+                    out += hex[c >> 4];
+                    out += hex[c & 0xF];
+                } else {
+                    out += static_cast<char>(c);
+                }
         }
     }
     return out + ")";

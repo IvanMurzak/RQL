@@ -686,7 +686,7 @@ namespace Rql.Execution
                     var expr = _stage.Keys[k].Expr;
                     var label = Compiler.PathText(expr) is string text ? $"sort key '{text}'" : $"sort key {k + 1}";
                     x.Diagnostics.Add(new Diagnostic(DiagnosticSeverity.Warning, e.Code,
-                        $"{label} failed for {_failed[k]} of {_items} item(s) ({e.Code}{(e.Detail != null ? ": " + e.Detail : "")}); they sort last", expr.Span));
+                        $"{label} failed for {_failed[k]} of {_items} item(s) (first: {V.Describe(e)}); they sort last", expr.Span));
                 }
             }
         }
