@@ -11,7 +11,7 @@ traces are committed in `evaluation/baselines/*.json`; spend is in `evaluation/b
 |---|---|
 | Spec | EBNF grammar, normative semantics (incl. §12 portability decisions), JSON schemas for QueryPlan / QueryResult / ObjectRef / CapabilityManifest, versioning + changelog |
 | Golden vectors | 496 checks: 141 syntax→plan cases (each also a codec round-trip = 282), 30 negative syntax, 27 negative/edge plans, 138 execution cases = 157 steps incl. 16 mutation scenarios with follow-up state checks, on a portable graph (`fixtures/cross-runtime/graph.json`) materialized natively per runtime |
-| .NET reference | parser, codec, live-CLR executor (compiled or reflection accessors), mutations, diagnostics, agent formats; libraries target netstandard2.1 + net8.0 |
+| .NET reference | parser, codec, live-CLR executor (compiled or reflection accessors), mutations, diagnostics, agent formats; libraries target netstandard2.1 + net8.0 + net10.0 |
 | TypeScript | contracts, identical parser, live-object executor with descriptor registry |
 | C++17 | own JSON, codec, provider-based reflection (`TypeRegistry`), executor; no parser by design |
 | Sandbox | deterministic game world + app data (small 0.3k → huge 145k objects), tool host, snapshot differ, CLI |
