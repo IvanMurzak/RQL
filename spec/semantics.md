@@ -715,6 +715,13 @@ threw, §13), `invalid-regex` (§4.1), `stale-ref`,
 a crash), `no-match` (warning: an `x is T` test was false
 for every tested item; the hint names where `T` objects are reachable).
 
+**Error values in messages.** A message that names an error value (`argument 'parent': value is …`, `cannot assign …`,
+`sum ignored … (first: …)`) shows its code and, when the error carries a detail (the reason a host function or a core
+function gave), the detail too: `error(stale-ref: no actor 'Islnd' in the open level …)`; without a detail it stays `error(code)`. In the
+detail `\` and `"` are escaped with a backslash and line breaks and tabs are written `\n`, `\r`, `\t`; a detail longer than
+300 UTF-16 code units is cut to its first 300 (one fewer when the cut would split a surrogate pair) followed by `…`.
+The value's own text form (string concatenation, `$error` in the output) stays the code alone.
+
 `unknown-member` SHOULD carry a `hint` with the closest member names of the observed types —
 this is the main self-correction channel for agents.
 

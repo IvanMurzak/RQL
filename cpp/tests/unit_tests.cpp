@@ -2090,6 +2090,17 @@ void overload_tests() {
     check(has(res.diagnostics[0].message, "no parameter 'sise' (did you mean 'size'?); parameters: name, primitive, size"), "named arguments: unknown name");
     res = run(*e, "Spawn", R"J({"object":[{"key":"size","value":{"lit":2}}]})J", true);
     check(has(res.diagnostics[0].message, "missing parameter 'name'; parameters: name, primitive, size"), "named arguments: missing required");
+    // An error value passed as an argument is described with its detail, escaped and cut (spec §10).
+    e->add_function("app.lookup", [](const std::vector<rql::Value>& a) { return rql::Value::error("stale-ref", a[0].as_string()); });
+    auto lookup = [&](const std::string& detail_json) {
+        return run(*e, "Link", R"J({"call":"lookup","on":{"path":["app"]},"args":[{"lit":")J" + detail_json + R"J("}]})J", true).diagnostics[0].message;
+    };
+    std::string said = lookup(R"J(no lamp \"Lmp\"\nin C:\\Maps)J");
+    check(has(said, R"J(argument 'other': value is error(stale-ref: no lamp \"Lmp\"\nin C:\\Maps))J"), "error detail: shown escaped in a message: " + said);
+    said = lookup(std::string(299, 'x') + "\\uD83D\\uDE00" + std::string(50, 'y'));
+    check(has(said, "value is error(stale-ref: " + std::string(299, 'x') + "\xE2\x80\xA6)"), "error detail: cut at 300 UTF-16 units, never inside a character: " + said);
+    said = lookup("");
+    check(has(said, "value is error(stale-ref)"), "error detail: none, code only: " + said);
     // The host decides.
     auto plain = engine(false);
     plain->add_object_source("editor", &editor);
