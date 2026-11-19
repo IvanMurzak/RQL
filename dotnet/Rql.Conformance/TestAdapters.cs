@@ -167,7 +167,10 @@ namespace Rql.Conformance
                     .AddMethod("scale", new[] { new CallableParameter("by", typeof(Vec2)) }, typeof(double),
                         (o, args) => ((Vec2)args[0]!).x * ((Vec2)args[0]!).y, "by.x * by.y")
                     .AddMethod("scale", new[] { new CallableParameter("x", typeof(double)), new CallableParameter("y", typeof(double)) }, typeof(double),
-                        (o, args) => (double)args[0]! + (double)args[1]!, "x + y");
+                        (o, args) => (double)args[0]! + (double)args[1]!, "x + y")
+                    // They change nothing: a call of them may be followed by read stages (spec §8 "Reading call results").
+                    .AddMethod("echo", new[] { new CallableParameter("node", typeof(Node)) }, typeof(Node), (o, args) => args[0], "the node itself")
+                    .ReadOnlyMethods("greet", "probe", "echo");
 
             /// <summary>The fixture's creation method: a child with Id = parent Id * 100 + its position (from 1).</summary>
             private static Node Spawn(Node parent, string name)

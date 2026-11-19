@@ -288,6 +288,11 @@ void register_test_adapters(rql::Engine& engine, rql::TypeRegistry& reg) {
                 rql::builtin::string_type(),
                 [](Node&, const std::vector<rql::Value>& args) -> rql::Value { throw std::runtime_error(args[0].as_string()); },
                 "always throws (call-threw)")
+            .method<Node>(
+                "echo", {rql::ParamDescriptor{"node", node_type, false, false, rql::Value()}}, node_type,
+                [](Node&, const std::vector<rql::Value>& args) { return args[0]; }, "the node itself")
+            // They change nothing: a call of them may be followed by read stages (spec §8 "Reading call results").
+            .read_only_methods({"greet", "probe", "echo"})
             .property<Node>(
                 "tagsCopy", [](Node& n) { return std::vector<std::string>(n.Tags); }, [](Node& n, std::vector<std::string> v) { n.Tags = std::move(v); },
                 nullptr, "a copy of Tags (copy-on-read)")

@@ -8,8 +8,10 @@ import {
   RqlError,
   diagnostic,
   failResult,
+  isMutation,
   isTerminal as isTerminalStage,
   segmentToString,
+  validateStructure,
   type CallExpr,
   type CallStage,
   type Diagnostic,
@@ -31,7 +33,7 @@ import { describeRun, reachableTypes } from './describe.js';
 import { Encoder } from './encoder.js';
 import type { ArgEvaluator, SourceRegistration } from './engine.js';
 import { PathNode, type Exec } from './exec.js';
-import { Mutator } from './mutator.js';
+import { CALL_COLUMNS, Mutator } from './mutator.js';
 import { closest, closestMembers, memberHint, metaHint, nestedMembers } from './suggest.js';
 import { EnumType, EnumValue, unwrapNullable, type TypeInfo, type TypeRef } from './types.js';
 import { ErrorValue, MISSING, MapEntry, RowValue, UNKNOWN, isAbsent, originOf, streamedEntry, toNumber, type EntryOrigin } from './values.js';
@@ -95,10 +97,9 @@ class KeyTally {
   }
 }
 
-/** A mutation request whose plan does not end with a set or call stage (spec §8): the error, else undefined. */
+/** A mutation request whose plan has no set or call stage (spec §8): the error, else undefined. */
 export function mutationWithoutWrite(plan: QueryPlan, options: QueryOptions): RqlError | undefined {
-  const last = plan.stages[plan.stages.length - 1];
-  if (!options.allowMutation || last?.kind === 'set' || last?.kind === 'call') return undefined;
+  if (!options.allowMutation || plan.stages.some(isMutation)) return undefined;
   return new RqlError(
     'invalid-plan',
     'a mutation request must end with a set or call stage; nothing was changed',
@@ -232,7 +233,9 @@ export class Pipeline {
   private emptyMutation(result: QueryResult): QueryResult | undefined {
     const x = this.x;
     const stages = x.plan.stages;
-    if (this.unknownMembers.length === 0 || !x.options.allowMutation || stages.length === 0 || (result.rows?.length ?? 0) > 0 || (result.unchanged ?? 0) > 0) return undefined;
+    // Only a receipt: read stages after a call may empty a stream the call did reach.
+    const last = stages[stages.length - 1];
+    if (this.unknownMembers.length === 0 || !x.options.allowMutation || last === undefined || !isMutation(last) || (result.rows?.length ?? 0) > 0 || (result.unchanged ?? 0) > 0) return undefined;
     const known = new Map(this.knownNames());
     for (const s of x.sites) if (s.hits > 0) known.set(s.name.toUpperCase(), s.name); // another read found it
     const typos = this.unknownMembers.filter((u) => !known.has(u.name.toUpperCase()) && !x.engine.hostKnowsMember(u.name));
@@ -253,6 +256,8 @@ export class Pipeline {
     const names = new Map(this.x.engine.knownMemberNames());
     // Group rows have their items (spec §5); elsewhere `items` is an ordinary member name.
     if (this.x.plan.stages.some((st) => st.kind === 'group-by' || (st.kind === 'expr' && st.op === 'group-by'))) names.set('ITEMS', 'items');
+    // Read stages after a call see its rows (spec §8); a call that ends the plan has none.
+    if (this.x.plan.stages.slice(0, -1).some((st) => st.kind === 'call')) for (const n of CALL_COLUMNS) if (!names.has(n.toUpperCase())) names.set(n.toUpperCase(), n);
     for (const st of this.x.plan.stages) {
       if (st.kind !== 'select' && st.kind !== 'group-by') continue;
       for (const f of st.kind === 'select' ? st.fields : st.keys) {
@@ -292,19 +297,13 @@ export class Pipeline {
   private runCore(): QueryResult {
     const x = this.x;
     const plan = x.plan;
+    validateStructure(plan); // plans built by hosts skip the codec
     x.checkTargetLimit();
     const noWrite = mutationWithoutWrite(plan, x.options);
     if (noWrite !== undefined) throw noWrite;
-    let stream: Iterable<Item> = this.compileSource(plan.source);
-    let terminal: Stage | undefined;
-    for (const st of plan.stages) {
-      if (isTerminalStage(st)) {
-        terminal = st;
-        break;
-      }
-      stream = this.apply(stream, st);
-    }
+    const [stream, at] = this.applyStages(this.compileSource(plan.source), 0);
     const encoder = new Encoder(x);
+    const terminal = plan.stages[at];
     if (terminal === undefined) return this.collect(stream, encoder);
     switch (terminal.kind) {
       case 'simple': {
@@ -322,11 +321,31 @@ export class Pipeline {
       }
       case 'set':
         return new Mutator(x, this.c, encoder).set(stream, terminal);
-      case 'call':
-        return new Mutator(x, this.c, encoder).call(stream, terminal, terminal.on !== undefined ? () => this.callReceiver(terminal) : undefined);
+      case 'call': {
+        const mutator = new Mutator(x, this.c, encoder);
+        const receiver = terminal.on !== undefined ? () => this.callReceiver(terminal) : undefined;
+        if (at === plan.stages.length - 1) return mutator.call(stream, terminal, receiver);
+        // Read stages over the rows of read-only calls (spec §8 "Reading call results"), compiled before any call runs.
+        let rows: readonly RowValue[] = [];
+        const [read] = this.applyStages(rowItems(() => rows), at + 1);
+        rows = mutator.callRows(stream, terminal, receiver);
+        const r = this.collect(read, encoder);
+        if (x.options.dryRun) r.dryRun = true;
+        return r;
+      }
       default:
         throw new RqlError('unsupported', `stage '${terminal.op}' is not supported`);
     }
+  }
+
+  /** Applies the stages from `from` up to the first terminal one: the stream and that stage's index (the stage count if none). */
+  private applyStages(stream: Iterable<Item>, from: number): [Iterable<Item>, number] {
+    const stages = this.x.plan.stages;
+    for (let i = from; i < stages.length; i++) {
+      if (isTerminalStage(stages[i]!)) return [stream, i];
+      stream = this.apply(stream, stages[i]!);
+    }
+    return [stream, stages.length];
   }
 
   private *values(stream: Iterable<Item>, sel: Eval): Generator<unknown> {
@@ -890,20 +909,26 @@ export class Pipeline {
   private lastIsRows(): boolean {
     let rows = false;
     for (const st of this.x.plan.stages) {
-      if (projects(st)) rows = true;
+      if (projects(st) || st.kind === 'call') rows = true;
       else if ((st.kind === 'expr' && st.op !== 'distinct') || st.kind === 'recurse' || st.kind === 'generic') rows = false;
     }
     return rows;
   }
 
   private lastColumns(): string[] {
-    const st = [...this.x.plan.stages].reverse().find(projects);
+    const st = [...this.x.plan.stages].reverse().find((s) => projects(s) || s.kind === 'call');
+    if (st?.kind === 'call') return [...CALL_COLUMNS];
     if (st?.kind === 'select') return st.fields.map((f) => f.name);
     return st?.kind === 'group-by' ? [...st.keys.map((k) => k.name), 'count'] : ['key', 'count'];
   }
 }
 
 // ------------------------------------------------------------------ helpers
+
+/** The rows `rows` returns when the stream is read (they do not exist yet when it is built). */
+function* rowItems(rows: () => readonly RowValue[]): Generator<Item> {
+  for (const row of rows()) yield item(row, null);
+}
 
 /** Stages whose output is projected rows. */
 const projects = (s: Stage): boolean => s.kind === 'select' || s.kind === 'group-by' || (s.kind === 'expr' && s.op === 'group-by');

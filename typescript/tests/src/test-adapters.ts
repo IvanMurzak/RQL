@@ -156,6 +156,9 @@ export const nodeAdapter: TypeAdapter<Node> = {
         (_n, x: number, y: number) => x + y,
         'x + y',
       )
+      .method('echo', [{ name: 'node', type: t.of(Node) }], t.of(Node), (_n, node: Node) => node, 'the node itself')
+      // They change nothing: a call of them may be followed by read stages (spec §8 "Reading call results").
+      .readOnlyMethods('greet', 'probe', 'echo')
       .add<string[]>('tagsCopy', {
         type: t.list(t.string),
         get: (n) => [...n.Tags],

@@ -122,15 +122,19 @@ namespace Rql
         public string Op { get; }
         public TextSpan? Span { get; set; }
 
-        /// <summary>Terminal stages must be the last stage of a plan.</summary>
+        /// <summary>Terminal stages must be the last stage of a plan (a <c>call</c> may be followed by <see cref="ReadsCallRows"/> stages).</summary>
         public virtual bool IsTerminal => false;
         public virtual bool IsMutation => false;
+
+        /// <summary>A read stage that may follow a <c>call</c> over its result rows: where / sort / first / skip / select (spec §5, §8).</summary>
+        public virtual bool ReadsCallRows => false;
     }
 
     public sealed class WhereStage : Stage
     {
         public WhereStage(Expr pred) : base("where") { Pred = pred; }
         public Expr Pred { get; }
+        public override bool ReadsCallRows => true;
     }
 
     public sealed class SelectField
@@ -144,6 +148,7 @@ namespace Rql
     {
         public SelectStage(IReadOnlyList<SelectField> fields) : base("select") { Fields = fields; }
         public IReadOnlyList<SelectField> Fields { get; }
+        public override bool ReadsCallRows => true;
     }
 
     /// <summary>
@@ -179,6 +184,7 @@ namespace Rql
     {
         public SortStage(IReadOnlyList<SortKey> keys) : base("sort") { Keys = keys; }
         public IReadOnlyList<SortKey> Keys { get; }
+        public override bool ReadsCallRows => true;
     }
 
     /// <summary>first / skip.</summary>
@@ -186,6 +192,7 @@ namespace Rql
     {
         public LimitStage(string op, int n) : base(op) { N = n; }
         public int N { get; }
+        public override bool ReadsCallRows => true;
     }
 
     /// <summary>count / describe (no arguments, terminal).</summary>

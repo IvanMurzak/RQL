@@ -425,6 +425,11 @@ export interface MethodSpec<T extends object = object> {
    * stage runs it for every target before the first call, on dry runs too (spec §8); a rejection is `invalid-value`.
    */
   validate?(target: T, args: unknown[]): string | null | undefined;
+  /**
+   * The method changes nothing (a measurement, a lookup): a `call` of read-only methods may be followed by where / sort /
+   * first / skip / select over its rows (spec §8 "Reading call results").
+   */
+  readOnly?: boolean;
 }
 
 export interface TypeSpec<T extends object = object> {
@@ -543,7 +548,14 @@ export class MethodAccessor {
     readonly invoke: (target: object, args: unknown[]) => unknown,
     /** Optional check of a planned call: the rejection reason, or null / undefined (spec §8). */
     readonly validate?: (target: object, args: unknown[]) => string | null | undefined,
+    /** The host's promise that the method changes nothing: read stages may follow a call of it (spec §8). */
+    readonly readOnly = false,
   ) {}
+
+  /** This method marked read-only. */
+  asReadOnly(): MethodAccessor {
+    return this.readOnly ? this : new MethodAccessor(this.name, this.params, this.returns, this.description, this.invoke, this.validate, true);
+  }
 
   signature(model?: TypeModel): string {
     return `${this.name}(${this.params.map((p) => `${friendlyName(p.type ?? 'any', model)} ${p.name}`).join(', ')})`;
@@ -1198,7 +1210,7 @@ export class TypeModel {
             return (fn as (...a: unknown[]) => unknown).apply(o, args);
           };
     const validate = spec.validate !== undefined ? spec.validate.bind(spec) : undefined;
-    return new MethodAccessor(name, spec.params ?? [], spec.returns, spec.description, invoke, validate);
+    return new MethodAccessor(name, spec.params ?? [], spec.returns, spec.description, invoke, validate, spec.readOnly ?? false);
   }
 
   // ---------------------------------------------------------------- dynamic fallback
@@ -1412,6 +1424,12 @@ class MemberTableImpl implements MemberTable<object> {
   hideMethods(...names: string[]): this {
     for (const n of names) if (!this.methodList.some((m) => m.name === n)) throw new Error(`type ${this.typeName} has no callable method '${n}' to hide`);
     retainInPlace(this.methodList, (m) => !names.includes(m.name));
+    return this;
+  }
+
+  readOnlyMethods(...names: string[]): this {
+    for (const n of names) if (!this.methodList.some((m) => m.name === n)) throw new Error(`type ${this.typeName} has no callable method '${n}' to mark read-only`);
+    for (let i = 0; i < this.methodList.length; i++) if (names.includes(this.methodList[i]!.name)) this.methodList[i] = this.methodList[i]!.asReadOnly();
     return this;
   }
 

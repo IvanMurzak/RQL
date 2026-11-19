@@ -15,7 +15,7 @@
     "Node": {
       "members": "virtual member `childCount` (int, read-only) = Children count; virtual writable member `title` (string): get = Name upper-cased (ASCII), set = Name := value lower-cased (ASCII); validation rejects an empty string with reason \"title must not be empty\" (before any write); the setter itself THROWS \"node 3 is locked\" when the node's Id is 3 (exercises rollback); member `Note` is HIDDEN; member `Children` is EXPLICIT-ONLY (generic recurse does not follow it); virtual map `stats` (map<string, number>): keys = Props keys in order, get = Props[key], set = Props[key] := value, validation rejects a key not in Props with reason \"unknown stat '<key>'\" and a negative value with \"stats must be non-negative\"; read-only virtual map `labels` (map<string, string>): keys \"name\", \"kind\" -> Name, Kind (enum name); virtual member `tagsCopy` (list<string>): get = a NEW copy of Tags, set = Tags := value, marked COPY-ON-READ; mixed-type virtual map `fields`: keys \"Name\", \"Value\", \"Enabled\" with entry types string / double / bool, get/set the corresponding member",
       "describe": "Node: a conformance graph node",
-      "methods": "callable `bump(number by = 1)`: Value += by, returns the new Value; its VALIDATOR rejects by < 0 with reason \"by must be non-negative\" and the node with Id 5 with \"node 5 is frozen\"; callable `greet(string who)`: returns \"hi <who>, I am <Name>\", no state change; callable `fail(string why)`: always THROWS with message <why> (call-threw); callable `spawn(string name)`: appends a new Node to this node's Children and returns it — Id = this Id * 100 + Children count + 1 (counted before adding), Name = name, Kind Alpha, Value 0, Enabled true, Note null, Pos (0, 0), Tags [], Props {}, Children [], Parent = this node, Peer null; its VALIDATOR rejects an empty name with reason \"name must not be empty\"; overloads `probe(Node peer)` (returns peer.Id) and `probe(Vec2 at, number scale = 1)` (returns (at.x + at.y) * scale); callable `pin(Node peer)`: returns peer.Id (an object literal never builds a Node here: Node has a liveness adapter, so it is an engine object, spec §4.5); callable `place(string name, string side = \"left\", number weight = 1)`: returns \"<name>/<side>\", no state change; its VALIDATOR rejects weight < 0 with reason \"weight must be non-negative\"; overloads `scale(Vec2 by)` (returns by.x * by.y) and `scale(number x, number y)` (returns x + y). callable `adopt(Node child)`: returns the Name of child.Parent (null when it has none), no state change.",
+      "methods": "callable `bump(number by = 1)`: Value += by, returns the new Value; its VALIDATOR rejects by < 0 with reason \"by must be non-negative\" and the node with Id 5 with \"node 5 is frozen\"; callable `greet(string who)`: returns \"hi <who>, I am <Name>\", no state change; callable `fail(string why)`: always THROWS with message <why> (call-threw); callable `spawn(string name)`: appends a new Node to this node's Children and returns it — Id = this Id * 100 + Children count + 1 (counted before adding), Name = name, Kind Alpha, Value 0, Enabled true, Note null, Pos (0, 0), Tags [], Props {}, Children [], Parent = this node, Peer null; its VALIDATOR rejects an empty name with reason \"name must not be empty\"; overloads `probe(Node peer)` (returns peer.Id) and `probe(Vec2 at, number scale = 1)` (returns (at.x + at.y) * scale); callable `echo(Node node)`: returns node, no state change; `greet`, both `probe` overloads and `echo` are marked READ-ONLY (spec §8 \"Reading call results\": a call of them may be followed by read stages), every other method is not; callable `pin(Node peer)`: returns peer.Id (an object literal never builds a Node here: Node has a liveness adapter, so it is an engine object, spec §4.5); callable `place(string name, string side = \"left\", number weight = 1)`: returns \"<name>/<side>\", no state change; its VALIDATOR rejects weight < 0 with reason \"weight must be non-negative\"; overloads `scale(Vec2 by)` (returns by.x * by.y) and `scale(number x, number y)` (returns x + y). callable `adopt(Node child)`: returns the Name of child.Parent (null when it has none), no state change.",
       "liveness": "IsAlive = Tags does not contain \"destroyed\" (destroyed nodes read as null)"
     },
     "Special": {
@@ -1878,6 +1878,7 @@
             "methods": [
               "adopt(Node child) — the Name of the child's Parent (no state change)",
               "bump(double by) — Value += by; returns the new Value",
+              "echo(Node node) — the node itself",
               "fail(string why) — always throws (call-threw)",
               "greet(string who) — a greeting (no state change)",
               "pin(Node peer) — the peer's Id",
@@ -10397,6 +10398,698 @@
           ]
         ],
         "total": 4
+      }
+    },
+    {
+      "name": "adapt-call-read-sort-first",
+      "rql": "g.Nodes | call greet(\"Ann\") | sort result desc | first 1",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "greet",
+            "args": [
+              {
+                "lit": "Ann"
+              }
+            ]
+          },
+          {
+            "op": "sort",
+            "keys": [
+              {
+                "expr": {
+                  "path": [
+                    "result"
+                  ]
+                },
+                "desc": true
+              }
+            ]
+          },
+          {
+            "op": "first",
+            "n": 1
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#5",
+            "greet(string who)",
+            "hi Ann, I am root-b"
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-call-read-where-select",
+      "rql": "g.Nodes | call greet(\"Ann\") | where result contains \"root\" | select $ref, greeting = result",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "greet",
+            "args": [
+              {
+                "lit": "Ann"
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": "contains",
+              "args": [
+                {
+                  "path": [
+                    "result"
+                  ]
+                },
+                {
+                  "lit": "root"
+                }
+              ]
+            }
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "$ref",
+                "expr": {
+                  "path": [
+                    {
+                      "meta": "ref"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "greeting",
+                "expr": {
+                  "path": [
+                    "result"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "greeting"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "hi Ann, I am root-a"
+          ],
+          [
+            "Node#5",
+            "hi Ann, I am root-b"
+          ]
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "adapt-call-read-qualified-navigate",
+      "rql": "g.Nodes | call ref(\"Node#8\").echo($) | sort result.Value desc | first 2 | select name = result.Name, value = result.Value",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "echo",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#8"
+                }
+              ]
+            },
+            "args": [
+              {
+                "path": []
+              }
+            ]
+          },
+          {
+            "op": "sort",
+            "keys": [
+              {
+                "expr": {
+                  "path": [
+                    "result",
+                    "Value"
+                  ]
+                },
+                "desc": true
+              }
+            ]
+          },
+          {
+            "op": "first",
+            "n": 2
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "name",
+                "expr": {
+                  "path": [
+                    "result",
+                    "Name"
+                  ]
+                }
+              },
+              {
+                "name": "value",
+                "expr": {
+                  "path": [
+                    "result",
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "name",
+          "value"
+        ],
+        "rows": [
+          [
+            "root-a",
+            10
+          ],
+          [
+            "root-b",
+            7
+          ]
+        ],
+        "total": 2
+      }
+    },
+    {
+      "name": "adapt-call-read-qualified-range-skip",
+      "rql": "range(0, 4) | call ref(\"Node#8\").probe([$, 10 - 3 * $]) | sort result | skip 1 | select result",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 4
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "probe",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#8"
+                }
+              ]
+            },
+            "args": [
+              {
+                "list": [
+                  {
+                    "path": []
+                  },
+                  {
+                    "op": "-",
+                    "args": [
+                      {
+                        "lit": 10
+                      },
+                      {
+                        "op": "*",
+                        "args": [
+                          {
+                            "lit": 3
+                          },
+                          {
+                            "path": []
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "op": "sort",
+            "keys": [
+              {
+                "expr": {
+                  "path": [
+                    "result"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "op": "skip",
+            "n": 1
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "result",
+                "expr": {
+                  "path": [
+                    "result"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "result"
+        ],
+        "rows": [
+          [
+            6
+          ],
+          [
+            8
+          ],
+          [
+            10
+          ]
+        ],
+        "total": 3
+      }
+    },
+    {
+      "name": "adapt-call-read-empty",
+      "rql": "g.Empty | call greet(\"x\") | sort result",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Empty"
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "greet",
+            "args": [
+              {
+                "lit": "x"
+              }
+            ]
+          },
+          {
+            "op": "sort",
+            "keys": [
+              {
+                "expr": {
+                  "path": [
+                    "result"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [],
+        "total": 0
+      }
+    },
+    {
+      "name": "adapt-call-read-dry-run",
+      "rql": "g.Nodes | call greet(\"x\") | first 1",
+      "options": {
+        "allowMutation": true,
+        "dryRun": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "greet",
+            "args": [
+              {
+                "lit": "x"
+              }
+            ]
+          },
+          {
+            "op": "first",
+            "n": 1
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "$ref",
+          "method",
+          "result"
+        ],
+        "rows": [
+          [
+            "Node#1",
+            "greet(string who)",
+            "(dry-run)"
+          ]
+        ],
+        "total": 1,
+        "dryRun": true
+      }
+    },
+    {
+      "name": "adapt-call-read-needs-mutation-request",
+      "rql": "g.Nodes | call greet(\"x\") | first 1",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "path": [
+            "g",
+            "Nodes"
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "greet",
+            "args": [
+              {
+                "lit": "x"
+              }
+            ]
+          },
+          {
+            "op": "first",
+            "n": 1
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "permission-denied"
+          }
+        ]
+      }
+    },
+    {
+      "name": "adapt-call-read-not-read-only",
+      "rql": "ref(\"Node#8\") | call bump(1) | first 1",
+      "then": "ref(\"Node#8\") | select Value",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "args": [
+              {
+                "lit": 1
+              }
+            ]
+          },
+          {
+            "op": "first",
+            "n": 1
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-plan"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Value"
+        ],
+        "rows": [
+          [
+            3
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-call-read-qualified-not-read-only",
+      "rql": "range(0, 2) | call ref(\"Node#8\").bump(1) | where result > 0",
+      "then": "ref(\"Node#8\") | select Value",
+      "options": {
+        "allowMutation": true
+      },
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 2
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "bump",
+            "on": {
+              "call": "ref",
+              "args": [
+                {
+                  "lit": "Node#8"
+                }
+              ]
+            },
+            "args": [
+              {
+                "lit": 1
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "op": ">",
+              "args": [
+                {
+                  "path": [
+                    "result"
+                  ]
+                },
+                {
+                  "lit": 0
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-plan"
+          }
+        ]
+      },
+      "thenPlan": {
+        "rql": "0.1",
+        "source": {
+          "call": "ref",
+          "args": [
+            {
+              "lit": "Node#8"
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "Value",
+                "expr": {
+                  "path": [
+                    "Value"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "thenExpect": {
+        "ok": true,
+        "kind": "rows",
+        "columns": [
+          "Value"
+        ],
+        "rows": [
+          [
+            3
+          ]
+        ],
+        "total": 1
+      }
+    },
+    {
+      "name": "adapt-call-read-count-refused",
+      "rql": "g.Nodes | call greet(\"x\") | count",
+      "options": {
+        "allowMutation": true
+      },
+      "expect": {
+        "ok": false,
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "invalid-plan"
+          }
+        ]
       }
     }
   ]

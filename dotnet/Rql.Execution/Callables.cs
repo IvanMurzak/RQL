@@ -30,9 +30,15 @@ namespace Rql.Execution
 
         public CallableMethod(string name, IReadOnlyList<CallableParameter> parameters, Type returnType,
             Func<object, object?[], object?> invoke, string? description = null, Func<object, object?[], string?>? validate = null)
+            : this(name, parameters, returnType, invoke, description, validate, readOnly: false) { }
+
+        /// <param name="readOnly">The method changes nothing (a measurement, a lookup): see <see cref="ReadOnly"/>.</param>
+        public CallableMethod(string name, IReadOnlyList<CallableParameter> parameters, Type returnType,
+            Func<object, object?[], object?> invoke, string? description, Func<object, object?[], string?>? validate, bool readOnly)
         {
             if (string.IsNullOrEmpty(name)) throw new ArgumentException("method name required", nameof(name));
             Name = name; Parameters = parameters; ReturnType = returnType; _invoke = invoke; Description = description; Validate = validate;
+            ReadOnly = readOnly;
         }
 
         public string Name { get; }
@@ -48,6 +54,16 @@ namespace Rql.Execution
         /// </summary>
         public Func<object, object?[], string?>? Validate { get; }
 
+        /// <summary>
+        /// The host's promise that the method changes nothing: a <c>call</c> whose planned calls are all read-only may be
+        /// followed by read stages over its rows (spec §8 "Reading call results").
+        /// </summary>
+        public bool ReadOnly { get; }
+
+        /// <summary>This method marked read-only.</summary>
+        internal CallableMethod AsReadOnly() =>
+            ReadOnly ? this : new CallableMethod(Name, Parameters, ReturnType, _invoke, Description, Validate, readOnly: true);
+
         public string Signature =>
             Name + "(" + string.Join(", ", Parameters.Select(p => TypeModel.FriendlyName(p.Type) + " " + p.Name)) + ")";
 
@@ -58,7 +74,7 @@ namespace Rql.Execution
             return ReturnType == typeof(void) ? null : r;
         }
 
-        internal static CallableMethod FromReflection(MethodInfo m, string? description)
+        internal static CallableMethod FromReflection(MethodInfo m, string? description, bool readOnly = false)
         {
             var pis = m.GetParameters();
             var ps = pis
@@ -70,7 +86,7 @@ namespace Rql.Execution
             Func<object, object?[], string?>? validate = companion != null && companion.ReturnType == typeof(string)
                 ? (target, args) => (string?)InvokeUnwrapped(companion, target, args)
                 : (Func<object, object?[], string?>?)null;
-            return new CallableMethod(m.Name, ps, m.ReturnType, (target, args) => InvokeUnwrapped(m, target, args), description, validate);
+            return new CallableMethod(m.Name, ps, m.ReturnType, (target, args) => InvokeUnwrapped(m, target, args), description, validate, readOnly);
         }
 
         private static object? InvokeUnwrapped(MethodInfo m, object target, object?[] args)

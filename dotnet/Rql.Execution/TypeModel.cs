@@ -484,7 +484,11 @@ namespace Rql.Execution
             string? identityName = null, displayName = null;
             var methods = t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
                 .Where(m => m.IsDefined(typeof(RqlCallableAttribute)) && !m.IsGenericMethodDefinition)
-                .Select(m => CallableMethod.FromReflection(m, m.GetCustomAttribute<RqlCallableAttribute>()?.Description))
+                .Select(m =>
+                {
+                    var callable = m.GetCustomAttribute<RqlCallableAttribute>()!;
+                    return CallableMethod.FromReflection(m, callable.Description, callable.ReadOnly);
+                })
                 .ToList();
             if (_excluded != null) members.RemoveAll(m => IsExcluded(m.Type));
             if (adapters.Length > 0)

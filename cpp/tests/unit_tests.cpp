@@ -2942,6 +2942,70 @@ void dynamic_subtype_tests() {
           "dynamic subtypes: a call argument resolves through the hook, built for the target");
 }
 
+// ------------------------------------------------------------------ read stages after read-only calls (spec §8)
+
+struct Hill {
+    int reads = 0, raises = 0;
+    double Height(double x) {
+        ++reads;
+        return 100 - (x - 3) * (x - 3);
+    }
+    double Raise(double by) {
+        ++raises;
+        return by;
+    }
+};
+
+void call_read_tests() {
+    rql::TypeRegistry reg;
+    reg.object<Hill>("Hill").method("Height", &Hill::Height, {"x"}).read_only_method().method("Raise", &Hill::Raise, {"by"});
+    Hill hill;
+    rql::Engine e(reg);
+    e.add_object_source("hill", &hill);
+    e.mutations().enabled = true;
+    int hooks = 0;
+    e.mutations().before_write = [&](const std::vector<rql::MutationRecord>&) { ++hooks; };
+    const std::string range = R"J("source":{"call":"range","args":[{"lit":0},{"lit":7}]})J";
+    const std::string height = R"J({"op":"call","method":"Height","on":{"path":["hill"]},"args":[{"path":[]}]})J";
+    auto top = run(e, "{\"rql\":\"0.1\"," + range + ",\"stages\":[" + height +
+                          R"J(,{"op":"sort","keys":[{"expr":{"path":["result"]},"desc":true}]},{"op":"first","n":2},{"op":"select","fields":[{"name":"h","expr":{"path":["result"]}}]}]})J",
+                   true);
+    check(top.ok && top.rows && top.rows->size() == 2 && (*top.rows)[0][0].as_number() == 100 && (*top.rows)[1][0].as_number() == 99 &&
+              top.columns == std::vector<std::string>{"h"} && top.total == 2 && hill.reads == 7 && hooks == 1,
+          "call read: read stages over the rows of read-only calls");
+    auto kept = run(e, "{\"rql\":\"0.1\"," + range + ",\"stages\":[" + height +
+                           R"J(,{"op":"where","pred":{"op":">","args":[{"path":["result"]},{"lit":95}]}},{"op":"skip","n":1}]})J",
+                    true);
+    check(kept.ok && kept.rows && kept.rows->size() == 4 && kept.columns == std::vector<std::string>{"$ref", "method", "result"},
+          "call read: the call's columns until a select");
+    auto empty = run(e, R"J({"rql":"0.1","source":{"list":[]},"stages":[)J" + height + R"J(,{"op":"first","n":1}]})J", true);
+    check(empty.ok && empty.rows && empty.rows->empty() && empty.columns == std::vector<std::string>{"$ref", "method", "result"},
+          "call read: no items keeps the call's columns");
+    const std::string raise = R"J({"op":"call","method":"Raise","on":{"path":["hill"]},"args":[{"lit":1}]})J";
+    for (bool dry : {false, true}) {
+        auto refused = run(e, "{\"rql\":\"0.1\"," + range + ",\"stages\":[" + raise + R"J(,{"op":"first","n":1}]})J", true, dry);
+        check(first_code(refused) == "invalid-plan" && refused.diagnostics[0].message == "stage 'call' is terminal and must be the last stage" &&
+                  refused.diagnostics[0].hint.find("Raise(double by)") != std::string::npos,
+              "call read: a mutating call stays terminal");
+    }
+    check(hill.raises == 0, "call read: nothing was called");
+    auto receipt = run(e, "{\"rql\":\"0.1\"," + range + ",\"stages\":[" + raise + "]}", true);
+    check(receipt.ok && receipt.rows && receipt.rows->size() == 7 && hill.raises == 7, "call read: a mutating call alone still runs");
+    auto query = run(e, "{\"rql\":\"0.1\"," + range + ",\"stages\":[" + height + R"J(,{"op":"first","n":1}]})J");
+    check(first_code(query) == "permission-denied", "call read: still needs a mutation request");
+    auto count = run(e, "{\"rql\":\"0.1\"," + range + ",\"stages\":[" + height + R"J(,{"op":"count"}]})J", true);
+    check(first_code(count) == "invalid-plan", "call read: other stages stay refused");
+    // A binding error in a read stage fails before any call runs.
+    const int reads = hill.reads, hooked = hooks;
+    auto unbound = run(e, "{\"rql\":\"0.1\"," + range + ",\"stages\":[" + height +
+                              R"J(,{"op":"where","pred":{"call":"nosuchfn","args":[{"path":["result"]}]}}]})J",
+                       true);
+    check(first_code(unbound) == "unknown-function" && hill.reads == reads && hooks == hooked, "call read: read stages compile before the calls");
+    // A plan that ends with the call keeps the typo rule for `result` (no read stage can see the call's columns).
+    auto typo = run(e, R"J({"rql":"0.1","source":{"path":["hill"]},"stages":[{"op":"where","pred":{"op":">","args":[{"path":["result"]},{"lit":1}]}},)J" + raise + "]}", true);
+    check(first_code(typo) == "unknown-member" && hill.raises == 7, "call read: a plan ending with the call keeps the typo rule");
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) repo_root = argv[1];
     try {
@@ -2961,6 +3025,7 @@ int main(int argc, char** argv) {
         vector_tests();
         hint_tests();
         dynamic_subtype_tests();
+        call_read_tests();
     } catch (const std::exception& ex) {
         std::cout << "FATAL " << ex.what() << "\n";
         return 2;

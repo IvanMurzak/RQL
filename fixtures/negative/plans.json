@@ -960,6 +960,170 @@
     ]
    },
    "code": null
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "call",
+      "method": "m",
+      "args": []
+     },
+     {
+      "op": "where",
+      "pred": {
+       "lit": true
+      }
+     },
+     {
+      "op": "sort",
+      "keys": [
+       {
+        "expr": {
+         "path": [
+          "result"
+         ]
+        },
+        "desc": true
+       }
+      ]
+     },
+     {
+      "op": "skip",
+      "n": 1
+     },
+     {
+      "op": "first",
+      "n": 1
+     },
+     {
+      "op": "select",
+      "fields": [
+       {
+        "name": "result",
+        "expr": {
+         "path": [
+          "result"
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "code": null
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "call",
+      "method": "m",
+      "args": []
+     },
+     {
+      "op": "count"
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "call",
+      "method": "m",
+      "args": []
+     },
+     {
+      "op": "get",
+      "expr": {
+       "path": [
+        "result"
+       ]
+      }
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "call",
+      "method": "m",
+      "args": []
+     },
+     {
+      "op": "first",
+      "n": 1
+     },
+     {
+      "op": "call",
+      "method": "m",
+      "args": []
+     }
+    ]
+   },
+   "code": "invalid-plan"
+  },
+  {
+   "plan": {
+    "rql": "0.1",
+    "source": {
+     "path": [
+      "g"
+     ]
+    },
+    "stages": [
+     {
+      "op": "set",
+      "assign": [
+       {
+        "target": {
+         "path": [
+          "a"
+         ]
+        },
+        "value": {
+         "lit": 1
+        }
+       }
+      ]
+     },
+     {
+      "op": "first",
+      "n": 1
+     }
+    ]
+   },
+   "code": "invalid-plan"
   }
  ]
 }

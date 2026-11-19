@@ -272,10 +272,18 @@ namespace Rql
         {
             for (int i = 0; i < plan.Stages.Count - 1; i++)
             {
-                if (plan.Stages[i].IsTerminal)
-                    throw new RqlException("invalid-plan", $"stage '{plan.Stages[i].Op}' is terminal and must be the last stage", plan.Stages[i].Span);
+                var st = plan.Stages[i];
+                if (!st.IsTerminal) continue;
+                // A call may be followed by read stages over its result rows; every planned call must then be of a read-only
+                // method, which only the run can tell (spec §5, §8).
+                if (st is CallStage && plan.Stages.Skip(i + 1).All(s => s.ReadsCallRows)) return;
+                throw TerminalNotLast(st);
             }
         }
+
+        /// <summary>A terminal stage followed by other stages (also a mutating <c>call</c> followed by read stages, spec §8).</summary>
+        public static RqlException TerminalNotLast(Stage st, string? hint = null) =>
+            new RqlException("invalid-plan", $"stage '{st.Op}' is terminal and must be the last stage", st.Span, hint);
 
         private static RqlException Invalid(string message) => new RqlException("invalid-plan", message);
 

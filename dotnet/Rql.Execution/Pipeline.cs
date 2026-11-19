@@ -174,7 +174,9 @@ namespace Rql.Execution
         private QueryResult? EmptyMutation(QueryResult result)
         {
             var plan = _x.Plan;
-            if (_unknownMembers.Count == 0 || !_x.Options.AllowMutation || plan.Stages.Count == 0 || (result.Rows?.Count ?? 0) > 0 || result.Unchanged > 0) return null;
+            // Only a receipt: read stages after a call may empty a stream the call did reach.
+            if (_unknownMembers.Count == 0 || !_x.Options.AllowMutation || plan.Stages.Count == 0 || !plan.Stages[plan.Stages.Count - 1].IsMutation
+                || (result.Rows?.Count ?? 0) > 0 || result.Unchanged > 0) return null;
             var known = KnownNames();
             foreach (var s in _x.Sites) if (s.Hits > 0) known.Add(s.Name); // another read found it
             var typos = _unknownMembers.Where(u => !known.Contains(u.Name) && !HostKnows(u.Name)).Select(u => u.Warning).ToList();
@@ -195,6 +197,8 @@ namespace Rql.Execution
             var names = new HashSet<string>(_x.Engine.KnownMemberNames(), StringComparer.OrdinalIgnoreCase);
             // Group rows have their items (spec §5); elsewhere `items` is an ordinary member name.
             if (_x.Plan.Stages.Any(st => st is GroupByStage || (st is ExprStage e && e.Op == "group-by"))) names.Add(GroupItems);
+            // Read stages after a call see its rows (spec §8); a call that ends the plan has none.
+            if (_x.Plan.Stages.Take(_x.Plan.Stages.Count - 1).Any(st => st is CallStage)) names.UnionWith(Mutator.CallColumns);
             foreach (var st in _x.Plan.Stages)
                 if (st is SelectStage || st is GroupByStage)
                     foreach (var f in st is SelectStage sel ? sel.Fields : ((GroupByStage)st).Keys)
@@ -259,13 +263,23 @@ namespace Rql.Execution
 
         private (IEnumerable<Item> stream, Stage? terminal) BuildStream()
         {
-            var plan = _x.Plan;
-            var stream = CompileSource(plan.Source);
-            for (int i = 0; i < plan.Stages.Count; i++)
+            var (stream, at) = ApplyStages(CompileSource(_x.Plan.Source), 0);
+            return (stream, at < _x.Plan.Stages.Count ? _x.Plan.Stages[at] : null);
+        }
+
+        /// <summary>
+        /// Apply the plan's stages from <paramref name="from"/> up to the first terminal one (compiling each: binding errors surface
+        /// before any traversal); the terminal stage's index, or the stage count.
+        /// </summary>
+        private (IEnumerable<Item> stream, int terminal) ApplyStages(IEnumerable<Item> stream, int from)
+        {
+            var stages = _x.Plan.Stages;
+            for (int i = from; i < stages.Count; i++)
             {
-                var st = plan.Stages[i];
-                if (st.IsTerminal) return (stream, st);
-                if (st is SortStage ss && i + 1 < plan.Stages.Count && plan.Stages[i + 1] is LimitStage ls && ls.Op == "first" && ls.N <= 1000 && !_x.Engine.DisableTopN)
+                var st = stages[i];
+                if (st.IsTerminal) return (stream, i);
+                // Peephole: `sort … | first n` keeps only the n best items (bounded insertion, same stable order).
+                if (st is SortStage ss && i + 1 < stages.Count && stages[i + 1] is LimitStage ls && ls.Op == "first" && ls.N <= 1000 && !_x.Engine.DisableTopN)
                 {
                     stream = TopN(stream, ss.Keys.Select(k => (eval: _c.Compile(k.Expr), desc: k.Desc)).ToArray(), ls.N, new SortKeyErrors(ss));
                     i++;
@@ -273,12 +287,12 @@ namespace Rql.Execution
                 }
                 stream = Apply(stream, st);
             }
-            return (stream, null);
+            return (stream, stages.Count);
         }
 
-        /// <summary>A mutation request whose plan does not end with a set or call stage (spec §8): the error, else null.</summary>
+        /// <summary>A mutation request whose plan has no set or call stage (spec §8): the error, else null.</summary>
         internal static RqlException? MutationWithoutWrite(QueryPlan plan, QueryOptions options) =>
-            options.AllowMutation && (plan.Stages.Count == 0 || !plan.Stages[plan.Stages.Count - 1].IsMutation)
+            options.AllowMutation && !plan.Stages.Any(st => st.IsMutation)
                 ? new RqlException("invalid-plan", "a mutation request must end with a set or call stage; nothing was changed", null,
                     "add '| set Member = value' or '| call Method(...)', or use the query tool to read")
                 : null;
@@ -286,27 +300,13 @@ namespace Rql.Execution
         private QueryResult RunCore()
         {
             var plan = _x.Plan;
+            PlanCodec.ValidateStructure(plan); // plans built by hosts skip the codec
             _x.CheckTargetLimit();
             if (MutationWithoutWrite(plan, _x.Options) is RqlException noWrite) throw noWrite;
-            // Pre-compile all stages (binding errors surface before any traversal).
-            var source = CompileSource(plan.Source);
-            IEnumerable<Item> stream = source;
-            Stage? terminal = null;
-            for (int i = 0; i < plan.Stages.Count; i++)
-            {
-                var st = plan.Stages[i];
-                if (st.IsTerminal) { terminal = st; break; }
-                // Peephole: `sort … | first n` keeps only the n best items (bounded insertion, same stable order).
-                if (st is SortStage ss && i + 1 < plan.Stages.Count && plan.Stages[i + 1] is LimitStage ls && ls.Op == "first" && ls.N <= 1000 && !_x.Engine.DisableTopN)
-                {
-                    stream = TopN(stream, ss.Keys.Select(k => (eval: _c.Compile(k.Expr), desc: k.Desc)).ToArray(), ls.N, new SortKeyErrors(ss));
-                    i++;
-                    continue;
-                }
-                stream = Apply(stream, st);
-            }
+            var (stream, at) = ApplyStages(CompileSource(plan.Source), 0);
             var encoder = new Encoder(_x);
-            if (terminal == null) return Collect(stream, encoder);
+            if (at == plan.Stages.Count) return Collect(stream, encoder);
+            var terminal = plan.Stages[at];
             switch (terminal)
             {
                 case SimpleTerminalStage s when s.Op == "count":
@@ -328,10 +328,27 @@ namespace Rql.Execution
                 case SetStage s:
                     return new Mutator(_x, _c, encoder).Set(stream, s);
                 case CallStage s:
-                    return new Mutator(_x, _c, encoder).Call(stream, s, s.On != null ? () => CallReceiver(s) : (Func<object>?)null);
+                {
+                    var mutator = new Mutator(_x, _c, encoder);
+                    var receiver = s.On != null ? () => CallReceiver(s) : (Func<object>?)null;
+                    if (at == plan.Stages.Count - 1) return mutator.Call(stream, s, receiver);
+                    // Read stages over the rows of read-only calls (spec §8 "Reading call results"), compiled before any call runs.
+                    List<RowValue>? rows = null;
+                    var (read, _) = ApplyStages(RowItems(() => rows!), at + 1);
+                    rows = mutator.CallRows(stream, s, receiver);
+                    var r = Collect(read, encoder);
+                    r.DryRun = _x.Options.DryRun;
+                    return r;
+                }
                 default:
                     throw new RqlException("unsupported", $"stage '{terminal.Op}' is not supported");
             }
+        }
+
+        /// <summary>The rows <paramref name="rows"/> yields when the stream is read (they do not exist yet when it is built).</summary>
+        private static IEnumerable<Item> RowItems(Func<List<RowValue>> rows)
+        {
+            foreach (var row in rows()) yield return new Item(row, null);
         }
 
         private static QueryResult Scalar(double v) => new QueryResult
@@ -1071,7 +1088,7 @@ namespace Rql.Execution
             bool rows = false;
             foreach (var st in _x.Plan.Stages)
             {
-                if (Projects(st)) rows = true;
+                if (Projects(st) || st is CallStage) rows = true;
                 else if ((st is ExprStage ee && ee.Op != "distinct") || st is RecurseStage || st is GenericStage) rows = false;
             }
             return rows;
@@ -1079,9 +1096,10 @@ namespace Rql.Execution
 
         private static bool Projects(Stage st) => st is SelectStage || st is GroupByStage || (st is ExprStage e && e.Op == "group-by");
 
-        private string[] SelectColumns() => _x.Plan.Stages.Last(Projects) switch
+        private string[] SelectColumns() => _x.Plan.Stages.Last(st => Projects(st) || st is CallStage) switch
         {
             SelectStage sel => sel.Fields.Select(f => f.Name).ToArray(),
+            CallStage _ => Mutator.CallColumns,
             GroupByStage g => g.Keys.Select(k => k.Name).Append("count").ToArray(),
             _ => new[] { "key", "count" },
         };
