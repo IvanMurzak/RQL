@@ -373,7 +373,7 @@ unique (`syntax-error` / `invalid-plan` otherwise); `{}` is empty. It behaves as
 | `group-by [n=]e, [n=]e ...` | several keys, or a named key: one row per distinct **combination** of key values, in order of first appearance, with one column per key — named like `select` columns (alias, or the key's source text: `group-by Folder, $type` → columns `Folder`, `$type`, `count`) — then `count`. Key values compare like `distinct` (lists by their elements: `group-by Tags` merges equal tag lists); `null`/`missing` values group as `null` per column. Keys are separated by commas or whitespace like `select` fields; computed keys need parentheses (`group-by Kind, big=(Mass > 10)`). Column names must be distinct (case-insensitive) and none may be `count` (`syntax-error` / `invalid-plan`). A single key without a name keeps the `{key, count}` form above. |
 | `describe` | terminal: schema of the distinct runtime types of the items (members, kinds, writability). |
 | `set p = e, ...` | mutation (§8). |
-| `call m(args)` | mutation: invoke an allowlisted method on each item (§8). |
+| `call m(args)` | mutation: invoke an allowlisted method on each item (§8); a call of read-only methods may be followed by read stages over its rows (§8 "Reading call results"). |
 | `call q.m(args)` | mutation: invoke the method `m` of the one object the source expression `q` yields, once per item (source-qualified call, §8). |
 
 **Sparse key members** (`group-by`, `distinct`). When a key is a member path (no meta member) that is `missing` on more
@@ -401,7 +401,11 @@ is transitive, a tolerance is not), so near a rounding boundary two values that 
 member by member with exact numbers (single precision compared as floats, §4.1). Scalars keep exact numeric equality.
 
 Terminal stages (`count`, aggregates, `describe`, `set`, `call`) MUST be last;
-otherwise `invalid-plan`.
+otherwise `invalid-plan` ("stage '…' is terminal and must be the last stage"). One exception: a `call` MAY be followed by
+**read stages** — `where`, `sort`, `first`, `skip` and `select`, any number in any order, nothing else — over its result
+rows. Such a plan is structurally valid (codecs and parsers accept it); whether it runs is decided by the planned calls:
+every one must be of a **read-only** method, otherwise the stage fails with that same `invalid-plan` before anything is
+called (§8 "Reading call results").
 
 ## 6. Output encoding
 
@@ -464,8 +468,8 @@ conformance form.
 ## 8. Mutations
 
 Mutations are disabled unless the caller's policy enables them (`permission-denied` otherwise).
-A request that asks for mutation (`options.allowMutation`) must end in a `set` or `call` stage; otherwise it is
-refused with `invalid-plan` before anything runs (the mutation tool never doubles as a query tool, and a forgotten
+A request that asks for mutation (`options.allowMutation`) must end in a `set` or `call` stage (or in read stages after a
+`call`, below); otherwise it is refused with `invalid-plan` before anything runs (the mutation tool never doubles as a query tool, and a forgotten
 `set` is reported instead of silently returning rows).
 
 * **Empty through a typo**: when no item reaches the `set` / `call` stage, every `unknown-member` warning of a member
@@ -573,6 +577,25 @@ refused with `invalid-plan` before anything runs (the mutation tool never double
   or destroyed → `invalid-plan`, a struct or scalar → `invalid-plan`, an error value (e.g. `stale-ref`) → that code, and
   a name that is not a source → `unknown-source` whose hint shows `… | get Member | call m(…)` for a method of each
   item's member. Messages about one invocation name the receiver and the item's position (`for item 3`).
+* **Reading call results**: a `call` followed by read stages (`where`, `sort`, `first`, `skip`, `select`, §5) runs only when
+  every planned call — each target's chosen overload — is of a method the host marked **read-only**: its promise that the
+  method changes nothing (a measurement or a lookup, such as the ground height at a point). .NET:
+  `[RqlCallable(ReadOnly = true)]`, `CallableMethod.ReadOnly`, adapters' `ReadOnlyMethods(names)`; TypeScript: a method
+  spec's `readOnly`, adapters' `readOnlyMethods(…names)`; C++: `MethodDescriptor::read_only`, `ClassBuilder::read_only_method()`,
+  adapters' `read_only_methods(names)`. The check comes after every call is resolved, coerced and validated and before
+  the batch validation, the host hooks and the first call, on dry runs too: one planned call that is not read-only fails
+  the stage with the terminal-stage `invalid-plan` (its hint names that method and target), nothing called. A stream
+  that reaches the stage with no item plans no call and passes. Everything else is the `call`'s own: the mutation policy
+  (the request must still be a mutation request; a host MAY grant one to a query whose planned calls are all read-only),
+  the target limit, validators, batch validation and hooks. The read stages then see one item per invocation: a
+  **row** with the receipt's columns `$ref`, `method` and `result` (below), where `result` is the method's **live**
+  return value, so `sort result.Height desc` and `select h = result.Height` navigate it like any member (§3). The result
+  is `kind: "rows"` with the columns of the last `select` (else `$ref`, `method`, `result`, also when no row is left),
+  `total` counts the rows after the read stages, and it is not a receipt (no receipt shortening, §8, §10); `dryRun` is
+  set on a dry run, where `result` is `"(dry-run)"`. So `range(0, 961) | call landscape.Surface(unreal.find("Island"),
+  [($ % 31) * 100, floor($ / 31) * 100, 0]) | sort result.Height desc | first 1` finds the highest of 961 sampled points
+  in one request. The empty-mutation rule (unknown members made errors, above) applies only to a plan that ends with
+  the `set` / `call`.
 * **Calls on items that are not objects**: an unqualified `call` whose items are numbers, strings or other value copies
   is `invalid-plan` (targets must be objects); its hint shows the source-qualified form, naming the sources whose
   object has the method (`… | call editor.CreateObject(… $ …)`).

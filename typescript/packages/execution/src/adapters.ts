@@ -75,6 +75,11 @@ export interface MemberTable<T extends object = object> {
   /** Remove callable methods by name (all overloads); unknown names fail the query. */
   hideMethods(...names: string[]): this;
   /**
+   * Mark callable methods read-only by name (all overloads; unknown names fail the query): they change nothing, so a
+   * `call` of them may be followed by read stages over its rows (spec §8 "Reading call results").
+   */
+  readOnlyMethods(...names: string[]): this;
+  /**
    * Add a virtual map member over the owner (e.g. a material's uniforms): `M["k"]` reads, `set M["k"] = v`
    * writes through `set` after coercion to `valueType` and `validate`. Without `set` the map is read-only.
    */

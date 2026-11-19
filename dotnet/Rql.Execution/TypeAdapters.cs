@@ -272,6 +272,19 @@ namespace Rql.Execution
         }
 
         /// <summary>
+        /// Mark callable methods read-only by name (all overloads): they change nothing, so a <c>call</c> of them may be followed
+        /// by read stages over its rows (spec §8 "Reading call results").
+        /// </summary>
+        public MemberTable ReadOnlyMethods(params string[] names)
+        {
+            foreach (var n in names)
+                if (!_methods.Any(m => m.Name == n)) throw new ArgumentException($"type {_type.Name} has no callable method '{n}' to mark read-only");
+            for (int i = 0; i < _methods.Count; i++)
+                if (names.Contains(_methods[i].Name)) _methods[i] = _methods[i].AsReadOnly();
+            return this;
+        }
+
+        /// <summary>
         /// Add a virtual map member: entries are the owner's <paramref name="keys"/>, read with <paramref name="get"/> and
         /// assigned with <paramref name="set"/> (null = read-only). <paramref name="validate"/> runs before any write and returns a
         /// rejection reason or null. Example: a Material's shader floats as <c>Floats["_Glossiness"]</c>.
@@ -445,6 +458,7 @@ namespace Rql.Execution
         public MemberTable<T> Display(string name) { Untyped.Display(name); return this; }
         public MemberTable<T> Expose(string name, string? description = null) { Untyped.Expose(name, description); return this; }
         public MemberTable<T> HideMethods(params string[] names) { Untyped.HideMethods(names); return this; }
+        public MemberTable<T> ReadOnlyMethods(params string[] names) { Untyped.ReadOnlyMethods(names); return this; }
 
         // Every Method / Function takes an optional validate: the rejection reason for a planned call (target, arguments), or
         // null. It runs for every target before the first call, on dry runs too (spec §8).

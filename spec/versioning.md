@@ -150,3 +150,11 @@
   its own all-or-nothing change and the first failure stops the rest (§14); the result gains `statements` (text plus
   `result` or `skipped`). The "one query per call" hint now points at `;` (§11) — **behaviour change** for text that
   used `;` (a `syntax-error` before).
+* Read stages after read-only calls (protocol stays `0.1`; additive, no new error code, no plan-node change; every plan
+  valid before decodes and runs the same): a `call` may be followed by `where`, `sort`, `first`, `skip` and `select` over
+  its rows (`$ref`, `method`, live `result`) when every planned call is of a method the host marked read-only (§5, §8
+  "Reading call results"); a call of any other method followed by stages keeps the terminal-stage `invalid-plan`, now
+  raised at run time before anything is called (a plan with other stages after a `call`, or any stage after another
+  terminal stage, is still refused when decoded). A mutation request may end in those read stages. Hosts mark methods
+  read-only: .NET `[RqlCallable(ReadOnly = true)]` / `CallableMethod.ReadOnly` / `ReadOnlyMethods`, TypeScript
+  `readOnly` / `readOnlyMethods`, C++ `MethodDescriptor::read_only` / `read_only_method()` / `read_only_methods`.

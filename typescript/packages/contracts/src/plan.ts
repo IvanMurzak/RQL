@@ -232,7 +232,12 @@ export const CORE_STAGES: ReadonlySet<string> = new Set([
   'group-by', 'distinct', 'recurse', 'set', 'call',
 ]);
 
-/** Terminal stages must be the last stage of a plan. */
+/** A read stage that may follow a `call` over its result rows: where / sort / first / skip / select (spec §5, §8). */
+export function readsCallRows(s: Stage): boolean {
+  return s.kind === 'where' || s.kind === 'sort' || s.kind === 'limit' || s.kind === 'select';
+}
+
+/** Terminal stages must be the last stage of a plan (a `call` may be followed by {@link readsCallRows} stages). */
 export function isTerminal(s: Stage): boolean {
   switch (s.kind) {
     case 'simple':

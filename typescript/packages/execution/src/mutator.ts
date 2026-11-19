@@ -1,5 +1,5 @@
 /** Permissioned, all-or-nothing `set` / `call` (spec §8). Port of dotnet/Rql.Execution/Mutator.cs. */
-import { RqlError, formatNumber, segmentToString, type CallStage, type PathExpr, type QueryResult, type Segment, type SetStage } from '@rql/contracts';
+import { RqlError, formatNumber, segmentToString, terminalNotLast, type CallStage, type PathExpr, type QueryResult, type Segment, type SetStage } from '@rql/contracts';
 import { findMapKey, isMapLike, mapGet, type MapLike } from './collections.js';
 import { describeValue, equal, type Compiler, type Eval } from './compiler.js';
 import type { Encoder } from './encoder.js';
@@ -193,6 +193,9 @@ export function mutationLimitHint(op: string, limit: number, matched: number | u
     ? `pass ${argument} = ${matched} (host ceiling ${ceiling}) to change all ${matched} in one all-or-nothing call (a dry run previews it); or ${narrow}`
     : `pass ${argument} = ${ceiling} (the host ceiling) and ${batches(ceiling)}; or ${narrow}`;
 }
+
+/** The columns of a call's rows: its receipt, and the items read stages after it see (spec §8). */
+export const CALL_COLUMNS: readonly string[] = ['$ref', 'method', 'result'];
 
 export class Mutator {
   constructor(
@@ -626,6 +629,21 @@ export class Mutator {
    * metas the item's; undefined: the method runs on each item.
    */
   call(stream: Iterable<Item>, s: CallStage, resolveReceiver?: () => object): QueryResult {
+    const r = this.enc.rows(CALL_COLUMNS, this.runCalls(stream, s, resolveReceiver, false), 'calls');
+    if (this.x.options.dryRun) r.dryRun = true;
+    return r;
+  }
+
+  /**
+   * A call followed by read stages (spec §8 "Reading call results"): every planned call must be of a read-only method (else
+   * the terminal-stage `invalid-plan`, before anything is called); its rows, with the live result, are the read stages' items.
+   */
+  callRows(stream: Iterable<Item>, s: CallStage, resolveReceiver?: () => object): RowValue[] {
+    return this.runCalls(stream, s, resolveReceiver, true).map((row) => new RowValue(CALL_COLUMNS, row));
+  }
+
+  /** Plans, checks and runs the calls; one row per invocation ($ref, signature, result). */
+  private runCalls(stream: Iterable<Item>, s: CallStage, resolveReceiver: (() => object) | undefined, readOnly: boolean): unknown[][] {
     const x = this.x;
     this.checkPolicy('call');
     const receiver = resolveReceiver?.(); // after the policy check: a read request never evaluates the target
@@ -690,6 +708,14 @@ export class Mutator {
       }
       planned.push({ item, ...chosen, index: t.index });
     }
+    const changing = readOnly ? planned.find((p) => !p.method.readOnly) : undefined;
+    if (changing !== undefined) {
+      throw terminalNotLast(
+        s,
+        `${changing.method.signature(x.types)} on ${at(changing.item, changing.index)} is not read-only: ` +
+          'only calls of read-only methods can be followed by where / sort / first / skip / select; end the query with the call',
+      );
+    }
 
     const callRecords = once(() =>
       planned.map(
@@ -720,9 +746,7 @@ export class Mutator {
       rows.push([x.engine.refOf(refOf), p.method.signature(x.types), result]);
     }
     this.runHook('committed', callRecords);
-    const r = this.enc.rows(['$ref', 'method', 'result'], rows, 'calls');
-    if (x.options.dryRun) r.dryRun = true;
-    return r;
+    return rows;
   }
 
   /** An object with identity (not a list, map, struct or scalar): a receipt row can carry its $ref. */

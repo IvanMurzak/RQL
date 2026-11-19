@@ -9,6 +9,7 @@ import {
   groupByProblem,
   isExprOp,
   isTerminal,
+  readsCallRows,
   type Assignment,
   type Expr,
   type LiteralValue,
@@ -252,8 +253,17 @@ export function readPlan(root: Json): QueryPlan {
 export function validateStructure(p: QueryPlan): void {
   for (let i = 0; i < p.stages.length - 1; i++) {
     const s = p.stages[i]!;
-    if (isTerminal(s)) throw new RqlError('invalid-plan', `stage '${s.op}' is terminal and must be the last stage`, s.span);
+    if (!isTerminal(s)) continue;
+    // A call may be followed by read stages over its result rows; every planned call must then be of a read-only method,
+    // which only the run can tell (spec §5, §8).
+    if (s.kind === 'call' && p.stages.slice(i + 1).every(readsCallRows)) return;
+    throw terminalNotLast(s);
   }
+}
+
+/** A terminal stage followed by other stages (also a mutating `call` followed by read stages, spec §8). */
+export function terminalNotLast(s: Stage, hint?: string): RqlError {
+  return new RqlError('invalid-plan', `stage '${s.op}' is terminal and must be the last stage`, s.span, hint);
 }
 
 function readLiteral(v: Json, ctx: string): LiteralValue {

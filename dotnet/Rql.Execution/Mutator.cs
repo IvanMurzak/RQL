@@ -560,6 +560,29 @@ namespace Rql.Execution
         /// the other metas the item's; null: the method runs on each item.</param>
         public QueryResult Call(IEnumerable<Item> stream, CallStage s, Func<object>? resolveReceiver = null)
         {
+            var rows = RunCalls(stream, s, resolveReceiver, readOnly: false);
+            var r = _enc.Rows(CallColumns, rows, receipt: "calls");
+            r.DryRun = _x.Options.DryRun;
+            return r;
+        }
+
+        /// <summary>The columns of a call's rows: its receipt, and the items read stages after it see (spec §8).</summary>
+        internal static readonly string[] CallColumns = { "$ref", "method", "result" };
+
+        /// <summary>
+        /// A call followed by read stages (spec §8 "Reading call results"): every planned call must be of a read-only method
+        /// (else the terminal-stage <c>invalid-plan</c>, before anything is called); its rows are the read stages' items, with
+        /// the live result.
+        /// </summary>
+        public IEnumerable<Item> CallRows(IEnumerable<Item> stream, CallStage s, Func<object>? resolveReceiver)
+        {
+            var rows = RunCalls(stream, s, resolveReceiver, readOnly: true);
+            return rows.Select(row => new Item(new RowValue(CallColumns, row), null)).ToList();
+        }
+
+        /// <summary>Plans, checks and runs the calls; one row per invocation ($ref, signature, result).</summary>
+        private List<object?[]> RunCalls(IEnumerable<Item> stream, CallStage s, Func<object>? resolveReceiver, bool readOnly)
+        {
             CheckPolicy("call");
             var receiver = resolveReceiver?.Invoke(); // after the policy check: a read request never evaluates the target
             var args = MutationValues(() => s.Args.Select(_c.Compile).ToArray());
@@ -590,6 +613,9 @@ namespace Rql.Execution
                 }
                 planned.Add((item, chosen, coerced!, t.Index));
             }
+            if (readOnly && planned.FirstOrDefault(p => !p.method.ReadOnly) is var changing && changing.method != null)
+                throw PlanCodec.TerminalNotLast(s, $"{changing.method.Signature} on {At(changing.item, changing.index)} is not read-only: "
+                    + "only calls of read-only methods can be followed by where / sort / first / skip / select; end the query with the call");
 
             List<MutationRecord> CallRecords() =>
                 planned.Select(p => new MutationRecord(p.item, p.item, p.method.Signature, null, null, p.method, null, p.args)).ToList();
@@ -622,9 +648,7 @@ namespace Rql.Execution
                 rows.Add(new object?[] { _x.Engine.RefOf(refOf), method.Signature, result });
             }
             RunHook(_x.Engine.Mutations.Committed, callRecords, veto: false);
-            var r = _enc.Rows(new[] { "$ref", "method", "result" }, rows, receipt: "calls");
-            r.DryRun = _x.Options.DryRun;
-            return r;
+            return rows;
 
             // The callable overloads of the method on a target; none: unknown-function (or permission-denied for a public method
             // the host does not expose), naming the targets' types and the sources that have it (spec §10).

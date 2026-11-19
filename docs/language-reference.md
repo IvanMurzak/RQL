@@ -80,7 +80,8 @@ Spec: [§5](../spec/semantics.md#5-stages).
 | `call m(args)` | mutation: the method of each item |
 | `call src.m(args)` | mutation: the method of the one object `src` yields, once per item |
 
-Terminal stages must be last (`invalid-plan` otherwise). Hosts add namespaced stages (`myapp.expand …`).
+Terminal stages must be last (`invalid-plan` otherwise), except that `where`, `sort`, `first`, `skip` and `select` may
+follow a `call` of read-only methods (see [Mutations](#mutations)). Hosts add namespaced stages (`myapp.expand …`).
 
 ```text
 objects | where $ is Enemy | group-by Faction | sort count desc
@@ -256,6 +257,11 @@ app.Tables | get Rows | where Value.IsElite | set Value.Health = Value.Health * 
 - **Validated `call`.** Every invocation is resolved, coerced and validated (per-method validators and the host's
   batch validator) before the first call, on dry runs too. A method that throws stops the stage with `call-threw`;
   earlier calls are not undone (hosts with undo record the whole stage as one step).
+- **Reading call results.** When every planned call is of a method the host marked read-only (it changes nothing: a
+  measurement, a lookup), `where`, `sort`, `first`, `skip` and `select` may follow the `call`. They see one row per
+  invocation with the receipt's columns `$ref`, `method` and `result`, where `result` is the live return value:
+  `range(0, 961) | call landscape.Surface(island, [($ % 31) * 100, floor($ / 31) * 100, 0]) | sort result.Height desc |
+  first 1`. A call of any other method followed by stages is the terminal-stage `invalid-plan`, with nothing called.
 - **Dry runs** return the receipt without changing anything.
 - **Target scope.** A value or argument is evaluated per target with `$` the target; `$index` is its position in the
   stream entering the stage and `$count` the size of that stream, so `$index / $count` spreads targets evenly (the

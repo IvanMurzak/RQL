@@ -6787,6 +6787,96 @@
           }
         ]
       }
+    },
+    {
+      "rql": "range(0, 4) | call landscape.Surface(island, [$, 0]) | where result.Inside | sort result.Height desc | skip 1 | first 2 | select result.Height",
+      "plan": {
+        "rql": "0.1",
+        "source": {
+          "call": "range",
+          "args": [
+            {
+              "lit": 0
+            },
+            {
+              "lit": 4
+            }
+          ]
+        },
+        "stages": [
+          {
+            "op": "call",
+            "method": "Surface",
+            "on": {
+              "path": [
+                "landscape"
+              ]
+            },
+            "args": [
+              {
+                "path": [
+                  "island"
+                ]
+              },
+              {
+                "list": [
+                  {
+                    "path": []
+                  },
+                  {
+                    "lit": 0
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "op": "where",
+            "pred": {
+              "path": [
+                "result",
+                "Inside"
+              ]
+            }
+          },
+          {
+            "op": "sort",
+            "keys": [
+              {
+                "expr": {
+                  "path": [
+                    "result",
+                    "Height"
+                  ]
+                },
+                "desc": true
+              }
+            ]
+          },
+          {
+            "op": "skip",
+            "n": 1
+          },
+          {
+            "op": "first",
+            "n": 2
+          },
+          {
+            "op": "select",
+            "fields": [
+              {
+                "name": "result.Height",
+                "expr": {
+                  "path": [
+                    "result",
+                    "Height"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }

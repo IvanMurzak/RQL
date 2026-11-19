@@ -31,6 +31,12 @@ namespace Rql
     {
         public RqlCallableAttribute(string? description = null) { Description = description; }
         public string? Description { get; }
+
+        /// <summary>
+        /// The method changes nothing (a measurement, a lookup): a <c>call</c> of read-only methods may be followed by
+        /// where / sort / first / skip / select over its rows (spec §8 "Reading call results").
+        /// </summary>
+        public bool ReadOnly { get; set; }
     }
 
     /// <summary>Optional human description of a type or member, surfaced by schema/describe.</summary>
