@@ -42,16 +42,6 @@ namespace Rql.Execution
         }
 
         public string Name { get; }
-
-        /// <summary>
-        /// The host's promise that the method changes nothing: a <c>call</c> whose planned calls are all read-only may be
-        /// followed by read stages over its rows (spec §8 "Reading call results").
-        /// </summary>
-        public bool ReadOnly { get; }
-
-        /// <summary>This method marked read-only.</summary>
-        internal CallableMethod AsReadOnly() =>
-            ReadOnly ? this : new CallableMethod(Name, Parameters, ReturnType, _invoke, Description, Validate, readOnly: true);
         public IReadOnlyList<CallableParameter> Parameters { get; }
         /// <summary><c>typeof(void)</c> for methods without a result.</summary>
         public Type ReturnType { get; }
@@ -63,6 +53,16 @@ namespace Rql.Execution
         /// (spec §8).
         /// </summary>
         public Func<object, object?[], string?>? Validate { get; }
+
+        /// <summary>
+        /// The host's promise that the method changes nothing: a <c>call</c> whose planned calls are all read-only may be
+        /// followed by read stages over its rows (spec §8 "Reading call results").
+        /// </summary>
+        public bool ReadOnly { get; }
+
+        /// <summary>This method marked read-only.</summary>
+        internal CallableMethod AsReadOnly() =>
+            ReadOnly ? this : new CallableMethod(Name, Parameters, ReturnType, _invoke, Description, Validate, readOnly: true);
 
         public string Signature =>
             Name + "(" + string.Join(", ", Parameters.Select(p => TypeModel.FriendlyName(p.Type) + " " + p.Name)) + ")";

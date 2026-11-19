@@ -1371,12 +1371,9 @@ std::vector<Diagnostic> add_warnings(Exec& x, QueryResult& r, bool only_general)
                     known.push_back("items");  // group rows have their items (spec §5)
                     break;
                 }
-            for (auto& st : x.plan.stages)
-                if (st.kind == StageKind::Call) {
-                    // read stages after a call see its rows (spec §8)
-                    known.insert(known.end(), call_columns().begin(), call_columns().end());
-                    break;
-                }
+            // read stages after a call see its rows (spec §8)
+            if (std::any_of(x.plan.stages.begin(), x.plan.stages.end(), [](const Stage& st) { return st.kind == StageKind::Call; }))
+                known.insert(known.end(), call_columns().begin(), call_columns().end());
             for (auto* t : known_types(x))
             {
                 const TypeView view = x.view(t);

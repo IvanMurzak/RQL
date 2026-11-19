@@ -8,6 +8,7 @@ import {
   RqlError,
   diagnostic,
   failResult,
+  isMutation,
   isTerminal as isTerminalStage,
   segmentToString,
   type CallExpr,
@@ -95,9 +96,9 @@ class KeyTally {
   }
 }
 
-/** A mutation request whose plan does not end with a set or call stage (spec §8): the error, else undefined. */
+/** A mutation request whose plan has no set or call stage (spec §8): the error, else undefined. */
 export function mutationWithoutWrite(plan: QueryPlan, options: QueryOptions): RqlError | undefined {
-  if (!options.allowMutation || plan.stages.some((st) => st.kind === 'set' || st.kind === 'call')) return undefined;
+  if (!options.allowMutation || plan.stages.some(isMutation)) return undefined;
   return new RqlError(
     'invalid-plan',
     'a mutation request must end with a set or call stage; nothing was changed',
@@ -233,7 +234,7 @@ export class Pipeline {
     const stages = x.plan.stages;
     // Only a receipt: read stages after a call may empty a stream the call did reach.
     const last = stages[stages.length - 1];
-    if (this.unknownMembers.length === 0 || !x.options.allowMutation || (last?.kind !== 'set' && last?.kind !== 'call') || (result.rows?.length ?? 0) > 0 || (result.unchanged ?? 0) > 0) return undefined;
+    if (this.unknownMembers.length === 0 || !x.options.allowMutation || last === undefined || !isMutation(last) || (result.rows?.length ?? 0) > 0 || (result.unchanged ?? 0) > 0) return undefined;
     const known = new Map(this.knownNames());
     for (const s of x.sites) if (s.hits > 0) known.set(s.name.toUpperCase(), s.name); // another read found it
     const typos = this.unknownMembers.filter((u) => !known.has(u.name.toUpperCase()) && !x.engine.hostKnowsMember(u.name));
@@ -323,8 +324,8 @@ export class Pipeline {
         const receiver = terminal.on !== undefined ? () => this.callReceiver(terminal) : undefined;
         if (at === plan.stages.length - 1) return mutator.call(stream, terminal, receiver);
         // Read stages over the rows of read-only calls (spec §8 "Reading call results").
-        const rows = mutator.callRows(stream, terminal, receiver).map((row) => item(row, null));
-        const r = this.collect(this.applyStages(rows, at + 1)[0], encoder);
+        const rows = mutator.callRows(stream, terminal, receiver);
+        const r = this.collect(this.applyStages(rowItems(rows), at + 1)[0], encoder);
         if (x.options.dryRun) r.dryRun = true;
         return r;
       }
@@ -919,6 +920,10 @@ export class Pipeline {
 }
 
 // ------------------------------------------------------------------ helpers
+
+function* rowItems(rows: readonly RowValue[]): Generator<Item> {
+  for (const row of rows) yield item(row, null);
+}
 
 /** Stages whose output is projected rows. */
 const projects = (s: Stage): boolean => s.kind === 'select' || s.kind === 'group-by' || (s.kind === 'expr' && s.op === 'group-by');

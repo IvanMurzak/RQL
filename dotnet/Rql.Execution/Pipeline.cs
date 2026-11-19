@@ -264,12 +264,12 @@ namespace Rql.Execution
         private (IEnumerable<Item> stream, Stage? terminal) BuildStream()
         {
             var (stream, at) = ApplyStages(CompileSource(_x.Plan.Source), 0);
-            return (stream, at < 0 ? null : _x.Plan.Stages[at]);
+            return (stream, at < _x.Plan.Stages.Count ? _x.Plan.Stages[at] : null);
         }
 
         /// <summary>
         /// Apply the plan's stages from <paramref name="from"/> up to the first terminal one (compiling each: binding errors surface
-        /// before any traversal); the terminal stage's index, or -1.
+        /// before any traversal); the terminal stage's index, or the stage count.
         /// </summary>
         private (IEnumerable<Item> stream, int terminal) ApplyStages(IEnumerable<Item> stream, int from)
         {
@@ -287,7 +287,7 @@ namespace Rql.Execution
                 }
                 stream = Apply(stream, st);
             }
-            return (stream, -1);
+            return (stream, stages.Count);
         }
 
         /// <summary>A mutation request whose plan has no set or call stage (spec §8): the error, else null.</summary>
@@ -304,7 +304,7 @@ namespace Rql.Execution
             if (MutationWithoutWrite(plan, _x.Options) is RqlException noWrite) throw noWrite;
             var (stream, at) = ApplyStages(CompileSource(plan.Source), 0);
             var encoder = new Encoder(_x);
-            if (at < 0) return Collect(stream, encoder);
+            if (at == plan.Stages.Count) return Collect(stream, encoder);
             var terminal = plan.Stages[at];
             switch (terminal)
             {
@@ -332,7 +332,7 @@ namespace Rql.Execution
                     var receiver = s.On != null ? () => CallReceiver(s) : (Func<object>?)null;
                     if (at == plan.Stages.Count - 1) return mutator.Call(stream, s, receiver);
                     // Read stages over the rows of read-only calls (spec §8 "Reading call results").
-                    var (rows, _) = ApplyStages(mutator.CallRows(stream, s, receiver), at + 1);
+                    var (rows, _) = ApplyStages(mutator.CallRows(stream, s, receiver).Select(row => new Item(row, null)), at + 1);
                     var r = Collect(rows, encoder);
                     r.DryRun = _x.Options.DryRun;
                     return r;

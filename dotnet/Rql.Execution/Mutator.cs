@@ -571,14 +571,11 @@ namespace Rql.Execution
 
         /// <summary>
         /// A call followed by read stages (spec §8 "Reading call results"): every planned call must be of a read-only method
-        /// (else the terminal-stage <c>invalid-plan</c>, before anything is called); its rows are the read stages' items, with
-        /// the live result.
+        /// (else the terminal-stage <c>invalid-plan</c>, before anything is called); its rows, with the live result, are the read
+        /// stages' items.
         /// </summary>
-        public IEnumerable<Item> CallRows(IEnumerable<Item> stream, CallStage s, Func<object>? resolveReceiver)
-        {
-            var rows = RunCalls(stream, s, resolveReceiver, readOnly: true);
-            return rows.Select(row => new Item(new RowValue(CallColumns, row), null)).ToList();
-        }
+        public List<RowValue> CallRows(IEnumerable<Item> stream, CallStage s, Func<object>? resolveReceiver) =>
+            RunCalls(stream, s, resolveReceiver, readOnly: true).ConvertAll(row => new RowValue(CallColumns, row));
 
         /// <summary>Plans, checks and runs the calls; one row per invocation ($ref, signature, result).</summary>
         private List<object?[]> RunCalls(IEnumerable<Item> stream, CallStage s, Func<object>? resolveReceiver, bool readOnly)
@@ -613,8 +610,9 @@ namespace Rql.Execution
                 }
                 planned.Add((item, chosen, coerced!, t.Index));
             }
-            if (readOnly && planned.FirstOrDefault(p => !p.method.ReadOnly) is var changing && changing.method != null)
-                throw PlanCodec.TerminalNotLast(s, $"{changing.method.Signature} on {At(changing.item, changing.index)} is not read-only: "
+            int changing = readOnly ? planned.FindIndex(p => !p.method.ReadOnly) : -1;
+            if (changing >= 0)
+                throw PlanCodec.TerminalNotLast(s, $"{planned[changing].method.Signature} on {At(planned[changing].item, planned[changing].index)} is not read-only: "
                     + "only calls of read-only methods can be followed by where / sort / first / skip / select; end the query with the call");
 
             List<MutationRecord> CallRecords() =>

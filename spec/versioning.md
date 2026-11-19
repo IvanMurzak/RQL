@@ -156,5 +156,4 @@
   "Reading call results"); a call of any other method followed by stages keeps the terminal-stage `invalid-plan`, now
   raised at run time before anything is called (a plan with other stages after a `call`, or any stage after another
   terminal stage, is still refused when decoded). A mutation request may end in those read stages. Hosts mark methods
-  read-only: .NET `[RqlCallable(ReadOnly = true)]` / `CallableMethod.ReadOnly` / `ReadOnlyMethods`, TypeScript
-  `readOnly` / `readOnlyMethods`, C++ `MethodDescriptor::read_only` / `read_only_method()` / `read_only_methods`.
+  read-only (per-runtime API: §8, `docs/feature-matrix.md`).
