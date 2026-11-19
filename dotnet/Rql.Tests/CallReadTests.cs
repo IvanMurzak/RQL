@@ -111,6 +111,39 @@ namespace Rql.Tests
         }
 
         [Fact]
+        public void ABindingErrorInAReadStageFailsBeforeAnyCallRuns()
+        {
+            var (e, terrain) = Host();
+            int commits = 0;
+            e.Mutations.Committed = _ => commits++;
+            var r = e.Execute("range(0, 3) | call landscape.Surface([$, 0]) | where nosuchfn(result)", null, Mutate);
+            Assert.Equal("unknown-function", r.Diagnostics[0].Code);
+            Assert.Equal(0, terrain.Reads);
+            Assert.Equal(0, commits);
+        }
+
+        [Fact]
+        public void APlanThatEndsWithTheCallKeepsTheTypoRuleForResultAndMethod()
+        {
+            var (e, terrain) = Host();
+            var r = e.Execute("terrains | where result > 1 | call Sculpt(1)", null, Mutate);
+            Assert.False(r.Ok);
+            Assert.Equal("unknown-member", r.Diagnostics[0].Code);
+            Assert.Equal(0, terrain.Sculpts);
+        }
+
+        [Fact]
+        public void HostBuiltPlansAreCheckedLikeDecodedOnes()
+        {
+            var (e, terrain) = Host();
+            var parsed = RqlParser.Parse("terrains | call Sculpt(1)");
+            var plan = new QueryPlan(parsed.Source, parsed.Stages.Append(new SimpleTerminalStage("count")).ToList(), parsed.Version);
+            var r = e.Execute(plan, null, Mutate);
+            Assert.Equal("invalid-plan", r.Diagnostics[0].Code);
+            Assert.Equal(0, terrain.Sculpts);
+        }
+
+        [Fact]
         public void AdaptersMarkMethodsReadOnly()
         {
             var terrain = new Terrain();

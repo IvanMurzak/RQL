@@ -377,10 +377,10 @@ private:
     PathPtr base_;
 };
 
-/// Items already computed (the rows of read-only calls, spec §8).
+/// The values of a vector filled after the stream is built (the rows of read-only calls, spec §8); it must outlive the stream.
 class ValuesStream final : public Stream {
 public:
-    explicit ValuesStream(std::vector<Value> values) : values_(std::move(values)) {}
+    explicit ValuesStream(std::vector<Value>& values) : values_(values) {}
 
     bool next(Item& out) override {
         if (k_ >= values_.size()) return false;
@@ -389,7 +389,7 @@ public:
     }
 
 private:
-    std::vector<Value> values_;
+    std::vector<Value>& values_;
     size_t k_ = 0;
 };
 
@@ -1371,8 +1371,9 @@ std::vector<Diagnostic> add_warnings(Exec& x, QueryResult& r, bool only_general)
                     known.push_back("items");  // group rows have their items (spec §5)
                     break;
                 }
-            // read stages after a call see its rows (spec §8)
-            if (std::any_of(x.plan.stages.begin(), x.plan.stages.end(), [](const Stage& st) { return st.kind == StageKind::Call; }))
+            // read stages after a call see its rows (spec §8); a call that ends the plan has none
+            if (!x.plan.stages.empty() &&
+                std::any_of(x.plan.stages.begin(), x.plan.stages.end() - 1, [](const Stage& st) { return st.kind == StageKind::Call; }))
                 known.insert(known.end(), call_columns().begin(), call_columns().end());
             for (auto* t : known_types(x))
             {
@@ -1517,10 +1518,12 @@ QueryResult run_core(Exec& x) {
             std::function<Value()> receiver;
             if (terminal->on) receiver = [&] { return call_receiver(x, c, *terminal); };
             if (at + 1 == x.plan.stages.size()) return run_call(x, c, enc, *stream, *terminal, receiver);
-            // Read stages over the rows of read-only calls (spec §8 "Reading call results").
-            StreamPtr rows = std::make_unique<ValuesStream>(call_rows(x, c, *stream, *terminal, receiver));
-            apply_stages(rows, at + 1);
-            QueryResult r = collect(x, *rows, enc);
+            // Read stages over the rows of read-only calls (spec §8 "Reading call results"), compiled before any call runs.
+            std::vector<Value> rows;
+            StreamPtr read = std::make_unique<ValuesStream>(rows);
+            apply_stages(read, at + 1);
+            rows = call_rows(x, c, *stream, *terminal, receiver);
+            QueryResult r = collect(x, *read, enc);
             r.dry_run = x.options.dry_run;
             return r;
         }

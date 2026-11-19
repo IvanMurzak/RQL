@@ -11,6 +11,7 @@ import {
   isMutation,
   isTerminal as isTerminalStage,
   segmentToString,
+  validateStructure,
   type CallExpr,
   type CallStage,
   type Diagnostic,
@@ -255,8 +256,8 @@ export class Pipeline {
     const names = new Map(this.x.engine.knownMemberNames());
     // Group rows have their items (spec §5); elsewhere `items` is an ordinary member name.
     if (this.x.plan.stages.some((st) => st.kind === 'group-by' || (st.kind === 'expr' && st.op === 'group-by'))) names.set('ITEMS', 'items');
-    // Read stages after a call see its rows (spec §8).
-    if (this.x.plan.stages.some((st) => st.kind === 'call')) for (const n of CALL_COLUMNS) if (!names.has(n.toUpperCase())) names.set(n.toUpperCase(), n);
+    // Read stages after a call see its rows (spec §8); a call that ends the plan has none.
+    if (this.x.plan.stages.slice(0, -1).some((st) => st.kind === 'call')) for (const n of CALL_COLUMNS) if (!names.has(n.toUpperCase())) names.set(n.toUpperCase(), n);
     for (const st of this.x.plan.stages) {
       if (st.kind !== 'select' && st.kind !== 'group-by') continue;
       for (const f of st.kind === 'select' ? st.fields : st.keys) {
@@ -296,6 +297,7 @@ export class Pipeline {
   private runCore(): QueryResult {
     const x = this.x;
     const plan = x.plan;
+    validateStructure(plan); // plans built by hosts skip the codec
     x.checkTargetLimit();
     const noWrite = mutationWithoutWrite(plan, x.options);
     if (noWrite !== undefined) throw noWrite;
@@ -323,9 +325,11 @@ export class Pipeline {
         const mutator = new Mutator(x, this.c, encoder);
         const receiver = terminal.on !== undefined ? () => this.callReceiver(terminal) : undefined;
         if (at === plan.stages.length - 1) return mutator.call(stream, terminal, receiver);
-        // Read stages over the rows of read-only calls (spec §8 "Reading call results").
-        const rows = mutator.callRows(stream, terminal, receiver);
-        const r = this.collect(this.applyStages(rowItems(rows), at + 1)[0], encoder);
+        // Read stages over the rows of read-only calls (spec §8 "Reading call results"), compiled before any call runs.
+        let rows: readonly RowValue[] = [];
+        const [read] = this.applyStages(rowItems(() => rows), at + 1);
+        rows = mutator.callRows(stream, terminal, receiver);
+        const r = this.collect(read, encoder);
         if (x.options.dryRun) r.dryRun = true;
         return r;
       }
@@ -921,8 +925,9 @@ export class Pipeline {
 
 // ------------------------------------------------------------------ helpers
 
-function* rowItems(rows: readonly RowValue[]): Generator<Item> {
-  for (const row of rows) yield item(row, null);
+/** The rows `rows` returns when the stream is read (they do not exist yet when it is built). */
+function* rowItems(rows: () => readonly RowValue[]): Generator<Item> {
+  for (const row of rows()) yield item(row, null);
 }
 
 /** Stages whose output is projected rows. */

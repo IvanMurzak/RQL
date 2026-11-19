@@ -2995,6 +2995,15 @@ void call_read_tests() {
     check(first_code(query) == "permission-denied", "call read: still needs a mutation request");
     auto count = run(e, "{\"rql\":\"0.1\"," + range + ",\"stages\":[" + height + R"J(,{"op":"count"}]})J", true);
     check(first_code(count) == "invalid-plan", "call read: other stages stay refused");
+    // A binding error in a read stage fails before any call runs.
+    const int reads = hill.reads, hooked = hooks;
+    auto unbound = run(e, "{\"rql\":\"0.1\"," + range + ",\"stages\":[" + height +
+                              R"J(,{"op":"where","pred":{"call":"nosuchfn","args":[{"path":["result"]}]}}]})J",
+                       true);
+    check(first_code(unbound) == "unknown-function" && hill.reads == reads && hooks == hooked, "call read: read stages compile before the calls");
+    // A plan that ends with the call keeps the typo rule for `result` (no read stage can see the call's columns).
+    auto typo = run(e, R"J({"rql":"0.1","source":{"path":["hill"]},"stages":[{"op":"where","pred":{"op":">","args":[{"path":["result"]},{"lit":1}]}},)J" + raise + "]}", true);
+    check(first_code(typo) == "unknown-member" && hill.raises == 7, "call read: a plan ending with the call keeps the typo rule");
 }
 
 int main(int argc, char** argv) {

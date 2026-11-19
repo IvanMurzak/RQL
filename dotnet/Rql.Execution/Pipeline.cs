@@ -197,8 +197,8 @@ namespace Rql.Execution
             var names = new HashSet<string>(_x.Engine.KnownMemberNames(), StringComparer.OrdinalIgnoreCase);
             // Group rows have their items (spec §5); elsewhere `items` is an ordinary member name.
             if (_x.Plan.Stages.Any(st => st is GroupByStage || (st is ExprStage e && e.Op == "group-by"))) names.Add(GroupItems);
-            // Read stages after a call see its rows (spec §8).
-            if (_x.Plan.Stages.Any(st => st is CallStage)) names.UnionWith(Mutator.CallColumns);
+            // Read stages after a call see its rows (spec §8); a call that ends the plan has none.
+            if (_x.Plan.Stages.Take(_x.Plan.Stages.Count - 1).Any(st => st is CallStage)) names.UnionWith(Mutator.CallColumns);
             foreach (var st in _x.Plan.Stages)
                 if (st is SelectStage || st is GroupByStage)
                     foreach (var f in st is SelectStage sel ? sel.Fields : ((GroupByStage)st).Keys)
@@ -300,6 +300,7 @@ namespace Rql.Execution
         private QueryResult RunCore()
         {
             var plan = _x.Plan;
+            PlanCodec.ValidateStructure(plan); // plans built by hosts skip the codec
             _x.CheckTargetLimit();
             if (MutationWithoutWrite(plan, _x.Options) is RqlException noWrite) throw noWrite;
             var (stream, at) = ApplyStages(CompileSource(plan.Source), 0);
@@ -331,15 +332,23 @@ namespace Rql.Execution
                     var mutator = new Mutator(_x, _c, encoder);
                     var receiver = s.On != null ? () => CallReceiver(s) : (Func<object>?)null;
                     if (at == plan.Stages.Count - 1) return mutator.Call(stream, s, receiver);
-                    // Read stages over the rows of read-only calls (spec §8 "Reading call results").
-                    var (rows, _) = ApplyStages(mutator.CallRows(stream, s, receiver).Select(row => new Item(row, null)), at + 1);
-                    var r = Collect(rows, encoder);
+                    // Read stages over the rows of read-only calls (spec §8 "Reading call results"), compiled before any call runs.
+                    List<RowValue>? rows = null;
+                    var (read, _) = ApplyStages(RowItems(() => rows!), at + 1);
+                    rows = mutator.CallRows(stream, s, receiver);
+                    var r = Collect(read, encoder);
                     r.DryRun = _x.Options.DryRun;
                     return r;
                 }
                 default:
                     throw new RqlException("unsupported", $"stage '{terminal.Op}' is not supported");
             }
+        }
+
+        /// <summary>The rows <paramref name="rows"/> yields when the stream is read (they do not exist yet when it is built).</summary>
+        private static IEnumerable<Item> RowItems(Func<List<RowValue>> rows)
+        {
+            foreach (var row in rows()) yield return new Item(row, null);
         }
 
         private static QueryResult Scalar(double v) => new QueryResult
